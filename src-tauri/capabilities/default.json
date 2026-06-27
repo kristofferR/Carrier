@@ -4,7 +4,12 @@
   "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`.",
   "windows": ["main", "win-*"],
   "remote": {
-    "urls": ["https://www.facebook.com", "https://*.facebook.com"]
+    "urls": [
+      "https://www.facebook.com",
+      "https://*.facebook.com",
+      "https://www.messenger.com",
+      "https://*.messenger.com"
+    ]
   },
   "permissions": [
     "core:default",

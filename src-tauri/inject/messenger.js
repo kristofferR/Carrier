@@ -96,13 +96,19 @@
   // new window via Shift/Ctrl/Cmd/middle-click navigate in place instead
   // (fixes the "Shift+Click internal links" bug).
   const INTERNAL = ["facebook.com", "messenger.com", "fbcdn.net", "fbsbx.com", "meta.com", "oculus.com"];
-  const AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com", "github.com"];
-  const AUTH_PATHS = ["/oauth", "/o/oauth2", "/authorize", "/signin", "/login", "/dialog/oauth"];
+  // Dedicated OAuth hosts (auth-only) stay in-app unconditionally; for code
+  // hosts an OAuth path disambiguates login from ordinary shared links.
+  const AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"];
+  const OAUTH_HOSTS = ["github.com", "gitlab.com", "bitbucket.org"];
+  const AUTH_PATHS = ["/login/oauth", "/oauth/authorize", "/o/oauth2", "/auth/authorize"];
   function isAuth(u) {
     const host = u.hostname.toLowerCase();
-    const path = u.pathname.toLowerCase();
     if (AUTH_HOSTS.some((h) => host === h || host.endsWith("." + h))) return true;
-    return AUTH_PATHS.some((p) => path.includes(p));
+    if (OAUTH_HOSTS.some((h) => host === h || host.endsWith("." + h))) {
+      const path = u.pathname.toLowerCase();
+      return AUTH_PATHS.some((p) => path.includes(p));
+    }
+    return false;
   }
   function classify(href) {
     try {

@@ -48,8 +48,7 @@
       "appimage": {
         "bundleMediaFramework": true
       }
-    },
-    "createUpdaterArtifacts": true
+    }
   },
   "plugins": {
     "updater": {

@@ -8,6 +8,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -131,12 +132,10 @@ fn dirs_config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-fn save_settings(app: &tauri::AppHandle, s: &Settings) {
-    if let Some(path) = settings_file(app) {
-        if let Ok(json) = serde_json::to_string_pretty(s) {
-            let _ = std::fs::write(path, json);
-        }
-    }
+fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
+    let path = settings_file(app).ok_or("no config directory available")?;
+    let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +180,10 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
 
 /// Apply settings that have an immediate runtime effect.
 fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_always_on_top(s.always_on_top);
+    for (label, window) in app.webview_windows() {
+        if label != "settings" {
+            let _ = window.set_always_on_top(s.always_on_top);
+        }
     }
 
     // Autostart (Start on System Startup).
@@ -233,33 +234,50 @@ fn unwrap_tracking(url: &Url) -> Option<String> {
 /// OAuth/login URLs that must stay *inside* the app (so logging in with
 /// Google/Apple/Microsoft/GitHub works in a popup instead of the browser).
 fn is_auth_url(url: &Url) -> bool {
-    let host = url.host_str().unwrap_or("").to_lowercase();
-    let path = url.path().to_lowercase();
-    const HOSTS: &[&str] = &[
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    // Dedicated OAuth provider hosts (these serve nothing but auth) stay in-app.
+    const AUTH_HOSTS: &[&str] = &[
         "accounts.google.com",
         "login.microsoftonline.com",
         "appleid.apple.com",
-        "github.com",
     ];
-    if HOSTS.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
+    if AUTH_HOSTS.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
         return true;
     }
-    const PATHS: &[&str] = &["/oauth", "/o/oauth2", "/authorize", "/signin", "/login", "/dialog/oauth"];
-    PATHS.iter().any(|p| path.contains(p))
+    // Hosts where an OAuth path disambiguates a login flow from ordinary links.
+    // Scoped to these hosts so a shared `example.com/oauth` link is NOT kept
+    // in-app.
+    const OAUTH_HOSTS: &[&str] = &["github.com", "gitlab.com", "bitbucket.org"];
+    if OAUTH_HOSTS.iter().any(|h| host == *h || host.ends_with(&format!(".{h}"))) {
+        let path = url.path().to_ascii_lowercase();
+        const PATHS: &[&str] = &["/login/oauth", "/oauth/authorize", "/o/oauth2", "/auth/authorize"];
+        return PATHS.iter().any(|p| path.contains(p));
+    }
+    false
 }
 
 /// Domains kept *inside* the app (Messenger plus the Facebook/Meta auth and
 /// media surfaces needed to log in and load content).
 fn is_internal(url: &Url) -> bool {
     match url.scheme() {
-        "about" | "blob" | "data" | "javascript" => return true,
+        "about" => return true,
+        // Resolve a blob: URL to its inner origin and judge that.
+        "blob" => {
+            return url
+                .as_str()
+                .strip_prefix("blob:")
+                .and_then(|inner| Url::parse(inner).ok())
+                .is_some_and(|inner| is_internal(&inner));
+        }
+        // data: / javascript: (and anything else) are never "internal".
         "http" | "https" => {}
         _ => return false,
     }
     if is_auth_url(url) {
         return true;
     }
-    let Some(host) = url.host_str() else { return true };
+    // Reject hostless HTTP(S) rather than treating it as internal.
+    let Some(host) = url.host_str() else { return false };
     let host = host.strip_prefix("www.").unwrap_or(host);
     const INTERNAL_SUFFIXES: &[&str] = &[
         "facebook.com",
@@ -277,6 +295,45 @@ fn is_internal(url: &Url) -> bool {
 // ---------------------------------------------------------------------------
 // Downloads
 // ---------------------------------------------------------------------------
+
+/// Only fetch ordinary public web URLs. Blocks non-HTTP(S) schemes and
+/// loopback/private/link-local hosts so an injected page script can't use these
+/// commands to probe the local network (SSRF).
+fn is_public_http(url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.to_ascii_lowercase();
+            d != "localhost" && !d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => {
+            !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified())
+        }
+        Some(url::Host::Ipv6(ip)) => !(ip.is_loopback() || ip.is_unspecified()),
+        None => false,
+    }
+}
+
+/// Fetch a public URL into memory (capped), with a request timeout.
+fn fetch_public(url: &str, cap: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let parsed = Url::parse(url).map_err(|e| e.to_string())?;
+    if !is_public_http(&parsed) {
+        return Err("refusing to fetch a non-public URL".into());
+    }
+    let resp = ureq::get(url)
+        .timeout(Duration::from_secs(60))
+        .call()
+        .map_err(|e| format!("fetch failed: {e}"))?;
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .take(cap)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
 
 fn downloads_dir() -> Option<std::path::PathBuf> {
     #[cfg(target_os = "windows")]
@@ -358,37 +415,46 @@ fn get_settings(state: State<AppState>) -> Settings {
 }
 
 #[tauri::command]
-fn set_settings(app: tauri::AppHandle, state: State<AppState>, new: Settings) -> Settings {
+fn set_settings(app: tauri::AppHandle, state: State<AppState>, new: Settings) -> Result<Settings, String> {
     {
         let mut guard = state.settings.lock().unwrap();
         *guard = new.clone();
     }
-    save_settings(&app, &new);
     apply_settings(&app, &new);
-    new
+    save_settings(&app, &new)?;
+    Ok(new)
+}
+
+/// Reset all settings to their defaults.
+#[tauri::command]
+fn reset_settings(app: tauri::AppHandle, state: State<AppState>) -> Result<Settings, String> {
+    let def = Settings::default();
+    *state.settings.lock().unwrap() = def.clone();
+    apply_settings(&app, &def);
+    save_settings(&app, &def)?;
+    Ok(def)
 }
 
 /// Open a URL in the user's default browser, unwrapping FB tracking redirects.
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
-    let target = Url::parse(&url)
-        .ok()
-        .and_then(|u| unwrap_tracking(&u))
-        .unwrap_or(url);
+    let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
+    let target = unwrap_tracking(&parsed).unwrap_or(url);
+    // Only hand safe web schemes to the OS opener so a page script can't ask us
+    // to open arbitrary `file://`/custom-scheme URIs.
+    let scheme = Url::parse(&target)
+        .map(|u| u.scheme().to_string())
+        .unwrap_or_default();
+    if !matches!(scheme.as_str(), "http" | "https" | "mailto") {
+        return Err(format!("refusing to open non-web URL ({scheme})"));
+    }
     open::that(target).map_err(|e| e.to_string())
 }
 
 /// Download an image and place it on the system clipboard.
 #[tauri::command]
 fn copy_image(url: String) -> Result<(), String> {
-    use std::io::Read;
-    let resp = ureq::get(&url).call().map_err(|e| format!("fetch failed: {e}"))?;
-    let mut bytes: Vec<u8> = Vec::new();
-    resp.into_reader()
-        .take(40 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-
+    let bytes = fetch_public(&url, 40 * 1024 * 1024)?;
     let img = image::load_from_memory(&bytes)
         .map_err(|e| format!("decode failed: {e}"))?
         .to_rgba8();
@@ -407,14 +473,21 @@ fn copy_image(url: String) -> Result<(), String> {
 /// Download a URL to the Downloads folder; returns the saved path.
 #[tauri::command]
 fn download_file(url: String) -> Result<String, String> {
-    use std::io::Read;
     let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
+    if !is_public_http(&parsed) {
+        return Err("refusing to fetch a non-public URL".into());
+    }
     let dir = downloads_dir().ok_or("no downloads directory")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = unique_path(dir.join(filename_from_url(&parsed)));
 
-    let resp = ureq::get(&url).call().map_err(|e| e.to_string())?;
-    let mut reader = resp.into_reader().take(500 * 1024 * 1024);
+    // Connect timeout only, so large media isn't cut off mid-download.
+    use std::io::Read;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(30))
+        .build();
+    let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
+    let mut reader = resp.into_reader().take(2 * 1024 * 1024 * 1024); // 2 GB ceiling
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
     std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().into_owned())
@@ -424,6 +497,11 @@ fn download_file(url: String) -> Result<String, String> {
 /// but that isn't a plain downloadable URL) to the Downloads folder.
 #[tauri::command]
 fn download_file_by_binary(filename: String, data: String) -> Result<String, String> {
+    // Cap the decoded size (~3/4 of the base64 length) before allocating.
+    const MAX_BYTES: usize = 512 * 1024 * 1024;
+    if data.len() / 4 * 3 > MAX_BYTES {
+        return Err("file too large".into());
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map_err(|e| e.to_string())?;
@@ -487,11 +565,19 @@ fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
 
-#[tauri::command]
-fn clear_cache_and_restart(app: tauri::AppHandle) {
+/// Clear the WebView's cookies/cache/storage, then relaunch.
+fn clear_cache(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.clear_all_browsing_data();
+    }
     if let Ok(cache) = app.path().app_cache_dir() {
         let _ = std::fs::remove_dir_all(&cache);
     }
+}
+
+#[tauri::command]
+fn clear_cache_and_restart(app: tauri::AppHandle) {
+    clear_cache(&app);
     app.restart();
 }
 
@@ -545,16 +631,22 @@ fn build_app_window(
     .user_agent(user_agent())
     .initialization_script(&init_script(settings))
     .on_navigation(|url| {
+        // External tracking redirect -> open the real (web-only) destination.
         if let Some(real) = unwrap_tracking(url) {
-            let _ = open::that(real);
+            if Url::parse(&real).is_ok_and(|r| matches!(r.scheme(), "http" | "https")) {
+                let _ = open::that(real);
+            }
             return false;
         }
         if is_internal(url) {
-            true
-        } else {
-            let _ = open::that(url.as_str());
-            false
+            return true;
         }
+        // Open ordinary web links in the browser; block anything else
+        // (data:, javascript:, file:, custom schemes).
+        if matches!(url.scheme(), "http" | "https") {
+            let _ = open::that(url.as_str());
+        }
+        false
     })
     .on_download(|_webview, event| {
         if let DownloadEvent::Requested { url, destination } = event {
@@ -566,6 +658,10 @@ fn build_app_window(
         true
     })
     .build()
+    .inspect(|window| {
+        // New windows inherit the current always-on-top preference.
+        let _ = window.set_always_on_top(settings.always_on_top);
+    })
 }
 
 /// Open (or focus) the dedicated settings window (a small local page, separate
@@ -682,9 +778,20 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &history, &window])
 }
 
+/// The focused Messenger window (a `main`/`win-*` window), falling back to
+/// `main`. Used so menu actions affect the window the user is actually looking
+/// at rather than always `main`. The local settings window is excluded.
+fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .find(|(label, w)| label.as_str() != "settings" && w.is_focused().unwrap_or(false))
+        .map(|(_, w)| w)
+        .or_else(|| app.get_webview_window("main"))
+}
+
 fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     let eval = |js: &str| {
-        if let Some(w) = app.get_webview_window("main") {
+        if let Some(w) = target_window(app) {
             let _ = w.eval(js);
         }
     };
@@ -706,12 +813,12 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
              document.execCommand('insertText', false, t); })",
         ),
         "print" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = target_window(app) {
                 let _ = w.print();
             }
         }
         "maximize" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = target_window(app) {
                 if w.is_maximized().unwrap_or(false) {
                     let _ = w.unmaximize();
                 } else {
@@ -725,9 +832,7 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
             let _ = build_app_window(app, &format!("win-{n}"), &s);
         }
         "clear_cache" => {
-            if let Ok(cache) = app.path().app_cache_dir() {
-                let _ = std::fs::remove_dir_all(&cache);
-            }
+            clear_cache(app);
             app.restart();
         }
         "always_on_top" => {
@@ -735,9 +840,13 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
             let mut s = state.settings.lock().unwrap().clone();
             s.always_on_top = !s.always_on_top;
             *state.settings.lock().unwrap() = s.clone();
-            save_settings(app, &s);
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.set_always_on_top(s.always_on_top);
+            if let Err(e) = save_settings(app, &s) {
+                eprintln!("carrier: failed to save settings: {e}");
+            }
+            for (label, w) in app.webview_windows() {
+                if label != "settings" {
+                    let _ = w.set_always_on_top(s.always_on_top);
+                }
             }
         }
         "devtools" => {
@@ -817,7 +926,11 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["settings"]) // fixed-size dialog; don't persist its geometry
+                .build(),
+        )
         .plugin(tauri_plugin_log::Builder::new().build())
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
@@ -829,6 +942,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             set_settings,
+            reset_settings,
             open_external,
             open_settings_window,
             copy_image,
@@ -851,8 +965,14 @@ pub fn run() {
             let handle = app.handle().clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
-                    let hide = handle.state::<AppState>().settings.lock().unwrap().hide_on_close;
-                    if hide {
+                    let (hide, has_tray) = {
+                        let state = handle.state::<AppState>();
+                        let s = state.settings.lock().unwrap();
+                        (s.hide_on_close, s.show_tray)
+                    };
+                    // Only hide to the tray if there's actually a tray to bring
+                    // it back from; otherwise let the window close (quit).
+                    if hide && has_tray {
                         api.prevent_close();
                         if let Some(w) = handle.get_webview_window("main") {
                             let _ = w.hide();
@@ -863,7 +983,8 @@ pub fn run() {
 
             apply_settings(app.handle(), &settings);
 
-            if settings.start_to_tray {
+            // Start hidden only when there's a tray to reopen from.
+            if settings.start_to_tray && settings.show_tray {
                 let _ = window.hide();
             }
 

@@ -37,6 +37,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
@@ -86,4 +88,6 @@ jobs:
           releaseBody: "Download the installer for your platform below."
           releaseDraft: true
           prerelease: false
-          args: --target ${{ matrix.target }}
+          # The release config enables createUpdaterArtifacts (kept out of the
+          # base config so local `tauri build` doesn't require the signing key).
+          args: --target ${{ matrix.target }} --config tauri.conf.release.json

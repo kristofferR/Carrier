@@ -52,6 +52,7 @@
       <div>
         <div class="ver" id="version">Carrier</div>
         <div id="status"></div>
+        <a href="#" id="reset" style="font-size:12px;opacity:.7">Reset to defaults</a>
       </div>
       <button id="check">Check for updates</button>
     </footer>
@@ -98,6 +99,19 @@
           root.appendChild(row);
         }
       }
+
+      document.getElementById("reset").onclick = async (e) => {
+        e.preventDefault();
+        try {
+          settings = await invoke("reset_settings");
+          render();
+          setStatus("Reset to defaults.");
+          setTimeout(() => setStatus(""), 1200);
+        } catch (err) {
+          setStatus("Could not reset.");
+          console.error(err);
+        }
+      };
 
       document.getElementById("check").onclick = async () => {
         setStatus("Checking for updates…");
