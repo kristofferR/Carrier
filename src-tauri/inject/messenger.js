@@ -132,7 +132,9 @@
     if (classify(href).external) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      invoke("open_external", { url: href });
+      // Swallow rejection: third-party in-app pages (OAuth providers) have no
+      // IPC access, so open_external simply does nothing there.
+      invoke("open_external", { url: href })?.catch?.(() => {});
     } else if (modified || blank) {
       e.preventDefault();
       e.stopImmediatePropagation();
