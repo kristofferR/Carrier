@@ -32,14 +32,6 @@ base64 = "0.22"
 dark-light = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 
-# Optional: an MCP socket server used only for autonomous UI testing.
-# Enable with `--features mcp` (e.g. `cargo run --features mcp`); never shipped
-# in release builds, so its `devtools` feature doesn't bloat them.
-tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "d5e0b807f14c79de14bac15146fd5e730d4a1b89", features = ["devtools"], optional = true }
-
-[features]
-mcp = ["dep:tauri-plugin-mcp"]
-
 [profile.release]
 panic = "abort"
 codegen-units = 1

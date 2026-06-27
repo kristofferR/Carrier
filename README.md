@@ -91,16 +91,16 @@ internal-domain list, and the injected CSS.
 
 ## Auto-updates
 
-The release workflow is set up to produce Tauri updater artifacts, but
-auto-update is **disabled by default** because it needs a signing keypair. To
-enable it:
+Carrier ships with the Tauri updater wired up: it checks
+`releases/latest/download/latest.json` and can download & install a verified
+(minisign-signed) update — press <kbd>F2</kbd> or use **Settings → Check for
+updates**.
 
-1. `bun run tauri signer generate` → add the private key + password as the
-   `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo
-   secrets.
-2. Add the `updater` plugin to `Cargo.toml` and `lib.rs`, and put the public key
-   + endpoint in `tauri.conf.json`. See the
-   [Tauri updater docs](https://v2.tauri.app/plugin/updater/).
+Updater artifacts are produced **only by the release CI** (which has the signing
+key), via `src-tauri/tauri.conf.release.json`. A plain local `bun run tauri
+build` does **not** require the key. To cut a signed release you need the
+`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repo secrets
+set (generate with `bun run tauri signer generate`).
 
 ## Acknowledgements & prior art
 

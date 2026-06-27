@@ -90,4 +90,5 @@ jobs:
           prerelease: false
           # The release config enables createUpdaterArtifacts (kept out of the
           # base config so local `tauri build` doesn't require the signing key).
-          args: --target ${{ matrix.target }} --config tauri.conf.release.json
+          # Path is relative to the repo root (tauri-action's projectPath).
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.conf.release.json

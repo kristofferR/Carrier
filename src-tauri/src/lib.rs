@@ -29,9 +29,6 @@ const HOME_URL: &str = "https://www.facebook.com/messages";
 const INJECT_CSS: &str = include_str!("../inject/messenger.css");
 const INJECT_JS: &str = include_str!("../inject/messenger.js");
 const INJECT_PANEL: &str = include_str!("../inject/panel.js");
-/// Test-only bridge so `tauri-plugin-mcp`'s `execute_js` works on the remote page.
-#[cfg(feature = "mcp")]
-const MCP_TEST_LISTENER: &str = include_str!("../inject/mcp_listener.js");
 
 /// A modern browser UA so Facebook serves the full Messenger web app.
 const fn user_agent() -> &'static str {
@@ -311,27 +308,46 @@ fn is_public_http(url: &Url) -> bool {
         Some(url::Host::Ipv4(ip)) => {
             !(ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified())
         }
-        Some(url::Host::Ipv6(ip)) => !(ip.is_loopback() || ip.is_unspecified()),
+        Some(url::Host::Ipv6(ip)) => {
+            // IPv4-mapped addresses (::ffff:a.b.c.d) get the IPv4 rules.
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return !(v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified());
+            }
+            let seg = ip.segments();
+            let unique_local = (seg[0] & 0xfe00) == 0xfc00; // fc00::/7
+            let link_local = (seg[0] & 0xffc0) == 0xfe80; // fe80::/10
+            !(ip.is_loopback() || ip.is_unspecified() || unique_local || link_local)
+        }
         None => false,
     }
 }
 
-/// Fetch a public URL into memory (capped), with a request timeout.
+/// Fetch a public URL into memory (capped), with timeouts and no redirects.
 fn fetch_public(url: &str, cap: u64) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let parsed = Url::parse(url).map_err(|e| e.to_string())?;
     if !is_public_http(&parsed) {
         return Err("refusing to fetch a non-public URL".into());
     }
-    let resp = ureq::get(url)
-        .timeout(Duration::from_secs(60))
-        .call()
-        .map_err(|e| format!("fetch failed: {e}"))?;
+    // No redirects: a public URL must not be able to bounce us onto a private
+    // host (SSRF). Accept 2xx only.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(30))
+        .timeout_read(Duration::from_secs(60))
+        .redirects(0)
+        .build();
+    let resp = agent.get(url).call().map_err(|e| format!("fetch failed: {e}"))?;
+    if resp.status() >= 300 {
+        return Err("refusing to follow a redirect".into());
+    }
     let mut bytes = Vec::new();
     resp.into_reader()
         .take(cap)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 >= cap {
+        return Err("response too large".into());
+    }
     Ok(bytes)
 }
 
@@ -362,9 +378,19 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Strip path separators so a filename can't escape the Downloads folder.
+/// Reduce a filename to a single safe path component so it can't escape the
+/// Downloads folder (path separators, NUL, and Windows drive/reserved chars).
 fn sanitize_filename(name: &str) -> String {
-    let cleaned = name.replace(['/', '\\', '\0'], "_");
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | '\0' | ':' | '<' | '>' | '"' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     let cleaned = cleaned.trim().trim_matches('.');
     if cleaned.is_empty() {
         "download".into()
@@ -481,15 +507,25 @@ fn download_file(url: String) -> Result<String, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = unique_path(dir.join(filename_from_url(&parsed)));
 
-    // Connect timeout only, so large media isn't cut off mid-download.
+    // Connect timeout only (so large media isn't cut off mid-download) and no
+    // redirects (SSRF).
     use std::io::Read;
+    const CAP: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(30))
+        .redirects(0)
         .build();
     let resp = agent.get(&url).call().map_err(|e| e.to_string())?;
-    let mut reader = resp.into_reader().take(2 * 1024 * 1024 * 1024); // 2 GB ceiling
+    if resp.status() >= 300 {
+        return Err("refusing to follow a redirect".into());
+    }
+    let mut reader = resp.into_reader().take(CAP);
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-    std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
+    let written = std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
+    if written >= CAP {
+        let _ = std::fs::remove_file(&path);
+        return Err("file too large".into());
+    }
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -866,8 +902,7 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
 fn init_script(settings: &Settings) -> String {
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
-    #[allow(unused_mut)]
-    let mut script = format!(
+    format!(
         r#"(function () {{
   window.__CARRIER_SETTINGS__ = {settings_literal};
   var css = {css_literal};
@@ -887,13 +922,7 @@ fn init_script(settings: &Settings) -> String {
 }})();
 {INJECT_JS}
 {INJECT_PANEL}"#
-    );
-    #[cfg(feature = "mcp")]
-    {
-        script.push('\n');
-        script.push_str(MCP_TEST_LISTENER);
-    }
-    script
+    )
 }
 
 pub fn run() {
@@ -907,16 +936,6 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }));
-    }
-
-    // Autonomous-testing socket (opt-in: `--features mcp`); never in release.
-    #[cfg(feature = "mcp")]
-    {
-        builder = builder.plugin(tauri_plugin_mcp::init_with_config(
-            tauri_plugin_mcp::PluginConfig::new("carrier".to_string())
-                .start_socket_server(true)
-                .socket_path("/tmp/tauri-mcp-carrier.sock".into()),
-        ));
     }
 
     builder
@@ -967,11 +986,13 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     let (hide, has_tray) = {
                         let state = handle.state::<AppState>();
-                        let s = state.settings.lock().unwrap();
-                        (s.hide_on_close, s.show_tray)
+                        let hide = state.settings.lock().unwrap().hide_on_close;
+                        let has_tray = state.tray.lock().unwrap().is_some();
+                        (hide, has_tray)
                     };
-                    // Only hide to the tray if there's actually a tray to bring
-                    // it back from; otherwise let the window close (quit).
+                    // Only hide to the tray if one was actually created (tray
+                    // creation can fail, e.g. on a Linux session without an
+                    // AppIndicator); otherwise let the window close (quit).
                     if hide && has_tray {
                         api.prevent_close();
                         if let Some(w) = handle.get_webview_window("main") {
@@ -983,8 +1004,9 @@ pub fn run() {
 
             apply_settings(app.handle(), &settings);
 
-            // Start hidden only when there's a tray to reopen from.
-            if settings.start_to_tray && settings.show_tray {
+            // Start hidden only when a tray was actually created to reopen from.
+            let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
+            if settings.start_to_tray && has_tray {
                 let _ = window.hide();
             }
 
