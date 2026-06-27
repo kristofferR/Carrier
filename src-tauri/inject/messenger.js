@@ -8,6 +8,10 @@
 (function () {
   "use strict";
 
+  // Tauri injects initialization scripts into subframes too (notably on
+  // Windows). Only enhance the top-level Messenger document.
+  if (window.top !== window.self) return;
+
   /* ----------------------------- Page zoom ------------------------------ */
   const ZOOM_KEY = "carrier:zoom";
   const isWindows = /windows/i.test(navigator.userAgent);

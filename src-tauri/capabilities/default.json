@@ -5,14 +5,17 @@
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
-      "https://www.facebook.com",
+      "https://facebook.com",
       "https://*.facebook.com",
-      "https://www.messenger.com",
+      "https://messenger.com",
       "https://*.messenger.com",
+      "https://fbcdn.net",
       "https://*.fbcdn.net",
+      "https://fbsbx.com",
       "https://*.fbsbx.com",
       "https://meta.com",
       "https://*.meta.com",
+      "https://oculus.com",
       "https://*.oculus.com"
     ]
   },

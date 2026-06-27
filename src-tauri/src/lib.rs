@@ -178,17 +178,19 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
         .build(app)
 }
 
-/// Apply settings that have an immediate runtime effect. Returns an error if a
-/// user-visible step (registering autostart) fails, so the caller can report it.
-///
-/// `sync_autostart` should be set only when the autostart preference actually
-/// changed; an unrelated save (spell-check, theme, …) must not touch — and
-/// possibly fail on — the OS autostart registration.
-fn apply_settings(
-    app: &tauri::AppHandle,
-    s: &Settings,
-    sync_autostart: bool,
-) -> Result<(), String> {
+/// Register or unregister Start on System Startup with the OS. Kept separate so
+/// callers can sync it *before* persisting and avoid committing a preference the
+/// OS rejected.
+fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    let res = if want { mgr.enable() } else { mgr.disable() };
+    res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
+}
+
+/// Apply the settings that have an immediate runtime effect (window topmost
+/// state, the injected-prefs refresh, and the tray). Autostart is handled
+/// separately by [`sync_autostart`]; everything here is best-effort.
+fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     let settings_json = serde_json::to_string(s).ok();
     for (label, window) in app.webview_windows() {
         // Apply to every window (incl. the Settings dialog) so toggling Always
@@ -205,19 +207,6 @@ fn apply_settings(
             }
         }
     }
-
-    // Autostart (Start on System Startup) — only touch the OS registration when
-    // the user actually changed this preference. Capture the result to surface it.
-    let autostart = if sync_autostart {
-        let mgr = app.autolaunch();
-        if s.autostart {
-            mgr.enable()
-        } else {
-            mgr.disable()
-        }
-    } else {
-        Ok(())
-    };
 
     // Tray: create or tear down to match `show_tray`.
     let state = app.state::<AppState>();
@@ -236,10 +225,6 @@ fn apply_settings(
         }
         _ => {}
     }
-
-    autostart.map_err(|e| {
-        format!("Settings saved, but Start on System Startup couldn't be updated: {e}")
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -477,38 +462,52 @@ fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
 }
 
+/// Persist `new`, syncing the OS autostart registration first so a failed sync
+/// doesn't commit an autostart preference the OS rejected. Other preferences are
+/// always saved; an autostart failure is returned (after saving the rest) so the
+/// UI can surface it.
+fn store_settings(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    new: Settings,
+) -> Result<Settings, String> {
+    let prev_autostart = state.settings.lock().unwrap().autostart;
+    let mut effective = new.clone();
+    let autostart_err = if new.autostart != prev_autostart {
+        match sync_autostart(app, new.autostart) {
+            Ok(()) => None,
+            // Keep the previous autostart value rather than persisting one the OS
+            // didn't accept; still save/apply every other preference.
+            Err(e) => {
+                effective.autostart = prev_autostart;
+                Some(e)
+            }
+        }
+    } else {
+        None
+    };
+    save_settings(app, &effective)?;
+    *state.settings.lock().unwrap() = effective.clone();
+    apply_settings(app, &effective);
+    match autostart_err {
+        Some(e) => Err(e),
+        None => Ok(effective),
+    }
+}
+
 #[tauri::command]
 fn set_settings(
     app: tauri::AppHandle,
     state: State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    // Persist first; only touch runtime state if the write succeeded, so a
-    // failed save can't leave the app applying settings it didn't store.
-    save_settings(&app, &new)?;
-    let autostart_changed = {
-        let mut guard = state.settings.lock().unwrap();
-        let changed = guard.autostart != new.autostart;
-        *guard = new.clone();
-        changed
-    };
-    apply_settings(&app, &new, autostart_changed)?;
-    Ok(new)
+    store_settings(&app, &state, new)
 }
 
 /// Reset all settings to their defaults.
 #[tauri::command]
 fn reset_settings(app: tauri::AppHandle, state: State<AppState>) -> Result<Settings, String> {
-    let def = Settings::default();
-    save_settings(&app, &def)?;
-    let autostart_changed = {
-        let mut guard = state.settings.lock().unwrap();
-        let changed = guard.autostart != def.autostart;
-        *guard = def.clone();
-        changed
-    };
-    apply_settings(&app, &def, autostart_changed)?;
-    Ok(def)
+    store_settings(&app, &state, Settings::default())
 }
 
 /// Open a URL in the user's default browser, unwrapping FB tracking redirects.
@@ -557,9 +556,17 @@ fn copy_image(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Download a URL to the Downloads folder; returns the saved path.
+/// Download a URL to the Downloads folder; returns the saved path. Async +
+/// `spawn_blocking` so the blocking fetch/copy of a large file doesn't run on the
+/// main thread (which would freeze the UI).
 #[tauri::command]
-fn download_file(url: String) -> Result<String, String> {
+async fn download_file(url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_file_blocking(url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn download_file_blocking(url: String) -> Result<String, String> {
     let parsed = Url::parse(&url).map_err(|e| e.to_string())?;
     if !is_fetchable_media_host(&parsed) {
         return Err("refusing to fetch a non-Messenger URL".into());
@@ -600,9 +607,16 @@ fn download_file(url: String) -> Result<String, String> {
 }
 
 /// Save base64-encoded bytes (e.g. a `blob:`/`data:` image the page rendered
-/// but that isn't a plain downloadable URL) to the Downloads folder.
+/// but that isn't a plain downloadable URL) to the Downloads folder. Async +
+/// `spawn_blocking` to keep the base64 decode + write off the main thread.
 #[tauri::command]
-fn download_file_by_binary(filename: String, data: String) -> Result<String, String> {
+async fn download_file_by_binary(filename: String, data: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_by_binary_blocking(filename, data))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn download_by_binary_blocking(filename: String, data: String) -> Result<String, String> {
     // Cap the decoded size (~3/4 of the base64 length) before allocating.
     const MAX_BYTES: usize = 512 * 1024 * 1024;
     if data.len() / 4 * 3 > MAX_BYTES {
@@ -756,6 +770,13 @@ fn build_app_window(
     })
     .on_download(|_webview, event| {
         if let DownloadEvent::Requested { url, destination } = event {
+            // Only accept downloads of Messenger's own media or page-generated
+            // blob:/data: content; refuse anything else a remote page might try
+            // to write to the user's Downloads folder.
+            let allowed = matches!(url.scheme(), "blob" | "data") || is_fetchable_media_host(&url);
+            if !allowed {
+                return false;
+            }
             if let Some(dir) = downloads_dir() {
                 let _ = std::fs::create_dir_all(&dir);
                 *destination = unique_path(dir.join(filename_from_url(&url)));
@@ -1122,7 +1143,7 @@ pub fn run() {
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
-            let _ = apply_settings(app.handle(), &settings, false);
+            apply_settings(app.handle(), &settings);
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();

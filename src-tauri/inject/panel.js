@@ -6,6 +6,9 @@
 (function () {
   "use strict";
 
+  // Subframes also receive init scripts (notably on Windows); only run in top.
+  if (window.top !== window.self) return;
+
   const invoke = (cmd, args) => window.__TAURI__?.core?.invoke(cmd, args);
 
   /* ------------------------------- Toast -------------------------------- */
