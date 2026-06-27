@@ -549,10 +549,17 @@ fn download_file(url: String) -> Result<String, String> {
     }
     let mut reader = resp.into_reader().take(CAP);
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-    let written = std::io::copy(&mut reader, &mut file).map_err(|e| e.to_string())?;
-    if written >= CAP {
-        let _ = std::fs::remove_file(&path);
-        return Err("file too large".into());
+    // Don't leave a partial (errored) or oversized file behind.
+    match std::io::copy(&mut reader, &mut file) {
+        Ok(n) if n < CAP => {}
+        other => {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+            return Err(match other {
+                Ok(_) => "file too large".to_string(),
+                Err(e) => e.to_string(),
+            });
+        }
     }
     Ok(path.to_string_lossy().into_owned())
 }

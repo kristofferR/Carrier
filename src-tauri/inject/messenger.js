@@ -156,9 +156,11 @@
 
   // Download an image/video src; routes blob:/data: through base64 so even
   // page-rendered media (not a plain URL) can be saved.
+  const MAX_BLOB = 512 * 1024 * 1024; // keep in step with the Rust-side cap
   async function downloadSrc(src, fallbackName) {
     if (src.startsWith("blob:") || src.startsWith("data:")) {
       const blob = await (await fetch(src)).blob();
+      if (blob.size > MAX_BLOB) throw new Error("file too large");
       const buf = new Uint8Array(await blob.arrayBuffer());
       let bin = "";
       for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
@@ -341,9 +343,13 @@
 
     const prefersDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
+    // Only Facebook's own login page — not the in-app OAuth provider pages
+    // (Google/Apple/Microsoft), which also have password fields.
+    const onFacebook = () => /(^|\.)facebook\.com$/i.test(location.hostname);
+
     function tidy() {
       const html = document.documentElement;
-      const pass = document.querySelector('input[name="pass"], input[type="password"]');
+      const pass = onFacebook() && document.querySelector('input[name="pass"], input[type="password"]');
       if (!pass) {
         if (html.hasAttribute("data-carrier-login")) {
           html.removeAttribute("data-carrier-login");

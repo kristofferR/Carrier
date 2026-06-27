@@ -18,6 +18,10 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # Run targets one at a time: tauri-action's updater step reads the
+      # release's latest.json, adds this job's signatures, then re-uploads it.
+      # Concurrent jobs would clobber each other's entries.
+      max-parallel: 1
       matrix:
         include:
           - os: macos-latest
