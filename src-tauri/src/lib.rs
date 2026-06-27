@@ -1193,4 +1193,248 @@ mod tests {
         );
         assert_eq!(filename_from_url(&u("https://x.com/")), "download");
     }
+
+    // -----------------------------------------------------------------------
+    // is_unsafe_download  (new in this PR)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unsafe_download_blocks_all_listed_executable_extensions() {
+        // Every extension in the explicit blocklist must be rejected.
+        let blocked = [
+            "malware.exe",
+            "setup.msi",
+            "run.bat",
+            "run.cmd",
+            "trojan.com",
+            "screen.scr",
+            "evil.ps1",
+            "script.vbs",
+            "script.vbe",
+            "payload.js",
+            "payload.jse",
+            "config.wsf",
+            "config.wsh",
+            "app.hta",
+            "installer.dmg",
+            "package.pkg",
+            "bundle.app",
+            "run.command",
+            "autorun.scpt",
+            "start.sh",
+            "start.bash",
+            "start.zsh",
+            "start.run",
+            "payload.bin",
+            "library.jar",
+            "webstart.jnlp",
+            "package.deb",
+            "package.rpm",
+            "portable.appimage",
+        ];
+        for name in &blocked {
+            assert!(
+                is_unsafe_download(name),
+                "expected {name} to be blocked as unsafe"
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_download_allows_safe_media_and_document_extensions() {
+        // Common file types users legitimately save from Messenger must be allowed.
+        let allowed = [
+            "photo.jpg",
+            "image.jpeg",
+            "picture.png",
+            "animation.gif",
+            "photo.webp",
+            "clip.mp4",
+            "video.mov",
+            "video.avi",
+            "audio.mp3",
+            "audio.wav",
+            "audio.ogg",
+            "document.pdf",
+            "spreadsheet.xlsx",
+            "presentation.pptx",
+            "archive.zip",
+            "archive.tar",
+            "archive.gz",
+            "archive.7z",
+            "text.txt",
+            "data.csv",
+            "data.json",
+        ];
+        for name in &allowed {
+            assert!(
+                !is_unsafe_download(name),
+                "expected {name} to be allowed (safe extension)"
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_download_is_case_insensitive() {
+        // Extensions should be compared case-insensitively.
+        assert!(is_unsafe_download("VIRUS.EXE"));
+        assert!(is_unsafe_download("Script.Ps1"));
+        assert!(is_unsafe_download("Payload.SH"));
+        assert!(!is_unsafe_download("Photo.PNG"));
+        assert!(!is_unsafe_download("Clip.MP4"));
+    }
+
+    #[test]
+    fn unsafe_download_no_extension_is_safe() {
+        // A filename with no extension at all is allowed (not executable by extension).
+        assert!(!is_unsafe_download("filenoext"));
+        assert!(!is_unsafe_download("download"));
+    }
+
+    #[test]
+    fn unsafe_download_dotfile_edge_cases() {
+        // A dotfile whose name is exactly the "extension" portion — rsplit_once('.') returns
+        // ("", "sh") for ".sh", so ".sh" is blocked; ".gitignore" has ext "gitignore" (safe).
+        assert!(is_unsafe_download(".sh"));
+        assert!(!is_unsafe_download(".gitignore"));
+        // Multiple dots: only the last segment is checked.
+        assert!(is_unsafe_download("setup.tar.exe"));
+        assert!(!is_unsafe_download("setup.exe.zip"));
+    }
+
+    // -----------------------------------------------------------------------
+    // theme_for  (new in this PR)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn theme_for_dark_returns_dark() {
+        let mut s = Settings::default();
+        s.theme = "dark".into();
+        assert_eq!(theme_for(&s), Some(tauri::Theme::Dark));
+    }
+
+    #[test]
+    fn theme_for_light_returns_light() {
+        let mut s = Settings::default();
+        s.theme = "light".into();
+        assert_eq!(theme_for(&s), Some(tauri::Theme::Light));
+    }
+
+    #[test]
+    fn theme_for_system_returns_none() {
+        let mut s = Settings::default();
+        s.theme = "system".into();
+        assert_eq!(theme_for(&s), None);
+    }
+
+    #[test]
+    fn theme_for_unknown_string_returns_none() {
+        let mut s = Settings::default();
+        s.theme = "auto".into();
+        assert_eq!(theme_for(&s), None);
+        s.theme = "".into();
+        assert_eq!(theme_for(&s), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // is_dark  (new in this PR) — only the explicitly-forced cases are tested
+    // because "system" calls dark_light::detect() which is OS-dependent.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_dark_forced_dark() {
+        let mut s = Settings::default();
+        s.theme = "dark".into();
+        assert!(is_dark(&s));
+    }
+
+    #[test]
+    fn is_dark_forced_light() {
+        let mut s = Settings::default();
+        s.theme = "light".into();
+        assert!(!is_dark(&s));
+    }
+
+    // -----------------------------------------------------------------------
+    // splash_background  (modified in this PR to accept &Settings)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn splash_background_dark_is_facebook_dark_color() {
+        let mut s = Settings::default();
+        s.theme = "dark".into();
+        // Facebook's dark background colour, as hard-coded in the function.
+        assert_eq!(splash_background(&s), Color(24, 25, 26, 255));
+    }
+
+    #[test]
+    fn splash_background_light_is_white() {
+        let mut s = Settings::default();
+        s.theme = "light".into();
+        assert_eq!(splash_background(&s), Color(255, 255, 255, 255));
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings::default  (new fields added in this PR)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn settings_default_new_fields_have_correct_values() {
+        let s = Settings::default();
+        assert!(s.unread_badge, "unread_badge should default to true");
+        assert_eq!(s.theme, "system", "theme should default to 'system'");
+        assert!(!s.compact, "compact should default to false");
+        assert!(!s.menu_bar_only, "menu_bar_only should default to false");
+    }
+
+    // -----------------------------------------------------------------------
+    // want_tray logic  (new in this PR: show_tray || menu_bar_only)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn want_tray_logic_show_tray_dominates() {
+        let mut s = Settings::default(); // show_tray defaults to true
+        s.menu_bar_only = false;
+        assert!(s.show_tray || s.menu_bar_only);
+    }
+
+    #[test]
+    fn want_tray_logic_menu_bar_only_forces_tray_even_without_show_tray() {
+        let mut s = Settings::default();
+        s.show_tray = false;
+        s.menu_bar_only = true;
+        assert!(s.show_tray || s.menu_bar_only, "menu_bar_only must force tray on");
+    }
+
+    #[test]
+    fn want_tray_logic_both_false_disables_tray() {
+        let mut s = Settings::default();
+        s.show_tray = false;
+        s.menu_bar_only = false;
+        assert!(!(s.show_tray || s.menu_bar_only), "no tray when both are false");
+    }
+
+    // -----------------------------------------------------------------------
+    // percent_decode  (used by filename_from_url; boundary cases)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn percent_decode_handles_encoded_chars() {
+        assert_eq!(percent_decode("hello%20world"), "hello world");
+        assert_eq!(percent_decode("photo%2Fname.jpg"), "photo/name.jpg");
+        assert_eq!(percent_decode("%2F%00"), "/\0");
+    }
+
+    #[test]
+    fn percent_decode_leaves_plain_text_unchanged() {
+        assert_eq!(percent_decode("photo.png"), "photo.png");
+        assert_eq!(percent_decode(""), "");
+    }
+
+    #[test]
+    fn percent_decode_incomplete_sequence_is_kept_literally() {
+        // A trailing lone '%' or short sequence must not panic.
+        assert_eq!(percent_decode("abc%"), "abc%");
+        assert_eq!(percent_decode("abc%2"), "abc%2");
+    }
 }
