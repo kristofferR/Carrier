@@ -182,8 +182,11 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
 fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     let settings_json = serde_json::to_string(s).ok();
     for (label, window) in app.webview_windows() {
+        // Apply to every window (incl. the Settings dialog) so toggling Always
+        // on Top from the dialog doesn't leave the dialog stuck behind the
+        // now-topmost Messenger windows.
+        let _ = window.set_always_on_top(s.always_on_top);
         if label != "settings" {
-            let _ = window.set_always_on_top(s.always_on_top);
             // Push the new prefs to the running page so JS-side settings
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {
@@ -212,6 +215,9 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             }
         }
         (false, true) => {
+            // Removing the only way back, so make sure the main window is
+            // visible before dropping the tray icon.
+            show_main(app);
             *tray = None; // dropping the TrayIcon removes it
         }
         _ => {}
