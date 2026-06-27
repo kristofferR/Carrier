@@ -11,6 +11,10 @@
 
   // Internal bridge directly (no global window.__TAURI__ exposed to the page).
   const invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
+  // Facebook is a remote origin and can't call Carrier's own commands, but it
+  // *can* emit events (core:event), which a Rust listener handles.
+  const emit = (event) =>
+    invoke("plugin:event|emit", { event, payload: null })?.catch?.(() => {});
 
   /* ------------------------------- Toast -------------------------------- */
   let toastEl = null;
@@ -40,29 +44,15 @@
   };
 
   /* --------------------------- Update check ----------------------------- */
-  let checking = false;
-  window.__carrierCheckUpdates = async function () {
-    if (checking) return;
-    checking = true;
+  // Rust runs the check (and reports the result with a native notification).
+  window.__carrierCheckUpdates = function () {
     window.__carrierToast("Checking for updates…");
-    try {
-      const res = await invoke("check_for_updates");
-      window.__carrierToast(res === "up-to-date" ? "Carrier is up to date" : "Updating…");
-    } catch (e) {
-      window.__carrierToast("Update check failed");
-      console.warn("[carrier] update check:", e);
-    } finally {
-      checking = false;
-    }
+    emit("carrier:check-updates");
   };
 
   /* --------------------------- Settings window -------------------------- */
   // F3 / the menu opens the dedicated settings window (handled in Rust).
   window.__carrierToggleSettings = function () {
-    try {
-      invoke("open_settings_window");
-    } catch (e) {
-      console.warn("[carrier] open settings:", e);
-    }
+    emit("carrier:open-settings");
   };
 })();

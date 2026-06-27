@@ -73,6 +73,15 @@
   const toast = (msg) =>
     window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
 
+  /* ------------------------ Plugin command bridges ---------------------- */
+  // Facebook is a *remote* origin: Tauri v2 lets it call plugin commands (gated
+  // by the capability ACL) but NOT the app's own custom commands. So page
+  // features route through plugins, matching how the upstream app works.
+  const openUrl = (url) =>
+    invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() => {});
+  const notify = (options) =>
+    invoke("plugin:notification|notify", { options })?.catch?.(() => {});
+
   // Expose zoom controls so the native menu (View ▸ Zoom) can drive them.
   window.__carrierZoomIn = zoomIn;
   window.__carrierZoomOut = zoomOut;
@@ -139,9 +148,7 @@
     if (classify(href).external) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      // Swallow rejection: third-party in-app pages (OAuth providers) have no
-      // IPC access, so open_external simply does nothing there.
-      invoke("open_external", { url: href })?.catch?.(() => {});
+      openUrl(href);
     } else if (modified || blank) {
       e.preventDefault();
       e.stopImmediatePropagation();
@@ -163,34 +170,33 @@
     }
   };
 
-  // Download an image/video src; routes blob:/data: through base64 so even
-  // page-rendered media (not a plain URL) can be saved.
-  const MAX_BLOB = 512 * 1024 * 1024; // keep in step with the Rust-side cap
+  // Download a media src by letting the WebView initiate the download, which the
+  // Rust `on_download` handler then writes to Downloads. (Custom commands can't
+  // be called from the remote Facebook origin, only plugins / WebView hooks.)
+  const MAX_BLOB = 512 * 1024 * 1024;
   async function downloadSrc(src, fallbackName) {
-    if (src.startsWith("blob:") || src.startsWith("data:")) {
+    let href = src;
+    // Re-wrap remote media as a same-origin blob so the `download` attribute is
+    // honoured (it's ignored for cross-origin URLs) and the save keeps its name.
+    if (!src.startsWith("blob:") && !src.startsWith("data:")) {
       const blob = await (await fetch(src)).blob();
       if (blob.size > MAX_BLOB) throw new Error("file too large");
-      const buf = new Uint8Array(await blob.arrayBuffer());
-      let bin = "";
-      for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
-      const ext = (blob.type.split("/")[1] || "bin").split(";")[0];
-      await invoke("download_file_by_binary", {
-        filename: filenameFromUrl(src) || `${fallbackName}.${ext}`,
-        data: btoa(bin),
-      });
-    } else {
-      await invoke("download_file", { url: src });
+      href = URL.createObjectURL(blob);
     }
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = filenameFromUrl(src) || fallbackName;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    if (href !== src) setTimeout(() => URL.revokeObjectURL(href), 10000);
   }
 
   async function copyImageSrc(src) {
-    if (src.startsWith("blob:") || src.startsWith("data:")) {
-      const blob = await (await fetch(src)).blob();
-      if (blob.size > MAX_BLOB) throw new Error("image too large");
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-    } else {
-      await invoke("copy_image", { url: src });
-    }
+    const blob = await (await fetch(src)).blob();
+    if (blob.size > MAX_BLOB) throw new Error("image too large");
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
   }
 
   let ctxMenu = null;
@@ -216,13 +222,13 @@
         items.push(["Copy image", () => copyImageSrc(imgSrc).then(() => toast("Image copied")).catch(() => toast("Copy failed"))]);
         items.push(["Download image", () => downloadSrc(imgSrc, "image").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))]);
         items.push(["Copy image address", () => navigator.clipboard?.writeText(imgSrc).then(() => toast("Address copied"))]);
-        items.push(["Open image in browser", () => invoke("open_external", { url: imgSrc })]);
+        items.push(["Open image in browser", () => openUrl(imgSrc)]);
       } else if (vidSrc) {
         items.push(["Download video", () => downloadSrc(vidSrc, "video").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))]);
         items.push(["Copy video address", () => navigator.clipboard?.writeText(vidSrc).then(() => toast("Address copied"))]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
         items.push(["Copy link address", () => navigator.clipboard?.writeText(linkHref).then(() => toast("Address copied"))]);
-        items.push(["Open link in browser", () => invoke("open_external", { url: linkHref })]);
+        items.push(["Open link in browser", () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
 
@@ -289,7 +295,7 @@
     if (!window.__TAURI_INTERNALS__) return;
     function CarrierNotification(title, options = {}) {
       try {
-        invoke("send_notification", { title: String(title || "Messenger"), body: String(options.body || "") });
+        notify({ title: String(title || "Messenger"), body: String(options.body || "") });
       } catch (_) {}
       this.title = title;
       this.onclick = null;
@@ -311,9 +317,9 @@
     if (!window.__TAURI_INTERNALS__ || !window.matchMedia) return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const push = () => {
-      try {
-        invoke("update_theme_mode", { mode: mq.matches ? "dark" : "light" });
-      } catch (_) {}
+      // Core window command (works from the remote origin); applies to the
+      // calling webview's own window.
+      invoke("plugin:window|set_theme", { value: mq.matches ? "dark" : "light" })?.catch?.(() => {});
     };
     push();
     mq.addEventListener?.("change", push);
@@ -332,10 +338,10 @@
       } catch (err) {
         if (err && (err.name === "NotAllowedError" || err.name === "NotFoundError")) {
           const kind = constraints && constraints.video ? "camera" : "microphone";
-          toast(`Carrier needs ${kind} access — opening privacy settings…`);
-          try {
-            invoke("open_privacy_settings", { kind: kind === "camera" ? "camera" : "microphone" });
-          } catch (_) {}
+          toast(`Carrier needs ${kind} access — check System Settings → Privacy & Security`);
+          // macOS deep link to the relevant privacy pane (no-op elsewhere).
+          const pane = kind === "camera" ? "Privacy_Camera" : "Privacy_Microphone";
+          openUrl(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
         }
         throw err;
       }

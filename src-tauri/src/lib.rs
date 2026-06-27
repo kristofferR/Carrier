@@ -16,7 +16,7 @@ use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     webview::{Color, DownloadEvent},
-    Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    Listener, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
@@ -705,8 +705,7 @@ fn clear_cache_and_restart(app: tauri::AppHandle) {
 }
 
 /// Check GitHub releases for an update; download & install if found.
-#[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
@@ -720,6 +719,11 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
         Ok(None) => Ok("up-to-date".into()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    run_update_check(&app).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,6 +1079,7 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -1153,6 +1158,30 @@ pub fn run() {
             if settings.start_to_tray && has_tray {
                 let _ = window.hide();
             }
+
+            // The Facebook page is a remote origin and can't call Carrier's own
+            // commands, so the F3/F2 shortcuts emit events that we handle here.
+            let h = app.handle().clone();
+            app.listen_any("carrier:open-settings", move |_| {
+                let h = h.clone();
+                tauri::async_runtime::spawn(async move { show_settings_window(&h) });
+            });
+            let h = app.handle().clone();
+            app.listen_any("carrier:check-updates", move |_| {
+                let h = h.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(msg) = run_update_check(&h).await {
+                        if msg == "up-to-date" {
+                            let _ = h
+                                .notification()
+                                .builder()
+                                .title("Carrier")
+                                .body("Carrier is up to date.")
+                                .show();
+                        }
+                    }
+                });
+            });
 
             Ok(())
         })
