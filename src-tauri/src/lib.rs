@@ -180,7 +180,15 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
 
 /// Apply settings that have an immediate runtime effect. Returns an error if a
 /// user-visible step (registering autostart) fails, so the caller can report it.
-fn apply_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
+///
+/// `sync_autostart` should be set only when the autostart preference actually
+/// changed; an unrelated save (spell-check, theme, …) must not touch — and
+/// possibly fail on — the OS autostart registration.
+fn apply_settings(
+    app: &tauri::AppHandle,
+    s: &Settings,
+    sync_autostart: bool,
+) -> Result<(), String> {
     let settings_json = serde_json::to_string(s).ok();
     for (label, window) in app.webview_windows() {
         // Apply to every window (incl. the Settings dialog) so toggling Always
@@ -198,15 +206,17 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
         }
     }
 
-    // Autostart (Start on System Startup) — only (re)register when the
-    // preference actually differs from the current OS state, so an unrelated
-    // change (spell-check, theme, …) doesn't fail on a machine where autostart
-    // registration is unavailable. Capture the result to surface it.
-    let mgr = app.autolaunch();
-    let autostart = match mgr.is_enabled() {
-        Ok(current) if current == s.autostart => Ok(()),
-        _ if s.autostart => mgr.enable(),
-        _ => mgr.disable(),
+    // Autostart (Start on System Startup) — only touch the OS registration when
+    // the user actually changed this preference. Capture the result to surface it.
+    let autostart = if sync_autostart {
+        let mgr = app.autolaunch();
+        if s.autostart {
+            mgr.enable()
+        } else {
+            mgr.disable()
+        }
+    } else {
+        Ok(())
     };
 
     // Tray: create or tear down to match `show_tray`.
@@ -251,6 +261,13 @@ fn unwrap_tracking(url: &Url) -> Option<String> {
     url.query_pairs()
         .find(|(k, _)| k == "u")
         .map(|(_, v)| v.into_owned())
+        // Only unwrap to a real web URL — never a javascript:/file:/data: target
+        // smuggled through the `u=` parameter.
+        .filter(|target| {
+            Url::parse(target)
+                .map(|u| matches!(u.scheme(), "http" | "https"))
+                .unwrap_or(false)
+        })
 }
 
 /// OAuth/login URLs that must stay *inside* the app, so Facebook's "continue
@@ -469,8 +486,13 @@ fn set_settings(
     // Persist first; only touch runtime state if the write succeeded, so a
     // failed save can't leave the app applying settings it didn't store.
     save_settings(&app, &new)?;
-    *state.settings.lock().unwrap() = new.clone();
-    apply_settings(&app, &new)?;
+    let autostart_changed = {
+        let mut guard = state.settings.lock().unwrap();
+        let changed = guard.autostart != new.autostart;
+        *guard = new.clone();
+        changed
+    };
+    apply_settings(&app, &new, autostart_changed)?;
     Ok(new)
 }
 
@@ -479,8 +501,13 @@ fn set_settings(
 fn reset_settings(app: tauri::AppHandle, state: State<AppState>) -> Result<Settings, String> {
     let def = Settings::default();
     save_settings(&app, &def)?;
-    *state.settings.lock().unwrap() = def.clone();
-    apply_settings(&app, &def)?;
+    let autostart_changed = {
+        let mut guard = state.settings.lock().unwrap();
+        let changed = guard.autostart != def.autostart;
+        *guard = def.clone();
+        changed
+    };
+    apply_settings(&app, &def, autostart_changed)?;
     Ok(def)
 }
 
@@ -1093,7 +1120,9 @@ pub fn run() {
                 }
             });
 
-            let _ = apply_settings(app.handle(), &settings);
+            // Don't sync autostart at startup; the OS registration already
+            // reflects the user's last explicit choice.
+            let _ = apply_settings(app.handle(), &settings, false);
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
@@ -1182,6 +1211,20 @@ mod tests {
         );
         assert_eq!(
             unwrap_tracking(&u("https://www.facebook.com/messages")),
+            None
+        );
+        // A tracking redirect whose `u=` target is a non-HTTP(S) scheme must not
+        // be unwrapped (defense-in-depth against javascript:/file:/data:).
+        assert_eq!(
+            unwrap_tracking(&u(
+                "https://l.facebook.com/l.php?u=javascript%3Aalert%281%29&h=AT0"
+            )),
+            None
+        );
+        assert_eq!(
+            unwrap_tracking(&u(
+                "https://l.facebook.com/l.php?u=file%3A%2F%2F%2Fetc%2Fpasswd"
+            )),
             None
         );
     }
