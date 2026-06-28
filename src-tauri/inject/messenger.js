@@ -359,15 +359,41 @@
         img.src = url;
       });
 
+    // Clicking a native notification routes back here by id: bring the
+    // conversation up by invoking the original `onclick` Facebook assigned to its
+    // Notification (that's what opens the right thread). A small bounded map keeps
+    // those handlers alive between "notification shown" and "notification clicked".
+    let notifySeq = 0;
+    const notifyHandlers = new Map();
+    window.__carrierNotifyClick = (id) => {
+      const n = notifyHandlers.get(id);
+      if (!n) return;
+      notifyHandlers.delete(id);
+      try {
+        window.focus();
+      } catch (_) {}
+      try {
+        n.onclick?.();
+      } catch (_) {}
+    };
+
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
       // Only notify when Carrier is in the background — don't interrupt you with
       // a notification for a conversation you're actively reading.
       if (!document.hasFocus()) {
+        const id = ++notifySeq;
+        // Facebook assigns `this.onclick` right after construction; hold onto
+        // this instance so the click route can call it. Cap the map so a long
+        // session of unclicked notifications can't grow it without bound.
+        notifyHandlers.set(id, this);
+        if (notifyHandlers.size > 50)
+          notifyHandlers.delete(notifyHandlers.keys().next().value);
         avatarToDataUrl(opts.icon).then((icon) =>
           invoke("plugin:event|emit", {
             event: "carrier:notify",
             payload: {
+              id,
               title: String(title || "Messenger"),
               body: String(opts.body || ""),
               icon,

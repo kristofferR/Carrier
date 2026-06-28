@@ -1174,9 +1174,12 @@ fn init_script(settings: &Settings) -> String {
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
 /// preview (`body`), and the sender's avatar URL; the injected bridge forwards
 /// them here, rendering the avatar to a PNG data URL (`icon`, best-effort) so the
-/// native side never has to re-fetch it.
+/// native side never has to re-fetch it. `id` is the page's handle for this
+/// notification — echoed back on click so the page can open the conversation.
 #[derive(Debug, Default, Deserialize)]
 struct NotifyMsg {
+    #[serde(default)]
+    id: u64,
     #[serde(default)]
     title: String,
     #[serde(default)]
@@ -1218,35 +1221,85 @@ fn clear_avatar_cache() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Show a native OS notification for a new message, attaching the sender's
-/// avatar where the platform allows it: a right-side thumbnail on macOS (the
-/// app icon always occupies the main slot there), and the notification icon on
-/// Linux/Windows. Fire-and-forget — dropping the handle sends asynchronously on
-/// macOS, so this never blocks. Runs the show on its own thread to stay off the
-/// event-loop thread.
-fn show_message_notification(msg: NotifyMsg) {
+/// Show a native OS notification for a new message and, if it's clicked, bring
+/// Carrier forward and open the conversation. The avatar is attached where the
+/// platform allows (a thumbnail on macOS — the app icon always owns the main
+/// slot there — and the notification icon on Linux/Windows). Each notification
+/// gets its own thread that blocks until the user clicks or dismisses it; the
+/// thread only parks (it doesn't spin), and on click it routes back to the page.
+fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     let title = if msg.title.trim().is_empty() {
         "Messenger".to_string()
     } else {
         msg.title
     };
+    let body = msg.body;
+    let id = msg.id;
     let image = avatar_to_temp_png(&msg.icon);
     std::thread::spawn(move || {
-        let mut n = notify_rust::Notification::new();
-        n.summary(&title);
-        if !msg.body.is_empty() {
-            n.body(&msg.body);
+        if show_native_notification(&title, &body, image.as_deref()) {
+            on_notification_click(app, id);
         }
-        if let Some(path) = image.as_ref().and_then(|p| p.to_str()) {
-            #[cfg(target_os = "macos")]
-            n.image_path(path);
-            #[cfg(not(target_os = "macos"))]
-            n.icon(path);
+    });
+}
+
+/// Show the notification and block until the user interacts with it; returns
+/// `true` if they clicked it (as opposed to dismissing it).
+///
+/// macOS uses mac-notification-sys directly: notify-rust only reports a click
+/// when the notification carries an action button, whereas `wait_for_click`
+/// reports a plain body click and `content_image` carries the avatar.
+#[cfg(target_os = "macos")]
+fn show_native_notification(title: &str, body: &str, image: Option<&std::path::Path>) -> bool {
+    let mut n = mac_notification_sys::Notification::default();
+    n.title(title).message(body).wait_for_click(true);
+    if let Some(path) = image.and_then(|p| p.to_str()) {
+        n.content_image(path);
+    }
+    matches!(
+        n.send(),
+        Ok(mac_notification_sys::NotificationResponse::Click)
+    )
+}
+
+/// See the macOS variant. On Linux/Windows notify-rust's `wait_for_action`
+/// blocks until the notification closes; a freedesktop notification needs an
+/// explicit `default` action for a body click to be reported (it shows no
+/// button), which Windows toasts don't.
+#[cfg(not(target_os = "macos"))]
+fn show_native_notification(title: &str, body: &str, image: Option<&std::path::Path>) -> bool {
+    let mut n = notify_rust::Notification::new();
+    n.summary(title);
+    if !body.is_empty() {
+        n.body(body);
+    }
+    if let Some(path) = image.and_then(|p| p.to_str()) {
+        n.icon(path);
+    }
+    #[cfg(unix)]
+    n.action("default", "Open");
+    let mut clicked = false;
+    if let Ok(handle) = n.show() {
+        handle.wait_for_action(|action| {
+            // notify-rust reports `__closed` for a dismissal; anything else is an
+            // activation (the body or our `default`/`Open` action).
+            clicked = action != "__closed";
+        });
+    }
+    clicked
+}
+
+/// A notification was clicked: surface Carrier's window and ask the page to open
+/// the conversation (it invokes Facebook's own `onclick` for that notification,
+/// keyed by `id`). Hops to the main thread for the window + webview calls.
+fn on_notification_click(app: tauri::AppHandle, id: u64) {
+    let _ = app.clone().run_on_main_thread(move || {
+        show_main(&app);
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.eval(format!(
+                "window.__carrierNotifyClick && window.__carrierNotifyClick({id});"
+            ));
         }
-        // The handle is dropped immediately; on macOS that triggers an
-        // asynchronous send (non-blocking), and on Linux/Windows the send has
-        // already happened by the time `show` returns.
-        let _ = n.show();
     });
 }
 
@@ -1371,24 +1424,25 @@ pub fn run() {
 
             // New-message notifications: the page's `Notification` bridge sends
             // sender/preview/avatar here; we render them natively (with the
-            // avatar) so a message notifies you while Carrier is in the background.
-            // See `show_message_notification`.
+            // avatar), notify you while Carrier is in the background, and open the
+            // conversation on click. See `show_message_notification`.
             clear_avatar_cache();
             #[cfg(target_os = "macos")]
             {
-                // notify-rust on macOS shows notifications under a registered
-                // bundle id; mirror the notification plugin's choice (a real
-                // bundle in release, Terminal's in dev where ours isn't signed).
+                // macOS shows notifications under a registered bundle id; mirror
+                // the notification plugin's choice (a real bundle in release,
+                // Terminal's in dev where ours isn't signed).
                 let id = app.config().identifier.clone();
-                let _ = notify_rust::set_application(if tauri::is_dev() {
+                let _ = mac_notification_sys::set_application(if tauri::is_dev() {
                     "com.apple.Terminal"
                 } else {
                     &id
                 });
             }
+            let notify_handle = app.handle().clone();
             app.listen_any("carrier:notify", move |event| {
                 if let Ok(msg) = serde_json::from_str::<NotifyMsg>(event.payload()) {
-                    show_message_notification(msg);
+                    show_message_notification(notify_handle.clone(), msg);
                 }
             });
 
@@ -1759,6 +1813,22 @@ mod tests {
         let written = std::fs::read(&path).expect("temp avatar file exists");
         assert_eq!(written, b"hello");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn notify_msg_parses_the_page_payload() {
+        // The shape the injected bridge emits on `carrier:notify`.
+        let msg: NotifyMsg = serde_json::from_str(
+            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk="}"#,
+        )
+        .expect("payload parses");
+        assert_eq!(msg.id, 7);
+        assert_eq!(msg.title, "Jane");
+        assert_eq!(msg.body, "hi there");
+        // Missing fields fall back to defaults rather than failing the parse.
+        let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
+        assert_eq!(bare.id, 0);
+        assert!(bare.title.is_empty());
     }
 
     #[test]
