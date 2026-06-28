@@ -95,6 +95,9 @@ struct AppState {
     settings: Mutex<Settings>,
     tray: Mutex<Option<TrayIcon>>,
     next_window: AtomicUsize,
+    /// True while [`recreate_themed_windows`] is between destroying and
+    /// rebuilding, so the run loop doesn't exit when the window count hits zero.
+    recreating: std::sync::atomic::AtomicBool,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
@@ -231,10 +234,25 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         // on Top from the dialog doesn't leave the dialog stuck behind the
         // now-topmost Messenger windows.
         let _ = window.set_always_on_top(s.always_on_top);
+        // Webview color-scheme (and the window chrome on Windows/Linux).
+        let _ = window.set_theme(theme);
+        // The (now-transparent) webview lets the window background show through
+        // the title bar, so keep that background in step with the theme. Tauri's
+        // own set_background_color is unreliable on macOS (it can invert white to
+        // black — tauri#12349), so set the NSWindow colour directly there.
+        #[cfg(target_os = "macos")]
+        {
+            let win = window.clone();
+            let dark = is_dark(s);
+            let _ = window.run_on_main_thread(move || {
+                if let Ok(ptr) = win.ns_window() {
+                    set_macos_window_bg(ptr, dark);
+                }
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.set_background_color(Some(splash_background(s)));
         if label != "settings" {
-            // Drive the native window chrome (incl. the macOS title bar) from the
-            // theme preference so it matches the page instead of staying light.
-            let _ = window.set_theme(theme);
             // Push the new prefs to the running page so JS-side settings
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {
@@ -533,6 +551,7 @@ fn store_settings(
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
+    let prev_theme = state.settings.lock().unwrap().theme.clone();
     let prev_autostart = state.settings.lock().unwrap().autostart;
     let mut effective = new.clone();
     let autostart_err = if new.autostart != prev_autostart {
@@ -551,6 +570,10 @@ fn store_settings(
     save_settings(app, &effective)?;
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
+    // The macOS title bar can't be re-themed live, so rebuild the windows.
+    if effective.theme != prev_theme {
+        recreate_themed_windows(app);
+    }
     match autostart_err {
         Some(e) => Err(e),
         None => Ok(effective),
@@ -707,7 +730,107 @@ fn build_app_window(
     .inspect(|window| {
         // New windows inherit the current always-on-top preference.
         let _ = window.set_always_on_top(settings.always_on_top);
+        // macOS: let the themed window background show through the title bar.
+        #[cfg(target_os = "macos")]
+        make_webview_transparent(window);
     })
+}
+
+/// Disable the WKWebView's opaque white background so the window background —
+/// which we keep in step with the theme — shows through the title bar and
+/// overscroll areas. Tauri leaves the webview background unimplemented on macOS,
+/// so flip the private `drawsBackground` flag ourselves (the same thing wry does
+/// for transparent windows).
+#[cfg(target_os = "macos")]
+fn make_webview_transparent(window: &WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        use objc2_foundation::NSString;
+
+        let wk = webview.inner() as *mut AnyObject;
+        if wk.is_null() {
+            return;
+        }
+        // SAFETY: `wk` is the live WKWebView; -setValue:forKey: with @NO on the
+        // private `drawsBackground` key runs on the main thread.
+        unsafe {
+            let no: *mut AnyObject = msg_send![class!(NSNumber), numberWithBool: false];
+            let key = NSString::from_str("drawsBackground");
+            let _: () = msg_send![wk, setValue: no, forKey: &*key];
+        }
+    });
+}
+
+/// Set the NSWindow background colour directly — Facebook dark, or white — so the
+/// transparent webview shows the right colour in the title bar. Tauri's
+/// set_background_color is unreliable on macOS, so we message AppKit ourselves.
+/// Must run on the main thread.
+#[cfg(target_os = "macos")]
+fn set_macos_window_bg(ns_window: *mut std::ffi::c_void, dark: bool) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    if ns_window.is_null() {
+        return;
+    }
+    // SAFETY: `ns_window` is this window's live NSWindow*; NSColor factory
+    // methods and -setBackgroundColor: run on the main thread.
+    unsafe {
+        let ns_window = ns_window as *mut AnyObject;
+        let color: *mut AnyObject = if dark {
+            // Facebook dark, matching splash_background.
+            msg_send![class!(NSColor), colorWithSRGBRed: 24.0f64 / 255.0, green: 25.0f64 / 255.0, blue: 26.0f64 / 255.0, alpha: 1.0f64]
+        } else {
+            msg_send![class!(NSColor), whiteColor]
+        };
+        let _: () = msg_send![ns_window, setBackgroundColor: color];
+    }
+}
+
+/// Rebuild every Messenger window (not the Settings dialog) with the current
+/// settings. The macOS title bar's theme is fixed at window creation — no
+/// runtime call repaints it — so a live theme switch is reflected by recreating
+/// the window. Each rebuilt window keeps its place and size; the page reloads
+/// (the login session is preserved by the persisted cookies). Runs off the
+/// event-loop handler and destroys before rebuilding so the label is free.
+fn recreate_themed_windows(app: &tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+        // Hold off the "last window closed" exit while we have zero windows.
+        app.state::<AppState>()
+            .recreating
+            .store(true, Ordering::SeqCst);
+        // Snapshot label + geometry, then destroy (not close — close would just
+        // hide it), so we can rebuild each window where it was.
+        let targets: Vec<(String, _)> = app
+            .webview_windows()
+            .into_iter()
+            .filter(|(label, _)| label != "settings")
+            .map(|(label, window)| {
+                let geometry = window.outer_position().ok().zip(window.inner_size().ok());
+                let _ = window.destroy();
+                (label, geometry)
+            })
+            .collect();
+        if !targets.is_empty() {
+            // Let the event loop finish destroying so the labels are free again.
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            for (label, geometry) in targets {
+                if let Ok(window) = build_app_window(&app, &label, &settings) {
+                    if let Some((pos, size)) = geometry {
+                        let _ = window.set_position(tauri::Position::Physical(pos));
+                        let _ = window.set_size(tauri::Size::Physical(size));
+                    }
+                }
+            }
+        }
+        app.state::<AppState>()
+            .recreating
+            .store(false, Ordering::SeqCst);
+    });
 }
 
 /// Open (or focus) the dedicated settings window (a small local page, separate
@@ -720,12 +843,11 @@ fn show_settings_window(app: &tauri::AppHandle) {
     }
     // Match the Messenger windows' topmost state so the dialog isn't trapped
     // behind them when Always on Top is enabled.
-    let aot = app
-        .state::<AppState>()
-        .settings
-        .lock()
-        .unwrap()
-        .always_on_top;
+    let (aot, theme) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.always_on_top, theme_for(&s))
+    };
     let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
         .title("Carrier Settings")
         .inner_size(460.0, 620.0)
@@ -733,6 +855,7 @@ fn show_settings_window(app: &tauri::AppHandle) {
         .maximizable(false)
         .minimizable(false)
         .always_on_top(aot)
+        .theme(theme)
         .build();
 }
 
@@ -800,9 +923,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&theme_light)
         .item(&theme_dark)
         .build()?;
-    // No accelerator here: Cmd/Ctrl+Shift+S is handled page-side (works in
-    // menu-bar-only mode too); a menu accelerator would double-fire with it.
-    let compact = mi("compact", "Toggle Compact Mode (⇧⌘S)", None)?;
+    let compact = mi("compact", "Toggle Compact Mode", Some("CmdOrCtrl+Shift+S"))?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
     let devtools = mi(
         "devtools",
@@ -854,12 +975,17 @@ fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
     let state = app.state::<AppState>();
     let mut s = state.settings.lock().unwrap().clone();
+    let prev_theme = s.theme.clone();
     f(&mut s);
     if let Err(e) = save_settings(app, &s) {
         eprintln!("carrier: failed to save settings: {e}");
     }
     *state.settings.lock().unwrap() = s.clone();
     apply_settings(app, &s);
+    // The macOS title bar can't be re-themed live, so rebuild the windows.
+    if s.theme != prev_theme {
+        recreate_themed_windows(app);
+    }
 }
 
 fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
@@ -992,6 +1118,7 @@ pub fn run() {
             settings: Mutex::new(initial.clone()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
+            recreating: std::sync::atomic::AtomicBool::new(false),
         })
         .menu(build_menu)
         .on_menu_event(handle_menu_event)
@@ -1081,21 +1208,23 @@ pub fn run() {
                 }
             });
 
-            // Cmd/Ctrl+Shift+S on the page toggles compact mode; persist it.
-            let h = app.handle().clone();
-            app.listen_any("carrier:toggle-compact", move |_| {
-                let state = h.state::<AppState>();
-                let mut s = state.settings.lock().unwrap().clone();
-                s.compact = !s.compact;
-                let _ = save_settings(&h, &s);
-                *state.settings.lock().unwrap() = s.clone();
-                apply_settings(&h, &s);
-            });
-
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Carrier");
+        .build(tauri::generate_context!())
+        .expect("error while building Carrier")
+        .run(|app, event| {
+            // A theme switch destroys and rebuilds the windows; don't let the
+            // momentary zero-window state quit the app.
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if app
+                    .state::<AppState>()
+                    .recreating
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 // ---------------------------------------------------------------------------
