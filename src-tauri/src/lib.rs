@@ -804,13 +804,19 @@ fn set_macos_window_bg(ns_window: *mut std::ffi::c_void, dark: bool) {
 /// event-loop handler and destroys before rebuilding so the label is free.
 fn recreate_themed_windows(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering;
+    // Claim the "recreating" flag synchronously: if a rebuild is already in
+    // flight, skip this one. Setting it inside the spawned task would let two
+    // rapid theme switches overlap, and the second could clear the flag mid-way
+    // through the first's zero-window window — letting the app exit.
+    if app
+        .state::<AppState>()
+        .recreating
+        .swap(true, Ordering::SeqCst)
+    {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let settings = app.state::<AppState>().settings.lock().unwrap().clone();
-        // Hold off the "last window closed" exit while we have zero windows.
-        app.state::<AppState>()
-            .recreating
-            .store(true, Ordering::SeqCst);
         // Snapshot label + geometry, then destroy (not close — close would just
         // hide it), so we can rebuild each window where it was.
         let targets: Vec<(String, _)> = app
@@ -826,6 +832,8 @@ fn recreate_themed_windows(app: &tauri::AppHandle) {
         if !targets.is_empty() {
             // Let the event loop finish destroying so the labels are free again.
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            // Read settings after the wait so a theme change during it is honoured.
+            let settings = app.state::<AppState>().settings.lock().unwrap().clone();
             for (label, geometry) in targets {
                 if let Ok(window) = build_app_window(&app, &label, &settings) {
                     if let Some((pos, size)) = geometry {

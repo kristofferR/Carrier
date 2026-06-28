@@ -568,7 +568,12 @@
         node = node.parentElement;
       }
       // Belt-and-braces: clear any large opaque-light backdrop the ancestor walk
-      // didn't catch, so nothing white surrounds the (dark) login card.
+      // didn't catch, so nothing white surrounds the (dark) login card. Undo it
+      // first so switching back to light/system restores the white backgrounds.
+      for (const el of document.querySelectorAll("[data-carrier-cleared-bg]")) {
+        el.style.removeProperty("background-color");
+        el.removeAttribute("data-carrier-cleared-bg");
+      }
       if (dark) {
         for (const el of document.body.querySelectorAll("*")) {
           const r = el.getBoundingClientRect();
@@ -577,6 +582,7 @@
             r.height >= window.innerHeight * 0.5 &&
             isLightFill(getComputedStyle(el).backgroundColor)
           ) {
+            el.setAttribute("data-carrier-cleared-bg", "");
             el.style.setProperty("background-color", "transparent", "important");
           }
         }
