@@ -81,10 +81,6 @@
     invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() => {});
   const notify = (options) =>
     invoke("plugin:notification|notify", { options })?.catch?.(() => {});
-  // Page can't call Carrier's own commands (remote origin) but can emit events
-  // that Rust listeners handle.
-  const emit = (event) =>
-    invoke("plugin:event|emit", { event, payload: null })?.catch?.(() => {});
 
   // Expose zoom controls so the native menu (View ▸ Zoom) can drive them.
   window.__carrierZoomIn = zoomIn;
@@ -112,10 +108,6 @@
           e.preventDefault();
           target.click();
         }
-      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyS") {
-        // Cmd/Ctrl+Shift+S: toggle compact mode (persisted by Rust).
-        e.preventDefault();
-        emit("carrier:toggle-compact");
       }
     },
     true,
@@ -496,6 +488,22 @@
     let scheduled = false;
 
     const prefersDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    // Follow the forced theme (Settings → Theme) when set, else the system. FB's
+    // login page ships only a light theme, so this drives our dark swap.
+    const wantDark = () => {
+      const t = window.__CARRIER_SETTINGS__?.theme;
+      if (t === "dark") return true;
+      if (t === "light") return false;
+      return prefersDark();
+    };
+    // A near-opaque light fill (Facebook's login wrappers) we want to clear so
+    // the dark backdrop shows through.
+    const isLightFill = (bg) => {
+      const m = bg && bg.match(/rgba?\(([^)]+)\)/);
+      if (!m) return false;
+      const [r, g, b, a = 1] = m[1].split(",").map((s) => parseFloat(s));
+      return a > 0.9 && (r + g + b) / 3 > 200;
+    };
 
     // Only Facebook's own login page — not the in-app OAuth provider pages
     // (Google/Apple/Microsoft), which also have password fields.
@@ -526,7 +534,7 @@
       // Use Facebook's native dark palette on the login page when the system is
       // dark (the login page itself ships only a light theme). Reacts to the
       // system theme changing while the login screen is open.
-      const dark = prefersDark();
+      const dark = wantDark();
       if (dark && html.classList.contains("__fb-light-mode")) {
         html.classList.replace("__fb-light-mode", "__fb-dark-mode");
         html.setAttribute("data-carrier-darkswap", "");
@@ -559,6 +567,20 @@
         if (node !== col && !node.hasAttribute(ANC)) node.setAttribute(ANC, "");
         node = node.parentElement;
       }
+      // Belt-and-braces: clear any large opaque-light backdrop the ancestor walk
+      // didn't catch, so nothing white surrounds the (dark) login card.
+      if (dark) {
+        for (const el of document.body.querySelectorAll("*")) {
+          const r = el.getBoundingClientRect();
+          if (
+            r.width >= window.innerWidth * 0.6 &&
+            r.height >= window.innerHeight * 0.5 &&
+            isLightFill(getComputedStyle(el).backgroundColor)
+          ) {
+            el.style.setProperty("background-color", "transparent", "important");
+          }
+        }
+      }
     }
 
     const schedule = () => {
@@ -573,6 +595,7 @@
     };
     schedule();
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener("carrier:settings", schedule);
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", schedule);
     }
