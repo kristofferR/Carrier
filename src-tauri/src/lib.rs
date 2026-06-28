@@ -36,6 +36,22 @@ const INJECT_CSS: &str = include_str!("../inject/messenger.css");
 const INJECT_JS: &str = include_str!("../inject/messenger.js");
 const INJECT_PANEL: &str = include_str!("../inject/panel.js");
 
+// The `mcp` feature wires a JS-eval responder into the remote Facebook page and
+// opens a local control socket — strictly a dev tool. Enabling it in a release
+// build is always a mistake, so fail the build loudly rather than risk shipping
+// it. (This guards every `#[cfg(feature = "mcp")]` path below, including the
+// plugin registration, since the feature can then only compile in debug.)
+#[cfg(all(feature = "mcp", not(debug_assertions)))]
+compile_error!("the `mcp` feature is dev-only and must not be enabled in release builds");
+
+// Dev-only (`mcp` feature): the tauri-plugin-mcp guest responder, injected into
+// the remote Facebook page so execute_js / get_dom round-trips work. Empty in
+// release builds, so the JS-eval responder never ships.
+#[cfg(feature = "mcp")]
+const INJECT_MCP_BRIDGE: &str = include_str!("../inject/mcp-bridge.js");
+#[cfg(not(feature = "mcp"))]
+const INJECT_MCP_BRIDGE: &str = "";
+
 /// A modern browser UA so Facebook serves the full Messenger web app.
 const fn user_agent() -> &'static str {
     #[cfg(target_os = "macos")]
@@ -71,8 +87,11 @@ struct Settings {
     /// next launch (takes effect after restart).
     multi_instance: bool,
     spellcheck: bool,
-    /// Show the unread-message count on the Dock/taskbar icon.
+    /// Show the unread count on the Dock/taskbar icon.
     unread_badge: bool,
+    /// What the unread badge counts: "messages" (Facebook's total unread message
+    /// count, from the page title) or "conversations" (unread chats in the list).
+    badge_mode: String,
     /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
     theme: String,
     /// Hide the conversation-info side panel for a roomier chat view.
@@ -92,6 +111,7 @@ impl Default for Settings {
             multi_instance: false,
             spellcheck: true,
             unread_badge: true,
+            badge_mode: "messages".into(),
             theme: "system".into(),
             compact: false,
             menu_bar_only: false,
@@ -265,7 +285,9 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {
                 let _ = window.eval(format!(
-                    "window.__CARRIER_SETTINGS__ = {json}; window.dispatchEvent(new Event('carrier:settings'));"
+                    "window.__CARRIER_SETTINGS__ = {json}; \
+                     try {{ localStorage.setItem('__carrier_settings', JSON.stringify(window.__CARRIER_SETTINGS__)); }} catch (e) {{}} \
+                     window.dispatchEvent(new Event('carrier:settings'));"
                 ));
             }
         }
@@ -855,6 +877,39 @@ fn install_main_close_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
     });
 }
 
+/// Ask macOS for notification authorization, including the **badge** option.
+///
+/// Since macOS 12 (Monterey), `[[NSApp dockTile] setBadgeLabel:]` — which is what
+/// Tauri's `set_badge_count` calls under the hood — is silently ignored unless the
+/// app has requested `UNUserNotificationCenter` authorization with the badge
+/// option. Carrier's notifications go through `notify-rust` (the legacy
+/// `NSUserNotification` path), which never asks, so the unread count the page set
+/// via `set_badge_count` produced no Dock badge at all (issue #5). Requesting it
+/// makes the badge work; the grant is persisted by the OS, so on later launches
+/// this resolves immediately without a prompt.
+///
+/// Must run on the main thread, and only takes effect once the app has finished
+/// launching — calling it from `setup` is a silent no-op — so it's invoked from
+/// the `RunEvent::Ready` handler. Safe to call unconditionally: if the user
+/// denies notifications the badge simply won't show, exactly as before.
+#[cfg(target_os = "macos")]
+fn request_badge_authorization() {
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::NSError;
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+
+    let center = UNUserNotificationCenter::currentNotificationCenter();
+    let options = UNAuthorizationOptions::Badge
+        | UNAuthorizationOptions::Alert
+        | UNAuthorizationOptions::Sound;
+    // The completion handler is required by the API; the OS persists the grant,
+    // so there's nothing to do with the result. The framework copies the block,
+    // so letting our `RcBlock` drop when this returns is fine.
+    let handler = RcBlock::new(|_granted: Bool, _error: *mut NSError| {});
+    center.requestAuthorizationWithOptions_completionHandler(options, &handler);
+}
+
 /// Rebuild every Messenger window (not the Settings dialog) with the current
 /// settings. The macOS title bar's theme is fixed at window creation — no
 /// runtime call repaints it — so a live theme switch is reflected by recreating
@@ -1143,7 +1198,28 @@ fn init_script(settings: &Settings) -> String {
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     format!(
         r#"(function () {{
-  window.__CARRIER_SETTINGS__ = {settings_literal};
+  // Prefer settings cached in localStorage (written by apply_settings on every
+  // change) over this baked-in snapshot, so an in-session settings change
+  // survives Facebook reloading the page (which re-runs this script). Falls back
+  // to the snapshot on first load / if storage was cleared.
+  var baked = {settings_literal};
+  try {{
+    // Merge the cache onto the baked defaults (rather than replacing) so a stale
+    // or partial cached object can't drop fields the current build expects, and
+    // sanitise enum-like settings.
+    var stored = JSON.parse(localStorage.getItem('__carrier_settings') || 'null');
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {{
+      var merged = Object.assign({{}}, baked, stored);
+      if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations') {{
+        merged.badge_mode = baked.badge_mode;
+      }}
+      window.__CARRIER_SETTINGS__ = merged;
+    }} else {{
+      window.__CARRIER_SETTINGS__ = baked;
+    }}
+  }} catch (e) {{
+    window.__CARRIER_SETTINGS__ = baked;
+  }}
   var css = {css_literal};
   function inject() {{
     if (!document.head) return false;
@@ -1160,7 +1236,8 @@ fn init_script(settings: &Settings) -> String {
   }}
 }})();
 {INJECT_JS}
-{INJECT_PANEL}"#
+{INJECT_PANEL}
+{INJECT_MCP_BRIDGE}"#
     )
 }
 
@@ -1288,6 +1365,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Carrier")
         .run(|app, event| {
+            // macOS hides the Dock badge unless the app has requested
+            // notification authorization with the badge option. Do it once the
+            // app is ready (UNUserNotificationCenter needs the app fully
+            // launched — calling it during setup is a silent no-op). See
+            // `request_badge_authorization` and issue #5.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Ready = event {
+                request_badge_authorization();
+            }
+
             // A theme switch destroys and rebuilds the windows; don't let the
             // momentary zero-window state quit the app.
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
