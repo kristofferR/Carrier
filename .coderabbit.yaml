@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# CodeRabbit configuration. Pins the keys that matter so this repo keeps
+# matching the org-wide setup even though a repo file overrides org settings.
+reviews:
+  profile: assertive        # match the org-wide review profile
+  review_status: false      # suppress the "Review skipped / auto reviews disabled" notices
+  auto_review:
+    enabled: false          # keep auto-review OFF — reviews are driven on demand (crq -> @coderabbitai review)
