@@ -13,16 +13,23 @@
         background: #ffffff; color: #1c1e21;
         display: flex; flex-direction: column;
       }
-      @media (prefers-color-scheme: dark) {
-        body { background: #242526; color: #e4e6eb; }
-        .row:hover { background: #3a3b3c; }
-        header, footer { border-color: #3a3b3c; }
-        .hint { color: #b0b3b8; }
+      /* Tab strip pinned to the top — stacked icon + label, like IPTVChecker. */
+      .tabs {
+        display: flex; gap: 6px; justify-content: center;
+        padding: 12px 12px 10px; border-bottom: 1px solid #e4e6eb;
       }
-      header {
-        padding: 16px 20px; font-size: 16px; font-weight: 600;
-        border-bottom: 1px solid #e4e6eb;
+      .tab {
+        flex: 1 1 0; min-width: 0;
+        display: flex; flex-direction: column; align-items: center; gap: 6px;
+        padding: 9px 4px; border-radius: 10px;
+        background: transparent; border: 0; cursor: pointer;
+        color: #65676b; font: inherit; font-size: 11px; font-weight: 500;
       }
+      .tab .lbl { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .tab svg { width: 22px; height: 22px; }
+      .tab:hover { background: #f0f2f5; color: #1c1e21; }
+      .tab.active { background: #e7f0ff; color: #0866ff; }
+      .tab.active svg { stroke-width: 1.9; }
       main { flex: 1; overflow-y: auto; padding: 6px 10px; }
       .row {
         display: flex; align-items: flex-start; gap: 12px;
@@ -36,29 +43,40 @@
         padding: 12px 20px; border-top: 1px solid #e4e6eb;
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
       }
-      button {
+      button.action {
         background: #0866ff; color: #fff; border: 0; border-radius: 8px;
         padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
       }
-      button:active { opacity: .85; }
+      button.action:active { opacity: .85; }
       .ver { opacity: .55; font-size: 12px; }
       #status { opacity: .7; font-size: 12px; min-height: 16px; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #242526; color: #e4e6eb; }
+        .row:hover { background: #3a3b3c; }
+        .tabs, footer { border-color: #3a3b3c; }
+        .hint { color: #b0b3b8; }
+        .tab { color: #b0b3b8; }
+        .tab:hover { background: #3a3b3c; color: #e4e6eb; }
+        .tab.active { background: #263a59; color: #5b9bff; }
+      }
     </style>
   </head>
   <body>
-    <header>Carrier settings</header>
-    <main id="rows"></main>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Settings sections"></nav>
+    <main id="rows" role="tabpanel"></main>
     <footer>
       <div>
         <div class="ver" id="version">Carrier</div>
         <div id="status"></div>
         <a href="#" id="reset" style="font-size:12px;opacity:.7">Reset to defaults</a>
       </div>
-      <button id="check">Check for updates</button>
+      <button class="action" id="check">Check for updates</button>
     </footer>
 
     <script>
       const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
+
+      // Per-field metadata: [key, label, hint]. Grouping into tabs is below.
       const FIELDS = [
         ["always_on_top", "Always on Top", "Keep the window above other apps."],
         ["show_tray", "Show System Tray", "Show a Carrier icon in the system tray."],
@@ -72,9 +90,51 @@
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["multi_instance", "Multi Instance", "Allow more than one window (experimental, needs restart)."],
       ];
+      const FIELD_META = Object.fromEntries(FIELDS.map(([k, label, hint]) => [k, { label, hint }]));
+
+      // Inline lucide-style icons (no dependency / build step). `theme` lives in General.
+      const ICONS = {
+        general:
+          '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+        tray: '<path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>',
+        notifications:
+          '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+        advanced:
+          '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+      };
+
+      const TABS = [
+        { id: "general", label: "General", icon: ICONS.general,
+          fields: ["theme", "compact", "hide_names_avatars", "always_on_top", "hide_on_close", "spellcheck"] },
+        { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
+          fields: ["show_tray", "start_to_tray", "autostart", "menu_bar_only"] },
+        { id: "notifications", label: "Notifications", icon: ICONS.notifications,
+          fields: ["unread_badge", "badge_mode"] },
+        { id: "advanced", label: "Advanced", icon: ICONS.advanced,
+          fields: ["multi_instance"] },
+      ];
+
+      let activeTab = "general";
+      try {
+        const saved = localStorage.getItem("carrier:settingsTab");
+        if (saved && TABS.some((t) => t.id === saved)) activeTab = saved;
+      } catch (_) {}
 
       let settings = {};
       const setStatus = (m) => (document.getElementById("status").textContent = m || "");
+
+      function svgIcon(inner) {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.6");
+        svg.setAttribute("stroke-linecap", "round");
+        svg.setAttribute("stroke-linejoin", "round");
+        svg.setAttribute("aria-hidden", "true");
+        svg.innerHTML = inner;
+        return svg;
+      }
 
       async function refresh() {
         try {
@@ -104,62 +164,101 @@
         }
       }
 
-      function render() {
+      // Build a <select> row bound to a string setting.
+      function selectRow(key, fallback, options, label, hint, disabled) {
+        const row = document.createElement("label");
+        row.className = "row";
+        const sel = document.createElement("select");
+        for (const [val, txt] of options) {
+          const o = document.createElement("option");
+          o.value = val;
+          o.textContent = txt;
+          if ((settings[key] || fallback) === val) o.selected = true;
+          sel.appendChild(o);
+        }
+        sel.disabled = !!disabled;
+        sel.onchange = () => persist(key, sel.value);
+        const text = document.createElement("div");
+        text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
+        row.append(sel, text);
+        return row;
+      }
+
+      function themeRow() {
+        return selectRow(
+          "theme", "system",
+          [["system", "System"], ["light", "Light"], ["dark", "Dark"]],
+          "Theme", "Force the Messenger theme, or follow your system.",
+          false,
+        );
+      }
+
+      // Badge counts mode — only meaningful while the unread badge is on.
+      function badgeModeRow() {
+        return selectRow(
+          "badge_mode", "messages",
+          [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
+          "Badge counts", "Whether the badge shows unread messages or unread conversations.",
+          !settings.unread_badge,
+        );
+      }
+
+      function checkboxRow(key) {
+        const meta = FIELD_META[key];
+        const row = document.createElement("label");
+        row.className = "row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!settings[key];
+        cb.onchange = () => persist(key, cb.checked);
+        const text = document.createElement("div");
+        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${meta.hint}</div>`;
+        row.append(cb, text);
+        return row;
+      }
+
+      function renderTabs() {
+        const nav = document.getElementById("tabs");
+        nav.innerHTML = "";
+        for (const t of TABS) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "tab" + (t.id === activeTab ? " active" : "");
+          b.setAttribute("role", "tab");
+          b.setAttribute("aria-selected", String(t.id === activeTab));
+          b.appendChild(svgIcon(t.icon));
+          const lbl = document.createElement("span");
+          lbl.className = "lbl";
+          lbl.textContent = t.label;
+          b.appendChild(lbl);
+          b.onclick = () => {
+            if (activeTab === t.id) return;
+            activeTab = t.id;
+            try {
+              localStorage.setItem("carrier:settingsTab", t.id);
+            } catch (_) {}
+            render();
+          };
+          nav.appendChild(b);
+        }
+      }
+
+      // Pseudo-fields ("theme", "badge_mode") are <select> rows; everything else is a checkbox.
+      const CUSTOM_ROWS = { theme: themeRow, badge_mode: badgeModeRow };
+
+      function renderBody() {
         const root = document.getElementById("rows");
         root.innerHTML = "";
-        // Theme picker (System / Light / Dark).
-        {
-          const row = document.createElement("label");
-          row.className = "row";
-          const sel = document.createElement("select");
-          for (const [val, txt] of [["system", "System"], ["light", "Light"], ["dark", "Dark"]]) {
-            const o = document.createElement("option");
-            o.value = val;
-            o.textContent = txt;
-            if ((settings.theme || "system") === val) o.selected = true;
-            sel.appendChild(o);
-          }
-          sel.onchange = () => persist("theme", sel.value);
-          const text = document.createElement("div");
-          text.innerHTML = `<div class="label">Theme</div><div class="hint">Force the Messenger theme, or follow your system.</div>`;
-          row.append(sel, text);
-          root.appendChild(row);
+        const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
+        for (const key of tab.fields) {
+          const build = CUSTOM_ROWS[key];
+          root.appendChild(build ? build() : checkboxRow(key));
         }
-        for (const [key, label, hint] of FIELDS) {
-          const row = document.createElement("label");
-          row.className = "row";
-          const cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.checked = !!settings[key];
-          cb.onchange = () => persist(key, cb.checked);
-          const text = document.createElement("div");
-          text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
-          row.append(cb, text);
-          root.appendChild(row);
+      }
 
-          // The unread badge can count either unread messages or unread chats.
-          if (key === "unread_badge") {
-            const mrow = document.createElement("label");
-            mrow.className = "row";
-            const sel = document.createElement("select");
-            for (const [val, txt] of [
-              ["messages", "Unread messages"],
-              ["conversations", "Unread conversations"],
-            ]) {
-              const o = document.createElement("option");
-              o.value = val;
-              o.textContent = txt;
-              if ((settings.badge_mode || "messages") === val) o.selected = true;
-              sel.appendChild(o);
-            }
-            sel.disabled = !settings.unread_badge;
-            sel.onchange = () => persist("badge_mode", sel.value);
-            const mtext = document.createElement("div");
-            mtext.innerHTML = `<div class="label">Badge counts</div><div class="hint">Whether the badge shows unread messages or unread conversations.</div>`;
-            mrow.append(sel, mtext);
-            root.appendChild(mrow);
-          }
-        }
+      function render() {
+        renderTabs();
+        renderBody();
       }
 
       document.getElementById("reset").onclick = async (e) => {
