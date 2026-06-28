@@ -460,6 +460,20 @@
     window.addEventListener("carrier:settings", apply);
   })();
 
+  /* ----------------------- Hide names & avatars ------------------------- */
+  // Toggle a marker attribute the injected CSS keys off of to blur contact
+  // names and avatars (Settings / View ▸ Hide Names & Avatars / Cmd+Shift+N).
+  (function hideNames() {
+    const apply = () => {
+      document.documentElement.toggleAttribute(
+        "data-carrier-hide-names",
+        window.__CARRIER_SETTINGS__?.hide_names_avatars === true,
+      );
+    };
+    apply();
+    window.addEventListener("carrier:settings", apply);
+  })();
+
   /* ------------------ Camera/mic permission warning --------------------- */
   // If a call can't get the camera or mic because the OS blocked it, tell the
   // user and offer to open the OS privacy settings.

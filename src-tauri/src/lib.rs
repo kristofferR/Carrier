@@ -79,6 +79,8 @@ struct Settings {
     compact: bool,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     menu_bar_only: bool,
+    /// Blur contact names and avatars (for screen-sharing / public spaces).
+    hide_names_avatars: bool,
 }
 
 impl Default for Settings {
@@ -95,6 +97,7 @@ impl Default for Settings {
             theme: "system".into(),
             compact: false,
             menu_bar_only: false,
+            hide_names_avatars: false,
         }
     }
 }
@@ -1005,6 +1008,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&theme_dark)
         .build()?;
     let compact = mi("compact", "Toggle Compact Mode", Some("CmdOrCtrl+Shift+S"))?;
+    let hide_names = mi(
+        "hide_names",
+        "Hide Names & Avatars",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
     let devtools = mi(
         "devtools",
@@ -1022,6 +1030,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             .separator()
             .item(&theme_menu)
             .item(&compact)
+            .item(&hide_names)
             .item(&aot);
         #[cfg(debug_assertions)]
         let b = b.separator().item(&devtools);
@@ -1096,6 +1105,7 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
         "compact" => mutate_settings(app, |s| s.compact = !s.compact),
+        "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
             if let Some(w) = target_window(app) {
                 if w.is_maximized().unwrap_or(false) {
