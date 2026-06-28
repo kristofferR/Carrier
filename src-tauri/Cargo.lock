@@ -556,6 +556,8 @@ name = "carrier"
 version = "1.0.0"
 dependencies = [
  "dark-light",
+ "objc2",
+ "objc2-foundation",
  "open",
  "serde",
  "serde_json",
@@ -568,6 +570,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tokio",
  "url",
 ]
 
