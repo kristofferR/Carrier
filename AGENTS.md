@@ -47,12 +47,10 @@ click/type, etc. Plugin: [P3GLEG/tauri-plugin-mcp](https://github.com/P3GLEG/tau
 On `main` (committed `d8a25a6`).
 
 - Gated behind the Cargo **`mcp` feature** → **release builds never compile it**.
-- Build with it: `bun run tauri build --debug --features mcp --bundles app`.
-  The running app then opens the IPC socket `/tmp/tauri-mcp.sock` and its window
-  title reads **"Carrier (debug)"** (all debug builds are marked via `APP_TITLE`).
-- `.mcp.json` registers the `tauri-mcp` server (`npx -y tauri-plugin-mcp-server`,
-  `TAURI_MCP_IPC_PATH=/tmp/tauri-mcp.sock`). **Approve the project MCP server when
-  a new session prompts for it.**
+- Build with it: `bun run tauri build --debug --features mcp --bundles app`. Debug
+  builds are marked — the window title reads **"Carrier (debug)"**.
+- `.mcp.json` registers the `tauri-mcp` server — **approve the project MCP server
+  when a new session prompts for it.**
 - **A "Carrier (debug)" build must be RUNNING** for the tools to connect — build it
   with the command above, then `ditto` it into `/Applications`.
 
@@ -80,29 +78,16 @@ On `main` (committed `d8a25a6`).
 
 ## macOS theme rendering — hard-won, do NOT re-litigate
 
-The forced light/dark theme (`Settings → Theme`) was a long rabbit hole. Current,
-working approach:
+The forced light/dark theme (`Settings → Theme`) was a long rabbit hole on macOS.
+These traps are already worked around in code — don't redo them:
 
-- Page theme: `messenger.js` forces FB's `__fb-dark-mode`/`__fb-light-mode` class;
-  the palette lives in `messenger.css`.
-- **WKWebView is opaque white on macOS** (Tauri leaves the webview bg unimplemented
-  there) → it bled through the title bar + login surround. Fixed by flipping the
-  private `drawsBackground=NO` via KVC (`make_webview_transparent`).
-- **`NSWindow` background set directly via objc** (`set_macos_window_bg`) — Tauri's
-  `set_background_color` **inverts white→black on macOS** (tauri#12349).
-- **The title bar only themes at WINDOW CREATION.** No runtime call repaints it —
-  tried `set_theme`, `NSApplication`/`NSWindow` appearance, `displayIfNeeded`,
-  `invalidateShadow`, `setFrame:display:`. So a theme **switch recreates the
-  windows** (`recreate_themed_windows`, with a `recreating` flag + `prevent_exit`
-  so the brief zero-window state doesn't quit, and a ~150ms delay so the label is
-  free). The page reloads; the login session survives via cookies.
-- **Login page** ships light-only: `loginTidy` dark-swaps based on the **forced**
-  theme (`wantDark`, not the system theme) and clears stray opaque-light wrappers
-  **by computed colour** (CSS can't select by colour, and FB's wrappers are
-  hash-named) — the palette stays in CSS, JS just finds the stray box.
-
-`objc2`/`objc2-foundation` are macOS-only deps for the above (same versions Tauri
-already pulls in).
+- Tauri's `set_background_color` **inverts white→black on macOS** (tauri#12349), so
+  the window background is set directly via objc.
+- WKWebView is **opaque white** on macOS and bleeds through the title bar / login
+  surround — it's forced transparent via a private API.
+- The **title bar only themes at window creation**, so a theme switch **recreates
+  the windows** (the page reloads; the login session survives via cookies).
+- The login page is light-only; its dark mode is applied by JS off the forced theme.
 
 ---
 
