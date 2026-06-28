@@ -6,9 +6,11 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
@@ -1164,6 +1166,90 @@ fn init_script(settings: &Settings) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// New-message notifications
+// ---------------------------------------------------------------------------
+
+/// A new-message notification request from the page (the `carrier:notify` event).
+/// Facebook hands its in-page `Notification` the sender (`title`), the message
+/// preview (`body`), and the sender's avatar URL; the injected bridge forwards
+/// them here, rendering the avatar to a PNG data URL (`icon`, best-effort) so the
+/// native side never has to re-fetch it.
+#[derive(Debug, Default, Deserialize)]
+struct NotifyMsg {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    icon: String,
+}
+
+/// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
+static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+/// Decode the avatar the page sent as a PNG data URL into a temp file the native
+/// notification can point at. Returns `None` (→ a text-only notification) on any
+/// problem; the avatar is strictly best-effort.
+fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
+    // Accept any `data:image/...;base64,<DATA>` prefix — take everything after
+    // the first comma.
+    let b64 = data_url.split_once(',').map(|(_, b)| b)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let dir = std::env::temp_dir().join("carrier-avatars");
+    std::fs::create_dir_all(&dir).ok()?;
+    // A unique name per notification avoids any race between writing the file
+    // here and the OS reading it when the notification is shown.
+    let seq = AVATAR_SEQ.fetch_add(1, Ordering::Relaxed);
+    let path = dir.join(format!("{seq}.png"));
+    std::fs::write(&path, &bytes).ok()?;
+    Some(path)
+}
+
+/// Best-effort cleanup of avatar temp files left by previous runs, so the temp
+/// directory doesn't grow without bound. Called once at startup.
+fn clear_avatar_cache() {
+    let dir = std::env::temp_dir().join("carrier-avatars");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Show a native OS notification for a new message, attaching the sender's
+/// avatar where the platform allows it: a right-side thumbnail on macOS (the
+/// app icon always occupies the main slot there), and the notification icon on
+/// Linux/Windows. Fire-and-forget — dropping the handle sends asynchronously on
+/// macOS, so this never blocks. Runs the show on its own thread to stay off the
+/// event-loop thread.
+fn show_message_notification(msg: NotifyMsg) {
+    let title = if msg.title.trim().is_empty() {
+        "Messenger".to_string()
+    } else {
+        msg.title
+    };
+    let image = avatar_to_temp_png(&msg.icon);
+    std::thread::spawn(move || {
+        let mut n = notify_rust::Notification::new();
+        n.summary(&title);
+        if !msg.body.is_empty() {
+            n.body(&msg.body);
+        }
+        if let Some(path) = image.as_ref().and_then(|p| p.to_str()) {
+            #[cfg(target_os = "macos")]
+            n.image_path(path);
+            #[cfg(not(target_os = "macos"))]
+            n.icon(path);
+        }
+        // The handle is dropped immediately; on macOS that triggers an
+        // asynchronous send (non-blocking), and on Linux/Windows the send has
+        // already happened by the time `show` returns.
+        let _ = n.show();
+    });
+}
+
 pub fn run() {
     let initial = load_settings_early();
 
@@ -1280,6 +1366,29 @@ pub fn run() {
                         APP_TITLE.to_string()
                     };
                     let _ = tray.set_tooltip(Some(&tip));
+                }
+            });
+
+            // New-message notifications: the page's `Notification` bridge sends
+            // sender/preview/avatar here; we render them natively (with the
+            // avatar) so a message notifies you while Carrier is in the background.
+            // See `show_message_notification`.
+            clear_avatar_cache();
+            #[cfg(target_os = "macos")]
+            {
+                // notify-rust on macOS shows notifications under a registered
+                // bundle id; mirror the notification plugin's choice (a real
+                // bundle in release, Terminal's in dev where ours isn't signed).
+                let id = app.config().identifier.clone();
+                let _ = notify_rust::set_application(if tauri::is_dev() {
+                    "com.apple.Terminal"
+                } else {
+                    &id
+                });
+            }
+            app.listen_any("carrier:notify", move |event| {
+                if let Ok(msg) = serde_json::from_str::<NotifyMsg>(event.payload()) {
+                    show_message_notification(msg);
                 }
             });
 
@@ -1638,5 +1747,28 @@ mod tests {
         // A trailing lone '%' or short sequence must not panic.
         assert_eq!(percent_decode("abc%"), "abc%");
         assert_eq!(percent_decode("abc%2"), "abc%2");
+    }
+
+    #[test]
+    fn avatar_data_url_is_decoded_to_a_temp_png() {
+        // "aGVsbG8=" is base64 for "hello"; the helper only base64-decodes the
+        // bytes after the comma (it doesn't validate PNG structure) and writes
+        // them out, so we can assert the exact contents round-trip.
+        let path = avatar_to_temp_png("data:image/png;base64,aGVsbG8=")
+            .expect("a well-formed data URL decodes to a file");
+        let written = std::fs::read(&path).expect("temp avatar file exists");
+        assert_eq!(written, b"hello");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn avatar_decode_rejects_malformed_input() {
+        // No comma → not a data URL.
+        assert!(avatar_to_temp_png("").is_none());
+        assert!(avatar_to_temp_png("https://example.com/a.png").is_none());
+        // Present but empty payload → nothing to attach.
+        assert!(avatar_to_temp_png("data:image/png;base64,").is_none());
+        // Garbage that isn't valid base64.
+        assert!(avatar_to_temp_png("data:image/png;base64,!!not-base64!!").is_none());
     }
 }

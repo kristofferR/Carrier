@@ -79,8 +79,6 @@
   // features route through plugins, matching how the upstream app works.
   const openUrl = (url) =>
     invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() => {});
-  const notify = (options) =>
-    invoke("plugin:notification|notify", { options })?.catch?.(() => {});
 
   // Expose zoom controls so the native menu (View ▸ Zoom) can drive them.
   window.__carrierZoomIn = zoomIn;
@@ -321,15 +319,62 @@
   // messages notify you even when Carrier is in the background.
   (function notificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
-    // Make sure the OS has actually granted Carrier notification permission,
-    // otherwise plugin:notification|notify silently no-ops.
+    // Keep the page convinced notifications are granted (below) so Facebook keeps
+    // firing them; this also flips on the OS-level grant the native side needs.
     invoke("plugin:notification|is_permission_granted")
       ?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))
       ?.catch?.(() => {});
+
+    // Render the sender's avatar — Facebook puts its (remote fbcdn) URL on the
+    // Notification's `icon` — to a small PNG data URL, so the native side can
+    // attach it without re-fetching: the page already holds Facebook's session
+    // and the cached image. Best-effort; resolves to "" if the image can't be
+    // read (e.g. the canvas is tainted) and the notification then shows text only.
+    const avatarToDataUrl = (url) =>
+      new Promise((resolve) => {
+        if (!url) return resolve("");
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        let settled = false;
+        const done = (v) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(v);
+        };
+        const timer = setTimeout(() => done(""), 2500);
+        img.onload = () => {
+          try {
+            const size = 64;
+            const c = document.createElement("canvas");
+            c.width = size;
+            c.height = size;
+            c.getContext("2d").drawImage(img, 0, 0, size, size);
+            done(c.toDataURL("image/png"));
+          } catch (_) {
+            done("");
+          }
+        };
+        img.onerror = () => done("");
+        img.src = url;
+      });
+
     function CarrierNotification(title, options = {}) {
-      try {
-        notify({ title: String(title || "Messenger"), body: String(options.body || "") });
-      } catch (_) {}
+      const opts = options || {};
+      // Only notify when Carrier is in the background — don't interrupt you with
+      // a notification for a conversation you're actively reading.
+      if (!document.hasFocus()) {
+        avatarToDataUrl(opts.icon).then((icon) =>
+          invoke("plugin:event|emit", {
+            event: "carrier:notify",
+            payload: {
+              title: String(title || "Messenger"),
+              body: String(opts.body || ""),
+              icon,
+            },
+          })?.catch?.(() => {}),
+        );
+      }
       // Nudge the auto-refresh so the conversation view catches up even when
       // Facebook's in-WebView live sync stalls.
       try {

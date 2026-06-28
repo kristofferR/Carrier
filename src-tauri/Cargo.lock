@@ -561,7 +561,9 @@ dependencies = [
 name = "carrier"
 version = "1.0.0"
 dependencies = [
+ "base64 0.22.1",
  "dark-light",
+ "notify-rust",
  "objc2",
  "objc2-foundation",
  "open",
