@@ -578,10 +578,9 @@ fn store_settings(
     save_settings(app, &effective)?;
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
-    // The macOS title bar can't be re-themed live, so rebuild the windows.
-    if effective.theme != prev_theme {
-        recreate_themed_windows(app);
-    }
+    // macOS needs a window rebuild to re-theme the title bar; other platforms
+    // already re-themed the chrome live in apply_settings.
+    recreate_on_theme_change(app, &prev_theme, &effective.theme);
     match autostart_err {
         Some(e) => Err(e),
         None => Ok(effective),
@@ -796,12 +795,57 @@ fn set_macos_window_bg(ns_window: *mut std::ffi::c_void, dark: bool) {
     }
 }
 
+/// On macOS the window/title-bar theme is fixed at creation, so a live theme
+/// change needs a full window rebuild; other platforms re-theme the chrome live
+/// in `apply_settings`, so this is a no-op there (rebuilding would needlessly
+/// reload Messenger and drop in-progress UI state).
+#[cfg(target_os = "macos")]
+fn recreate_on_theme_change(app: &tauri::AppHandle, prev: &str, next: &str) {
+    if prev != next {
+        recreate_themed_windows(app);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _next: &str) {}
+
+/// Install the `main` window's close behaviour: hide to the tray when
+/// `hide_on_close` is set and a tray exists, otherwise quit. Reinstalled on every
+/// `main` window the app creates (startup and after a themed rebuild) so the
+/// behaviour survives `recreate_themed_windows`.
+fn install_main_close_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            let (hide, has_tray) = {
+                let state = handle.state::<AppState>();
+                let hide = state.settings.lock().unwrap().hide_on_close;
+                let has_tray = state.tray.lock().unwrap().is_some();
+                (hide, has_tray)
+            };
+            // Only hide to the tray if one was actually created (tray creation can
+            // fail, e.g. on a Linux session without an AppIndicator); otherwise
+            // closing the main window quits the app (don't let an open Settings
+            // dialog keep it running).
+            if hide && has_tray {
+                api.prevent_close();
+                if let Some(w) = handle.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            } else {
+                handle.exit(0);
+            }
+        }
+    });
+}
+
 /// Rebuild every Messenger window (not the Settings dialog) with the current
 /// settings. The macOS title bar's theme is fixed at window creation — no
 /// runtime call repaints it — so a live theme switch is reflected by recreating
 /// the window. Each rebuilt window keeps its place and size; the page reloads
 /// (the login session is preserved by the persisted cookies). Runs off the
 /// event-loop handler and destroys before rebuilding so the label is free.
+#[cfg(target_os = "macos")]
 fn recreate_themed_windows(app: &tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     // Claim the "recreating" flag synchronously: if a rebuild is already in
@@ -836,6 +880,11 @@ fn recreate_themed_windows(app: &tauri::AppHandle) {
             let settings = app.state::<AppState>().settings.lock().unwrap().clone();
             for (label, geometry) in targets {
                 if let Ok(window) = build_app_window(&app, &label, &settings) {
+                    // The rebuilt main window must re-acquire the close-to-tray
+                    // handler startup installed on the original.
+                    if label == "main" {
+                        install_main_close_handler(&app, &window);
+                    }
                     if let Some((pos, size)) = geometry {
                         let _ = window.set_position(tauri::Position::Physical(pos));
                         let _ = window.set_size(tauri::Size::Physical(size));
@@ -998,10 +1047,9 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
     }
     *state.settings.lock().unwrap() = s.clone();
     apply_settings(app, &s);
-    // The macOS title bar can't be re-themed live, so rebuild the windows.
-    if s.theme != prev_theme {
-        recreate_themed_windows(app);
-    }
+    // macOS needs a window rebuild to re-theme the title bar; other platforms
+    // already re-themed the chrome live in apply_settings.
+    recreate_on_theme_change(app, &prev_theme, &s.theme);
 }
 
 fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
@@ -1162,29 +1210,8 @@ pub fn run() {
             let window = build_app_window(app.handle(), "main", &settings)?;
 
             // Close button: hide to tray (if enabled) instead of quitting.
-            let handle = app.handle().clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    let (hide, has_tray) = {
-                        let state = handle.state::<AppState>();
-                        let hide = state.settings.lock().unwrap().hide_on_close;
-                        let has_tray = state.tray.lock().unwrap().is_some();
-                        (hide, has_tray)
-                    };
-                    // Only hide to the tray if one was actually created (tray
-                    // creation can fail, e.g. on a Linux session without an
-                    // AppIndicator); otherwise closing the main window quits the
-                    // app (don't let an open Settings dialog keep it running).
-                    if hide && has_tray {
-                        api.prevent_close();
-                        if let Some(w) = handle.get_webview_window("main") {
-                            let _ = w.hide();
-                        }
-                    } else {
-                        handle.exit(0);
-                    }
-                }
-            });
+            // A themed rebuild reinstalls this on the new main window too.
+            install_main_close_handler(app.handle(), &window);
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
