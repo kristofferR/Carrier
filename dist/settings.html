@@ -13,10 +13,15 @@
         background: #ffffff; color: #1c1e21;
         display: flex; flex-direction: column;
       }
-      /* Tab strip pinned to the top — stacked icon + label, like IPTVChecker. */
+      /* Tab strip pinned to the top — stacked icon + label, like IPTVChecker.
+         `main` is the only scroll container (flex:1 + overflow), so the strip
+         already stays put; `flex:0 0 auto` (never shrink) plus a sticky, opaque
+         background make that pinning explicit and robust to layout changes. */
       .tabs {
+        position: sticky; top: 0; z-index: 1; flex: 0 0 auto;
         display: flex; gap: 6px; justify-content: center;
-        padding: 12px 12px 10px; border-bottom: 1px solid #e4e6eb;
+        padding: 12px 12px 10px;
+        background: #ffffff; border-bottom: 1px solid #e4e6eb;
       }
       .tab {
         flex: 1 1 0; min-width: 0;
@@ -53,6 +58,7 @@
       @media (prefers-color-scheme: dark) {
         body { background: #242526; color: #e4e6eb; }
         .row:hover { background: #3a3b3c; }
+        .tabs { background: #242526; }
         .tabs, footer { border-color: #3a3b3c; }
         .hint { color: #b0b3b8; }
         .tab { color: #b0b3b8; }
@@ -217,30 +223,65 @@
         return row;
       }
 
+      // Switch to a tab (no-op re-render if already active) and, when asked,
+      // move focus to its button — used by keyboard nav so focus follows the
+      // selection across the re-render that rebuilds the buttons.
+      function selectTab(id, focus) {
+        if (id !== activeTab) {
+          activeTab = id;
+          try {
+            localStorage.setItem("carrier:settingsTab", id);
+          } catch (_) {}
+          render();
+        }
+        if (focus) {
+          const el = document.getElementById("tab-" + id);
+          if (el) el.focus();
+        }
+      }
+
+      // ARIA tablist keyboard support: Left/Right move between tabs (wrapping),
+      // Home/End jump to the first/last. Activation follows focus (automatic
+      // activation — switching panels is cheap). Other keys fall through.
+      function onTabKeydown(e, id) {
+        const i = TABS.findIndex((t) => t.id === id);
+        if (i < 0) return;
+        let j = null;
+        if (e.key === "ArrowRight") j = (i + 1) % TABS.length;
+        else if (e.key === "ArrowLeft") j = (i - 1 + TABS.length) % TABS.length;
+        else if (e.key === "Home") j = 0;
+        else if (e.key === "End") j = TABS.length - 1;
+        if (j === null) return;
+        e.preventDefault();
+        selectTab(TABS[j].id, true);
+      }
+
       function renderTabs() {
         const nav = document.getElementById("tabs");
         nav.innerHTML = "";
         for (const t of TABS) {
+          const active = t.id === activeTab;
           const b = document.createElement("button");
           b.type = "button";
-          b.className = "tab" + (t.id === activeTab ? " active" : "");
+          b.className = "tab" + (active ? " active" : "");
+          b.id = "tab-" + t.id;
           b.setAttribute("role", "tab");
-          b.setAttribute("aria-selected", String(t.id === activeTab));
+          b.setAttribute("aria-selected", String(active));
+          b.setAttribute("aria-controls", "rows");
+          // Roving tabindex: only the active tab is in the Tab order; the arrow
+          // keys move focus among the rest.
+          b.tabIndex = active ? 0 : -1;
           b.appendChild(svgIcon(t.icon));
           const lbl = document.createElement("span");
           lbl.className = "lbl";
           lbl.textContent = t.label;
           b.appendChild(lbl);
-          b.onclick = () => {
-            if (activeTab === t.id) return;
-            activeTab = t.id;
-            try {
-              localStorage.setItem("carrier:settingsTab", t.id);
-            } catch (_) {}
-            render();
-          };
+          b.onclick = () => selectTab(t.id, false);
+          b.onkeydown = (e) => onTabKeydown(e, t.id);
           nav.appendChild(b);
         }
+        // The single shared panel is labelled by whichever tab is selected.
+        document.getElementById("rows").setAttribute("aria-labelledby", "tab-" + activeTab);
       }
 
       // Pseudo-fields ("theme", "badge_mode") are <select> rows; everything else is a checkbox.
