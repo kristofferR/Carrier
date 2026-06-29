@@ -69,11 +69,13 @@ On `main` (committed `d8a25a6`).
 - **`dist/settings.html`** — the standalone Settings window.
 - **IPC model (important):** the FB page is a **remote origin**, so it **cannot
   call Carrier's own commands**. Page→backend goes through Tauri **plugins**
-  (`plugin:opener|open_url`, `plugin:notification|notify`,
+  (`plugin:opener|open_url`,
   `plugin:window|set_theme`/`set_badge_count`, `plugin:event|emit`) and **core
   events** the Rust side handles via `app.listen_any` (`carrier:open-settings`,
-  `carrier:check-updates`, `carrier:unread`). Settings are pushed to the page as
-  `window.__CARRIER_SETTINGS__` + a `carrier:settings` event.
+  `carrier:check-updates`, `carrier:unread`, and `carrier:notify` — the
+  new-message notification bridge, emitted via `plugin:event|emit` and rendered
+  natively). Settings are pushed to the page as `window.__CARRIER_SETTINGS__` +
+  a `carrier:settings` event.
 
 ---
 
