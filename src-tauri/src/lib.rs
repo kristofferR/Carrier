@@ -844,6 +844,88 @@ fn set_macos_window_bg(ns_window: *mut std::ffi::c_void, dark: bool) {
     }
 }
 
+/// The data the appearance observer needs: the handle it rebuilds windows through.
+#[cfg(target_os = "macos")]
+struct ThemeObserverIvars {
+    app: tauri::AppHandle,
+}
+
+// `define_class!` matches the conformed protocol as a bare identifier, so bring it
+// into scope rather than naming it by path in the macro body.
+#[cfg(target_os = "macos")]
+use objc2::runtime::NSObjectProtocol;
+
+// A KVO observer of `NSApplication`'s `effectiveAppearance`.
+//
+// macOS only surfaces a *system* light/dark switch through tao's
+// `WindowEvent::ThemeChanged`, which rides a coalesced distributed notification a
+// background app doesn't receive in time — so Carrier, sitting in the background
+// while you flip the OS theme in System Settings, never noticed, and its title bar
+// (themed once, at window creation) stayed on the old colour. KVO on
+// `effectiveAppearance` fires reliably and on the main thread the instant AppKit
+// updates the appearance, background or not. On each change, while following the
+// system theme, rebuild the windows — the same refresh a manual theme change does
+// (`recreate_themed_windows`). The webview's own CSS re-themes by itself.
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    #[unsafe(super(objc2::runtime::NSObject))]
+    #[ivars = ThemeObserverIvars]
+    struct ThemeObserver;
+
+    impl ThemeObserver {
+        #[unsafe(method(observeValueForKeyPath:ofObject:change:context:))]
+        fn observe_appearance_change(
+            &self,
+            _key_path: Option<&objc2_foundation::NSString>,
+            _object: Option<&objc2::runtime::AnyObject>,
+            _change: Option<&objc2::runtime::AnyObject>,
+            _context: *mut std::ffi::c_void,
+        ) {
+            use objc2::DefinedClass;
+            let app = &self.ivars().app;
+            // Only while following the system theme. An explicit light/dark choice
+            // also moves NSApp's appearance (we set it ourselves on a manual
+            // switch), but must not rebuild from here; and overlapping rebuilds are
+            // dropped by the `recreating` flag, so a burst of changes is safe.
+            let is_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
+            if is_system {
+                recreate_themed_windows(app);
+            }
+        }
+    }
+
+    unsafe impl NSObjectProtocol for ThemeObserver {}
+);
+
+/// Register a [`ThemeObserver`] on the shared application so live OS light/dark
+/// switches refresh the native window chrome while Theme = System. Called once at
+/// startup; the observer is leaked (it lives for the whole process) so KVO never
+/// messages a freed object, and it keeps working across the rebuilds it triggers.
+#[cfg(target_os = "macos")]
+fn observe_system_theme_changes(app: &tauri::AppHandle) {
+    use objc2::{class, msg_send, rc::Retained, runtime::AnyObject, AllocAnyThread};
+    use objc2_foundation::ns_string;
+
+    let observer = ThemeObserver::alloc().set_ivars(ThemeObserverIvars { app: app.clone() });
+    let observer: Retained<ThemeObserver> = unsafe { msg_send![super(observer), init] };
+
+    // SAFETY: standard KVO registration on the shared NSApplication. The key path
+    // exists on NSApplication; we request no change values and pass a null context.
+    // KVO does not retain observers, so the observer is kept alive for the process
+    // lifetime via `mem::forget` below.
+    unsafe {
+        let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![
+            ns_app,
+            addObserver: &*observer,
+            forKeyPath: ns_string!("effectiveAppearance"),
+            options: 0usize,
+            context: std::ptr::null_mut::<std::ffi::c_void>(),
+        ];
+    }
+    std::mem::forget(observer);
+}
+
 /// On macOS the window/title-bar theme is fixed at creation, so a live theme
 /// change needs a full window rebuild; other platforms re-theme the chrome live
 /// in `apply_settings`, so this is a no-op there (rebuilding would needlessly
@@ -1507,6 +1589,12 @@ pub fn run() {
             // Close button: hide to tray (if enabled) instead of quitting.
             // A themed rebuild reinstalls this on the new main window too.
             install_main_close_handler(app.handle(), &window);
+
+            // Follow live OS light/dark switches while Theme = System (macOS only;
+            // other platforms re-theme the chrome on their own). Registered once —
+            // the observer is process-wide and survives the window rebuilds.
+            #[cfg(target_os = "macos")]
+            observe_system_theme_changes(app.handle());
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
