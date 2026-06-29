@@ -373,7 +373,11 @@
         window.focus();
       } catch (_) {}
       try {
-        n.onclick?.();
+        // Facebook's onclick expects the click Event (it can read it / call
+        // preventDefault); a native notification click carries no DOM event, so
+        // hand it a synthetic one. Called as `n.onclick(...)` so `this` stays
+        // bound to the Notification instance.
+        n.onclick?.(new Event("click"));
       } catch (_) {}
     };
 
@@ -389,7 +393,16 @@
         notifyHandlers.set(id, this);
         if (notifyHandlers.size > 50)
           notifyHandlers.delete(notifyHandlers.keys().next().value);
-        avatarToDataUrl(opts.icon).then((icon) =>
+        avatarToDataUrl(opts.icon).then((icon) => {
+          // avatarToDataUrl is async (it decodes the image, up to ~2.5s), so
+          // you may have returned to Carrier by the time it resolves — re-check
+          // before emitting so we don't pop a notification for a conversation
+          // you're now looking at. Drop the stored click handler too, since no
+          // notification will reference it.
+          if (document.hasFocus()) {
+            notifyHandlers.delete(id);
+            return;
+          }
           invoke("plugin:event|emit", {
             event: "carrier:notify",
             payload: {
@@ -398,8 +411,8 @@
               body: String(opts.body || ""),
               icon,
             },
-          })?.catch?.(() => {}),
-        );
+          })?.catch?.(() => {});
+        });
       }
       // Nudge the auto-refresh so the conversation view catches up even when
       // Facebook's in-WebView live sync stalls.

@@ -1282,13 +1282,20 @@ static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// notification can point at. Returns `None` (→ a text-only notification) on any
 /// problem; the avatar is strictly best-effort.
 fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
-    // Accept any `data:image/...;base64,<DATA>` prefix — take everything after
-    // the first comma.
-    let b64 = data_url.split_once(',').map(|(_, b)| b)?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .ok()?;
-    if bytes.is_empty() {
+    // `carrier:notify` crosses from the remote page, so validate the shape
+    // before decoding or writing: require a base64 `data:image/...` URL (what
+    // our injected bridge builds from a 64×64 canvas) and bound the size.
+    let payload = data_url.strip_prefix("data:image/")?;
+    let b64 = payload.split_once(";base64,").map(|(_, b)| b)?.trim();
+    // A 64×64 PNG is a few KB; cap far below this ceiling but well above any
+    // legitimate avatar, and reject before decoding so an oversized payload
+    // can't force a large allocation (base64 inflates the byte count by ~4/3).
+    const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
+    if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    if bytes.is_empty() || bytes.len() > MAX_AVATAR_BYTES {
         return None;
     }
     let dir = std::env::temp_dir().join("carrier-avatars");
@@ -1324,7 +1331,14 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     let id = msg.id;
     let image = avatar_to_temp_png(&msg.icon);
     std::thread::spawn(move || {
-        if show_native_notification(&title, &body, image.as_deref()) {
+        let clicked = show_native_notification(&title, &body, image.as_deref());
+        // The notification has been shown and dismissed/clicked, so the OS is
+        // done with the avatar file — delete it now rather than leaving it for
+        // the next startup's clear_avatar_cache().
+        if let Some(path) = image.as_deref() {
+            let _ = std::fs::remove_file(path);
+        }
+        if clicked {
             on_notification_click(app, id);
         }
     });
@@ -1930,12 +1944,24 @@ mod tests {
 
     #[test]
     fn avatar_decode_rejects_malformed_input() {
-        // No comma → not a data URL.
+        // Not a data URL at all.
         assert!(avatar_to_temp_png("").is_none());
         assert!(avatar_to_temp_png("https://example.com/a.png").is_none());
+        // A data URL, but not an image media type.
+        assert!(avatar_to_temp_png("data:text/plain;base64,aGVsbG8=").is_none());
+        // Image, but not base64-encoded (no `;base64,` marker).
+        assert!(avatar_to_temp_png("data:image/png,aGVsbG8=").is_none());
         // Present but empty payload → nothing to attach.
         assert!(avatar_to_temp_png("data:image/png;base64,").is_none());
         // Garbage that isn't valid base64.
         assert!(avatar_to_temp_png("data:image/png;base64,!!not-base64!!").is_none());
+    }
+
+    #[test]
+    fn avatar_decode_rejects_oversized_payload() {
+        // A base64 body far larger than any real 64×64 avatar is rejected
+        // before it's decoded, so a hostile page can't force a huge write.
+        let huge = format!("data:image/png;base64,{}", "A".repeat(4 << 20));
+        assert!(avatar_to_temp_png(&huge).is_none());
     }
 }
