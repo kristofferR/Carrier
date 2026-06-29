@@ -96,8 +96,6 @@ struct Settings {
     badge_mode: String,
     /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
     theme: String,
-    /// Hide the conversation-info side panel for a roomier chat view.
-    compact: bool,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     menu_bar_only: bool,
     /// Suppress all desktop notifications for new messages.
@@ -121,7 +119,6 @@ impl Default for Settings {
             unread_badge: true,
             badge_mode: "messages".into(),
             theme: "system".into(),
-            compact: false,
             menu_bar_only: false,
             mute_notifications: false,
             hide_notification_preview: false,
@@ -844,6 +841,44 @@ fn set_macos_window_bg(ns_window: *mut std::ffi::c_void, dark: bool) {
     }
 }
 
+/// The last resolved app appearance (true = dark) the observer acted on. Used to
+/// drop spurious `effectiveAppearance` KVO notifications that don't actually flip
+/// light↔dark — notably the ones our own `set_theme` calls post on *every*
+/// settings change while Theme = System (see [`nsapp_effective_is_dark`]).
+#[cfg(target_os = "macos")]
+static LAST_EFFECTIVE_DARK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the shared application's current effective appearance resolves to dark
+/// — i.e. what macOS is actually rendering right now (while Theme = System this
+/// tracks the OS light/dark setting). Read straight from AppKit so it reflects
+/// the live state rather than our settings. Must run on the main thread.
+#[cfg(target_os = "macos")]
+fn nsapp_effective_is_dark() -> bool {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send, rc::Retained, sel};
+    use objc2_foundation::NSString;
+
+    // SAFETY: -sharedApplication / -effectiveAppearance / -name are main-thread
+    // AppKit reads; the only callers (startup setup + the KVO observer) are on it.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let responds: bool = msg_send![app, respondsToSelector: sel!(effectiveAppearance)];
+        if !responds {
+            return false;
+        }
+        let appearance: *mut AnyObject = msg_send![app, effectiveAppearance];
+        if appearance.is_null() {
+            return false;
+        }
+        // The appearance name is "…DarkAqua" for every dark variant (incl. the
+        // high-contrast ones), so a substring test is enough and avoids needing
+        // NSArray + bestMatchFromAppearancesWithNames:.
+        let name: Retained<NSString> = msg_send![appearance, name];
+        name.to_string().contains("Dark")
+    }
+}
+
 /// The data the appearance observer needs: the handle it rebuilds windows through.
 #[cfg(target_os = "macos")]
 struct ThemeObserverIvars {
@@ -882,13 +917,23 @@ objc2::define_class!(
             _context: *mut std::ffi::c_void,
         ) {
             use objc2::DefinedClass;
+            use std::sync::atomic::Ordering;
             let app = &self.ivars().app;
+            // `effectiveAppearance` fires for changes that don't flip light↔dark —
+            // in particular our own `set_theme` runs on *every* settings change
+            // (apply_settings calls it for each window), and while Theme = System
+            // that's `setAppearance:nil`, which re-posts the KVO without changing
+            // the resolved appearance. Acting on those reloaded the page on an
+            // unrelated toggle (Hide Names, Always on Top, …), so require a flip.
+            let now_dark = nsapp_effective_is_dark();
+            let was_dark = LAST_EFFECTIVE_DARK.swap(now_dark, Ordering::SeqCst);
             // Only while following the system theme. An explicit light/dark choice
             // also moves NSApp's appearance (we set it ourselves on a manual
-            // switch), but must not rebuild from here; and overlapping rebuilds are
-            // dropped by the `recreating` flag, so a burst of changes is safe.
+            // switch), but is rebuilt by recreate_on_theme_change, not from here;
+            // and overlapping rebuilds are dropped by the `recreating` flag, so a
+            // burst of changes is safe.
             let is_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
-            if is_system {
+            if is_system && now_dark != was_dark {
                 recreate_themed_windows(app);
             }
         }
@@ -905,6 +950,13 @@ objc2::define_class!(
 fn observe_system_theme_changes(app: &tauri::AppHandle) {
     use objc2::{class, msg_send, rc::Retained, runtime::AnyObject, AllocAnyThread};
     use objc2_foundation::ns_string;
+
+    // Seed the baseline so the observer only fires on a genuine flip away from the
+    // appearance shown right now — not on the first spurious self-inflicted KVO.
+    LAST_EFFECTIVE_DARK.store(
+        nsapp_effective_is_dark(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
 
     let observer = ThemeObserver::alloc().set_ivars(ThemeObserverIvars { app: app.clone() });
     let observer: Retained<ThemeObserver> = unsafe { msg_send![super(observer), init] };
@@ -1138,7 +1190,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let reload = mi("reload", "Reload", Some("CmdOrCtrl+R"))?;
     let clear_cache = mi(
         "clear_cache",
-        "Clear Cache & Restart",
+        "Clear Cache && Restart",
         Some("CmdOrCtrl+Shift+Backspace"),
     )?;
     let zreset = mi("zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
@@ -1152,10 +1204,14 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .item(&theme_light)
         .item(&theme_dark)
         .build()?;
-    let compact = mi("compact", "Toggle Compact Mode", Some("CmdOrCtrl+Shift+S"))?;
+    let toggle_info = mi(
+        "toggle_info",
+        "Toggle Conversation Information",
+        Some("CmdOrCtrl+Shift+I"),
+    )?;
     let hide_names = mi(
         "hide_names",
-        "Hide Names & Avatars",
+        "Hide Names && Avatars",
         Some("CmdOrCtrl+Shift+N"),
     )?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
@@ -1174,7 +1230,7 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             .item(&zout)
             .separator()
             .item(&theme_menu)
-            .item(&compact)
+            .item(&toggle_info)
             .item(&hide_names)
             .item(&aot);
         #[cfg(debug_assertions)]
@@ -1249,7 +1305,7 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
-        "compact" => mutate_settings(app, |s| s.compact = !s.compact),
+        "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
             if let Some(w) = target_window(app) {
@@ -1978,7 +2034,6 @@ mod tests {
         let s = Settings::default();
         assert!(s.unread_badge, "unread_badge should default to true");
         assert_eq!(s.theme, "system", "theme should default to 'system'");
-        assert!(!s.compact, "compact should default to false");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
     }
 

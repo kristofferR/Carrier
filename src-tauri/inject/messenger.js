@@ -624,18 +624,35 @@
     setTimeout(() => apply(true), 4000);
   })();
 
-  /* --------------------------- Compact mode ----------------------------- */
-  // Toggle a marker class the injected CSS keys off of to collapse side panels.
-  (function compact() {
-    const apply = () => {
-      document.documentElement.toggleAttribute(
-        "data-carrier-compact",
-        window.__CARRIER_SETTINGS__?.compact === true,
-      );
+  /* ------------------ Toggle conversation information ------------------- */
+  // Click Messenger's own conversation-info ("ⓘ") button in the open thread's
+  // header so the native details sidebar shows/hides. Invoked from the View menu
+  // / Cmd+Shift+I: the Rust side can't run page JS through a plugin (Facebook's
+  // CSP blocks evaluating arbitrary strings), but it can call this function we
+  // defined at document-start. Match the stable aria-label rather than FB's
+  // churning class names; the label is unchanged whether the panel is open or
+  // closed, so one click toggles it.
+  window.__carrierToggleInfo = () => {
+    const wanted = (el) => {
+      const l = (el.getAttribute("aria-label") || "").toLowerCase();
+      return l.includes("conversation information") || l.includes("conversation details");
     };
-    apply();
-    window.addEventListener("carrier:settings", apply);
-  })();
+    let btn = document.querySelector(
+      '[role="button"][aria-label="Conversation information"]',
+    );
+    if (!btn)
+      for (const el of document.querySelectorAll("[aria-label]"))
+        if (wanted(el)) {
+          btn = el.closest('[role="button"]') || el;
+          break;
+        }
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    toast("Open a conversation first");
+    return false;
+  };
 
   /* ----------------------- Hide names & avatars ------------------------- */
   // Toggle a marker attribute the injected CSS keys off of to blur contact
