@@ -98,3 +98,16 @@ html[data-carrier-darkswap] [data-carrier-login-anc] {
 html[data-carrier-compact] div[role="complementary"] {
   display: none !important;
 }
+
+/* ----------------------- Hide names & avatars --------------------------- */
+/* Blur each conversation-list row (name, avatar and message preview) — handy
+   when screen-sharing or in a public space. Toggled by `data-carrier-hide-names`
+   (set in messenger.js from Settings, the View menu, or Cmd/Ctrl+Shift+N).
+   Blurring the whole row anchors only on the proven `a[href*="/t/"]` selector
+   the jump-to-chat shortcut uses — making no assumption about the row's internal
+   markup — so it stays robust as Facebook's class names churn. The blur is
+   cosmetic: rows stay clickable, so you can still navigate by position. */
+html[data-carrier-hide-names]
+  :is([role="grid"], [role="navigation"]) a[href*="/t/"] {
+  filter: blur(6px) !important;
+}
