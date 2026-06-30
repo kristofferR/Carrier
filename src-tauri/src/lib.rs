@@ -476,14 +476,43 @@ fn unwrap_tracking(url: &Url) -> Option<String> {
 /// unnecessary (Facebook doesn't offer those providers) and error-prone.
 fn is_auth_url(url: &Url) -> bool {
     let host = url.host_str().unwrap_or("").to_ascii_lowercase();
-    const AUTH_HOSTS: &[&str] = &[
-        "accounts.google.com",
-        "login.microsoftonline.com",
-        "appleid.apple.com",
-    ];
-    AUTH_HOSTS
+    const AUTH_HOSTS: &[&str] = &["login.microsoftonline.com", "appleid.apple.com"];
+    if AUTH_HOSTS
         .iter()
         .any(|h| host == *h || host.ends_with(&format!(".{h}")))
+    {
+        return true;
+    }
+    // Google federates "Sign in with Google" across many of its own domains in a
+    // single flow: the sign-in/consent UI on accounts.google.com (and country
+    // domains like accounts.google.no), plus a session-cookie sync
+    // ("CheckConnection"/"SetSID"/"SetOSID") that bounces through
+    // accounts.youtube.com, myaccount.google.com, … — always under an
+    // `/accounts/` path. Keep these in-app so none spawn a default-browser
+    // window, while ordinary Google/YouTube content still opens externally.
+    is_google_owned_host(&host)
+        && (host.starts_with("accounts.") || url.path().starts_with("/accounts/"))
+}
+
+/// A host whose registrable domain is Google's: `youtube.com` or `google.<tld>`
+/// for a plausible country/gTLD (each label 2–3 ASCII letters, e.g. `com`, `no`,
+/// `co.uk`). The boundary + TLD checks reject lookalikes like
+/// `accounts.google.evil.com`.
+fn is_google_owned_host(host: &str) -> bool {
+    if host == "youtube.com" || host.ends_with(".youtube.com") {
+        return true;
+    }
+    let is_tld = |tld: &str| {
+        !tld.is_empty()
+            && tld.len() <= 6
+            && tld
+                .split('.')
+                .all(|p| (2..=3).contains(&p.len()) && p.chars().all(|c| c.is_ascii_alphabetic()))
+    };
+    host.match_indices("google.").any(|(i, _)| {
+        // Must start a label: at the host start or right after a dot.
+        (i == 0 || host.as_bytes()[i - 1] == b'.') && is_tld(&host[i + "google.".len()..])
+    })
 }
 
 /// Domains kept *inside* the app (Messenger plus the Facebook/Meta auth and
@@ -1890,10 +1919,34 @@ mod tests {
         assert!(is_auth_url(&u(
             "https://login.microsoftonline.com/common/oauth2"
         )));
+        assert!(is_auth_url(&u("https://accounts.google.com/o/oauth2/auth")));
+        // Google SSO federates across YouTube, country-coded domains and other
+        // Google products mid-flow — sign-in subdomains and /accounts/ cookie sync.
+        assert!(is_auth_url(&u(
+            "https://accounts.youtube.com/accounts/CheckConnection?pmpo=https%3A%2F%2Faccounts.google.com"
+        )));
+        assert!(is_auth_url(&u(
+            "https://accounts.google.no/accounts/SetSID"
+        )));
+        assert!(is_auth_url(&u(
+            "https://accounts.google.co.uk/ServiceLogin"
+        )));
+        assert!(is_auth_url(&u(
+            "https://myaccount.google.com/accounts/SetOSID"
+        )));
         // code hosts and arbitrary /oauth paths are external, not in-app auth
         assert!(!is_auth_url(&u("https://github.com/login/oauth/authorize")));
         assert!(!is_auth_url(&u("https://github.com/user/repo")));
         assert!(!is_auth_url(&u("https://example.com/oauth/authorize")));
+        // Ordinary Google/YouTube content stays external: Google-owned but neither
+        // an `accounts.` subdomain nor an `/accounts/` cookie-sync path.
+        assert!(!is_auth_url(&u("https://www.youtube.com/watch?v=abc")));
+        assert!(!is_auth_url(&u("https://www.google.com/search?q=x")));
+        assert!(!is_auth_url(&u("https://mail.google.com/mail/u/0")));
+        // Lookalike / invalid Google TLDs don't match.
+        assert!(!is_auth_url(&u("https://accounts.google.evil.com/SetSID")));
+        assert!(!is_auth_url(&u("https://accounts.google.example/SetSID")));
+        assert!(!is_auth_url(&u("https://accounts.googleX.com/SetSID")));
     }
 
     #[test]

@@ -974,33 +974,15 @@
 
     const isFooterNoiseLink = (link) => FOOTER_NOISE_RE.test((link.textContent || "").replace(/\s+/g, " ").trim());
 
+    // Facebook's footer language switcher is a row of locale links whose href is
+    // just "#" (they swap the page locale via JS). Identify them by that — NOT by
+    // on-screen geometry — so detection still works before the strip has been
+    // laid out, and even if a previous pass had hidden it (geometry-based
+    // detection was the bug: it failed on the FDSIntlLocaleSelectorList variant
+    // that has no #pageFooter, then the strip got swept into the hidden chrome).
     const topLanguageLinks = (links) => {
-      const visibleLinks = links
-        .map((link) => ({ link, rect: visibleBox(link) }))
-        .filter(({ rect }) => rect)
-        .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
-      const rows = [];
-      for (const item of visibleLinks) {
-        const center = item.rect.top + item.rect.height / 2;
-        let row = rows.find((candidate) => Math.abs(candidate.center - center) < 18);
-        if (!row) {
-          row = { center, items: [] };
-          rows.push(row);
-        }
-        row.items.push(item);
-        row.center = row.items.reduce((sum, i) => sum + i.rect.top + i.rect.height / 2, 0) / row.items.length;
-      }
-
-      const languageLinks = [];
-      for (const row of rows) {
-        if (row.items.length < 2) {
-          if (languageLinks.length) break;
-          continue;
-        }
-        if (row.items.some(({ link }) => isFooterNoiseLink(link))) break;
-        languageLinks.push(...row.items.map(({ link }) => link));
-      }
-      return languageLinks;
+      const langs = links.filter((link) => isLanguageFooterLink(link) && !isFooterNoiseLink(link));
+      return langs.length >= 2 ? langs : [];
     };
 
     const linksOutside = (root, inner) =>
@@ -1013,65 +995,50 @@
       return links.length >= 6 && (topLanguageLinks(links).length >= 2 || links.filter(isLanguageFooterLink).length >= 2);
     };
 
-    const markLanguageStrip = (footer, languageLinks) => {
-      if (languageLinks.length < 2) return;
-      const commonAncestor = (nodes) => {
-        let root = nodes[0];
-        while (root && !nodes.every((node) => root.contains(node))) root = root.parentElement;
-        return root;
-      };
+    const commonAncestor = (nodes) => {
+      let root = nodes[0];
+      while (root && !nodes.every((node) => root.contains(node))) root = root.parentElement;
+      return root;
+    };
 
-      const languageRoot =
-        footer.querySelector(".localeSelectorList") ||
-        commonAncestor(languageLinks.map((link) => link.closest("li") || link));
-      if (!languageRoot) return;
-
+    // Keep the language switcher visible (pinned across the bottom by CSS) and
+    // exempt it from the chrome-hiding pass. `languageRoot` is the smallest box
+    // holding every locale link; `footer` is the highest ancestor that doesn't
+    // also contain the login column — i.e. the sibling branch the hide pass would
+    // otherwise blank out. Marking that branch FOOTER tells the hide pass to keep
+    // it; the inner chain is FOOTER_KEEP (display:contents) so only the strip
+    // itself paints.
+    const keepLanguageStrip = (col, languageLinks) => {
+      const languageRoot = commonAncestor(languageLinks);
+      if (!languageRoot || languageRoot === document.body || languageRoot.contains(col)) return;
+      let footer = languageRoot;
+      while (footer.parentElement && footer.parentElement !== document.body && !footer.parentElement.contains(col)) {
+        footer = footer.parentElement;
+      }
       languageLinks.forEach((link) => link.setAttribute(LANGUAGE_LINK, ""));
       languageRoot.setAttribute(LANGUAGES, "");
-      let node = languageRoot.parentElement;
-      while (node && node !== footer.parentElement && node !== document.body) {
-        node.removeAttribute(HIDE);
-        node.setAttribute(FOOTER_KEEP, "");
-        if (node === footer) break;
-        node = node.parentElement;
-      }
-    };
-
-    const markFooterLinksBelowLanguages = (footer) => {
-      footer.removeAttribute(HIDE);
       footer.setAttribute(FOOTER, "");
-
-      const knownLowerFooter = footer.querySelectorAll("#contentCurve, #pageFooterChildren");
-      knownLowerFooter.forEach((el) => el.setAttribute(FOOTER_LINKS, ""));
-      for (const el of footer.querySelectorAll(".copyright, .mvl")) {
-        if (!el.querySelector(".localeSelectorList")) el.setAttribute(FOOTER_LINKS, "");
-      }
-
-      const links = [...footer.querySelectorAll("a[href]")].filter((link) => visibleBox(link));
-      const languageLinks = topLanguageLinks(links);
-      markLanguageStrip(footer, languageLinks);
-      if (languageLinks.length < 2) return;
-
-      const languageBottom = Math.max(...languageLinks.map((link) => link.getBoundingClientRect().bottom));
-      for (const link of links) {
-        const r = link.getBoundingClientRect();
-        if (!isLanguageFooterLink(link) || r.top > languageBottom + 4) {
-          (link.closest("li") || link).setAttribute(FOOTER_LINKS, "");
-        }
-      }
-
-      for (const child of footer.children) {
-        const r = visibleBox(child);
-        if (!r || r.bottom <= languageBottom + 4) continue;
-        if (languageLinks.some((link) => child.contains(link))) continue;
-        child.setAttribute(FOOTER_LINKS, "");
+      for (let node = footer; node; node = node.parentElement) {
+        node.removeAttribute(HIDE);
+        node.removeAttribute(FOOTER_LINKS);
+        if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
+        if (node === languageRoot) break;
       }
     };
 
-    const hideFooterNoiseOutsideLogin = (col) => {
-      const links = [...document.querySelectorAll("a[href]")].filter((link) => !col.contains(link));
-      const languageLinks = topLanguageLinks(links);
+    const tidyFooter = (col) => {
+      clearFooterMarks();
+      const allLinks = [...document.querySelectorAll("a[href]")].filter((link) => !col.contains(link));
+      const languageLinks = topLanguageLinks(allLinks);
       const languageSet = new Set(languageLinks);
+      if (languageLinks.length >= 2) keepLanguageStrip(col, languageLinks);
+
+      // Hide every other footer anchor (Register, privacy, Meta family, app
+      // links, …) and the Meta copyright line — everything but the languages.
+      for (const link of allLinks) {
+        if (languageSet.has(link) || link.hasAttribute(LANGUAGE_LINK)) continue;
+        (link.closest("li") || link).setAttribute(FOOTER_LINKS, "");
+      }
       for (const el of document.body.querySelectorAll("div, span")) {
         if (el.contains(col) || col.contains(el)) continue;
         if (languageLinks.some((link) => el.contains(link))) continue;
@@ -1079,53 +1046,26 @@
           el.setAttribute(FOOTER_LINKS, "");
         }
       }
-
-      for (const link of links) {
-        if (!languageSet.has(link)) {
-          (link.closest("li") || link).setAttribute(FOOTER_LINKS, "");
-        }
-      }
-
-      if (languageLinks.length < 2) return;
-      const languageBottom = Math.max(...languageLinks.map((link) => link.getBoundingClientRect().bottom));
-      for (const el of document.body.querySelectorAll("div, ul, li, span")) {
-        if (el.contains(col) || col.contains(el)) continue;
-        if (languageLinks.some((link) => el.contains(link))) continue;
-        const r = visibleBox(el);
-        if (r && r.top > languageBottom + 4 && r.top > window.innerHeight * 0.45) {
-          el.setAttribute(FOOTER_LINKS, "");
-        }
-      }
-    };
-
-    const tidyFooter = (col) => {
-      clearFooterMarks();
-      const pageFooter = document.getElementById("pageFooter");
-      if (pageFooter && !pageFooter.contains(col)) {
-        markFooterLinksBelowLanguages(pageFooter);
-        hideFooterNoiseOutsideLogin(col);
-        return;
-      }
-
-      const candidates = [...document.body.querySelectorAll("footer, div")]
-        .filter((el) => !el.contains(col) && !col.contains(el))
-        .map((el) => ({ el, box: visibleBox(el), links: [...el.querySelectorAll("a[href]")] }))
-        .filter(({ box, links }) => box && box.top > window.innerHeight * 0.45 && links.length >= 6)
-        .sort((a, b) => a.box.height * a.box.width - b.box.height * b.box.width);
-
-      for (const { el, links } of candidates) {
-        if (topLanguageLinks(links).length >= 2) {
-          markFooterLinksBelowLanguages(el);
-          hideFooterNoiseOutsideLogin(col);
-          return;
-        }
-      }
-
-      hideFooterNoiseOutsideLogin(col);
     };
 
     function tidy() {
       const html = document.documentElement;
+      // Facebook's logged-out auth interstitials (verify-with-provider /
+      // checkpoint / 2FA) render their body copy in near-black even though the
+      // page is in Facebook's dark theme, leaving it unreadable. Flag them by URL
+      // path so CSS can force the text light. This only sets one of *our* data
+      // attributes — it never touches Facebook's own theme class, which is what
+      // broke Comet's rendering when we tried swapping the theme directly.
+      if (
+        onFacebookHost() &&
+        /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
+          location.pathname,
+        )
+      ) {
+        html.setAttribute("data-carrier-authtext", "");
+      } else {
+        html.removeAttribute("data-carrier-authtext");
+      }
       // The login page has both an identifier and a password field. Checkpoint /
       // re-auth / recovery forms have only a password field, so require both to
       // avoid hiding their required UI.
@@ -1240,17 +1180,21 @@
         el.removeAttribute("data-carrier-cleared-bg");
       }
       if (dark) {
+        const clearLight = (el) => {
+          if (!isLightFill(getComputedStyle(el).backgroundColor)) return;
+          el.setAttribute("data-carrier-cleared-bg", "");
+          el.style.setProperty("background-color", "transparent", "important");
+        };
+        // Large light backdrops anywhere — the ancestor wrappers behind the card.
         for (const el of document.body.querySelectorAll("*")) {
           const r = el.getBoundingClientRect();
-          if (
-            r.width >= window.innerWidth * 0.6 &&
-            r.height >= window.innerHeight * 0.5 &&
-            isLightFill(getComputedStyle(el).backgroundColor)
-          ) {
-            el.setAttribute("data-carrier-cleared-bg", "");
-            el.style.setProperty("background-color", "transparent", "important");
-          }
+          if (r.width >= window.innerWidth * 0.6 && r.height >= window.innerHeight * 0.5) clearLight(el);
         }
+        // Light bands *inside* the login column (e.g. the logo/title header),
+        // which the size heuristic above misses at narrow/tall window shapes.
+        // Safe: isLightFill only matches near-white opaque fills, so FB's dark
+        // inputs and the blue submit button are left untouched.
+        for (const el of col.querySelectorAll("*")) clearLight(el);
       }
     }
 
@@ -1267,6 +1211,11 @@
     schedule();
     new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener("carrier:settings", schedule);
+    // The language strip can mount slightly after our first pass, so re-run on
+    // resize and a couple of short delays after load (cheap; tidy() no-ops off
+    // the login page).
+    window.addEventListener("resize", schedule);
+    for (const delay of [300, 1200]) setTimeout(schedule, delay);
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", schedule);
     }
