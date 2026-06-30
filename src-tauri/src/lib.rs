@@ -219,6 +219,7 @@ fn remove_path_if_exists(path: &Path) -> Result<(), std::io::Error> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn push_macos_webview_store_paths(paths: &mut Vec<PathBuf>, home: &Path, name: &str) {
     paths.push(home.join("Library/WebKit").join(name));
     paths.push(home.join("Library/Caches").join(name));
