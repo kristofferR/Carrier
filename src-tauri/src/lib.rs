@@ -380,7 +380,8 @@ fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     if s.unread_badge && unread > 0 {
         Some(unread.to_string())
     } else {
-        None
+        // tray-icon's macOS backend ignores None, so clear with an empty title.
+        Some(String::new())
     }
 }
 
@@ -2446,12 +2447,15 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn tray_unread_title_clears_zero_and_disabled_badges() {
-        assert_eq!(tray_unread_title(&Settings::default(), 0), None);
+        assert_eq!(
+            tray_unread_title(&Settings::default(), 0),
+            Some(String::new())
+        );
         let s = Settings {
             unread_badge: false,
             ..Default::default()
         };
-        assert_eq!(tray_unread_title(&s, 7), None);
+        assert_eq!(tray_unread_title(&s, 7), Some(String::new()));
     }
 
     // -----------------------------------------------------------------------
