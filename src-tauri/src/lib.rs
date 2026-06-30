@@ -6,7 +6,7 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -185,6 +185,101 @@ fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
     let path = settings_file(app).ok_or("no config directory available")?;
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
     std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+const CLEAR_WEBVIEW_DATA_MARKER: &str = ".clear-webview-data-on-next-launch";
+
+fn clear_webview_data_marker(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(CLEAR_WEBVIEW_DATA_MARKER))
+}
+
+fn schedule_webview_data_clear(app: &tauri::AppHandle) -> Result<(), String> {
+    let marker = clear_webview_data_marker(app)?;
+    std::fs::write(&marker, b"pending").map_err(|e| e.to_string())?;
+
+    // Best-effort for the current process. On macOS this only schedules
+    // WKWebView's async clear, so startup also removes the on-disk profile before
+    // creating the next webview.
+    for (_label, window) in app.webview_windows() {
+        if let Err(e) = window.clear_all_browsing_data() {
+            eprintln!("carrier: failed to schedule webview data clear: {e}");
+        }
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), std::io::Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn push_macos_webview_store_paths(paths: &mut Vec<PathBuf>, home: &Path, name: &str) {
+    paths.push(home.join("Library/WebKit").join(name));
+    paths.push(home.join("Library/Caches").join(name));
+    paths.push(
+        home.join("Library/HTTPStorages")
+            .join(format!("{name}.binarycookies")),
+    );
+    paths.push(
+        home.join("Library/Cookies")
+            .join(format!("{name}.binarycookies")),
+    );
+}
+
+fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(cache) = app.path().app_cache_dir() {
+        paths.push(cache);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            let identifier = app.config().identifier.as_str();
+            push_macos_webview_store_paths(&mut paths, &home, identifier);
+
+            // Older/dev builds wrote WKWebView data under the executable name.
+            push_macos_webview_store_paths(&mut paths, &home, "carrier");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    if let Ok(local_data) = app.path().app_local_data_dir() {
+        paths.push(local_data);
+    }
+
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+fn clear_pending_webview_data(app: &tauri::AppHandle) {
+    let Ok(marker) = clear_webview_data_marker(app) else {
+        return;
+    };
+    if !marker.exists() {
+        return;
+    }
+
+    if let Err(e) = std::fs::remove_file(&marker) {
+        eprintln!("carrier: failed to remove clear-cache marker: {e}");
+    }
+
+    for path in webview_data_paths(app) {
+        if let Err(e) = remove_path_if_exists(&path) {
+            eprintln!(
+                "carrier: failed to remove webview data path {}: {e}",
+                path.display()
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -640,16 +735,6 @@ fn set_settings(
 #[tauri::command]
 fn reset_settings(app: tauri::AppHandle, state: State<AppState>) -> Result<Settings, String> {
     store_settings(&app, &state, Settings::default())
-}
-
-/// Clear the WebView's cookies/cache/storage, then relaunch.
-fn clear_cache(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.clear_all_browsing_data();
-    }
-    if let Ok(cache) = app.path().app_cache_dir() {
-        let _ = std::fs::remove_dir_all(&cache);
-    }
 }
 
 /// Check GitHub releases for an update; download & install if found.
@@ -1329,10 +1414,10 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
                 let _ = build_app_window(&app, &format!("win-{n}"), &s);
             });
         }
-        "clear_cache" => {
-            clear_cache(app);
-            app.restart();
-        }
+        "clear_cache" => match schedule_webview_data_clear(app) {
+            Ok(()) => app.restart(),
+            Err(e) => eprintln!("carrier: failed to schedule cache clear: {e}"),
+        },
         "always_on_top" => mutate_settings(app, |s| s.always_on_top = !s.always_on_top),
         "devtools" =>
         {
@@ -1637,6 +1722,8 @@ pub fn run() {
             check_for_updates
         ])
         .setup(move |app| {
+            clear_pending_webview_data(app.handle());
+
             let settings = load_settings(app.handle());
             *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
 

@@ -59,18 +59,108 @@ div[role="dialog"][aria-label] {
   display: none !important;
 }
 
+html[data-carrier-login] {
+  --carrier-login-width: min(560px, calc(100vw - 48px));
+}
+
 html[data-carrier-login] [data-carrier-login-col] {
+  position: fixed !important;
+  display: block !important;
+  left: 50% !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: var(--carrier-login-width) !important;
   margin-left: auto !important;
   margin-right: auto !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
   float: none !important;
-  max-width: 420px !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 48px) !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+html[data-carrier-login] [data-carrier-login-card],
+html[data-carrier-login] [data-carrier-login-form] {
+  display: block !important;
+  width: var(--carrier-login-width) !important;
+  min-width: 0 !important;
+  max-width: calc(100vw - 48px) !important;
+  box-sizing: border-box !important;
+  overflow: visible !important;
+}
+
+html[data-carrier-login] [data-carrier-login-form] {
+  position: relative !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+}
+
+html[data-carrier-login] [data-carrier-login-col] form,
+html[data-carrier-login] [data-carrier-login-col] form div,
+html[data-carrier-login] [data-carrier-login-col] form span,
+html[data-carrier-login] [data-carrier-login-col] form label,
+html[data-carrier-login] [data-carrier-login-col] input,
+html[data-carrier-login] [data-carrier-login-col] button,
+html[data-carrier-login] [data-carrier-login-col] [role="button"] {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+html[data-carrier-login] [data-carrier-login-col] form,
+html[data-carrier-login] [data-carrier-login-col] form div,
+html[data-carrier-login] [data-carrier-login-col] form span:has(input),
+html[data-carrier-login] [data-carrier-login-col] form span:has(button),
+html[data-carrier-login] [data-carrier-login-col] form label:has(input),
+html[data-carrier-login] [data-carrier-login-col] input,
+html[data-carrier-login] [data-carrier-login-col] button {
+  width: 100% !important;
+}
+
+html[data-carrier-login] [data-carrier-login-footer] {
+  display: contents !important;
+}
+
+html[data-carrier-login] [data-carrier-login-footer-keep] {
+  display: contents !important;
+}
+
+html[data-carrier-login] [data-carrier-login-languages] {
+  position: fixed !important;
+  left: 24px !important;
+  right: 24px !important;
+  bottom: 0 !important;
+  z-index: 2147483646 !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  gap: 8px 20px !important;
+  max-height: 64px !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+  padding: 0 0 18px !important;
+  margin: 0 !important;
+  list-style: none !important;
+  text-align: center !important;
+}
+
+html[data-carrier-login] [data-carrier-login-languages] li {
+  display: inline-block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+html[data-carrier-login] [data-carrier-login-footer-links] {
+  display: none !important;
 }
 
 /* Centre the remaining login column within whatever container is left. */
 html[data-carrier-login] body {
-  display: flex !important;
-  align-items: flex-start !important;
-  justify-content: center !important;
+  display: block !important;
+  min-height: 100vh !important;
+  overflow-x: hidden !important;
 }
 
 /* Dark mode on the login page is handled by swapping Facebook's own theme
@@ -83,6 +173,11 @@ html#facebook[data-carrier-darkswap],
 html[data-carrier-darkswap],
 html[data-carrier-darkswap] body {
   background-color: #18191a !important;
+}
+
+html[data-carrier-login][data-carrier-darkswap] body > div {
+  background-color: transparent !important;
+  background-image: none !important;
 }
 
 /* The login card's ancestor wrappers often carry a white background; clear it
