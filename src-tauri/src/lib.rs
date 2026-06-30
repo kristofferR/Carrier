@@ -367,10 +367,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 #[cfg(target_os = "macos")]
 fn show_tray_menu(app: &tauri::AppHandle) {
-    let Some(window) = app
-        .get_webview_window("main")
-        .or_else(|| target_window(app))
-    else {
+    let Some(window) = target_window(app).or_else(|| app.get_webview_window("main")) else {
         return;
     };
     if let Ok(menu) = build_tray_menu(app) {
