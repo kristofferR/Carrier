@@ -2238,8 +2238,11 @@ mod tests {
 
         let first = dir.join("Messenger.jpeg");
         let second = dir.join("Messenger (1).jpeg");
+        let third = dir.join("Messenger (2).jpeg");
         std::fs::write(&first, b"").unwrap();
         assert_eq!(unique_path(first.clone()), second);
+        std::fs::write(&second, b"").unwrap();
+        assert_eq!(unique_path(first), third);
 
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -191,7 +191,6 @@
   };
 
   const GENERIC_DOWNLOAD_STEMS = new Set(["download", "image", "video"]);
-  let messengerDownloadSeq = 0;
 
   const splitDownloadName = (name) => {
     const file = String(name || "").trim().split(/[\\/]/).pop() || "";
@@ -202,15 +201,11 @@
     return { stem: file, ext: "" };
   };
 
-  const nextMessengerDownloadName = (ext = "") => {
-    const n = messengerDownloadSeq++;
-    return `Messenger${n ? ` (${n})` : ""}${ext}`;
-  };
-
   const friendlyDownloadName = (name) => {
     const { stem, ext } = splitDownloadName(name);
     if (!stem || GENERIC_DOWNLOAD_STEMS.has(stem.toLowerCase())) {
-      return nextMessengerDownloadName(ext);
+      // Keep the basename stable; Rust `unique_path` owns "(n)" de-duping.
+      return `Messenger${ext}`;
     }
     return name;
   };
