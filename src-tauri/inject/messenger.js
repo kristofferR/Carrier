@@ -692,18 +692,18 @@
 
     const MAX_THREADS = 9;
     const EMPTY_GRACE_MS = 15000;
-    // Fragments that sit next to the name in a row: timestamps ("3m", "now"),
-    // weekday abbreviations, and separator dots.
-    const META_RE = /^(\d+\s*(?:s|m|h|d|w|mo|y)|now|just now|sun|mon|tue|wed|thu|fri|sat|[·•.,\s\d]+)$/i;
+    // Structural separators that can appear between row fragments. Do not filter
+    // short or metadata-looking words: they can be real display names.
+    const SEPARATOR_RE = /^[·•.,\s]+$/;
 
     // A thread row's display name. Facebook's class names are hashed and
-    // unstable, so take the row's first span with real (non-meta) text — the
-    // name renders before the message preview and timestamp.
+    // unstable, so take the row's first span with real text — the name renders
+    // before the message preview and timestamp.
     const rowName = (a) => {
       const row = a.closest('[role="row"]') || a;
       for (const span of row.querySelectorAll("span")) {
         const t = (span.textContent || "").replace(/\s+/g, " ").trim();
-        if (t.length > 1 && !META_RE.test(t)) return t.slice(0, 60);
+        if (t && !SEPARATOR_RE.test(t)) return t.slice(0, 60);
       }
       return "";
     };

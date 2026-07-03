@@ -441,11 +441,7 @@ fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     }
 }
 
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
-    // Left-click toggles the window; right-click offers only Quit (showing is the
-    // click itself, so a separate "Open" item would be redundant).
-    let menu = build_tray_menu(app)?;
-
+fn build_tray_with_menu(app: &tauri::AppHandle, menu: Menu<tauri::Wry>) -> tauri::Result<TrayIcon> {
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -536,11 +532,22 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // reach a Dock-less app), so force it on then.
     let want_tray = wants_tray(s);
     let state = app.state::<AppState>();
+    let needs_tray = {
+        let tray = state.tray.lock().unwrap();
+        want_tray && tray.is_none()
+    };
+    let new_tray_menu = if needs_tray {
+        build_tray_menu(app).ok()
+    } else {
+        None
+    };
     let mut tray = state.tray.lock().unwrap();
     match (want_tray, tray.is_some()) {
         (true, false) => {
-            if let Ok(t) = build_tray(app) {
-                *tray = Some(t);
+            if let Some(menu) = new_tray_menu {
+                if let Ok(t) = build_tray_with_menu(app, menu) {
+                    *tray = Some(t);
+                }
             }
         }
         (false, true) => {
