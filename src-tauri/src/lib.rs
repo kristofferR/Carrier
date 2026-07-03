@@ -129,6 +129,9 @@ struct Settings {
     hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     system_emoji: bool,
+    /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
+    /// anywhere. Off by default so it can't clash with other apps' shortcuts.
+    global_hotkey: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +152,7 @@ impl Default for Settings {
             hide_notification_preview: false,
             hide_names_avatars: false,
             system_emoji: false,
+            global_hotkey: false,
         }
     }
 }
@@ -465,10 +469,38 @@ fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
     res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
 }
 
+/// The fixed global summon shortcut ("CmdOrCtrl" resolves to Cmd on macOS and
+/// Ctrl on Windows/Linux). No recorder UI yet, so the combination isn't
+/// configurable — see issue #52.
+const SUMMON_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
+
+/// Register or unregister the global summon hotkey to match the setting.
+/// Best-effort like the rest of [`apply_settings`]: registration can fail when
+/// another app already owns the combination, and Carrier still works without it.
+fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let shortcuts = app.global_shortcut();
+    let registered = shortcuts.is_registered(SUMMON_SHORTCUT);
+    if want && !registered {
+        let res = shortcuts.on_shortcut(SUMMON_SHORTCUT, |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                toggle_main(app);
+            }
+        });
+        if let Err(e) = res {
+            eprintln!("carrier: failed to register the global hotkey: {e}");
+        }
+    } else if !want && registered {
+        let _ = shortcuts.unregister(SUMMON_SHORTCUT);
+    }
+}
+
 /// Apply the settings that have an immediate runtime effect (window topmost
-/// state, the injected-prefs refresh, and the tray). Autostart is handled
-/// separately by [`sync_autostart`]; everything here is best-effort.
+/// state, the injected-prefs refresh, the global hotkey, and the tray).
+/// Autostart is handled separately by [`sync_autostart`]; everything here is
+/// best-effort.
 fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
+    sync_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
     for (label, window) in app.webview_windows() {
@@ -2213,6 +2245,9 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // The summon shortcut itself is (un)registered in `apply_settings`,
+        // following the Global Hotkey setting.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
