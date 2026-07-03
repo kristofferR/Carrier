@@ -1705,8 +1705,14 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .quit()
         .build()?;
 
+    let new_conversation = mi(
+        "new_conversation",
+        "New Conversation",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+N"))?;
     let file = SubmenuBuilder::new(app, "File")
+        .item(&new_conversation)
         .item(&new_window)
         .separator()
         .close_window()
@@ -1750,10 +1756,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "Toggle Conversation Information",
         Some("CmdOrCtrl+Shift+I"),
     )?;
+    // Shift+N belongs to New Conversation, so "hide" gets Shift+H.
     let hide_names = mi(
         "hide_names",
         "Hide Names && Avatars",
-        Some("CmdOrCtrl+Shift+N"),
+        Some("CmdOrCtrl+Shift+H"),
     )?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
     let devtools = mi(
@@ -1846,6 +1853,9 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
+        "new_conversation" => {
+            eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
+        }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
