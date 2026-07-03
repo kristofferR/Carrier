@@ -364,7 +364,7 @@
       attributes: true,
       attributeFilter: ["target", "download"],
     });
-  observeSweeps();
+  if (!document.hidden) observeSweeps();
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       sweepObserver.disconnect();
@@ -663,6 +663,12 @@
     let lastFresh = Date.now();
     let pending = false;
     let timer = null;
+    const clearPending = () => {
+      pending = false;
+      clearTimeout(timer);
+      timer = null;
+      lastFresh = Date.now();
+    };
     const composerHasText = () => {
       try {
         for (const el of document.querySelectorAll('[contenteditable="true"]')) {
@@ -672,7 +678,12 @@
       return false;
     };
     const maybeReload = () => {
+      timer = null;
       if (!pending) return;
+      if (document.hasFocus()) {
+        clearPending();
+        return;
+      }
       // Never yank the page out from under a draft or an in-progress call.
       if (composerHasText() || window.__carrierInCall) {
         timer = setTimeout(maybeReload, 8000);
@@ -683,10 +694,18 @@
       location.reload();
     };
     const schedule = (delay) => {
+      if (document.hasFocus()) {
+        lastFresh = Date.now();
+        return;
+      }
       pending = true;
       clearTimeout(timer);
       timer = setTimeout(maybeReload, delay);
     };
+    window.addEventListener("focus", clearPending);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && document.hasFocus()) clearPending();
+    });
     // Reload shortly after a new-message notification, but only while the window
     // is unfocused — that's when Facebook's live sync throttles and the view
     // goes stale. When you're actively reading, live sync works, so we leave the

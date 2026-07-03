@@ -6,10 +6,13 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
+use std::hash::{BuildHasher, Hasher};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -1974,6 +1977,7 @@ struct NotifyMsg {
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
+static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Decode the avatar the page sent as a PNG data URL into a temp file the native
 /// notification can point at. Returns `None` (→ a text-only notification) on any
@@ -1999,10 +2003,9 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     if bytes.len() > MAX_AVATAR_BYTES || !bytes.starts_with(PNG_MAGIC) {
         return None;
     }
-    // A per-process directory keeps `multi_instance` runs from colliding on
-    // temp-file names or deleting each other's in-flight avatars.
-    let dir = avatar_cache_dir();
-    std::fs::create_dir_all(&dir).ok()?;
+    // A private per-process directory keeps `multi_instance` runs from colliding
+    // on temp-file names or deleting each other's in-flight avatars.
+    let dir = avatar_cache_dir()?;
     sweep_stale_avatars(&dir);
     // A unique name per notification avoids any race between writing the file
     // here and the OS reading it when the notification is shown.
@@ -2023,6 +2026,16 @@ fn sweep_stale_avatars(dir: &Path) {
         return;
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("png") {
+            continue;
+        }
         let stale = entry
             .metadata()
             .and_then(|m| m.modified())
@@ -2030,25 +2043,53 @@ fn sweep_stale_avatars(dir: &Path) {
             .and_then(|t| t.elapsed().ok())
             .is_some_and(|age| age > MAX_AVATAR_AGE);
         if stale {
-            let _ = std::fs::remove_file(entry.path());
+            let _ = std::fs::remove_file(path);
         }
     }
 }
 
-/// This process's private avatar-cache directory. Keying it on the PID keeps
-/// concurrent `multi_instance` runs from colliding on temp-file names or wiping
-/// each other's in-flight avatars (see [`clear_avatar_cache`]).
-fn avatar_cache_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("carrier-avatars-{}", std::process::id()))
+/// This process's private avatar-cache directory. The random suffix prevents a
+/// different local user from pre-creating the path as a symlink before the first
+/// notification.
+fn avatar_cache_dir() -> Option<PathBuf> {
+    AVATAR_CACHE_DIR
+        .get_or_init(create_avatar_cache_dir)
+        .clone()
+}
+
+fn create_avatar_cache_dir() -> Option<PathBuf> {
+    let temp_dir = std::env::temp_dir();
+    for attempt in 0..16 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        hasher.write_usize(attempt);
+        let dir = temp_dir.join(format!(
+            "carrier-avatars-{}-{:016x}",
+            std::process::id(),
+            hasher.finish()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                #[cfg(unix)]
+                if std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_err() {
+                    let _ = std::fs::remove_dir(&dir);
+                    return None;
+                }
+                return Some(dir);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 /// Best-effort cleanup of avatar temp files, so the temp directory doesn't grow
-/// without bound. Called once at startup. Removes this process's own directory
-/// (e.g. leftovers from a previously crashed run that reused the PID) and sweeps
-/// *empty* sibling directories left by cleanly-exited runs — but never a
-/// non-empty one, which could belong to another live instance mid-notification.
+/// without bound. Called once at startup. Sweeps old files from sibling cache
+/// directories and removes directories that are then empty, but never follows
+/// symlinks or removes a non-empty directory that could belong to a live
+/// instance mid-notification.
 fn clear_avatar_cache() {
-    let _ = std::fs::remove_dir_all(avatar_cache_dir());
     if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
         for entry in entries.flatten() {
             if entry
@@ -2056,9 +2097,17 @@ fn clear_avatar_cache() {
                 .to_string_lossy()
                 .starts_with("carrier-avatars-")
             {
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let path = entry.path();
+                sweep_stale_avatars(&path);
                 // `remove_dir` only succeeds on an empty directory, so a live
                 // instance's avatars are never deleted out from under it.
-                let _ = std::fs::remove_dir(entry.path());
+                let _ = std::fs::remove_dir(path);
             }
         }
     }
