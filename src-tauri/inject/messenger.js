@@ -42,6 +42,13 @@
   const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   const accel = (e) => (isMac ? e.metaKey : e.ctrlKey);
 
+  function isEditableTarget(target) {
+    return (
+      target instanceof Element &&
+      !!target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
+    );
+  }
+
   const shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),
@@ -70,6 +77,7 @@
       if (!accel(e)) return;
       const fn = shortcuts[e.key];
       if (fn) {
+        if (isEditableTarget(e.target)) return;
         e.preventDefault();
         fn();
       }
@@ -173,7 +181,8 @@
     const m = location.pathname.match(/\/t\/([^/]+)/);
     const idx = m ? rows.findIndex((a) => (a.getAttribute("href") || "").includes("/t/" + m[1])) : -1;
     // No active row (e.g. on the requests view): start from the top or bottom.
-    (idx === -1 ? rows[delta > 0 ? 0 : rows.length - 1] : rows[idx + delta])?.click();
+    const nextIdx = idx === -1 ? (delta > 0 ? 0 : rows.length - 1) : (idx + delta + rows.length) % rows.length;
+    rows[nextIdx]?.click();
   }
 
   function focusChatSearch() {
@@ -216,7 +225,7 @@
     }
     // The control only exists inside the conversation-info sidebar: open that
     // first, then click Search once React has rendered the panel.
-    if (!window.__carrierToggleInfo()) return false;
+    if (typeof window.__carrierToggleInfo !== "function" || !window.__carrierToggleInfo()) return false;
     let tries = 0;
     const timer = setInterval(() => {
       const b = searchInConvoButton();

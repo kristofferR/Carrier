@@ -67,6 +67,32 @@
       return II.invoke("plugin:event|emit", { event: event, payload: payload });
     }
 
+    function rect(el) {
+      var r = el.getBoundingClientRect();
+      return {
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+      };
+    }
+
+    function visible(el) {
+      var r = el.getBoundingClientRect();
+      var cs = getComputedStyle(el);
+      return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden";
+    }
+
+    function maskText(s, limit) {
+      var out = (s || "").replace(/\d{3,}/g, "{id}");
+      return typeof limit === "number" ? out.slice(0, limit) : out;
+    }
+
+    function maskedHref(el) {
+      var href = el && el.getAttribute && el.getAttribute("href");
+      return href ? maskText(href) : "";
+    }
+
     function correlationId(p) {
       return p && typeof p === "object" && typeof p._correlationId === "string"
         ? p._correlationId
@@ -154,28 +180,6 @@
       var PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
       var PREVIEW_EVENT_RE =
         /^(.{1,40}?)(?=\s+(?:sent|replied|reacted|liked|laughed|loved|mentioned|shared|left|joined|added|removed|changed|created|named|started)\b)/i;
-
-      function rect(el) {
-        var r = el.getBoundingClientRect();
-        return {
-          x: Math.round(r.x),
-          y: Math.round(r.y),
-          w: Math.round(r.width),
-          h: Math.round(r.height),
-        };
-      }
-
-      function visible(el) {
-        var r = el.getBoundingClientRect();
-        var cs = getComputedStyle(el);
-        return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden";
-      }
-
-      function maskedHref(el) {
-        var href = el && el.getAttribute && el.getAttribute("href");
-        if (!href) return "";
-        return href.replace(/\d{3,}/g, "{id}");
-      }
 
       function textLength(el) {
         return (el.textContent || "").replace(/\s+/g, " ").trim().length;
@@ -321,41 +325,42 @@
     // Sanitized inventory of the controls the keyboard shortcuts target:
     // textboxes, search inputs, and labelled buttons. Chat-list rows, message
     // articles, and thread links are excluded so contact names and message
-    // text never appear; digit runs are masked and labels capped.
+    // text never appear; labels are classified instead of serialized raw.
     function shortcutProbe() {
-      function vis(el) {
-        var r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      }
-      function mask(s) {
-        return (s || "").replace(/\d{3,}/g, "{id}").slice(0, 60);
+      function labelKind(value) {
+        var s = (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (!s) return "";
+        if (/\bsearch(?: in conversation| messenger)?\b/.test(s)) return "search";
+        if (/\bnew (?:message|chat)\b/.test(s)) return "new-message";
+        if (/\b(?:choose an? )?emoji\b/.test(s)) return "emoji";
+        if (/\b(?:choose a )?gif\b/.test(s)) return "gif";
+        if (/\battach\b/.test(s)) return "attach";
+        if (/\bprofile\b/.test(s)) return "profile";
+        if (/\bmute\b/.test(s)) return "mute";
+        if (/\b(?:photo|video|media)\b/.test(s)) return "media";
+        return "[present]";
       }
       function ctl(el) {
-        var r = el.getBoundingClientRect();
+        var box = rect(el);
         return {
           tag: el.tagName.toLowerCase(),
           role: el.getAttribute("role") || "",
           type: el.getAttribute("type") || "",
-          aria: mask(el.getAttribute("aria-label")),
-          placeholder: mask(el.getAttribute("placeholder")),
+          aria: labelKind(el.getAttribute("aria-label")),
+          placeholder: labelKind(el.getAttribute("placeholder")),
           contenteditable: el.getAttribute("contenteditable") || "",
           lexical: el.hasAttribute("data-lexical-editor"),
-          href: mask(el.getAttribute("href")),
+          href: maskedHref(el),
           inMain: !!el.closest('[role="main"]'),
           inNav: !!el.closest('[role="navigation"]'),
           inPanel: !!el.closest('[role="dialog"], [role="complementary"]'),
-          rect: {
-            x: Math.round(r.x),
-            y: Math.round(r.y),
-            w: Math.round(r.width),
-            h: Math.round(r.height),
-          },
+          rect: box,
         };
       }
       function grab(sel, limit) {
         var out = [];
         document.querySelectorAll(sel).forEach(function (el) {
-          if (out.length >= limit || !vis(el)) return;
+          if (out.length >= limit || !visible(el)) return;
           // Skip identity-bearing surfaces: chat rows and message bubbles.
           if (el.closest('a[href*="/t/"], [role="article"], [role="gridcell"]')) return;
           out.push(ctl(el));
@@ -368,7 +373,7 @@
       function textButtons(limit) {
         var out = [];
         document.querySelectorAll('[role="button"]:not([aria-label])').forEach(function (el) {
-          if (out.length >= limit || !vis(el)) return;
+          if (out.length >= limit || !visible(el)) return;
           if (el.closest('a[href*="/t/"], [role="article"], [role="gridcell"]')) return;
           var text = (el.textContent || "").replace(/\s+/g, " ").trim();
           if (!text || text.length > 20) return;
@@ -378,7 +383,8 @@
             if (role) roles.push(role);
           }
           var c = ctl(el);
-          c.text = text;
+          c.text = labelKind(text);
+          c.textLength = text.length;
           c.ancestorRoles = roles;
           out.push(c);
         });
@@ -387,11 +393,10 @@
       function landmark(sel) {
         var el = document.querySelector(sel);
         if (!el) return null;
-        var r = el.getBoundingClientRect();
-        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        return rect(el);
       }
       return {
-        url: location.href.replace(/\d{3,}/g, "{id}"),
+        url: maskText(location.href),
         textboxes: grab('[contenteditable="true"], [role="textbox"], textarea', 10),
         inputs: grab("input", 10),
         buttons: grab('[role="button"][aria-label], button[aria-label]', 80),
