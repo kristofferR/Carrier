@@ -1999,12 +1999,36 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     // temp-file names or deleting each other's in-flight avatars.
     let dir = avatar_cache_dir();
     std::fs::create_dir_all(&dir).ok()?;
+    sweep_stale_avatars(&dir);
     // A unique name per notification avoids any race between writing the file
     // here and the OS reading it when the notification is shown.
     let seq = AVATAR_SEQ.fetch_add(1, Ordering::Relaxed);
     let path = dir.join(format!("{seq}.png"));
     std::fs::write(&path, &bytes).ok()?;
     Some(path)
+}
+
+/// Best-effort sweep of stale avatars from this process's own directory. On
+/// macOS a shown notification's file is deliberately left behind for the OS to
+/// read asynchronously (see [`show_message_notification`]) and would otherwise
+/// accumulate for the whole session; anything this old is long past delivery
+/// and safe to drop.
+fn sweep_stale_avatars(dir: &Path) {
+    const MAX_AVATAR_AGE: Duration = Duration::from_secs(10 * 60);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > MAX_AVATAR_AGE);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// This process's private avatar-cache directory. Keying it on the PID keeps
