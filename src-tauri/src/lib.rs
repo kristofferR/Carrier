@@ -1155,7 +1155,7 @@ fn is_dark(s: &Settings) -> bool {
     match s.theme.as_str() {
         "dark" => true,
         "light" => false,
-        _ => matches!(dark_light::detect(), dark_light::Mode::Dark),
+        _ => matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)),
     }
 }
 
