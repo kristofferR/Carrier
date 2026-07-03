@@ -1705,8 +1705,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .quit()
         .build()?;
 
-    let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+N"))?;
+    // Cmd/Ctrl+N composes a new conversation (Caprine parity, Ref #30); New
+    // Window moved to Cmd/Ctrl+Alt+N to make room.
+    let new_conversation = mi("new_conversation", "New Conversation", Some("CmdOrCtrl+N"))?;
+    let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+Alt+N"))?;
     let file = SubmenuBuilder::new(app, "File")
+        .item(&new_conversation)
         .item(&new_window)
         .separator()
         .close_window()
@@ -1846,6 +1850,9 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
+        "new_conversation" => {
+            eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
+        }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {

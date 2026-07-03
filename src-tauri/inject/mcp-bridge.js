@@ -95,6 +95,25 @@
           reply(privacyProbe());
           return;
         }
+        // CSP-safe control probe for keyboard-shortcut selector work (#18/#30).
+        if (code === "__carrier_mcp_shortcut_probe__") {
+          reply(shortcutProbe());
+          return;
+        }
+        // CSP-safe invoker for the page's own shortcut helpers (Facebook's CSP
+        // blocks new Function, so `execute_js` can't reach them otherwise).
+        // Restricted to the __carrierShortcuts registry — no arbitrary globals.
+        var call = /^__carrier_mcp_call__:([\w$]+)$/.exec(code);
+        if (call) {
+          var registry = window.__carrierShortcuts || {};
+          var helper = registry[call[1]];
+          reply(
+            typeof helper === "function"
+              ? { called: call[1], returned: helper() }
+              : { error: "no such shortcut helper: " + call[1] },
+          );
+          return;
+        }
         var result;
         try {
           // Expression form first (so the last value is returned)…
@@ -296,6 +315,93 @@
             })
             .slice(0, 20),
         },
+      };
+    }
+
+    // Sanitized inventory of the controls the keyboard shortcuts target:
+    // textboxes, search inputs, and labelled buttons. Chat-list rows, message
+    // articles, and thread links are excluded so contact names and message
+    // text never appear; digit runs are masked and labels capped.
+    function shortcutProbe() {
+      function vis(el) {
+        var r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      }
+      function mask(s) {
+        return (s || "").replace(/\d{3,}/g, "{id}").slice(0, 60);
+      }
+      function ctl(el) {
+        var r = el.getBoundingClientRect();
+        return {
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute("role") || "",
+          type: el.getAttribute("type") || "",
+          aria: mask(el.getAttribute("aria-label")),
+          placeholder: mask(el.getAttribute("placeholder")),
+          contenteditable: el.getAttribute("contenteditable") || "",
+          lexical: el.hasAttribute("data-lexical-editor"),
+          href: mask(el.getAttribute("href")),
+          inMain: !!el.closest('[role="main"]'),
+          inNav: !!el.closest('[role="navigation"]'),
+          inPanel: !!el.closest('[role="dialog"], [role="complementary"]'),
+          rect: {
+            x: Math.round(r.x),
+            y: Math.round(r.y),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          },
+        };
+      }
+      function grab(sel, limit) {
+        var out = [];
+        document.querySelectorAll(sel).forEach(function (el) {
+          if (out.length >= limit || !vis(el)) return;
+          // Skip identity-bearing surfaces: chat rows and message bubbles.
+          if (el.closest('a[href*="/t/"], [role="article"], [role="gridcell"]')) return;
+          out.push(ctl(el));
+        });
+        return out;
+      }
+      // Buttons labelled by inner text instead of aria-label (e.g. the info
+      // sidebar's Profile/Mute/Search circles). Short texts only — real labels
+      // are one or two words; anything longer risks message/name content.
+      function textButtons(limit) {
+        var out = [];
+        document.querySelectorAll('[role="button"]:not([aria-label])').forEach(function (el) {
+          if (out.length >= limit || !vis(el)) return;
+          if (el.closest('a[href*="/t/"], [role="article"], [role="gridcell"]')) return;
+          var text = (el.textContent || "").replace(/\s+/g, " ").trim();
+          if (!text || text.length > 20) return;
+          var roles = [];
+          for (var n = el.parentElement; n && roles.length < 8; n = n.parentElement) {
+            var role = n.getAttribute("role");
+            if (role) roles.push(role);
+          }
+          var c = ctl(el);
+          c.text = text;
+          c.ancestorRoles = roles;
+          out.push(c);
+        });
+        return out;
+      }
+      function landmark(sel) {
+        var el = document.querySelector(sel);
+        if (!el) return null;
+        var r = el.getBoundingClientRect();
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      }
+      return {
+        url: location.href.replace(/\d{3,}/g, "{id}"),
+        textboxes: grab('[contenteditable="true"], [role="textbox"], textarea', 10),
+        inputs: grab("input", 10),
+        buttons: grab('[role="button"][aria-label], button[aria-label]', 80),
+        textButtons: textButtons(40),
+        composeLinks: grab('a[href*="/new"]', 5),
+        landmarks: {
+          complementary: landmark('[role="complementary"]'),
+          main: landmark('[role="main"]'),
+        },
+        helpers: Object.keys(window.__carrierShortcuts || {}),
       };
     }
 

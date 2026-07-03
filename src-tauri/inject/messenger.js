@@ -43,18 +43,30 @@
   const accel = (e) => (isMac ? e.metaKey : e.ctrlKey);
 
   const shortcuts = {
-    "[": () => history.back(),
-    "]": () => history.forward(),
+    "[": () => stepConversation(-1),
+    "]": () => stepConversation(1),
     "-": zoomOut,
     "=": zoomIn,
     "+": zoomIn,
     "0": zoomReset,
     r: () => location.reload(),
+    k: () => focusChatSearch(),
+    f: () => searchInConversation(),
+    l: () => focusComposer(),
+    e: () => openEmojiPicker(),
+    g: () => openGifPicker(),
+    t: () => attachFiles(),
   };
 
   document.addEventListener(
     "keydown",
     (e) => {
+      // Ctrl+Tab / Ctrl+Shift+Tab cycle conversations (all platforms).
+      if (e.key === "Tab" && e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        stepConversation(e.shiftKey ? -1 : 1);
+        return;
+      }
       if (!accel(e)) return;
       const fn = shortcuts[e.key];
       if (fn) {
@@ -125,6 +137,141 @@
     }
     return out;
   }
+
+  /* ----------------- Conversation & composer shortcuts ------------------ */
+  // Caprine-parity actions (Ref #18, #30). Messenger is a minified React SPA
+  // with no callable API, so each action is either a plain DOM op
+  // (focus/navigate) or a click on Messenger's own control, resolved by stable
+  // roles and aria-labels. Every lookup bails quietly when the control is
+  // missing — Facebook reshuffles its markup often, and none of these exist on
+  // the login page.
+
+  function isShown(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function firstShown(sel, root) {
+    for (const el of (root || document).querySelectorAll(sel)) if (isShown(el)) return el;
+    return null;
+  }
+
+  // The visible button whose aria-label contains any of `needles` (lowercase).
+  function buttonByLabel(needles, root) {
+    for (const el of (root || document).querySelectorAll('[role="button"][aria-label], button[aria-label]')) {
+      if (!isShown(el)) continue;
+      const label = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (needles.some((n) => label.includes(n))) return el;
+    }
+    return null;
+  }
+
+  // Open the previous/next conversation relative to the one on screen.
+  function stepConversation(delta) {
+    const rows = chatRows();
+    if (!rows.length) return;
+    const m = location.pathname.match(/\/t\/([^/]+)/);
+    const idx = m ? rows.findIndex((a) => (a.getAttribute("href") || "").includes("/t/" + m[1])) : -1;
+    // No active row (e.g. on the requests view): start from the top or bottom.
+    (idx === -1 ? rows[delta > 0 ? 0 : rows.length - 1] : rows[idx + delta])?.click();
+  }
+
+  function focusChatSearch() {
+    const input =
+      firstShown('[role="navigation"] input[type="search"]') || firstShown('input[type="search"]');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    return !!input;
+  }
+
+  function focusComposer() {
+    const box =
+      firstShown('[role="main"] [contenteditable="true"][role="textbox"]') ||
+      firstShown('[contenteditable="true"][data-lexical-editor="true"]');
+    box?.focus();
+    return !!box;
+  }
+
+  // The info sidebar's Search circle is labelled just "Search" (and lives
+  // inside [role=main]; the sidebar is not a complementary landmark). A bare
+  // "Search" button only exists in main while the sidebar is open, so an exact
+  // label match doubles as the "is the sidebar open?" check.
+  function searchInConvoButton() {
+    const root = document.querySelector('[role="main"]');
+    if (!root) return null;
+    for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
+      if (!isShown(el)) continue;
+      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
+      if (label === "search" || label === "search in conversation") return el;
+    }
+    return null;
+  }
+  function searchInConversation() {
+    const btn = searchInConvoButton();
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    // The control only exists inside the conversation-info sidebar: open that
+    // first, then click Search once React has rendered the panel.
+    if (!window.__carrierToggleInfo()) return false;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const b = searchInConvoButton();
+      if (b) {
+        clearInterval(timer);
+        b.click();
+      } else if (++tries >= 40) {
+        clearInterval(timer);
+      }
+    }, 50);
+    return true;
+  }
+
+  // Composer controls live in the open thread's footer; scope to [role=main]
+  // so chat-list controls can't match.
+  function clickComposerButton(needles) {
+    const root = document.querySelector('[role="main"]');
+    const btn = root && buttonByLabel(needles, root);
+    btn?.click();
+    return !!btn;
+  }
+  const openEmojiPicker = () => clickComposerButton(["choose an emoji"]);
+  const openGifPicker = () => clickComposerButton(["choose a gif"]);
+  const attachFiles = () => clickComposerButton(["attach a photo or video", "attach a file"]);
+
+  function newConversation() {
+    // Prefer Messenger's own compose control (SPA navigation, no reload)…
+    const link = firstShown('a[href*="/messages/new"]');
+    if (link) {
+      link.click();
+      return true;
+    }
+    const btn = buttonByLabel(["new message"]);
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    // …falling back to the compose route (full page load).
+    location.assign("/messages/new/");
+    return true;
+  }
+
+  // Registry for the native menu (File ▸ New Conversation) and the dev-only
+  // mcp-bridge test hook; the keydown handler above calls these directly.
+  window.__carrierShortcuts = {
+    nextConversation: () => stepConversation(1),
+    prevConversation: () => stepConversation(-1),
+    focusChatSearch,
+    focusComposer,
+    searchInConversation,
+    openEmojiPicker,
+    openGifPicker,
+    attachFiles,
+    newConversation,
+  };
 
   /* --------------------------- Link handling ---------------------------- */
   // External links open in the real browser (Facebook's l.php tracking
