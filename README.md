@@ -69,6 +69,8 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - **Lightweight & native** — one WebView window, no bundled Chromium.
 - **Native notifications** — new messages raise real OS notifications even when
   Carrier is in the background.
+- **Notification sound & do not disturb** — deliver notifications silently, or
+  suppress them entirely on a daily schedule (overnight ranges work).
 - **Unread badge** — the unread count appears on the Dock / taskbar icon.
 - **Force light / dark theme** — keep Messenger (and the window chrome, including
   the macOS title bar) light or dark regardless of the system theme, or follow

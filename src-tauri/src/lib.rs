@@ -123,8 +123,14 @@ struct Settings {
     menu_bar_only: bool,
     /// Suppress all desktop notifications for new messages.
     mute_notifications: bool,
+    /// Play the OS notification sound for new-message notifications.
+    notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
     hide_notification_preview: bool,
+    /// Do-not-disturb window start, local wall-clock "HH:MM" (empty = off).
+    dnd_start: String,
+    /// Do-not-disturb window end, local wall-clock "HH:MM" (empty = off).
+    dnd_end: String,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
@@ -146,7 +152,10 @@ impl Default for Settings {
             theme: "system".into(),
             menu_bar_only: false,
             mute_notifications: false,
+            notification_sound: true,
             hide_notification_preview: false,
+            dnd_start: String::new(),
+            dnd_end: String::new(),
             hide_names_avatars: false,
             system_emoji: false,
         }
@@ -2036,6 +2045,47 @@ fn clear_avatar_cache() {
     }
 }
 
+/// Parse a `"HH:MM"` wall-clock string into minutes since midnight. Strict:
+/// digits only (1–2 hour digits, exactly 2 minute digits, as `<input
+/// type="time">` produces), hour 0–23, minute 0–59. Anything else → `None`.
+fn parse_hhmm(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    if h.is_empty()
+        || h.len() > 2
+        || m.len() != 2
+        || !h.bytes().all(|b| b.is_ascii_digit())
+        || !m.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+    (h <= 23 && m <= 59).then_some(h * 60 + m)
+}
+
+/// Whether the do-not-disturb window covers `now_minutes` (minutes since local
+/// midnight). The window is half-open `[start, end)` so back-to-back windows
+/// can't overlap, and it may wrap past midnight (e.g. `22:00`–`07:00`). The
+/// schedule is off — never active — when either bound is empty, malformed, or
+/// when start == end (a zero-length window rather than "all day").
+fn dnd_active(start: &str, end: &str, now_minutes: u32) -> bool {
+    let (Some(s), Some(e)) = (parse_hhmm(start.trim()), parse_hhmm(end.trim())) else {
+        return false;
+    };
+    match s.cmp(&e) {
+        std::cmp::Ordering::Equal => false,
+        std::cmp::Ordering::Less => now_minutes >= s && now_minutes < e,
+        // Overnight wrap: active from `start` to midnight and midnight to `end`.
+        std::cmp::Ordering::Greater => now_minutes >= s || now_minutes < e,
+    }
+}
+
+/// Minutes since local midnight, for [`dnd_active`].
+fn local_now_minutes() -> u32 {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    now.hour() * 60 + now.minute()
+}
+
 /// Show a native OS notification for a new message and, if it's clicked, bring
 /// Carrier forward and open the conversation. The avatar is attached where the
 /// platform allows (a thumbnail on macOS — the app icon always owns the main
@@ -2048,6 +2098,18 @@ fn clear_avatar_cache() {
 /// gets its own thread that blocks until the user clicks or dismisses it (it
 /// only parks, doesn't spin), and on click it routes back to the page.
 fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
+    let (sound, dnd_start, dnd_end) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.notification_sound, s.dnd_start.clone(), s.dnd_end.clone())
+    };
+    // Do-not-disturb schedule: drop the notification entirely inside the window.
+    // Only delivery is suppressed — the unread badge/tray count still updates
+    // (that rides the separate `carrier:unread` event).
+    if dnd_active(&dnd_start, &dnd_end, local_now_minutes()) {
+        return;
+    }
+
     let title = if msg.title.trim().is_empty() {
         "Messenger".to_string()
     } else {
@@ -2064,12 +2126,12 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
         let _ = app;
-        deliver_notification_macos(&title, &body, id, image.as_deref());
+        deliver_notification_macos(&title, &body, id, image.as_deref(), sound);
     }
 
     #[cfg(not(target_os = "macos"))]
     std::thread::spawn(move || {
-        let clicked = show_native_notification(&title, &body, image.as_deref());
+        let clicked = show_native_notification(&title, &body, image.as_deref(), sound);
         // The notification has been shown and dismissed/clicked, so the OS is
         // done with the avatar file — delete it now rather than leaving it for
         // the next startup's clear_avatar_cache().
@@ -2084,7 +2146,8 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
 
 /// Deliver a new-message notification through the modern
 /// `UNUserNotificationCenter` (macOS). Builds a `UNMutableNotificationContent`
-/// (title = sender, body = preview, default sound), stashes the conversation
+/// (title = sender, body = preview, the default sound when `sound` is on —
+/// leaving it unset delivers silently), stashes the conversation
 /// `id` in `userInfo` so [`NotifyDelegate`] can recover it on click, attaches
 /// the avatar as a `UNNotificationAttachment` when one decoded (best-effort),
 /// and adds the request for immediate delivery (`trigger: nil`).
@@ -2092,7 +2155,7 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
 /// Replaces the dead legacy `NSUserNotification` path (mac-notification-sys),
 /// which macOS 26/27 no longer presents for third-party apps.
 #[cfg(target_os = "macos")]
-fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&Path>) {
+fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&Path>, sound: bool) {
     use objc2::rc::Retained;
     use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
     use objc2_user_notifications::{
@@ -2103,7 +2166,9 @@ fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&P
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
-    content.setSound(Some(&UNNotificationSound::defaultSound()));
+    if sound {
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
+    }
 
     // Carry the conversation id so the delegate's click handler can recover it.
     // Built typed (NSString → NSNumber) then cast to the bare `NSDictionary`
@@ -2145,7 +2210,12 @@ fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&P
 /// explicit `default` action for a body click to be reported (it shows no
 /// button), which Windows toasts don't.
 #[cfg(not(target_os = "macos"))]
-fn show_native_notification(title: &str, body: &str, image: Option<&std::path::Path>) -> bool {
+fn show_native_notification(
+    title: &str,
+    body: &str,
+    image: Option<&std::path::Path>,
+    sound: bool,
+) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary(title);
     if !body.is_empty() {
@@ -2153,6 +2223,19 @@ fn show_native_notification(title: &str, body: &str, image: Option<&std::path::P
     }
     if let Some(path) = image.and_then(|p| p.to_str()) {
         n.icon(path);
+    }
+    // Windows toasts are silent unless a sound is named (notify-rust maps an
+    // unset `sound_name` to a silent toast), so name the system default when
+    // sound is on; when it's off, leaving `sound_name` unset already delivers
+    // silently.
+    #[cfg(windows)]
+    if sound {
+        n.sound_name("Default");
+    }
+    // XDG servers pick their own default sound, so ask them not to play it.
+    #[cfg(unix)]
+    if !sound {
+        n.hint(notify_rust::Hint::SuppressSound(true));
     }
     #[cfg(unix)]
     n.action("default", "Open");
@@ -2391,6 +2474,61 @@ mod tests {
         assert!(!should_disable_webkit_dmabuf_renderer(false, false));
         assert!(!should_disable_webkit_dmabuf_renderer(true, true));
         assert!(!should_disable_webkit_dmabuf_renderer(false, true));
+    }
+
+    #[test]
+    fn dnd_is_off_when_unset_or_malformed() {
+        // Empty = the schedule is disabled.
+        assert!(!dnd_active("", "", 0));
+        assert!(!dnd_active("22:00", "", 23 * 60));
+        assert!(!dnd_active("", "07:00", 3 * 60));
+        // Malformed inputs never activate.
+        assert!(!dnd_active("24:00", "07:00", 3 * 60));
+        assert!(!dnd_active("22:60", "07:00", 3 * 60));
+        assert!(!dnd_active("22", "07:00", 3 * 60));
+        assert!(!dnd_active("2a:00", "07:00", 3 * 60));
+        assert!(!dnd_active("+2:00", "07:00", 3 * 60));
+        assert!(!dnd_active("22:0", "07:00", 3 * 60));
+        assert!(!dnd_active("garbage", "also garbage", 3 * 60));
+        // start == end is a zero-length window, not "all day".
+        assert!(!dnd_active("09:00", "09:00", 9 * 60));
+    }
+
+    #[test]
+    fn dnd_normal_range_is_half_open() {
+        let at = |m| dnd_active("09:00", "17:30", m);
+        assert!(at(9 * 60)); // start boundary: active
+        assert!(at(12 * 60));
+        assert!(at(17 * 60 + 29)); // last minute inside
+        assert!(!at(17 * 60 + 30)); // end boundary: inactive
+        assert!(!at(8 * 60 + 59)); // minute before start
+        assert!(!at(23 * 60));
+    }
+
+    #[test]
+    fn dnd_overnight_range_wraps_midnight() {
+        let at = |m| dnd_active("22:00", "07:00", m);
+        assert!(at(22 * 60)); // start boundary: active
+        assert!(at(23 * 60 + 59)); // just before midnight
+        assert!(at(0)); // midnight itself
+        assert!(at(6 * 60 + 59)); // last minute inside
+        assert!(!at(7 * 60)); // end boundary: inactive
+        assert!(!at(12 * 60)); // daytime is outside the window
+        assert!(!at(21 * 60 + 59)); // minute before start
+    }
+
+    #[test]
+    fn hhmm_parses_strict_wall_clock_times() {
+        assert_eq!(parse_hhmm("00:00"), Some(0));
+        assert_eq!(parse_hhmm("7:05"), Some(7 * 60 + 5)); // single hour digit ok
+        assert_eq!(parse_hhmm("23:59"), Some(23 * 60 + 59));
+        assert_eq!(parse_hhmm("24:00"), None);
+        assert_eq!(parse_hhmm("12:60"), None);
+        assert_eq!(parse_hhmm("12:5"), None);
+        assert_eq!(parse_hhmm("120:00"), None);
+        assert_eq!(parse_hhmm(""), None);
+        assert_eq!(parse_hhmm(":30"), None);
+        assert_eq!(parse_hhmm("1230"), None);
     }
 
     #[test]
