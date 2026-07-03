@@ -42,13 +42,6 @@
   const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   const accel = (e) => (isMac ? e.metaKey : e.ctrlKey);
 
-  function isEditableTarget(target) {
-    return (
-      target instanceof Element &&
-      !!target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]')
-    );
-  }
-
   const shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),
@@ -77,7 +70,6 @@
       if (!accel(e)) return;
       const fn = shortcuts[e.key];
       if (fn) {
-        if (isEditableTarget(e.target)) return;
         e.preventDefault();
         fn();
       }
