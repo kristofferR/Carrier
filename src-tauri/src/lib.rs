@@ -18,7 +18,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::{
-    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
+    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     webview::{Color, DownloadEvent},
     Listener, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -167,6 +167,9 @@ struct AppState {
     /// True while [`recreate_themed_windows`] is between destroying and
     /// rebuilding, so the run loop doesn't exit when the window count hits zero.
     recreating: std::sync::atomic::AtomicBool,
+    /// The page-scraped recent-conversations list backing the Dock/tray menus.
+    /// In memory only — never persisted (see `carrier:recent-threads`).
+    recent_threads: Mutex<Vec<RecentThread>>,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
@@ -399,8 +402,30 @@ fn wants_tray(s: &Settings) -> bool {
 }
 
 fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let quit_item = MenuItem::with_id(app, "quit", "Quit Carrier", true, None::<&str>)?;
-    Menu::with_items(app, &[&quit_item])
+    let menu = Menu::new(app)?;
+    // Most recent conversations first (mirrors the macOS Dock menu); clicking
+    // one opens that thread. Empty until the page has pushed a list.
+    let threads = recent_threads_for_menu(app);
+    for t in &threads {
+        menu.append(&MenuItem::with_id(
+            app,
+            recent_menu_id(t),
+            &t.name,
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    if !threads.is_empty() {
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+    menu.append(&MenuItem::with_id(
+        app,
+        "quit",
+        "Quit Carrier",
+        true,
+        None::<&str>,
+    )?)?;
+    Ok(menu)
 }
 
 #[cfg(target_os = "macos")]
@@ -423,11 +448,7 @@ fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     }
 }
 
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
-    // Left-click toggles the window; right-click offers only Quit (showing is the
-    // click itself, so a separate "Open" item would be redundant).
-    let menu = build_tray_menu(app)?;
-
+fn build_tray_with_menu(app: &tauri::AppHandle, menu: Menu<tauri::Wry>) -> tauri::Result<TrayIcon> {
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -518,11 +539,22 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // reach a Dock-less app), so force it on then.
     let want_tray = wants_tray(s);
     let state = app.state::<AppState>();
+    let needs_tray = {
+        let tray = state.tray.lock().unwrap();
+        want_tray && tray.is_none()
+    };
+    let new_tray_menu = if needs_tray {
+        build_tray_menu(app).ok()
+    } else {
+        None
+    };
     let mut tray = state.tray.lock().unwrap();
     match (want_tray, tray.is_some()) {
         (true, false) => {
-            if let Ok(t) = build_tray(app) {
-                *tray = Some(t);
+            if let Some(menu) = new_tray_menu {
+                if let Ok(t) = build_tray_with_menu(app, menu) {
+                    *tray = Some(t);
+                }
             }
         }
         (false, true) => {
@@ -555,6 +587,222 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         });
         if s.menu_bar_only && !tray_available {
             show_main(app);
+        }
+    }
+
+    // Keep the recent-conversations menus in step with the settings — most
+    // importantly, flipping Hide Names & Avatars on must clear them at once.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_recent_menus(&handle));
+}
+
+// ---------------------------------------------------------------------------
+// Recent conversations (Dock / tray menu)
+// ---------------------------------------------------------------------------
+
+/// One entry of the recent-conversations list the page scrapes from the chat
+/// list and pushes over `carrier:recent-threads` (see inject/messenger.js).
+/// Held in memory only; conversation names/ids are never written to disk.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RecentThread {
+    name: String,
+    href: String,
+}
+
+/// The `carrier:recent-threads` payload crosses from the remote Facebook page,
+/// so validate it hard: names are trimmed and truncated, hrefs must be a bare
+/// `/t/<digits>/` thread path (they're re-embedded into an eval'd navigation),
+/// duplicates are dropped, and the list is capped.
+fn sanitize_recent_threads(threads: Vec<RecentThread>) -> Vec<RecentThread> {
+    const MAX_THREADS: usize = 9;
+    const MAX_NAME_CHARS: usize = 60;
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<RecentThread> = Vec::new();
+    for t in threads {
+        let name: String = t.name.trim().chars().take(MAX_NAME_CHARS).collect();
+        let Some(id) = t
+            .href
+            .strip_prefix("/t/")
+            .map(|rest| rest.trim_end_matches('/'))
+        else {
+            continue;
+        };
+        if name.is_empty()
+            || id.is_empty()
+            || id.len() > 32
+            || !id.bytes().all(|b| b.is_ascii_digit())
+            || t.href != format!("/t/{id}/")
+        {
+            continue;
+        }
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        out.push(RecentThread {
+            name,
+            href: format!("/t/{id}/"),
+        });
+        if out.len() >= MAX_THREADS {
+            break;
+        }
+    }
+    out
+}
+
+fn recent_thread_id(href: &str) -> Option<&str> {
+    let id = href.strip_prefix("/t/")?.trim_end_matches('/');
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(id)
+}
+
+fn recent_menu_id(thread: &RecentThread) -> String {
+    let id = recent_thread_id(&thread.href).expect("recent thread href is sanitized");
+    format!("recent:{id}")
+}
+
+fn recent_href_from_menu_id(menu_id: &str) -> Option<String> {
+    let id = menu_id.strip_prefix("recent:")?;
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("/t/{id}/"))
+}
+
+/// The recent-threads list as native menus should show it: empty while Hide
+/// Names & Avatars is on, so contact names never surface in the Dock/tray menu
+/// of a screen-shared machine.
+fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThread> {
+    let state = app.state::<AppState>();
+    if state.settings.lock().unwrap().hide_names_avatars {
+        return Vec::new();
+    }
+    let threads = state.recent_threads.lock().unwrap().clone();
+    threads
+}
+
+/// Open a conversation picked from the Dock/tray menu: surface the app and ask
+/// the page to navigate to the thread (it clicks the chat-list row for SPA
+/// navigation, falling back to a hard navigation). The href is encoded into the
+/// menu id when the menu is built, so a later recents refresh cannot make a
+/// visible native menu item open a different thread.
+fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
+    show_main(app);
+    if let Some(w) = target_window(app) {
+        // `href` is validated to `/t/<digits>/`; JSON-encode it anyway so the
+        // eval always receives a well-formed JS string literal.
+        if let Ok(arg) = serde_json::to_string(&href) {
+            let _ = w.eval(format!(
+                "window.__carrierOpenThread && window.__carrierOpenThread({arg});"
+            ));
+        }
+    }
+}
+
+/// The NSMenu currently served as the Dock menu. AppKit re-queries
+/// `applicationDockMenu:` on every Dock right-click, so swapping this pointer
+/// (and the keepalive below) is all a rebuild takes. Null = no custom menu.
+#[cfg(target_os = "macos")]
+static DOCK_NS_MENU: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+// Keeps the muda menu backing DOCK_NS_MENU alive between rebuilds. Main-thread
+// only: muda menus aren't Send, and AppKit menus must be touched there anyway.
+#[cfg(target_os = "macos")]
+thread_local! {
+    static DOCK_MENU_KEEPALIVE: std::cell::RefCell<Option<muda::Menu>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The `applicationDockMenu:` implementation grafted onto tao's NSApplication
+/// delegate: hand AppKit whatever menu the last rebuild published.
+#[cfg(target_os = "macos")]
+extern "C-unwind" fn application_dock_menu(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _sender: *mut objc2::runtime::AnyObject,
+) -> *mut objc2::runtime::AnyObject {
+    DOCK_NS_MENU.load(Ordering::SeqCst) as *mut objc2::runtime::AnyObject
+}
+
+/// Add `applicationDockMenu:` to the live app delegate so the Dock icon's
+/// context menu can list recent conversations — neither tauri, tao, nor muda
+/// exposes a Dock-menu API, but the delegate hook is the one AppKit blesses.
+/// Called once from `RunEvent::Ready` (the delegate exists by then); the added
+/// method reads [`DOCK_NS_MENU`], so later rebuilds don't touch the delegate.
+#[cfg(target_os = "macos")]
+fn install_dock_menu_provider() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send, sel};
+
+    // SAFETY: main-thread AppKit reads (RunEvent::Ready runs there); the
+    // delegate outlives the app, and class_addMethod is a documented runtime
+    // call — it fails harmlessly (returns NO) if the method ever exists.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let delegate: *mut AnyObject = msg_send![app, delegate];
+        if delegate.is_null() {
+            return;
+        }
+        let cls = (*delegate).class() as *const objc2::runtime::AnyClass;
+        // "@@:@": returns id, takes self + _cmd + the NSApplication sender.
+        let imp: objc2::runtime::Imp = std::mem::transmute(
+            application_dock_menu
+                as extern "C-unwind" fn(
+                    *mut AnyObject,
+                    objc2::runtime::Sel,
+                    *mut AnyObject,
+                ) -> *mut AnyObject,
+        );
+        objc2::ffi::class_addMethod(
+            cls.cast_mut(),
+            sel!(applicationDockMenu:),
+            imp,
+            c"@@:@".as_ptr(),
+        );
+    }
+}
+
+/// Rebuild the native menus that mirror the recent-threads list: the macOS
+/// Dock menu, and the tray menu on Windows/Linux (the macOS tray builds its
+/// menu fresh on every right-click, so it needs no push). Must run on the main
+/// thread — menu construction is main-thread-only on macOS.
+fn rebuild_recent_menus(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let threads = recent_threads_for_menu(app);
+        let ptr = if threads.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            use muda::ContextMenu as _;
+            let menu = muda::Menu::new();
+            for t in &threads {
+                let _ = menu.append(&muda::MenuItem::with_id(
+                    recent_menu_id(t),
+                    &t.name,
+                    true,
+                    None,
+                ));
+            }
+            let ptr = menu.ns_menu();
+            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = Some(menu));
+            ptr
+        };
+        DOCK_NS_MENU.store(ptr, Ordering::SeqCst);
+        if ptr.is_null() {
+            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Ok(menu) = build_tray_menu(app) else {
+            return;
+        };
+        let state = app.state::<AppState>();
+        let tray = state.tray.lock().unwrap();
+        if let Some(tray) = tray.as_ref() {
+            let _ = tray.set_menu(Some(menu));
         }
     }
 }
@@ -1864,6 +2112,14 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
             eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
         }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
+        // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
+        // here (the app-wide menu handler) only — the tray's own handler must
+        // not repeat this, since every menu event is broadcast to all handlers.
+        id if id.starts_with("recent:") => {
+            if let Some(href) = recent_href_from_menu_id(id) {
+                open_recent_thread(app, &href);
+            }
+        }
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
             if let Some(w) = target_window(app) {
@@ -2322,6 +2578,7 @@ pub fn run() {
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
             recreating: std::sync::atomic::AtomicBool::new(false),
+            recent_threads: Mutex::new(Vec::new()),
         })
         .menu(build_menu)
         .on_menu_event(handle_menu_event)
@@ -2407,6 +2664,27 @@ pub fn run() {
                 }
             });
 
+            // Recent conversations scraped from the page's chat list → the
+            // macOS Dock menu / tray menu. Kept in memory only; the menus are
+            // rebuilt on the main thread (menu APIs require it on macOS).
+            let h = app.handle().clone();
+            app.listen_any("carrier:recent-threads", move |event| {
+                let Ok(threads) = serde_json::from_str::<Vec<RecentThread>>(event.payload()) else {
+                    return;
+                };
+                let threads = sanitize_recent_threads(threads);
+                {
+                    let state = h.state::<AppState>();
+                    let mut current = state.recent_threads.lock().unwrap();
+                    if *current == threads {
+                        return;
+                    }
+                    *current = threads;
+                }
+                let handle = h.clone();
+                let _ = h.run_on_main_thread(move || rebuild_recent_menus(&handle));
+            });
+
             // New-message notifications: the page's `Notification` bridge sends
             // sender/preview/avatar here; we render them natively (with the
             // avatar), notify you while Carrier is in the background, and open the
@@ -2435,6 +2713,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Ready = event {
                 setup_macos_notifications(app);
+                // The Dock-menu delegate hook also needs the app fully
+                // launched (tao installs its NSApplication delegate by now).
+                install_dock_menu_provider();
             }
 
             #[cfg(target_os = "macos")]
@@ -2948,6 +3229,66 @@ mod tests {
             tray_unread_title(&Settings::default(), 7),
             Some("7".to_string())
         );
+    }
+
+    fn thread(name: &str, href: &str) -> RecentThread {
+        RecentThread {
+            name: name.into(),
+            href: href.into(),
+        }
+    }
+
+    #[test]
+    fn recent_threads_keep_only_valid_thread_paths() {
+        let out = sanitize_recent_threads(vec![
+            thread("Alice", "/t/12345/"),
+            thread("Mallory", "https://evil.example/t/1/"),
+            thread("Mallory", "/t/1'; alert(1);//"),
+            thread("Mallory", "/t/12345/../../settings/"),
+            thread("Mallory", "/t//"),
+            thread("Bob", "/t/67890/"),
+        ]);
+        assert_eq!(
+            out,
+            vec![thread("Alice", "/t/12345/"), thread("Bob", "/t/67890/")]
+        );
+    }
+
+    #[test]
+    fn recent_threads_drop_empty_names_and_duplicates_and_cap_the_list() {
+        let mut input = vec![
+            thread("   ", "/t/1/"),
+            thread("Alice", "/t/2/"),
+            thread("Alice again", "/t/2/"),
+        ];
+        for i in 0..20 {
+            input.push(thread("More", &format!("/t/{}/", 100 + i)));
+        }
+        let out = sanitize_recent_threads(input);
+        assert_eq!(out.len(), 9);
+        assert_eq!(out[0], thread("Alice", "/t/2/"));
+        // Duplicate thread id keeps only the first entry.
+        assert!(!out.iter().any(|t| t.name == "Alice again"));
+    }
+
+    #[test]
+    fn recent_threads_truncate_long_names_on_char_boundaries() {
+        let name = "ø".repeat(100);
+        let out = sanitize_recent_threads(vec![thread(&name, "/t/5/")]);
+        assert_eq!(out[0].name.chars().count(), 60);
+    }
+
+    #[test]
+    fn recent_menu_ids_round_trip_thread_ids() {
+        let t = thread("Alice", "/t/12345/");
+        assert_eq!(recent_menu_id(&t), "recent:12345");
+        assert_eq!(
+            recent_href_from_menu_id("recent:12345").as_deref(),
+            Some("/t/12345/")
+        );
+        assert_eq!(recent_href_from_menu_id("recent:"), None);
+        assert_eq!(recent_href_from_menu_id("recent:abc"), None);
+        assert_eq!(recent_href_from_menu_id("recent:12345/../../"), None);
     }
 
     #[cfg(target_os = "macos")]

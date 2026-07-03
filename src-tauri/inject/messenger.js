@@ -1028,6 +1028,123 @@
     setTimeout(() => apply(true), 4000);
   })();
 
+  /* ---------------------- Recent conversations ------------------------- */
+  // Scrape the chat list's most recent threads (display name + /t/<id> link)
+  // and push them to Rust, which mirrors them into the macOS Dock menu and the
+  // tray menu so a conversation is one right-click away. The list lives in
+  // memory only — nothing is persisted to disk.
+  (function recentThreads() {
+    if (!window.__TAURI_INTERNALS__) return;
+
+    const MAX_THREADS = 9;
+    const EMPTY_GRACE_MS = 15000;
+    // Structural separators that can appear between row fragments. Do not filter
+    // short or metadata-looking words: they can be real display names.
+    const SEPARATOR_RE = /^[·•.,\s]+$/;
+
+    // A thread row's display name. Facebook's class names are hashed and
+    // unstable, so take the row's first span with real text — the name renders
+    // before the message preview and timestamp.
+    const rowName = (a) => {
+      const row = a.closest('[role="row"]') || a;
+      for (const span of row.querySelectorAll("span")) {
+        const t = (span.textContent || "").replace(/\s+/g, " ").trim();
+        if (t && !SEPARATOR_RE.test(t)) return t.slice(0, 60);
+      }
+      return "";
+    };
+
+    const chatListScrolledFromTop = (rows) => {
+      const first = rows[0];
+      if (!first) return false;
+      for (let el = first.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 16) return el.scrollTop > 8;
+      }
+      return false;
+    };
+
+    // The visible chat list, top to bottom. Only trust it while the virtualized
+    // list is at the top; after a manual scroll, visible rows no longer equal
+    // Messenger's most recent conversations.
+    const scan = () => {
+      const rows = chatRows();
+      if (chatListScrolledFromTop(rows)) return null;
+      const seen = new Set();
+      const out = [];
+      for (const a of rows) {
+        const m = (a.getAttribute("href") || "").match(/\/t\/(\d+)/);
+        if (!m || seen.has(m[1])) continue;
+        const name = rowName(a);
+        if (!name) continue;
+        seen.add(m[1]);
+        out.push({ name, href: "/t/" + m[1] + "/" });
+        if (out.length >= MAX_THREADS) break;
+      }
+      return out;
+    };
+
+    let lastSent = null;
+    let emptySince = 0;
+    const push = () => {
+      // Hide Names & Avatars: never let contact names cross into native menus.
+      const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+      const threads = hide ? [] : scan();
+      if (threads === null) return;
+      // An empty scan usually means the chat list hasn't rendered (mid-reload),
+      // so give it a short grace period. If rows stay absent, clear the menus so
+      // logout/offline/selector-break states do not leak stale contact names.
+      if (!hide && threads.length === 0) {
+        const now = Date.now();
+        if (!emptySince) emptySince = now;
+        if (now - emptySince < EMPTY_GRACE_MS) return;
+      } else {
+        emptySince = 0;
+      }
+      const key = JSON.stringify(threads);
+      if (key === lastSent) return;
+      lastSent = key;
+      invoke("plugin:event|emit", { event: "carrier:recent-threads", payload: threads })?.catch?.(
+        () => {},
+      );
+    };
+
+    // The list reorders when messages arrive or are read — moments the unread
+    // badge already refreshes on — so a slow poll plus the settings/visibility
+    // hooks keeps the menus fresh without another DOM-wide observer. Emits only
+    // on actual change, so the steady-state cost is one scan per tick.
+    let timer = null;
+    const startPoll = () => {
+      clearInterval(timer);
+      timer = setInterval(push, document.hidden ? 60000 : 10000);
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) push();
+    });
+    window.addEventListener("carrier:settings", push);
+    startPoll();
+    setTimeout(push, 1500);
+    setTimeout(push, 4000);
+  })();
+
+  // Open a conversation by its "/t/<id>/" path (used by the Dock/tray menus,
+  // via eval from Rust). Prefer clicking the row — SPA navigation, no full
+  // reload; fall back to a hard navigation when the row isn't in the list
+  // (scrolled out of Facebook's virtualized list, or a fresh window).
+  window.__carrierOpenThread = (href) => {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    if (!m) return false;
+    for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+      const am = (a.getAttribute("href") || "").match(/\/t\/(\d+)/);
+      if (am && am[1] === m[1]) {
+        a.click();
+        return true;
+      }
+    }
+    location.href = "https://www.facebook.com/messages/t/" + m[1] + "/";
+    return true;
+  };
+
   /* ------------------ Toggle conversation information ------------------- */
   // Click Messenger's own conversation-info ("ⓘ") button in the open thread's
   // header so the native details sidebar shows/hides. Invoked from the View menu
