@@ -6,9 +6,11 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,9 @@ use url::Url;
 
 /// The page we wrap.
 const HOME_URL: &str = "https://www.facebook.com/messages";
+const HOME_HOST: &str = "www.facebook.com";
+const HOME_PORT: u16 = 443;
+const MESSENGER_DNS_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Window/app title. Debug builds are marked so a dev build (e.g. the
 /// tauri-mcp one) isn't mistaken for a release install.
@@ -624,6 +629,9 @@ fn is_google_owned_host(host: &str) -> bool {
 /// Domains kept *inside* the app (Messenger plus the Facebook/Meta auth and
 /// media surfaces needed to log in and load content).
 fn is_internal(url: &Url) -> bool {
+    if is_local_app_url(url) {
+        return true;
+    }
     match url.scheme() {
         "about" => return true,
         // Resolve a blob: URL to its inner origin and judge that.
@@ -657,6 +665,144 @@ fn is_internal(url: &Url) -> bool {
     INTERNAL_SUFFIXES
         .iter()
         .any(|s| host == *s || host.ends_with(&format!(".{s}")))
+}
+
+fn is_local_app_url(url: &Url) -> bool {
+    matches!(
+        (url.scheme(), url.host_str()),
+        ("tauri", Some("localhost")) | ("http" | "https", Some("tauri.localhost"))
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Messenger connectivity preflight
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct MessengerLoadStatus {
+    state: String,
+    title: String,
+    message: String,
+    detail: Option<String>,
+}
+
+impl MessengerLoadStatus {
+    fn new(state: &str, title: &str, message: &str, detail: Option<String>) -> Self {
+        Self {
+            state: state.into(),
+            title: title.into(),
+            message: message.into(),
+            detail,
+        }
+    }
+
+    fn loading() -> Self {
+        Self::new(
+            "loading",
+            "Loading Messenger",
+            "Messenger is reachable. Carrier is opening it now.",
+            None,
+        )
+    }
+
+    fn unexpected(title: &str, detail: String) -> Self {
+        Self::new(
+            "error",
+            title,
+            "Carrier could not finish the Messenger reachability check.",
+            Some(detail),
+        )
+    }
+}
+
+#[derive(Debug)]
+enum MessengerPreflightError {
+    Blocked {
+        host: &'static str,
+        ips: Vec<IpAddr>,
+    },
+    DnsFailed {
+        host: &'static str,
+        error: String,
+    },
+}
+
+impl From<MessengerPreflightError> for MessengerLoadStatus {
+    fn from(error: MessengerPreflightError) -> Self {
+        match error {
+            MessengerPreflightError::Blocked { host, ips } => Self::new(
+                "blocked",
+                "Messenger appears blocked",
+                "Carrier cannot load Messenger because Facebook is resolving to a local blocking address. This commonly happens when a productivity blocker, DNS filter, or hosts-file rule is active.",
+                Some(format!("{host} -> {}", format_ips(&ips))),
+            ),
+            MessengerPreflightError::DnsFailed { host, error } => Self::new(
+                "unreachable",
+                "Cannot resolve Messenger",
+                "Carrier could not resolve Facebook's Messenger host. Check your internet connection, DNS settings, VPN, or firewall.",
+                Some(format!("{host}: {error}")),
+            ),
+        }
+    }
+}
+
+fn is_blocker_sinkhole_ip(ip: IpAddr) -> bool {
+    ip.is_unspecified() || ip.is_loopback()
+}
+
+fn unique_ips(addrs: &[SocketAddr]) -> Vec<IpAddr> {
+    let mut ips = Vec::new();
+    for addr in addrs {
+        let ip = addr.ip();
+        if !ips.contains(&ip) {
+            ips.push(ip);
+        }
+    }
+    ips
+}
+
+fn format_ips(ips: &[IpAddr]) -> String {
+    if ips.is_empty() {
+        "no addresses".into()
+    } else {
+        ips.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn classify_messenger_resolution(addrs: &[SocketAddr]) -> Option<MessengerPreflightError> {
+    let ips = unique_ips(addrs);
+    if ips.is_empty() {
+        return Some(MessengerPreflightError::DnsFailed {
+            host: HOME_HOST,
+            error: "no addresses returned".into(),
+        });
+    }
+    if ips.iter().all(|ip| is_blocker_sinkhole_ip(*ip)) {
+        return Some(MessengerPreflightError::Blocked {
+            host: HOME_HOST,
+            ips,
+        });
+    }
+    None
+}
+
+fn messenger_dns_preflight() -> Result<(), MessengerPreflightError> {
+    let addrs = (HOME_HOST, HOME_PORT)
+        .to_socket_addrs()
+        .map(|iter| iter.collect::<Vec<_>>())
+        .map_err(|e| MessengerPreflightError::DnsFailed {
+            host: HOME_HOST,
+            error: e.to_string(),
+        })?;
+
+    if let Some(error) = classify_messenger_resolution(&addrs) {
+        return Err(error);
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -742,6 +888,60 @@ fn filename_from_url(url: &Url) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("download");
     sanitize_filename(&percent_decode(raw))
+}
+
+fn is_media_filename(name: &str) -> bool {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "jpg"
+            | "jpeg"
+            | "png"
+            | "gif"
+            | "webp"
+            | "heic"
+            | "heif"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "mp4"
+            | "m4v"
+            | "mov"
+            | "webm"
+            | "avi"
+            | "mkv"
+            | "3gp"
+            | "mp3"
+            | "m4a"
+            | "aac"
+            | "wav"
+            | "ogg"
+            | "opus"
+            | "flac"
+    )
+}
+
+fn is_media_data_url(url: &Url) -> bool {
+    let Some(rest) = url.as_str().strip_prefix("data:") else {
+        return false;
+    };
+    let header = rest.split_once(',').map(|(h, _)| h).unwrap_or(rest);
+    let media_type = header.split_once(';').map(|(m, _)| m).unwrap_or(header);
+    let media_type = media_type.to_ascii_lowercase();
+    media_type.starts_with("image/")
+        || media_type.starts_with("video/")
+        || media_type.starts_with("audio/")
+}
+
+fn is_allowed_download(url: &Url, name: &str) -> bool {
+    match url.scheme() {
+        "blob" => is_media_filename(name),
+        "data" => is_media_data_url(url) && is_media_filename(name),
+        _ => is_fetchable_media_host(url) && is_media_filename(name),
+    }
 }
 
 /// True for filenames whose extension is a directly-executable type, so a remote
@@ -894,6 +1094,48 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     run_update_check(&app).await
 }
 
+fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
+    match Url::parse(HOME_URL) {
+        Ok(url) => match window.navigate(url) {
+            Ok(()) => MessengerLoadStatus::loading(),
+            Err(e) => MessengerLoadStatus::unexpected(
+                "Cannot open Messenger",
+                format!("WebView navigation failed: {e}"),
+            ),
+        },
+        Err(e) => MessengerLoadStatus::unexpected(
+            "Cannot open Messenger",
+            format!("Carrier has an invalid Messenger URL: {e}"),
+        ),
+    }
+}
+
+#[tauri::command]
+async fn connect_messenger(window: WebviewWindow) -> MessengerLoadStatus {
+    let preflight = tokio::time::timeout(
+        MESSENGER_DNS_TIMEOUT,
+        tauri::async_runtime::spawn_blocking(messenger_dns_preflight),
+    )
+    .await;
+
+    match preflight {
+        Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
+        Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
+        Ok(Ok(Err(error))) => {
+            eprintln!("carrier: Messenger DNS preflight failed ({error:?}); navigating anyway");
+            navigate_to_messenger(&window)
+        }
+        Ok(Err(e)) => {
+            eprintln!("carrier: Messenger DNS preflight task failed: {e}; navigating anyway");
+            navigate_to_messenger(&window)
+        }
+        Err(_) => {
+            eprintln!("carrier: Messenger DNS preflight timed out; navigating anyway");
+            navigate_to_messenger(&window)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
@@ -933,80 +1175,75 @@ fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(
-        app,
-        label,
-        WebviewUrl::External(HOME_URL.parse().expect("valid home URL")),
-    )
-    .title(APP_TITLE)
-    .inner_size(1200.0, 780.0)
-    .min_inner_size(420.0, 520.0)
-    .theme(theme_for(settings))
-    .background_color(splash_background(settings))
-    .user_agent(user_agent())
-    .initialization_script(init_script(settings))
-    .on_navigation(|url| {
-        // External tracking redirect -> open the real (web-only) destination.
-        if let Some(real) = unwrap_tracking(url) {
-            if Url::parse(&real).is_ok_and(|r| matches!(r.scheme(), "http" | "https")) {
-                let _ = open::that(real);
-            }
-            return false;
-        }
-        if is_internal(url) {
-            return true;
-        }
-        // Open ordinary web links in the browser; block anything else
-        // (data:, javascript:, file:, custom schemes).
-        if matches!(url.scheme(), "http" | "https") {
-            let _ = open::that(url.as_str());
-        }
-        false
-    })
-    .on_download(|_webview, event| {
-        if let DownloadEvent::Requested { url, destination } = event {
-            // Only accept downloads of Messenger's own media or page-generated
-            // blob:/data: content; refuse anything else a remote page might try
-            // to write to the user's Downloads folder.
-            let allowed = matches!(url.scheme(), "blob" | "data") || is_fetchable_media_host(&url);
-            if !allowed {
+    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+        .title(APP_TITLE)
+        .inner_size(1200.0, 780.0)
+        .min_inner_size(420.0, 520.0)
+        .theme(theme_for(settings))
+        .background_color(splash_background(settings))
+        .user_agent(user_agent())
+        .initialization_script(init_script(settings))
+        .on_navigation(|url| {
+            // External tracking redirect -> open the real (web-only) destination.
+            if let Some(real) = unwrap_tracking(url) {
+                if Url::parse(&real).is_ok_and(|r| matches!(r.scheme(), "http" | "https")) {
+                    let _ = open::that(real);
+                }
                 return false;
             }
-            // Prefer the WebView's suggested filename — it carries the real
-            // extension (e.g. a blob the page named via `download="photo.png"`);
-            // fall back to the URL's last path segment.
-            let suggested = destination
-                .file_name()
-                .and_then(|n| n.to_str())
-                .filter(|n| !n.is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| filename_from_url(&url));
-            let name = sanitize_filename(&suggested);
-            // Don't silently save an executable a page might push to Downloads.
-            if is_unsafe_download(&name) {
-                return false;
+            if is_internal(url) {
+                return true;
             }
-            // Fail closed: if we can't resolve/create the Downloads folder we
-            // can't enforce where the file lands, so refuse rather than let the
-            // WebView write to its own chosen destination.
-            let Some(dir) = downloads_dir() else {
-                return false;
-            };
-            if std::fs::create_dir_all(&dir).is_err() {
-                return false;
+            // Open ordinary web links in the browser; block anything else
+            // (data:, javascript:, file:, custom schemes).
+            if matches!(url.scheme(), "http" | "https") {
+                let _ = open::that(url.as_str());
             }
-            *destination = unique_path(dir.join(name));
-        }
-        true
-    })
-    .build()
-    .inspect(|window| {
-        // New windows inherit the current always-on-top preference.
-        let _ = window.set_always_on_top(settings.always_on_top);
-        // macOS: let the themed window background show through the title bar.
-        #[cfg(target_os = "macos")]
-        make_webview_transparent(window);
-    })
+            false
+        })
+        .on_download(|_webview, event| {
+            if let DownloadEvent::Requested { url, destination } = event {
+                // Only accept downloads of Messenger's own media or page-generated
+                // blob:/data: content; refuse anything else a remote page might try
+                // to write to the user's Downloads folder.
+                // Prefer the WebView's suggested filename — it carries the real
+                // extension (e.g. a blob the page named via `download="photo.png"`);
+                // fall back to the URL's last path segment.
+                let suggested = destination
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| filename_from_url(&url));
+                let name = sanitize_filename(&suggested);
+                if !is_allowed_download(&url, &name) {
+                    return false;
+                }
+                // Don't silently save an executable a page might push to Downloads.
+                if is_unsafe_download(&name) {
+                    return false;
+                }
+                // Fail closed: if we can't resolve/create the Downloads folder we
+                // can't enforce where the file lands, so refuse rather than let the
+                // WebView write to its own chosen destination.
+                let Some(dir) = downloads_dir() else {
+                    return false;
+                };
+                if std::fs::create_dir_all(&dir).is_err() {
+                    return false;
+                }
+                *destination = unique_path(dir.join(name));
+            }
+            true
+        })
+        .build()
+        .inspect(|window| {
+            // New windows inherit the current always-on-top preference.
+            let _ = window.set_always_on_top(settings.always_on_top);
+            // macOS: let the themed window background show through the title bar.
+            #[cfg(target_os = "macos")]
+            make_webview_transparent(window);
+        })
 }
 
 /// Disable the WKWebView's opaque white background so the window background —
@@ -1658,6 +1895,14 @@ fn init_script(settings: &Settings) -> String {
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     format!(
         r#"(function () {{
+  var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+  var carrierInjectable =
+    carrierHost === 'facebook.com' ||
+    carrierHost.endsWith('.facebook.com') ||
+    carrierHost === 'messenger.com' ||
+    carrierHost.endsWith('.messenger.com');
+  if (!carrierInjectable) return;
+
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
   // survives Facebook reloading the page (which re-runs this script). Falls back
@@ -1694,10 +1939,10 @@ fn init_script(settings: &Settings) -> String {
     new MutationObserver(function (_, obs) {{ if (inject()) obs.disconnect(); }})
       .observe(document.documentElement, {{ childList: true, subtree: true }});
   }}
-}})();
 {INJECT_JS}
 {INJECT_PANEL}
-{INJECT_MCP_BRIDGE}"#
+{INJECT_MCP_BRIDGE}
+}})();"#
     )
 }
 
@@ -1997,7 +2242,8 @@ pub fn run() {
             get_settings,
             set_settings,
             reset_settings,
-            check_for_updates
+            check_for_updates,
+            connect_messenger
         ])
         .setup(move |app| {
             clear_pending_webview_data(app.handle());
@@ -2172,9 +2418,45 @@ mod tests {
         assert!(is_internal(&u("https://web.facebook.com/x")));
         assert!(is_internal(&u("https://accounts.google.com/o/oauth2/auth")));
         assert!(is_internal(&u("about:blank")));
+        assert!(is_internal(&u("tauri://localhost/")));
+        assert!(is_internal(&u("http://tauri.localhost/")));
         assert!(!is_internal(&u("https://example.com/")));
+        assert!(!is_internal(&u("tauri://example.com/")));
+        assert!(!is_internal(&u("https://not-tauri.localhost/")));
+        assert!(!is_internal(&u("foo://tauri.localhost/")));
+        assert!(!is_internal(&u("ftp://tauri.localhost/")));
         assert!(!is_internal(&u("data:text/html,<script>1</script>")));
         assert!(!is_internal(&u("javascript:alert(1)")));
+    }
+
+    #[test]
+    fn blocker_sinkhole_ips_are_detected() {
+        assert!(is_blocker_sinkhole_ip(IpAddr::from([0, 0, 0, 0])));
+        assert!(is_blocker_sinkhole_ip(IpAddr::from([127, 0, 0, 1])));
+        assert!(is_blocker_sinkhole_ip("::".parse().unwrap()));
+        assert!(is_blocker_sinkhole_ip("::1".parse().unwrap()));
+        assert!(!is_blocker_sinkhole_ip(IpAddr::from([31, 13, 72, 8])));
+    }
+
+    #[test]
+    fn messenger_resolution_all_sinkholes_is_blocked() {
+        let addrs = [
+            SocketAddr::from(([0, 0, 0, 0], 443)),
+            SocketAddr::from(([127, 0, 0, 1], 443)),
+        ];
+        assert!(matches!(
+            classify_messenger_resolution(&addrs),
+            Some(MessengerPreflightError::Blocked { .. })
+        ));
+    }
+
+    #[test]
+    fn messenger_resolution_with_public_ip_is_not_blocked() {
+        let addrs = [
+            SocketAddr::from(([0, 0, 0, 0], 443)),
+            SocketAddr::from(([31, 13, 72, 8], 443)),
+        ];
+        assert!(classify_messenger_resolution(&addrs).is_none());
     }
 
     #[test]
@@ -2259,6 +2541,64 @@ mod tests {
             "video.mp4"
         );
         assert_eq!(filename_from_url(&u("https://x.com/")), "download");
+    }
+
+    #[test]
+    fn media_filename_accepts_media_extensions_only() {
+        assert!(is_media_filename("photo.jpg"));
+        assert!(is_media_filename("clip.MP4"));
+        assert!(is_media_filename("voice.opus"));
+        assert!(!is_media_filename("document.pdf"));
+        assert!(!is_media_filename("archive.zip"));
+        assert!(!is_media_filename("download"));
+    }
+
+    #[test]
+    fn media_data_url_requires_media_mime_type() {
+        assert!(is_media_data_url(&u("data:image/png;base64,iVBORw0KGgo=")));
+        assert!(is_media_data_url(&u("data:video/mp4;base64,AAAA")));
+        assert!(!is_media_data_url(&u("data:text/html,<script>1</script>")));
+        assert!(!is_media_data_url(&u("data:application/pdf;base64,AAAA")));
+    }
+
+    #[test]
+    fn allowed_download_requires_media_for_generated_urls() {
+        assert!(is_allowed_download(
+            &u("blob:https://www.facebook.com/123"),
+            "photo.png"
+        ));
+        assert!(!is_allowed_download(
+            &u("blob:https://www.facebook.com/123"),
+            "document.pdf"
+        ));
+        assert!(is_allowed_download(
+            &u("data:image/png;base64,iVBORw0KGgo="),
+            "photo.png"
+        ));
+        assert!(!is_allowed_download(
+            &u("data:text/html,<script>1</script>"),
+            "photo.png"
+        ));
+        assert!(!is_allowed_download(
+            &u("data:image/png;base64,iVBORw0KGgo="),
+            "document.pdf"
+        ));
+    }
+
+    #[test]
+    fn allowed_download_requires_media_host_and_name_for_remote_urls() {
+        assert!(is_allowed_download(
+            &u("https://scontent.fbcdn.net/v/photo.jpg"),
+            "photo.jpg"
+        ));
+        assert!(!is_allowed_download(
+            &u("https://scontent.fbcdn.net/v/document.pdf"),
+            "document.pdf"
+        ));
+        assert!(!is_allowed_download(
+            &u("https://example.com/photo.jpg"),
+            "photo.jpg"
+        ));
     }
 
     #[test]
