@@ -861,7 +861,7 @@
 
   /* ----------------------- Hide names & avatars ------------------------- */
   // Toggle marker attributes the injected CSS keys off of to blur contact
-  // names and avatars (Settings / View ▸ Hide Names & Avatars / Cmd+Shift+N).
+  // names and avatars (Settings / View ▸ Hide Names & Avatars / Cmd+Shift+H).
   // Facebook's generated class names churn, so this keeps the selectors shallow
   // and marks identity surfaces by stable roles, links, and layout shape.
   (function hideNames() {

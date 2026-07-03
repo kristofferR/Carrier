@@ -103,14 +103,14 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - <kbd>Cmd/Ctrl</kbd>+<kbd>1</kbd>–<kbd>9</kbd> — jump to the Nth conversation
 - <kbd>Ctrl</kbd>+<kbd>Tab</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> (or
   <kbd>Cmd/Ctrl</kbd>+<kbd>]</kbd>/<kbd>[</kbd>) — next / previous conversation
-- <kbd>Cmd/Ctrl</kbd>+<kbd>N</kbd> — new conversation
-  (<kbd>Cmd/Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> — new window)
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — new conversation
+  (<kbd>Cmd/Ctrl</kbd>+<kbd>N</kbd> — new window)
 - <kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> — search conversations
 - <kbd>Cmd/Ctrl</kbd>+<kbd>F</kbd> — search in conversation
 - <kbd>Cmd/Ctrl</kbd>+<kbd>L</kbd> — focus the message input
 - <kbd>Cmd/Ctrl</kbd>+<kbd>E</kbd>/<kbd>G</kbd>/<kbd>T</kbd> — emoji / GIF / attach files
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> — toggle conversation information
-- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — hide names &amp; avatars
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> — hide names &amp; avatars
 - <kbd>F2</kbd> check for updates &middot; <kbd>F3</kbd> settings &middot;
   <kbd>F5</kbd>/<kbd>Cmd-R</kbd> reload
 - <kbd>Cmd</kbd>+<kbd>-</kbd>/<kbd>=</kbd>/<kbd>0</kbd> — zoom out / in / reset

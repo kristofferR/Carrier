@@ -1705,10 +1705,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .quit()
         .build()?;
 
-    // Cmd/Ctrl+N composes a new conversation (Caprine parity, Ref #30); New
-    // Window moved to Cmd/Ctrl+Alt+N to make room.
-    let new_conversation = mi("new_conversation", "New Conversation", Some("CmdOrCtrl+N"))?;
-    let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+Alt+N"))?;
+    let new_conversation = mi(
+        "new_conversation",
+        "New Conversation",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
+    let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+N"))?;
     let file = SubmenuBuilder::new(app, "File")
         .item(&new_conversation)
         .item(&new_window)
@@ -1754,10 +1756,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "Toggle Conversation Information",
         Some("CmdOrCtrl+Shift+I"),
     )?;
+    // Shift+N belongs to New Conversation, so "hide" gets Shift+H.
     let hide_names = mi(
         "hide_names",
         "Hide Names && Avatars",
-        Some("CmdOrCtrl+Shift+N"),
+        Some("CmdOrCtrl+Shift+H"),
     )?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
     let devtools = mi(
