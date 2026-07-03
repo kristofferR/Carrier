@@ -399,10 +399,10 @@ fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // Most recent conversations first (mirrors the macOS Dock menu); clicking
     // one opens that thread. Empty until the page has pushed a list.
     let threads = recent_threads_for_menu(app);
-    for (i, t) in threads.iter().enumerate() {
+    for t in &threads {
         menu.append(&MenuItem::with_id(
             app,
-            format!("recent:{i}"),
+            recent_menu_id(t),
             &t.name,
             true,
             None::<&str>,
@@ -635,6 +635,27 @@ fn sanitize_recent_threads(threads: Vec<RecentThread>) -> Vec<RecentThread> {
     out
 }
 
+fn recent_thread_id(href: &str) -> Option<&str> {
+    let id = href.strip_prefix("/t/")?.trim_end_matches('/');
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(id)
+}
+
+fn recent_menu_id(thread: &RecentThread) -> String {
+    let id = recent_thread_id(&thread.href).expect("recent thread href is sanitized");
+    format!("recent:{id}")
+}
+
+fn recent_href_from_menu_id(menu_id: &str) -> Option<String> {
+    let id = menu_id.strip_prefix("recent:")?;
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("/t/{id}/"))
+}
+
 /// The recent-threads list as native menus should show it: empty while Hide
 /// Names & Avatars is on, so contact names never surface in the Dock/tray menu
 /// of a screen-shared machine.
@@ -649,17 +670,10 @@ fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThread> {
 
 /// Open a conversation picked from the Dock/tray menu: surface the app and ask
 /// the page to navigate to the thread (it clicks the chat-list row for SPA
-/// navigation, falling back to a hard navigation). `idx` indexes the list the
-/// menus were built from.
-fn open_recent_thread(app: &tauri::AppHandle, idx: usize) {
-    let href = {
-        let state = app.state::<AppState>();
-        let threads = state.recent_threads.lock().unwrap();
-        match threads.get(idx) {
-            Some(t) => t.href.clone(),
-            None => return,
-        }
-    };
+/// navigation, falling back to a hard navigation). The href is encoded into the
+/// menu id when the menu is built, so a later recents refresh cannot make a
+/// visible native menu item open a different thread.
+fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
     show_main(app);
     if let Some(w) = target_window(app) {
         // `href` is validated to `/t/<digits>/`; JSON-encode it anyway so the
@@ -749,9 +763,9 @@ fn rebuild_recent_menus(app: &tauri::AppHandle) {
         } else {
             use muda::ContextMenu as _;
             let menu = muda::Menu::new();
-            for (i, t) in threads.iter().enumerate() {
+            for t in &threads {
                 let _ = menu.append(&muda::MenuItem::with_id(
-                    format!("recent:{i}"),
+                    recent_menu_id(t),
                     &t.name,
                     true,
                     None,
@@ -768,12 +782,13 @@ fn rebuild_recent_menus(app: &tauri::AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let Ok(menu) = build_tray_menu(app) else {
+            return;
+        };
         let state = app.state::<AppState>();
         let tray = state.tray.lock().unwrap();
         if let Some(tray) = tray.as_ref() {
-            if let Ok(menu) = build_tray_menu(app) {
-                let _ = tray.set_menu(Some(menu));
-            }
+            let _ = tray.set_menu(Some(menu));
         }
     }
 }
@@ -2073,12 +2088,12 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
-        // Dock/tray "recent conversations" items ("recent:<index>"). Handled
+        // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
         // here (the app-wide menu handler) only — the tray's own handler must
         // not repeat this, since every menu event is broadcast to all handlers.
         id if id.starts_with("recent:") => {
-            if let Ok(idx) = id["recent:".len()..].parse::<usize>() {
-                open_recent_thread(app, idx);
+            if let Some(href) = recent_href_from_menu_id(id) {
+                open_recent_thread(app, &href);
             }
         }
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
@@ -3167,6 +3182,19 @@ mod tests {
         let name = "ø".repeat(100);
         let out = sanitize_recent_threads(vec![thread(&name, "/t/5/")]);
         assert_eq!(out[0].name.chars().count(), 60);
+    }
+
+    #[test]
+    fn recent_menu_ids_round_trip_thread_ids() {
+        let t = thread("Alice", "/t/12345/");
+        assert_eq!(recent_menu_id(&t), "recent:12345");
+        assert_eq!(
+            recent_href_from_menu_id("recent:12345").as_deref(),
+            Some("/t/12345/")
+        );
+        assert_eq!(recent_href_from_menu_id("recent:"), None);
+        assert_eq!(recent_href_from_menu_id("recent:abc"), None);
+        assert_eq!(recent_href_from_menu_id("recent:12345/../../"), None);
     }
 
     #[cfg(target_os = "macos")]

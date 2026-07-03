@@ -691,6 +691,7 @@
     if (!window.__TAURI_INTERNALS__) return;
 
     const MAX_THREADS = 9;
+    const EMPTY_GRACE_MS = 15000;
     // Fragments that sit next to the name in a row: timestamps ("3m", "now"),
     // weekday abbreviations, and separator dots.
     const META_RE = /^(\d+\s*(?:s|m|h|d|w|mo|y)|now|just now|sun|mon|tue|wed|thu|fri|sat|[·•.,\s\d]+)$/i;
@@ -707,11 +708,24 @@
       return "";
     };
 
-    // The visible chat list, top to bottom (Messenger orders it by recency).
+    const chatListScrolledFromTop = (rows) => {
+      const first = rows[0];
+      if (!first) return false;
+      for (let el = first.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollHeight > el.clientHeight + 16) return el.scrollTop > 8;
+      }
+      return false;
+    };
+
+    // The visible chat list, top to bottom. Only trust it while the virtualized
+    // list is at the top; after a manual scroll, visible rows no longer equal
+    // Messenger's most recent conversations.
     const scan = () => {
+      const rows = chatRows();
+      if (chatListScrolledFromTop(rows)) return null;
       const seen = new Set();
       const out = [];
-      for (const a of chatRows()) {
+      for (const a of rows) {
         const m = (a.getAttribute("href") || "").match(/\/t\/(\d+)/);
         if (!m || seen.has(m[1])) continue;
         const name = rowName(a);
@@ -724,14 +738,22 @@
     };
 
     let lastSent = null;
+    let emptySince = 0;
     const push = () => {
       // Hide Names & Avatars: never let contact names cross into native menus.
       const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
       const threads = hide ? [] : scan();
+      if (threads === null) return;
       // An empty scan usually means the chat list hasn't rendered (mid-reload),
-      // so keep the previous menu rather than blanking it; hiding names clears
-      // it for real via the branch above.
-      if (!hide && threads.length === 0) return;
+      // so give it a short grace period. If rows stay absent, clear the menus so
+      // logout/offline/selector-break states do not leak stale contact names.
+      if (!hide && threads.length === 0) {
+        const now = Date.now();
+        if (!emptySince) emptySince = now;
+        if (now - emptySince < EMPTY_GRACE_MS) return;
+      } else {
+        emptySince = 0;
+      }
       const key = JSON.stringify(threads);
       if (key === lastSent) return;
       lastSent = key;
