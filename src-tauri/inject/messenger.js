@@ -477,17 +477,54 @@
     root.querySelectorAll?.("a[download][target]").forEach(stripDlTarget);
   };
   sweepDlAnchors(document.documentElement);
-  new MutationObserver((muts) => {
+
+  // One shared document-wide observer runs every registered added-node sweep
+  // (download anchors here, spellcheck below), debounced over a queue of added
+  // roots so Facebook's constant DOM churn costs one batched pass instead of a
+  // sweep per mutation record. The `target`/`download` *attribute* branch stays
+  // synchronous: a debounce there would leave a re-targeted anchor clickable,
+  // and stripDlTarget is a cheap match, no querySelectorAll. While the window
+  // is hidden nothing observed here is user-reachable (no clicks, no typing),
+  // so the observer disconnects entirely and a full re-sweep on show catches up.
+  const addedNodeSweeps = [];
+  const queuedSweepRoots = new Set();
+  let sweepTimer = 0;
+  const runSweeps = () => {
+    sweepTimer = 0;
+    const roots = [...queuedSweepRoots];
+    queuedSweepRoots.clear();
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      for (const fn of addedNodeSweeps) fn(root);
+    }
+  };
+  const sweepObserver = new MutationObserver((muts) => {
     for (const m of muts) {
       if (m.type === "attributes") stripDlTarget(m.target);
-      else for (const n of m.addedNodes) if (n.nodeType === 1) sweepDlAnchors(n);
+      else for (const n of m.addedNodes) if (n.nodeType === 1) queuedSweepRoots.add(n);
     }
-  }).observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["target", "download"],
+    if (!sweepTimer && queuedSweepRoots.size) sweepTimer = setTimeout(runSweeps, 50);
   });
+  const observeSweeps = () =>
+    sweepObserver.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["target", "download"],
+    });
+  if (!document.hidden) observeSweeps();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      sweepObserver.disconnect();
+      clearTimeout(sweepTimer);
+      sweepTimer = 0;
+      queuedSweepRoots.clear();
+    } else {
+      observeSweeps();
+      for (const fn of addedNodeSweeps) fn(document.documentElement);
+    }
+  });
+  addedNodeSweeps.push(sweepDlAnchors);
   document.addEventListener(
     "click",
     (e) => {
@@ -512,22 +549,135 @@
   }
   function applySpellcheck() {
     applySpellcheckNow();
-    new MutationObserver((muts) => {
+    // New editable surfaces are caught by the shared added-node sweep above.
+    addedNodeSweeps.push((root) => {
       const on = window.__CARRIER_SETTINGS__?.spellcheck !== false;
-      const set = (el) => el.setAttribute?.("spellcheck", on ? "true" : "false");
-      for (const m of muts)
-        for (const n of m.addedNodes)
-          if (n.nodeType === 1) {
-            if (n.matches?.(SPELL_SEL)) set(n);
-            n.querySelectorAll?.(SPELL_SEL).forEach(set);
-          }
-    }).observe(document.documentElement, { childList: true, subtree: true });
+      const want = on ? "true" : "false";
+      const set = (el) => {
+        if (el.getAttribute?.("spellcheck") !== want) el.setAttribute?.("spellcheck", want);
+      };
+      if (root.matches?.(SPELL_SEL)) set(root);
+      root.querySelectorAll?.(SPELL_SEL).forEach(set);
+    });
   }
   // Re-apply when the Rust side pushes updated settings at runtime (no reload).
   window.addEventListener("carrier:settings", applySpellcheckNow);
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", applySpellcheck);
   else applySpellcheck();
+
+  /* ------------------------- Telemetry blocking ------------------------- */
+  // Short-circuit Facebook's pure analytics/logging requests before they hit
+  // the network (Settings → Block Facebook telemetry). Messenger batches
+  // Banzai/Falco/QPL events into POSTs every few seconds, forever — blocking
+  // them cuts constant background network + CPU chatter. This runs at
+  // document-start, so fetch/XHR/sendBeacon are wrapped before any Facebook
+  // script captures them (same trick as the Notification wrapper below).
+  // The setting is consulted per call, so toggling applies without a reload.
+  //
+  // The blocklist is anchored path prefixes matching EasyPrivacy's Facebook
+  // filters — pure logging sinks only. NEVER add broad rules here: /api/graphql
+  // (every messaging op), /ajax/bootloader-endpoint (lazy JS chunks — blocking
+  // it white-screens), /ajax/bulk-route-definitions, /ajax/mercury/*,
+  // /ajax/dtsg*, the edge-chat/gateway MQTT websockets, and rupload.facebook.com
+  // (attachment uploads) must all stay reachable. Known gaps, accepted: worker/
+  // service-worker-originated logs, <img> pixels, and telemetry riding inside
+  // /api/graphql mutations.
+  (function blockTelemetry() {
+    const BLOCK_RE = new RegExp(
+      [
+        "^/ajax/bz(/|$)", // Banzai batch logging — the main telemetry firehose
+        "^/a/bz(/|$)", // newer short Banzai alias
+        "^/ajax/bnzai(/|$)", // legacy Banzai path
+        "^/ajax/qm(\\.php)?(/|$)", // Quick Metrics performance beacons
+        "^/common/scribe_endpoint(\\.php)?$", // legacy Scribe logging sink
+        "^/security/hsts-pixel\\.gif$", // HSTS beacon
+        "^/tr(/|$)", // Meta Pixel
+        "^/ajax/error/", // browser JS-error reporting
+      ].join("|"),
+    );
+    const on = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const shouldBlock = (raw) => {
+      if (!on()) return false;
+      let u;
+      try {
+        u = new URL(raw, location.href);
+      } catch (_) {
+        return false; // fail open — never block what we can't classify
+      }
+      if (!/(^|\.)(facebook\.com|messenger\.com)$/.test(u.hostname)) return false;
+      if (u.hostname === "pixel.facebook.com") return true;
+      return BLOCK_RE.test(u.pathname);
+    };
+
+    try {
+      const origFetch = window.fetch;
+      window.fetch = function (input) {
+        try {
+          const raw = typeof input === "string" ? input : (input && input.url) || String(input);
+          if (raw && shouldBlock(raw)) return Promise.resolve(new Response(null, { status: 204 }));
+        } catch (_) {}
+        return origFetch.apply(this, arguments);
+      };
+    } catch (_) {}
+
+    try {
+      const proto = XMLHttpRequest.prototype;
+      const origOpen = proto.open;
+      const origSend = proto.send;
+      proto.open = function (method, url) {
+        try {
+          this.__carrierBlocked = shouldBlock(url);
+        } catch (_) {
+          this.__carrierBlocked = false;
+        }
+        // Always run the native open, even when blocking: a skipped open leaves
+        // the XHR UNSENT and Facebook's setRequestHeader() calls would throw.
+        return origOpen.apply(this, arguments);
+      };
+      proto.send = function () {
+        if (this.__carrierBlocked && on()) {
+          // Skip the network and synthesize a clean empty 200 — Banzai persists
+          // unsent batches and retries, so a silently-dropped request would
+          // just make it queue and re-send. Own data properties shadow the
+          // prototype accessors; async dispatch matches real XHR timing.
+          const xhr = this;
+          setTimeout(() => {
+            try {
+              for (const [k, v] of [
+                ["readyState", 4],
+                ["status", 200],
+                ["statusText", "OK"],
+                ["responseText", ""],
+                ["response", ""],
+                ["responseURL", ""],
+              ]) {
+                Object.defineProperty(xhr, k, { value: v, configurable: true });
+              }
+              xhr.dispatchEvent(new Event("readystatechange"));
+              xhr.dispatchEvent(new ProgressEvent("load"));
+              xhr.dispatchEvent(new ProgressEvent("loadend"));
+            } catch (_) {}
+          }, 0);
+          return;
+        }
+        return origSend.apply(this, arguments);
+      };
+    } catch (_) {}
+
+    try {
+      // Patch the prototype so captures like sendBeacon.bind(navigator) made
+      // after injection still go through us; .apply keeps the receiver (a bare
+      // call would throw Illegal invocation in WebKit).
+      const origBeacon = Navigator.prototype.sendBeacon;
+      Navigator.prototype.sendBeacon = function (url) {
+        try {
+          if (shouldBlock(url)) return true; // "queued" — callers never see a response anyway
+        } catch (_) {}
+        return origBeacon.apply(this, arguments);
+      };
+    } catch (_) {}
+  })();
 
   /* --------------------- Native message notifications ------------------- */
   // Bridge the page's Web Notification API to native OS notifications so new
@@ -651,8 +801,22 @@
   // new-message notification, plus a periodic refresh while in the background.
   // A reload is deferred while a message is half-typed so a draft is never lost.
   (function autoRefresh() {
+    // A full reload re-boots the whole Facebook SPA — seconds of CPU — so gate
+    // it on *staleness*, not a fixed cadence. The page counts as fresh while
+    // focused (live sync works there) and right after a reload; only once it
+    // has been unfocused long enough does the periodic refresh kick in. The
+    // reload doubles as a memory bound: it resets Facebook's ever-growing heap.
+    const PERIODIC_MS = 15 * 60 * 1000; // reload after this long unfocused
+    const NOTIF_GAP_MS = 5 * 60 * 1000; // floor between notification reloads
+    let lastFresh = Date.now();
     let pending = false;
     let timer = null;
+    const clearPending = () => {
+      pending = false;
+      clearTimeout(timer);
+      timer = null;
+      lastFresh = Date.now();
+    };
     const composerHasText = () => {
       try {
         for (const el of document.querySelectorAll('[contenteditable="true"]')) {
@@ -662,31 +826,52 @@
       return false;
     };
     const maybeReload = () => {
+      timer = null;
       if (!pending) return;
+      if (document.hasFocus()) {
+        clearPending();
+        return;
+      }
       // Never yank the page out from under a draft or an in-progress call.
       if (composerHasText() || window.__carrierInCall) {
         timer = setTimeout(maybeReload, 8000);
         return;
       }
       pending = false;
+      lastFresh = Date.now();
       location.reload();
     };
     const schedule = (delay) => {
+      if (document.hasFocus()) {
+        lastFresh = Date.now();
+        return;
+      }
       pending = true;
       clearTimeout(timer);
       timer = setTimeout(maybeReload, delay);
     };
+    window.addEventListener("focus", clearPending);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && document.hasFocus()) clearPending();
+    });
     // Reload shortly after a new-message notification, but only while the window
     // is unfocused — that's when Facebook's live sync throttles and the view
     // goes stale. When you're actively reading, live sync works, so we leave the
-    // page alone. (Debounced to batch a burst of notifications into one reload.)
+    // page alone. (Debounced to batch a burst of notifications into one reload;
+    // the gap floor keeps a chatty thread from reloading every few minutes.)
     window.__carrierOnNotification = () => {
-      if (!document.hasFocus()) schedule(4000);
+      if (!document.hasFocus() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4000);
     };
-    // Regular refresh so an unfocused, stale window keeps catching up.
+    // Regular refresh so an unfocused, stale window keeps catching up. The
+    // tradeoff: a badge cleared by reading on another device can take up to
+    // PERIODIC_MS to clear while hidden; it corrects instantly on focus.
     setInterval(() => {
-      if (!document.hasFocus()) schedule(2000);
-    }, 4 * 60 * 1000);
+      if (document.hasFocus()) {
+        lastFresh = Date.now();
+        return;
+      }
+      if (Date.now() - lastFresh >= PERIODIC_MS) schedule(2000);
+    }, 60 * 1000);
   })();
 
   /* --------------------------- Force theme ------------------------------ */
@@ -824,7 +1009,20 @@
       waitForHead.observe(document.documentElement, { childList: true, subtree: true });
     }
     window.addEventListener("carrier:settings", () => apply(true));
-    setInterval(() => apply(false), 5000);
+    // Fallback poll behind the title observer above (which stays armed while
+    // hidden — badge freshness in the background is the feature). Poll slowly
+    // when the window is hidden, snappily when visible, and catch up the moment
+    // it's shown again.
+    let pollTimer = null;
+    const startPoll = () => {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(() => apply(false), document.hidden ? 60000 : 5000);
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) apply(false);
+    });
+    startPoll();
     apply(true);
     setTimeout(() => apply(true), 1500);
     setTimeout(() => apply(true), 4000);
@@ -1174,13 +1372,25 @@
       }
     }
 
+    // scan() is a full-document sweep with forced-layout reads, so cap it at
+    // one pass per SCAN_MIN_GAP_MS instead of every animation frame during DOM
+    // churn (trailing-edge: the last mutation in a burst always gets a scan).
+    // The window where a freshly rendered name can show unblurred is bounded by
+    // the gap; the pure-CSS blur rules in messenger.css don't wait on this scan.
+    // A timeout queued before stop() may still fire — scan() no-ops via on().
+    const SCAN_MIN_GAP_MS = 150;
+    let lastScanAt = 0;
     function schedule() {
       if (suppressMutations || !on() || pending) return;
       pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        scan();
-      });
+      const wait = Math.max(0, SCAN_MIN_GAP_MS - (performance.now() - lastScanAt));
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          pending = false;
+          lastScanAt = performance.now();
+          scan();
+        });
+      }, wait);
     }
 
     function start() {
@@ -1294,6 +1504,14 @@
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
+      // While the window is hidden, rAF never fires to drain the queue but
+      // mutations keep arriving — without a cap the Set would retain every
+      // mutated (often since-detached) node until the window is shown again.
+      // Past the cap, collapse to one full-document rescan on the next drain.
+      if (queuedRoots.size > 50) {
+        queuedRoots.clear();
+        queuedRoots.add(document.documentElement);
+      }
       if (pending) return;
       pending = true;
       requestAnimationFrame(() => {
@@ -1572,6 +1790,7 @@
     const LANGUAGES = "data-carrier-login-languages";
     const LANGUAGE_LINK = "data-carrier-login-language-link";
     let scheduled = false;
+    let tidyObserver = null;
 
     const prefersDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     // Follow the forced theme (Settings → Theme) when set, else the system. FB's
@@ -1769,6 +1988,21 @@
             html.removeAttribute("data-carrier-darkswap");
           }
         }
+        // Once confidently logged in (auth cookie set, not on a checkpoint/2FA
+        // interstitial, page fully loaded), stop watching: this observer fires
+        // on every DOM mutation forever otherwise, and login surfaces can only
+        // come back via a logout — a full navigation that re-injects and
+        // re-arms everything.
+        if (
+          tidyObserver &&
+          /\bc_user=/.test(document.cookie) &&
+          !html.hasAttribute("data-carrier-authtext") &&
+          document.readyState === "complete"
+        ) {
+          tidyObserver.disconnect();
+          tidyObserver = null;
+          window.removeEventListener("resize", schedule);
+        }
         return;
       }
       html.setAttribute("data-carrier-login", "");
@@ -1891,7 +2125,8 @@
       });
     };
     schedule();
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    tidyObserver = new MutationObserver(schedule);
+    tidyObserver.observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener("carrier:settings", schedule);
     // The language strip can mount slightly after our first pass, so re-run on
     // resize and a couple of short delays after load (cheap; tidy() no-ops off

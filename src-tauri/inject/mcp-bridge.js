@@ -121,6 +121,11 @@
           reply(privacyProbe());
           return;
         }
+        // Sanitized network-traffic aggregates for telemetry-blocking work.
+        if (code === "__carrier_mcp_network_probe__") {
+          reply(networkProbe());
+          return;
+        }
         // CSP-safe control probe for keyboard-shortcut selector work (#18/#30).
         if (code === "__carrier_mcp_shortcut_probe__") {
           reply(shortcutProbe());
@@ -168,6 +173,43 @@
         });
       }
     });
+
+    // Aggregated resource-timing counts for verifying telemetry blocking.
+    // Sanitized like privacyProbe: hosts plus digit-masked path prefixes and
+    // counts/bytes only — no query strings, no full URLs. Note blocked-by-us
+    // requests never start, so they simply don't appear; verify by comparing
+    // counts with the setting on vs off.
+    function networkProbe() {
+      var buckets = {};
+      var entries = performance.getEntriesByType("resource");
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var key;
+        try {
+          var u = new URL(e.name);
+          // First two path segments, digits masked, query dropped.
+          var path = u.pathname.split("/").slice(0, 3).join("/").replace(/\d{3,}/g, "{id}");
+          key = u.hostname + path + " [" + (e.initiatorType || "?") + "]";
+        } catch (_) {
+          key = "(unparsable) [" + (e.initiatorType || "?") + "]";
+        }
+        var b = buckets[key] || (buckets[key] = { count: 0, bytes: 0 });
+        b.count++;
+        b.bytes += e.transferSize || 0;
+      }
+      var rows = Object.keys(buckets)
+        .map(function (k) {
+          return { key: k, count: buckets[k].count, bytes: buckets[k].bytes };
+        })
+        .sort(function (a, b) {
+          return b.count - a.count;
+        });
+      return {
+        blockTelemetry: !!(window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.block_telemetry),
+        totalEntries: entries.length,
+        buckets: rows.slice(0, 80),
+      };
+    }
 
     // Keep privacy diagnostics sanitized: no message text, raw thread/profile
     // IDs, image URLs, or alt/aria-label contents.
