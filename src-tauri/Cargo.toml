@@ -67,6 +67,11 @@ objc2-user-notifications = { version = "0.3.2", features = ["UNUserNotificationC
 # Still pulled in transitively via notify-rust (which Linux/Windows use), so it
 # adds no build cost; the macOS notification code no longer references it.
 mac-notification-sys = "0.6"
+# The Dock menu (recent conversations): Tauri exposes no Dock-menu API, so the
+# NSMenu is built with muda directly (the same crate Tauri's menus wrap — same
+# version, no extra build cost) and served via an `applicationDockMenu:` hook.
+# Menu events still flow through Tauri's regular menu-event plumbing.
+muda = "0.19"
 
 [profile.release]
 panic = "abort"

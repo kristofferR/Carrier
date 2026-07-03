@@ -682,6 +682,101 @@
     setTimeout(() => apply(true), 4000);
   })();
 
+  /* ---------------------- Recent conversations ------------------------- */
+  // Scrape the chat list's most recent threads (display name + /t/<id> link)
+  // and push them to Rust, which mirrors them into the macOS Dock menu and the
+  // tray menu so a conversation is one right-click away. The list lives in
+  // memory only — nothing is persisted to disk.
+  (function recentThreads() {
+    if (!window.__TAURI_INTERNALS__) return;
+
+    const MAX_THREADS = 9;
+    // Fragments that sit next to the name in a row: timestamps ("3m", "now"),
+    // weekday abbreviations, and separator dots.
+    const META_RE = /^(\d+\s*(?:s|m|h|d|w|mo|y)|now|just now|sun|mon|tue|wed|thu|fri|sat|[·•.,\s\d]+)$/i;
+
+    // A thread row's display name. Facebook's class names are hashed and
+    // unstable, so take the row's first span with real (non-meta) text — the
+    // name renders before the message preview and timestamp.
+    const rowName = (a) => {
+      const row = a.closest('[role="row"]') || a;
+      for (const span of row.querySelectorAll("span")) {
+        const t = (span.textContent || "").replace(/\s+/g, " ").trim();
+        if (t.length > 1 && !META_RE.test(t)) return t.slice(0, 60);
+      }
+      return "";
+    };
+
+    // The visible chat list, top to bottom (Messenger orders it by recency).
+    const scan = () => {
+      const seen = new Set();
+      const out = [];
+      for (const a of chatRows()) {
+        const m = (a.getAttribute("href") || "").match(/\/t\/(\d+)/);
+        if (!m || seen.has(m[1])) continue;
+        const name = rowName(a);
+        if (!name) continue;
+        seen.add(m[1]);
+        out.push({ name, href: "/t/" + m[1] + "/" });
+        if (out.length >= MAX_THREADS) break;
+      }
+      return out;
+    };
+
+    let lastSent = null;
+    const push = () => {
+      // Hide Names & Avatars: never let contact names cross into native menus.
+      const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+      const threads = hide ? [] : scan();
+      // An empty scan usually means the chat list hasn't rendered (mid-reload),
+      // so keep the previous menu rather than blanking it; hiding names clears
+      // it for real via the branch above.
+      if (!hide && threads.length === 0) return;
+      const key = JSON.stringify(threads);
+      if (key === lastSent) return;
+      lastSent = key;
+      invoke("plugin:event|emit", { event: "carrier:recent-threads", payload: threads })?.catch?.(
+        () => {},
+      );
+    };
+
+    // The list reorders when messages arrive or are read — moments the unread
+    // badge already refreshes on — so a slow poll plus the settings/visibility
+    // hooks keeps the menus fresh without another DOM-wide observer. Emits only
+    // on actual change, so the steady-state cost is one scan per tick.
+    let timer = null;
+    const startPoll = () => {
+      clearInterval(timer);
+      timer = setInterval(push, document.hidden ? 60000 : 10000);
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) push();
+    });
+    window.addEventListener("carrier:settings", push);
+    startPoll();
+    setTimeout(push, 1500);
+    setTimeout(push, 4000);
+  })();
+
+  // Open a conversation by its "/t/<id>/" path (used by the Dock/tray menus,
+  // via eval from Rust). Prefer clicking the row — SPA navigation, no full
+  // reload; fall back to a hard navigation when the row isn't in the list
+  // (scrolled out of Facebook's virtualized list, or a fresh window).
+  window.__carrierOpenThread = (href) => {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    if (!m) return false;
+    for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+      const am = (a.getAttribute("href") || "").match(/\/t\/(\d+)/);
+      if (am && am[1] === m[1]) {
+        a.click();
+        return true;
+      }
+    }
+    location.href = "https://www.facebook.com/messages/t/" + m[1] + "/";
+    return true;
+  };
+
   /* ------------------ Toggle conversation information ------------------- */
   // Click Messenger's own conversation-info ("ⓘ") button in the open thread's
   // header so the native details sidebar shows/hides. Invoked from the View menu
