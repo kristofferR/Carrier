@@ -30,6 +30,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
+# The `log` macros behind tauri-plugin-log; failures that used to vanish into
+# `let _ =` / eprintln! go through these so release builds capture them.
+log = "0.4"
 # New-message notifications are built natively (not via the notification plugin)
 # so the sender's avatar survives: the plugin drops images on desktop, whereas
 # notify-rust attaches them (a thumbnail on macOS, the icon on Linux/Windows).

@@ -564,6 +564,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "dark-light",
+ "log",
  "mac-notification-sys",
  "notify-rust",
  "objc2",

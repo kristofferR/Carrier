@@ -97,6 +97,9 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - **Settings window** (<kbd>F3</kbd>) — theme, unread badge, hide names &
   avatars, system emoji, menu-bar mode, always-on-top, tray, start-to-tray, start
   on login, hide-on-close, spell-check, and experimental multi-window.
+- **Diagnostics log** — warnings and page-integration failures (e.g. a Messenger
+  markup change breaking a feature) are logged to a file: **Settings → Advanced
+  → Open log folder**.
 
 ## Keyboard shortcuts
 

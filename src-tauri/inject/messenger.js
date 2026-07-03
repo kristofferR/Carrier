@@ -78,12 +78,81 @@
   // by the capability ACL) but NOT the app's own custom commands. So page
   // features route through plugins, matching how the upstream app works.
   const openUrl = (url) =>
-    invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() => {});
+    invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() =>
+      diag("ipc.open-url", "opener invoke failed"),
+    );
 
   // Expose zoom controls so the native menu (View ▸ Zoom) can drive them.
   window.__carrierZoomIn = zoomIn;
   window.__carrierZoomOut = zoomOut;
   window.__carrierZoomReset = zoomReset;
+
+  /* ----------------------------- Diagnostics ---------------------------- */
+  // Every page feature hangs off Facebook's unstable DOM, and failures used to
+  // vanish into empty `catch {}` blocks — when Messenger shipped new markup a
+  // feature just silently died. `diag()` reports failures to the native log
+  // (Settings → Advanced → Open log folder) so field breakage is visible, and
+  // mirrors them to the console when `localStorage.__carrier_debug = "1"`.
+  // Reports carry only Carrier's own strings (selector names, counts) — never
+  // message text, names, or URLs.
+  const diag = (() => {
+    const RATE_MS = 60_000; // at most one report per key per minute
+    const lastSent = new Map();
+    return (key, msg) => {
+      try {
+        const now = Date.now();
+        if (now - (lastSent.get(key) || 0) < RATE_MS) return;
+        lastSent.set(key, now);
+        try {
+          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
+        } catch (_) {}
+        invoke("plugin:event|emit", {
+          event: "carrier:diag",
+          payload: { key: String(key), msg: String(msg) },
+        })?.catch?.(() => {});
+      } catch (_) {}
+    };
+  })();
+
+  // The selectors the core features stand on. If one goes dry while a
+  // logged-in Messenger page is up, the matching feature is broken — report it
+  // and tell the user once, instead of failing silently for weeks.
+  const WATCHED_SELECTORS = [
+    // Conversation list links: Cmd/Ctrl+1–9, unread-conversations badge,
+    // recent threads, hide-names blur.
+    { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },
+    // The conversation pane: media viewer, hide-names header blur.
+    { key: "main-region", sel: '[role="main"]' },
+  ];
+  (function selectorHealth() {
+    if (!window.__TAURI_INTERNALS__) return;
+    let warnedUser = false;
+    const misses = new Map();
+    const check = () => {
+      // Only a logged-in Messenger view is expected to match; skip the login
+      // page, checkpoints, and mid-reload states.
+      if (!location.pathname.startsWith("/messages")) return;
+      if (document.querySelector('input[name="pass"]')) return;
+      for (const { key, sel } of WATCHED_SELECTORS) {
+        if (document.querySelector(sel)) {
+          misses.set(key, 0);
+          continue;
+        }
+        // Two consecutive dry checks, so a slow render can't false-positive.
+        const n = (misses.get(key) || 0) + 1;
+        misses.set(key, n);
+        if (n < 2) continue;
+        diag("selector." + key, "core selector matched nothing on a logged-in Messenger page");
+        if (!warnedUser) {
+          warnedUser = true;
+          toast("A Messenger update may have broken part of Carrier — check for updates (F2).");
+        }
+      }
+    };
+    // First check once the page has had time to render, then keep watch.
+    setTimeout(check, 45_000);
+    setInterval(check, 300_000);
+  })();
 
   /* ----------------------- Function-key shortcuts ----------------------- */
   // F2 check for updates · F3 settings · F5 reload (parity with messenger-next).
@@ -390,7 +459,7 @@
     // firing them; this also flips on the OS-level grant the native side needs.
     invoke("plugin:notification|is_permission_granted")
       ?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))
-      ?.catch?.(() => {});
+      ?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
 
     // Render the sender's avatar — Facebook puts its (remote fbcdn) URL on the
     // Notification's `icon` — to a small PNG data URL, so the native side can
@@ -475,7 +544,7 @@
               body: hidePreview ? "New message" : String(opts.body || ""),
               icon,
             },
-          })?.catch?.(() => {});
+          })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
         });
       }
       // Nudge the auto-refresh so the conversation view catches up even when
@@ -617,8 +686,12 @@
       last = n;
       // NB: the command's argument is `value` (the Tauri `setter!` macro names
       // it that), not `count` — passing `count` silently clears the badge.
-      invoke("plugin:window|set_badge_count", { value: n > 0 ? n : null })?.catch?.(() => {});
-      invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(() => {});
+      invoke("plugin:window|set_badge_count", { value: n > 0 ? n : null })?.catch?.(() =>
+        diag("badge.set", "set_badge_count invoke failed"),
+      );
+      invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(() =>
+        diag("badge.emit", "carrier:unread emit failed"),
+      );
     };
 
     // `force` re-applies even when the count is unchanged — used for the initial
