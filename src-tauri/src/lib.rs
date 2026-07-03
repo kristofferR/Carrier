@@ -129,6 +129,9 @@ struct Settings {
     hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     system_emoji: bool,
+    /// Block Facebook's analytics/logging requests (banzai, quick metrics,
+    /// error reporting) in the page. Never touches messaging endpoints.
+    block_telemetry: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +152,7 @@ impl Default for Settings {
             hide_notification_preview: false,
             hide_names_avatars: false,
             system_emoji: false,
+            block_telemetry: true,
         }
     }
 }

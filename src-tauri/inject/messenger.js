@@ -418,6 +418,119 @@
     document.addEventListener("DOMContentLoaded", applySpellcheck);
   else applySpellcheck();
 
+  /* ------------------------- Telemetry blocking ------------------------- */
+  // Short-circuit Facebook's pure analytics/logging requests before they hit
+  // the network (Settings → Block Facebook telemetry). Messenger batches
+  // Banzai/Falco/QPL events into POSTs every few seconds, forever — blocking
+  // them cuts constant background network + CPU chatter. This runs at
+  // document-start, so fetch/XHR/sendBeacon are wrapped before any Facebook
+  // script captures them (same trick as the Notification wrapper below).
+  // The setting is consulted per call, so toggling applies without a reload.
+  //
+  // The blocklist is anchored path prefixes matching EasyPrivacy's Facebook
+  // filters — pure logging sinks only. NEVER add broad rules here: /api/graphql
+  // (every messaging op), /ajax/bootloader-endpoint (lazy JS chunks — blocking
+  // it white-screens), /ajax/bulk-route-definitions, /ajax/mercury/*,
+  // /ajax/dtsg*, the edge-chat/gateway MQTT websockets, and rupload.facebook.com
+  // (attachment uploads) must all stay reachable. Known gaps, accepted: worker/
+  // service-worker-originated logs, <img> pixels, and telemetry riding inside
+  // /api/graphql mutations.
+  (function blockTelemetry() {
+    const BLOCK_RE = new RegExp(
+      [
+        "^/ajax/bz(/|$)", // Banzai batch logging — the main telemetry firehose
+        "^/a/bz(/|$)", // newer short Banzai alias
+        "^/ajax/bnzai(/|$)", // legacy Banzai path
+        "^/ajax/qm(\\.php)?(/|$)", // Quick Metrics performance beacons
+        "^/common/scribe_endpoint(\\.php)?$", // legacy Scribe logging sink
+        "^/security/hsts-pixel\\.gif$", // HSTS beacon
+        "^/tr(/|$)", // Meta Pixel
+        "^/ajax/error/", // browser JS-error reporting
+      ].join("|"),
+    );
+    const on = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const shouldBlock = (raw) => {
+      if (!on()) return false;
+      let u;
+      try {
+        u = new URL(raw, location.href);
+      } catch (_) {
+        return false; // fail open — never block what we can't classify
+      }
+      if (!/(^|\.)(facebook\.com|messenger\.com)$/.test(u.hostname)) return false;
+      if (u.hostname === "pixel.facebook.com") return true;
+      return BLOCK_RE.test(u.pathname);
+    };
+
+    try {
+      const origFetch = window.fetch;
+      window.fetch = function (input) {
+        try {
+          const raw = typeof input === "string" ? input : (input && input.url) || String(input);
+          if (raw && shouldBlock(raw)) return Promise.resolve(new Response(null, { status: 204 }));
+        } catch (_) {}
+        return origFetch.apply(this, arguments);
+      };
+    } catch (_) {}
+
+    try {
+      const proto = XMLHttpRequest.prototype;
+      const origOpen = proto.open;
+      const origSend = proto.send;
+      proto.open = function (method, url) {
+        try {
+          this.__carrierBlocked = shouldBlock(url);
+        } catch (_) {
+          this.__carrierBlocked = false;
+        }
+        // Always run the native open, even when blocking: a skipped open leaves
+        // the XHR UNSENT and Facebook's setRequestHeader() calls would throw.
+        return origOpen.apply(this, arguments);
+      };
+      proto.send = function () {
+        if (this.__carrierBlocked && on()) {
+          // Skip the network and synthesize a clean empty 200 — Banzai persists
+          // unsent batches and retries, so a silently-dropped request would
+          // just make it queue and re-send. Own data properties shadow the
+          // prototype accessors; async dispatch matches real XHR timing.
+          const xhr = this;
+          setTimeout(() => {
+            try {
+              for (const [k, v] of [
+                ["readyState", 4],
+                ["status", 200],
+                ["statusText", "OK"],
+                ["responseText", ""],
+                ["response", ""],
+                ["responseURL", ""],
+              ]) {
+                Object.defineProperty(xhr, k, { value: v, configurable: true });
+              }
+              xhr.dispatchEvent(new Event("readystatechange"));
+              xhr.dispatchEvent(new ProgressEvent("load"));
+              xhr.dispatchEvent(new ProgressEvent("loadend"));
+            } catch (_) {}
+          }, 0);
+          return;
+        }
+        return origSend.apply(this, arguments);
+      };
+    } catch (_) {}
+
+    try {
+      // Patch the prototype so captures like sendBeacon.bind(navigator) made
+      // after injection still go through us; .apply keeps the receiver (a bare
+      // call would throw Illegal invocation in WebKit).
+      const origBeacon = Navigator.prototype.sendBeacon;
+      Navigator.prototype.sendBeacon = function (url) {
+        try {
+          if (shouldBlock(url)) return true; // "queued" — callers never see a response anyway
+        } catch (_) {}
+        return origBeacon.apply(this, arguments);
+      };
+    } catch (_) {}
+  })();
+
   /* --------------------- Native message notifications ------------------- */
   // Bridge the page's Web Notification API to native OS notifications so new
   // messages notify you even when Carrier is in the background.
