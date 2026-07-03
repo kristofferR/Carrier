@@ -329,17 +329,54 @@
     root.querySelectorAll?.("a[download][target]").forEach(stripDlTarget);
   };
   sweepDlAnchors(document.documentElement);
-  new MutationObserver((muts) => {
+
+  // One shared document-wide observer runs every registered added-node sweep
+  // (download anchors here, spellcheck below), debounced over a queue of added
+  // roots so Facebook's constant DOM churn costs one batched pass instead of a
+  // sweep per mutation record. The `target`/`download` *attribute* branch stays
+  // synchronous: a debounce there would leave a re-targeted anchor clickable,
+  // and stripDlTarget is a cheap match, no querySelectorAll. While the window
+  // is hidden nothing observed here is user-reachable (no clicks, no typing),
+  // so the observer disconnects entirely and a full re-sweep on show catches up.
+  const addedNodeSweeps = [];
+  const queuedSweepRoots = new Set();
+  let sweepTimer = 0;
+  const runSweeps = () => {
+    sweepTimer = 0;
+    const roots = [...queuedSweepRoots];
+    queuedSweepRoots.clear();
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      for (const fn of addedNodeSweeps) fn(root);
+    }
+  };
+  const sweepObserver = new MutationObserver((muts) => {
     for (const m of muts) {
       if (m.type === "attributes") stripDlTarget(m.target);
-      else for (const n of m.addedNodes) if (n.nodeType === 1) sweepDlAnchors(n);
+      else for (const n of m.addedNodes) if (n.nodeType === 1) queuedSweepRoots.add(n);
     }
-  }).observe(document.documentElement, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["target", "download"],
+    if (!sweepTimer && queuedSweepRoots.size) sweepTimer = setTimeout(runSweeps, 50);
   });
+  const observeSweeps = () =>
+    sweepObserver.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["target", "download"],
+    });
+  observeSweeps();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      sweepObserver.disconnect();
+      clearTimeout(sweepTimer);
+      sweepTimer = 0;
+      queuedSweepRoots.clear();
+    } else {
+      observeSweeps();
+      for (const fn of addedNodeSweeps) fn(document.documentElement);
+    }
+  });
+  addedNodeSweeps.push(sweepDlAnchors);
   document.addEventListener(
     "click",
     (e) => {
@@ -364,16 +401,16 @@
   }
   function applySpellcheck() {
     applySpellcheckNow();
-    new MutationObserver((muts) => {
+    // New editable surfaces are caught by the shared added-node sweep above.
+    addedNodeSweeps.push((root) => {
       const on = window.__CARRIER_SETTINGS__?.spellcheck !== false;
-      const set = (el) => el.setAttribute?.("spellcheck", on ? "true" : "false");
-      for (const m of muts)
-        for (const n of m.addedNodes)
-          if (n.nodeType === 1) {
-            if (n.matches?.(SPELL_SEL)) set(n);
-            n.querySelectorAll?.(SPELL_SEL).forEach(set);
-          }
-    }).observe(document.documentElement, { childList: true, subtree: true });
+      const want = on ? "true" : "false";
+      const set = (el) => {
+        if (el.getAttribute?.("spellcheck") !== want) el.setAttribute?.("spellcheck", want);
+      };
+      if (root.matches?.(SPELL_SEL)) set(root);
+      root.querySelectorAll?.(SPELL_SEL).forEach(set);
+    });
   }
   // Re-apply when the Rust side pushes updated settings at runtime (no reload).
   window.addEventListener("carrier:settings", applySpellcheckNow);
@@ -503,6 +540,14 @@
   // new-message notification, plus a periodic refresh while in the background.
   // A reload is deferred while a message is half-typed so a draft is never lost.
   (function autoRefresh() {
+    // A full reload re-boots the whole Facebook SPA — seconds of CPU — so gate
+    // it on *staleness*, not a fixed cadence. The page counts as fresh while
+    // focused (live sync works there) and right after a reload; only once it
+    // has been unfocused long enough does the periodic refresh kick in. The
+    // reload doubles as a memory bound: it resets Facebook's ever-growing heap.
+    const PERIODIC_MS = 15 * 60 * 1000; // reload after this long unfocused
+    const NOTIF_GAP_MS = 5 * 60 * 1000; // floor between notification reloads
+    let lastFresh = Date.now();
     let pending = false;
     let timer = null;
     const composerHasText = () => {
@@ -521,6 +566,7 @@
         return;
       }
       pending = false;
+      lastFresh = Date.now();
       location.reload();
     };
     const schedule = (delay) => {
@@ -531,14 +577,21 @@
     // Reload shortly after a new-message notification, but only while the window
     // is unfocused — that's when Facebook's live sync throttles and the view
     // goes stale. When you're actively reading, live sync works, so we leave the
-    // page alone. (Debounced to batch a burst of notifications into one reload.)
+    // page alone. (Debounced to batch a burst of notifications into one reload;
+    // the gap floor keeps a chatty thread from reloading every few minutes.)
     window.__carrierOnNotification = () => {
-      if (!document.hasFocus()) schedule(4000);
+      if (!document.hasFocus() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4000);
     };
-    // Regular refresh so an unfocused, stale window keeps catching up.
+    // Regular refresh so an unfocused, stale window keeps catching up. The
+    // tradeoff: a badge cleared by reading on another device can take up to
+    // PERIODIC_MS to clear while hidden; it corrects instantly on focus.
     setInterval(() => {
-      if (!document.hasFocus()) schedule(2000);
-    }, 4 * 60 * 1000);
+      if (document.hasFocus()) {
+        lastFresh = Date.now();
+        return;
+      }
+      if (Date.now() - lastFresh >= PERIODIC_MS) schedule(2000);
+    }, 60 * 1000);
   })();
 
   /* --------------------------- Force theme ------------------------------ */
@@ -676,7 +729,20 @@
       waitForHead.observe(document.documentElement, { childList: true, subtree: true });
     }
     window.addEventListener("carrier:settings", () => apply(true));
-    setInterval(() => apply(false), 5000);
+    // Fallback poll behind the title observer above (which stays armed while
+    // hidden — badge freshness in the background is the feature). Poll slowly
+    // when the window is hidden, snappily when visible, and catch up the moment
+    // it's shown again.
+    let pollTimer = null;
+    const startPoll = () => {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(() => apply(false), document.hidden ? 60000 : 5000);
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) apply(false);
+    });
+    startPoll();
     apply(true);
     setTimeout(() => apply(true), 1500);
     setTimeout(() => apply(true), 4000);
@@ -1026,13 +1092,25 @@
       }
     }
 
+    // scan() is a full-document sweep with forced-layout reads, so cap it at
+    // one pass per SCAN_MIN_GAP_MS instead of every animation frame during DOM
+    // churn (trailing-edge: the last mutation in a burst always gets a scan).
+    // The window where a freshly rendered name can show unblurred is bounded by
+    // the gap; the pure-CSS blur rules in messenger.css don't wait on this scan.
+    // A timeout queued before stop() may still fire — scan() no-ops via on().
+    const SCAN_MIN_GAP_MS = 150;
+    let lastScanAt = 0;
     function schedule() {
       if (suppressMutations || !on() || pending) return;
       pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        scan();
-      });
+      const wait = Math.max(0, SCAN_MIN_GAP_MS - (performance.now() - lastScanAt));
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          pending = false;
+          lastScanAt = performance.now();
+          scan();
+        });
+      }, wait);
     }
 
     function start() {
@@ -1146,6 +1224,14 @@
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
+      // While the window is hidden, rAF never fires to drain the queue but
+      // mutations keep arriving — without a cap the Set would retain every
+      // mutated (often since-detached) node until the window is shown again.
+      // Past the cap, collapse to one full-document rescan on the next drain.
+      if (queuedRoots.size > 50) {
+        queuedRoots.clear();
+        queuedRoots.add(document.documentElement);
+      }
       if (pending) return;
       pending = true;
       requestAnimationFrame(() => {
@@ -1424,6 +1510,7 @@
     const LANGUAGES = "data-carrier-login-languages";
     const LANGUAGE_LINK = "data-carrier-login-language-link";
     let scheduled = false;
+    let tidyObserver = null;
 
     const prefersDark = () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     // Follow the forced theme (Settings → Theme) when set, else the system. FB's
@@ -1621,6 +1708,21 @@
             html.removeAttribute("data-carrier-darkswap");
           }
         }
+        // Once confidently logged in (auth cookie set, not on a checkpoint/2FA
+        // interstitial, page fully loaded), stop watching: this observer fires
+        // on every DOM mutation forever otherwise, and login surfaces can only
+        // come back via a logout — a full navigation that re-injects and
+        // re-arms everything.
+        if (
+          tidyObserver &&
+          /\bc_user=/.test(document.cookie) &&
+          !html.hasAttribute("data-carrier-authtext") &&
+          document.readyState === "complete"
+        ) {
+          tidyObserver.disconnect();
+          tidyObserver = null;
+          window.removeEventListener("resize", schedule);
+        }
         return;
       }
       html.setAttribute("data-carrier-login", "");
@@ -1743,7 +1845,8 @@
       });
     };
     schedule();
-    new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    tidyObserver = new MutationObserver(schedule);
+    tidyObserver.observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener("carrier:settings", schedule);
     // The language strip can mount slightly after our first pass, so re-run on
     // resize and a couple of short delays after load (cheap; tidy() no-ops off
