@@ -108,12 +108,14 @@
           <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
         </svg>
       </div>
-      <h1 id="title">Checking Messenger</h1>
-      <p id="message">Carrier is checking whether Facebook Messenger is reachable.</p>
+      <div role="status" aria-live="polite" aria-atomic="true">
+        <h1 id="title">Checking Messenger</h1>
+        <p id="message">Carrier is checking whether Facebook Messenger is reachable.</p>
+      </div>
       <div class="actions">
         <button id="retry" type="button" disabled>Retry</button>
       </div>
-      <pre id="detail"></pre>
+      <pre id="detail" aria-live="polite"></pre>
     </main>
 
     <script>
@@ -134,7 +136,7 @@
           detail.textContent = "";
           detail.style.display = "none";
         }
-        retry.disabled = status.state === "checking" || status.state === "loading";
+        retry.disabled = status.state === "checking";
       }
 
       async function connect() {
