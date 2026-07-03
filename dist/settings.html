@@ -113,7 +113,7 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["theme", "hide_names_avatars", "system_emoji", "always_on_top", "hide_on_close", "spellcheck"] },
+          fields: ["theme", "zoom", "hide_names_avatars", "system_emoji", "always_on_top", "hide_on_close", "spellcheck"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: ["show_tray", "start_to_tray", "autostart", "menu_bar_only"] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
@@ -172,8 +172,10 @@
         }
       }
 
-      // Build a <select> row bound to a string setting.
-      function selectRow(key, fallback, options, label, hint, disabled) {
+      // Build a <select> row bound to a setting. `parse` converts the chosen
+      // option value before persisting (e.g. Number for the numeric zoom);
+      // string settings omit it.
+      function selectRow(key, fallback, options, label, hint, disabled, parse) {
         const row = document.createElement("label");
         row.className = "row";
         const sel = document.createElement("select");
@@ -181,11 +183,11 @@
           const o = document.createElement("option");
           o.value = val;
           o.textContent = txt;
-          if ((settings[key] || fallback) === val) o.selected = true;
+          if (String(settings[key] || fallback) === val) o.selected = true;
           sel.appendChild(o);
         }
         sel.disabled = !!disabled;
-        sel.onchange = () => persist(key, sel.value);
+        sel.onchange = () => persist(key, parse ? parse(sel.value) : sel.value);
         const text = document.createElement("div");
         text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
         row.append(sel, text);
@@ -198,6 +200,24 @@
           [["system", "System"], ["light", "Light"], ["dark", "Dark"]],
           "Theme", "Force the Messenger theme, or follow your system.",
           false,
+        );
+      }
+
+      // Page zoom — the same 10% steps as the Cmd/Ctrl+−/=/0 keyboard zoom
+      // (30–200%). A hand-edited off-step value is shown as an extra option so
+      // the select never displays a wrong level.
+      function zoomRow() {
+        const options = [];
+        for (let z = 30; z <= 200; z += 10) options.push([String(z), z + "%"]);
+        const current = Number(settings.zoom) || 100;
+        if (!options.some(([v]) => Number(v) === current)) {
+          options.push([String(current), current + "%"]);
+          options.sort((a, b) => Number(a[0]) - Number(b[0]));
+        }
+        return selectRow(
+          "zoom", 100, options,
+          "Page zoom", "Scale the Messenger page (Cmd/Ctrl + − / = / 0 also works).",
+          false, Number,
         );
       }
 
@@ -286,8 +306,8 @@
         document.getElementById("rows").setAttribute("aria-labelledby", "tab-" + activeTab);
       }
 
-      // Pseudo-fields ("theme", "badge_mode") are <select> rows; everything else is a checkbox.
-      const CUSTOM_ROWS = { theme: themeRow, badge_mode: badgeModeRow };
+      // Pseudo-fields ("theme", "zoom", "badge_mode") are <select> rows; everything else is a checkbox.
+      const CUSTOM_ROWS = { theme: themeRow, zoom: zoomRow, badge_mode: badgeModeRow };
 
       function renderBody() {
         const root = document.getElementById("rows");

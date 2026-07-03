@@ -13,11 +13,19 @@
   if (window.top !== window.self) return;
 
   /* ----------------------------- Page zoom ------------------------------ */
+  // The persisted zoom level lives in the Rust Settings struct (source of
+  // truth) and reaches the page via __CARRIER_SETTINGS__ / carrier:settings.
+  // Keyboard/menu zoom reports its changes back with a carrier:zoom event so
+  // Rust can persist them. The old localStorage key is only kept as a
+  // migration source for pre-settings installs (see initZoom below).
   const ZOOM_KEY = "carrier:zoom";
   const isWindows = /windows/i.test(navigator.userAgent);
+  const clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
-  function applyZoom(percent) {
-    const clamped = Math.min(200, Math.max(30, percent));
+  let zoomLevel = 100; // the level currently applied to the page
+
+  function applyZoom(percent, fromSettings) {
+    const clamped = clampZoom(percent);
     if (isWindows) {
       // WebView2 ignores `zoom`; fall back to a transform.
       const scale = clamped / 100;
@@ -29,12 +37,30 @@
       document.documentElement.style.zoom = `${clamped}%`;
       window.dispatchEvent(new Event("resize"));
     }
-    localStorage.setItem(ZOOM_KEY, String(clamped));
+    const changed = clamped !== zoomLevel;
+    zoomLevel = clamped;
+    // Keep the page-side settings snapshot and its localStorage cache in step,
+    // so a Facebook-triggered reload (which re-runs the init script off that
+    // cache) restores the same level without waiting for a settings push.
+    try {
+      localStorage.setItem(ZOOM_KEY, String(clamped));
+      if (window.__CARRIER_SETTINGS__) window.__CARRIER_SETTINGS__.zoom = clamped;
+      const cached = JSON.parse(localStorage.getItem("__carrier_settings") || "null");
+      if (cached && typeof cached === "object" && !Array.isArray(cached)) {
+        cached.zoom = clamped;
+        localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+      }
+    } catch (_) {}
+    // Report a local change (keyboard / View menu) so Rust persists it. Never
+    // re-emit for a settings push — Rust already has that value, and echoing
+    // it back could feed a loop.
+    if (changed && !fromSettings) {
+      invoke("plugin:event|emit", { event: "carrier:zoom", payload: clamped })?.catch?.(() => {});
+    }
   }
 
-  const currentZoom = () => parseInt(localStorage.getItem(ZOOM_KEY) || "100", 10);
-  const zoomIn = () => applyZoom(currentZoom() + 10);
-  const zoomOut = () => applyZoom(currentZoom() - 10);
+  const zoomIn = () => applyZoom(zoomLevel + 10);
+  const zoomOut = () => applyZoom(zoomLevel - 10);
   const zoomReset = () => applyZoom(100);
 
   /* --------------------------- Keyboard shortcuts ----------------------- */
@@ -84,6 +110,32 @@
   window.__carrierZoomIn = zoomIn;
   window.__carrierZoomOut = zoomOut;
   window.__carrierZoomReset = zoomReset;
+
+  // Follow the zoom in settings: applied at load and whenever Rust pushes a
+  // settings change (e.g. the Settings window's Page zoom select).
+  function syncZoomFromSettings() {
+    const s = window.__CARRIER_SETTINGS__ || {};
+    const z = typeof s.zoom === "number" && isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
+    if (z !== zoomLevel) applyZoom(z, true);
+  }
+
+  function initZoom() {
+    const s = window.__CARRIER_SETTINGS__ || {};
+    let z = typeof s.zoom === "number" && isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
+    // Migrate pre-settings installs: keyboard zoom used to persist only to
+    // localStorage. If settings still hold the default but the old key has a
+    // level, adopt it and report it once so it lands in settings.json.
+    const stored = parseInt(localStorage.getItem(ZOOM_KEY) || "", 10);
+    if (z === 100 && Number.isFinite(stored) && clampZoom(stored) !== 100) {
+      z = clampZoom(stored);
+      invoke("plugin:event|emit", { event: "carrier:zoom", payload: z })?.catch?.(() => {});
+    }
+    if (z !== zoomLevel) applyZoom(z, true);
+    window.addEventListener("carrier:settings", syncZoomFromSettings);
+  }
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", initZoom, { once: true });
+  else initZoom();
 
   /* ----------------------- Function-key shortcuts ----------------------- */
   // F2 check for updates · F3 settings · F5 reload (parity with messenger-next).

@@ -94,9 +94,10 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
   (wheel to zoom, drag or arrow keys to pan, <kbd>Esc</kbd> to close).
 - **Calls work** — camera/microphone are requested for Messenger voice & video.
 - **Remembers its window** — size and position persist between launches.
-- **Settings window** (<kbd>F3</kbd>) — theme, unread badge, hide names &
-  avatars, system emoji, menu-bar mode, always-on-top, tray, start-to-tray, start
-  on login, hide-on-close, spell-check, and experimental multi-window.
+- **Settings window** (<kbd>F3</kbd>) — theme, page zoom, unread badge, hide
+  names & avatars, system emoji, menu-bar mode, always-on-top, tray,
+  start-to-tray, start on login, hide-on-close, spell-check, and experimental
+  multi-window.
 
 ## Keyboard shortcuts
 
@@ -106,6 +107,7 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - <kbd>F2</kbd> check for updates &middot; <kbd>F3</kbd> settings &middot;
   <kbd>F5</kbd>/<kbd>Cmd-R</kbd> reload
 - <kbd>Cmd</kbd>+<kbd>-</kbd>/<kbd>=</kbd>/<kbd>0</kbd> — zoom out / in / reset
+  (also **Settings → Page zoom**; the level persists across restarts)
 
 ## Install
 
