@@ -37,6 +37,9 @@ tauri-plugin-log = "2"
 # build cost. `base64` decodes the avatar the page hands us as a PNG data URL.
 notify-rust = "4"
 base64 = "0.22"
+# Local wall-clock time for the do-not-disturb schedule (std only exposes UTC).
+# Already in the tree transitively, so it adds no extra build cost.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
