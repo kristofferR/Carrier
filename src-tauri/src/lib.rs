@@ -138,12 +138,32 @@ struct Settings {
     hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     system_emoji: bool,
+    /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
+    zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
     /// anywhere. Off by default so it can't clash with other apps' shortcuts.
     global_hotkey: bool,
     /// Block Facebook's analytics/logging requests (banzai, quick metrics,
     /// error reporting) in the page. Never touches messaging endpoints.
     block_telemetry: bool,
+}
+
+/// Valid page-zoom range in percent (matches the keyboard zoom in
+/// `inject/messenger.js`).
+const ZOOM_MIN: i32 = 30;
+const ZOOM_MAX: i32 = 200;
+
+fn clamp_zoom(zoom: i32) -> i32 {
+    zoom.clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+impl Settings {
+    /// Clamp out-of-range values (settings.json is user-editable, and the zoom
+    /// event payload comes from the remote-origin page).
+    fn sanitized(mut self) -> Self {
+        self.zoom = clamp_zoom(self.zoom);
+        self
+    }
 }
 
 impl Default for Settings {
@@ -167,6 +187,7 @@ impl Default for Settings {
             dnd_end: String::new(),
             hide_names_avatars: false,
             system_emoji: false,
+            zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
         }
@@ -196,8 +217,9 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 fn load_settings(app: &tauri::AppHandle) -> Settings {
     settings_file(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
         .unwrap_or_default()
+        .sanitized()
 }
 
 /// Read persisted settings directly from disk before the Tauri app is built
@@ -206,8 +228,9 @@ fn load_settings_early() -> Settings {
     dirs_config_dir()
         .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
         .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
         .unwrap_or_default()
+        .sanitized()
 }
 
 fn dirs_config_dir() -> Option<std::path::PathBuf> {
@@ -1352,7 +1375,7 @@ fn store_settings(
         let prev = state.settings.lock().unwrap();
         (prev.theme.clone(), prev.autostart, prev.global_hotkey)
     };
-    let mut effective = new.clone();
+    let mut effective = new.clone().sanitized();
     let mut sync_errors = Vec::new();
 
     if new.autostart != prev_autostart {
@@ -2271,6 +2294,8 @@ fn init_script(settings: &Settings) -> String {
       if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations') {{
         merged.badge_mode = baked.badge_mode;
       }}
+      var mz = Math.round(Number(merged.zoom));
+      merged.zoom = isFinite(mz) ? Math.min({ZOOM_MAX}, Math.max({ZOOM_MIN}, mz)) : baked.zoom;
       window.__CARRIER_SETTINGS__ = merged;
     }} else {{
       window.__CARRIER_SETTINGS__ = baked;
@@ -2821,6 +2846,31 @@ pub fn run() {
                         let _ = tray.set_title(tray_unread_title(&settings, tray_n));
                     }
                 }
+            });
+
+            // Keyboard/menu zoom from the page → persist it in settings so the
+            // Settings window, other Messenger windows, and the next launch pick
+            // it up. The payload comes from the remote-origin page, so treat it
+            // as untrusted: parse, clamp, and ignore junk.
+            let h = app.handle().clone();
+            app.listen_any("carrier:zoom", move |event| {
+                let Ok(zoom) = event.payload().trim().parse::<i32>() else {
+                    return;
+                };
+                let zoom = clamp_zoom(zoom);
+                let state = h.state::<AppState>();
+                let s = {
+                    let mut settings = state.settings.lock().unwrap();
+                    if settings.zoom == zoom {
+                        return;
+                    }
+                    settings.zoom = zoom;
+                    settings.clone()
+                };
+                if let Err(e) = save_settings(&h, &s) {
+                    eprintln!("carrier: failed to save settings: {e}");
+                }
+                apply_settings(&h, &s);
             });
 
             // Recent conversations scraped from the page's chat list → the
@@ -3386,6 +3436,42 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.system_emoji, "system_emoji should default to false");
+        assert_eq!(s.zoom, 100, "zoom should default to 100%");
+    }
+
+    // -----------------------------------------------------------------------
+    // Page zoom clamping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn clamp_zoom_limits_to_valid_range() {
+        assert_eq!(clamp_zoom(100), 100);
+        assert_eq!(clamp_zoom(30), 30);
+        assert_eq!(clamp_zoom(200), 200);
+        assert_eq!(clamp_zoom(10), 30);
+        assert_eq!(clamp_zoom(-50), 30);
+        assert_eq!(clamp_zoom(1000), 200);
+    }
+
+    #[test]
+    fn settings_sanitized_clamps_zoom() {
+        let s = Settings {
+            zoom: 9999,
+            ..Default::default()
+        };
+        assert_eq!(s.sanitized().zoom, 200);
+        let s = Settings {
+            zoom: 0,
+            ..Default::default()
+        };
+        assert_eq!(s.sanitized().zoom, 30);
+    }
+
+    #[test]
+    fn settings_json_missing_zoom_defaults_to_100() {
+        // Pre-existing installs have no `zoom` key in settings.json.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.zoom, 100);
     }
 
     // -----------------------------------------------------------------------
