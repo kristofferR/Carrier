@@ -127,7 +127,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "dnd_start", "dnd_end", "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["block_telemetry", "multi_instance"] },
+          fields: ["block_telemetry", "multi_instance", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -330,6 +330,31 @@
         document.getElementById("rows").setAttribute("aria-labelledby", "tab-" + activeTab);
       }
 
+      // Carrier logs warnings and page-integration failures to a file; this
+      // opens its folder so the log is easy to attach to a bug report.
+      function openLogsRow() {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cursor = "default";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "action";
+        btn.textContent = "Open log folder";
+        btn.onclick = async () => {
+          try {
+            await invoke("open_log_folder");
+          } catch (e) {
+            setStatus("Could not open the log folder.");
+            console.error(e);
+          }
+        };
+        const text = document.createElement("div");
+        text.innerHTML =
+          '<div class="label">Diagnostics log</div><div class="hint">Warnings and page-integration failures are logged here — attach the file to bug reports.</div>';
+        row.append(btn, text);
+        return row;
+      }
+
       // Pseudo-fields ("theme", "zoom", "badge_mode") are <select> rows, the DND
       // bounds are <input type="time"> rows; everything else is a checkbox.
       const CUSTOM_ROWS = {
@@ -338,6 +363,7 @@
         badge_mode: badgeModeRow,
         dnd_start: () => timeRow("dnd_start"),
         dnd_end: () => timeRow("dnd_end"),
+        open_logs: openLogsRow,
       };
 
       function renderBody() {

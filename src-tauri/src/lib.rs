@@ -276,7 +276,7 @@ fn schedule_webview_data_clear(app: &tauri::AppHandle) -> Result<(), String> {
     // creating the next webview.
     for (_label, window) in app.webview_windows() {
         if let Err(e) = window.clear_all_browsing_data() {
-            eprintln!("carrier: failed to schedule webview data clear: {e}");
+            log::warn!("failed to schedule webview data clear: {e}");
         }
     }
     Ok(())
@@ -345,10 +345,7 @@ fn clear_pending_webview_data(app: &tauri::AppHandle) {
     for path in webview_data_paths(app) {
         if let Err(e) = remove_path_if_exists(&path) {
             all_removed = false;
-            eprintln!(
-                "carrier: failed to remove webview data path {}: {e}",
-                path.display()
-            );
+            log::error!("failed to remove webview data path {}: {e}", path.display());
         }
     }
 
@@ -358,7 +355,7 @@ fn clear_pending_webview_data(app: &tauri::AppHandle) {
     // cookies/cache behind.
     if all_removed {
         if let Err(e) = std::fs::remove_file(&marker) {
-            eprintln!("carrier: failed to remove clear-cache marker: {e}");
+            log::warn!("failed to remove clear-cache marker: {e}");
         }
     }
 }
@@ -559,7 +556,7 @@ fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) -> Result<(), String> 
 /// changes call [`sync_global_hotkey`] directly so failures can be shown in UI.
 fn apply_global_hotkey(app: &tauri::AppHandle, want: bool) {
     if let Err(e) = sync_global_hotkey(app, want) {
-        eprintln!("carrier: {e}");
+        log::warn!("{e}");
     }
 }
 
@@ -571,10 +568,10 @@ fn reconcile_startup_global_hotkey(app: &tauri::AppHandle, s: &mut Settings) {
         return;
     }
     if let Err(e) = sync_global_hotkey(app, true) {
-        eprintln!("carrier: {e}");
+        log::warn!("{e}");
         s.global_hotkey = false;
         if let Err(save_err) = save_settings(app, s) {
-            eprintln!("carrier: failed to save disabled Global Hotkey setting: {save_err}");
+            log::error!("failed to save disabled Global Hotkey setting: {save_err}");
         }
     }
 }
@@ -1355,6 +1352,60 @@ fn unique_path(p: std::path::PathBuf) -> std::path::PathBuf {
 }
 
 // ---------------------------------------------------------------------------
+// Page diagnostics
+// ---------------------------------------------------------------------------
+
+/// A diagnostic report from the injected page script (`carrier:diag`): which
+/// feature broke and a short description. The page only ever sends Carrier's
+/// own strings (selector names, failure kinds) — never page content.
+#[derive(Deserialize)]
+struct DiagMsg {
+    key: String,
+    msg: String,
+}
+
+fn parse_diag_payload(payload: &str) -> Option<DiagMsg> {
+    if payload.len() > DIAG_RAW_PAYLOAD_MAX_LEN {
+        return None;
+    }
+    serde_json::from_str::<DiagMsg>(payload).ok()
+}
+
+/// Reports come from the remote Facebook origin, so treat them as untrusted:
+/// keep printable characters only and cap the length before logging.
+fn sanitize_diag(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(DIAG_MAX_LEN)
+        .collect();
+    cleaned.trim().to_string()
+}
+
+/// Longest diagnostic string that makes it into the log.
+const DIAG_MAX_LEN: usize = 160;
+
+/// Longest raw JSON payload accepted before deserialization.
+const DIAG_RAW_PAYLOAD_MAX_LEN: usize = DIAG_MAX_LEN * 8;
+
+/// Cap page diagnostics per session so a misbehaving (or malicious) page
+/// script can't grow the log without bound. The page already rate-limits to
+/// one report per key per minute; this is the backstop.
+const DIAG_SESSION_CAP: u32 = 200;
+
+/// Keep the app log bounded even if page diagnostics keep reporting over time.
+const LOG_FILE_MAX_BYTES: u128 = 5 * 1024 * 1024;
+
+/// Open the folder holding Carrier's log file, for attaching to bug reports.
+/// Called from the (local-origin) Settings window.
+#[tauri::command]
+fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open::that_detached(&dir).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
@@ -1480,15 +1531,15 @@ async fn connect_messenger(window: WebviewWindow) -> MessengerLoadStatus {
         Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
         Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
         Ok(Ok(Err(error))) => {
-            eprintln!("carrier: Messenger DNS preflight failed ({error:?}); navigating anyway");
+            log::warn!("Messenger DNS preflight failed ({error:?}); navigating anyway");
             navigate_to_messenger(&window)
         }
         Ok(Err(e)) => {
-            eprintln!("carrier: Messenger DNS preflight task failed: {e}; navigating anyway");
+            log::warn!("Messenger DNS preflight task failed: {e}; navigating anyway");
             navigate_to_messenger(&window)
         }
         Err(_) => {
-            eprintln!("carrier: Messenger DNS preflight timed out; navigating anyway");
+            log::warn!("Messenger DNS preflight timed out; navigating anyway");
             navigate_to_messenger(&window)
         }
     }
@@ -2181,7 +2232,7 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
         (prev_theme, settings.clone())
     };
     if let Err(e) = save_settings(app, &s) {
-        eprintln!("carrier: failed to save settings: {e}");
+        log::error!("failed to save settings: {e}");
     }
     apply_settings(app, &s);
     // macOS needs a window rebuild to re-theme the title bar; other platforms
@@ -2248,7 +2299,7 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         }
         "clear_cache" => match schedule_webview_data_clear(app) {
             Ok(()) => app.restart(),
-            Err(e) => eprintln!("carrier: failed to schedule cache clear: {e}"),
+            Err(e) => log::warn!("failed to schedule cache clear: {e}"),
         },
         "always_on_top" => mutate_settings(app, |s| s.always_on_top = !s.always_on_top),
         "devtools" =>
@@ -2754,7 +2805,24 @@ pub fn run() {
                 .with_denylist(&["settings"]) // fixed-size dialog; don't persist its geometry
                 .build(),
         )
-        .plugin(tauri_plugin_log::Builder::new().build())
+        // Warnings and errors land in a file under the app log dir (surfaced
+        // via Settings → Advanced → Open log folder) besides stderr. Global
+        // level Warn keeps dependency noise out; Carrier's own info lines
+        // still make it through.
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
+                ])
+                .level(log::LevelFilter::Warn)
+                .level_for("carrier_lib", log::LevelFilter::Info)
+                .max_file_size(LOG_FILE_MAX_BYTES)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .build(),
+        )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
             tray: Mutex::new(None),
@@ -2769,7 +2837,8 @@ pub fn run() {
             set_settings,
             reset_settings,
             check_for_updates,
-            connect_messenger
+            connect_messenger,
+            open_log_folder
         ])
         .setup(move |app| {
             clear_pending_webview_data(app.handle());
@@ -2868,7 +2937,7 @@ pub fn run() {
                     settings.clone()
                 };
                 if let Err(e) = save_settings(&h, &s) {
-                    eprintln!("carrier: failed to save settings: {e}");
+                    log::error!("failed to save settings: {e}");
                 }
                 apply_settings(&h, &s);
             });
@@ -2906,6 +2975,27 @@ pub fn run() {
             app.listen_any("carrier:notify", move |event| {
                 if let Ok(msg) = serde_json::from_str::<NotifyMsg>(event.payload()) {
                     show_message_notification(notify_handle.clone(), msg);
+                }
+            });
+
+            // Page diagnostics (`diag()` in messenger.js): selector-health and
+            // IPC failures from the injected script, routed into the log file
+            // so field breakage of the page features is visible in bug reports.
+            let diag_count = std::sync::Arc::new(AtomicUsize::new(0));
+            app.listen_any("carrier:diag", move |event| {
+                let n = diag_count.fetch_add(1, Ordering::Relaxed);
+                if n >= DIAG_SESSION_CAP as usize {
+                    if n == DIAG_SESSION_CAP as usize {
+                        log::warn!("page diagnostics muted for this session (cap reached)");
+                    }
+                    return;
+                }
+                if let Some(d) = parse_diag_payload(event.payload()) {
+                    let key = sanitize_diag(&d.key);
+                    let msg = sanitize_diag(&d.msg);
+                    if !key.is_empty() {
+                        log::warn!("page diagnostic [{key}] {msg}");
+                    }
                 }
             });
 
@@ -2957,6 +3047,40 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_diag_strips_control_characters() {
+        assert_eq!(sanitize_diag("a\nb\tc\x07d"), "abcd");
+    }
+
+    #[test]
+    fn sanitize_diag_truncates_to_cap() {
+        let long = "x".repeat(DIAG_MAX_LEN + 50);
+        assert_eq!(sanitize_diag(&long).chars().count(), DIAG_MAX_LEN);
+    }
+
+    #[test]
+    fn sanitize_diag_trims_and_handles_empty() {
+        assert_eq!(sanitize_diag("  spaced  "), "spaced");
+        assert_eq!(sanitize_diag(""), "");
+        assert_eq!(sanitize_diag("\n\r\t"), "");
+    }
+
+    #[test]
+    fn parse_diag_payload_accepts_small_reports() {
+        let diag = parse_diag_payload(r#"{"key":"selector","msg":"missing"}"#).unwrap();
+        assert_eq!(diag.key, "selector");
+        assert_eq!(diag.msg, "missing");
+    }
+
+    #[test]
+    fn parse_diag_payload_rejects_oversized_reports() {
+        let payload = format!(
+            r#"{{"key":"selector","msg":"{}"}}"#,
+            "x".repeat(DIAG_RAW_PAYLOAD_MAX_LEN)
+        );
+        assert!(parse_diag_payload(&payload).is_none());
+    }
 
     fn u(s: &str) -> Url {
         Url::parse(s).unwrap()

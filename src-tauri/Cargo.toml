@@ -30,6 +30,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
+# The `log` macros behind tauri-plugin-log; failures that used to vanish into
+# `let _ =` / eprintln! go through these so release builds capture them.
+log = "0.4"
 # Global summon hotkey (Settings → Global Hotkey): show/hide Carrier from
 # anywhere. Registered purely from Rust, so it needs no capability entry.
 tauri-plugin-global-shortcut = "2"
