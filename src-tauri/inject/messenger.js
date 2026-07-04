@@ -44,11 +44,21 @@
     // cache) restores the same level without waiting for a settings push.
     try {
       localStorage.setItem(ZOOM_KEY, String(clamped));
-      if (window.__CARRIER_SETTINGS__) window.__CARRIER_SETTINGS__.zoom = clamped;
+      const settings =
+        window.__CARRIER_SETTINGS__ && typeof window.__CARRIER_SETTINGS__ === "object" && !Array.isArray(window.__CARRIER_SETTINGS__)
+          ? window.__CARRIER_SETTINGS__
+          : null;
+      if (settings) settings.zoom = clamped;
       const cached = JSON.parse(localStorage.getItem("__carrier_settings") || "null");
-      if (cached && typeof cached === "object" && !Array.isArray(cached)) {
-        cached.zoom = clamped;
-        localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+      const nextSettings =
+        cached && typeof cached === "object" && !Array.isArray(cached)
+          ? cached
+          : settings
+            ? Object.assign({}, settings)
+            : null;
+      if (nextSettings) {
+        nextSettings.zoom = clamped;
+        localStorage.setItem("__carrier_settings", JSON.stringify(nextSettings));
       }
     } catch (_) {}
     // Report a local change (keyboard / View menu) so Rust persists it. Never

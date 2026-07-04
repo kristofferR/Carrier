@@ -1942,7 +1942,7 @@ fn init_script(settings: &Settings) -> String {
         merged.badge_mode = baked.badge_mode;
       }}
       var mz = Math.round(Number(merged.zoom));
-      merged.zoom = isFinite(mz) ? Math.min(200, Math.max(30, mz)) : baked.zoom;
+      merged.zoom = isFinite(mz) ? Math.min({ZOOM_MAX}, Math.max({ZOOM_MIN}, mz)) : baked.zoom;
       window.__CARRIER_SETTINGS__ = merged;
     }} else {{
       window.__CARRIER_SETTINGS__ = baked;
