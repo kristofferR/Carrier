@@ -1021,6 +1021,13 @@ struct DiagMsg {
     msg: String,
 }
 
+fn parse_diag_payload(payload: &str) -> Option<DiagMsg> {
+    if payload.len() > DIAG_RAW_PAYLOAD_MAX_LEN {
+        return None;
+    }
+    serde_json::from_str::<DiagMsg>(payload).ok()
+}
+
 /// Reports come from the remote Facebook origin, so treat them as untrusted:
 /// keep printable characters only and cap the length before logging.
 fn sanitize_diag(s: &str) -> String {
@@ -1035,10 +1042,16 @@ fn sanitize_diag(s: &str) -> String {
 /// Longest diagnostic string that makes it into the log.
 const DIAG_MAX_LEN: usize = 160;
 
+/// Longest raw JSON payload accepted before deserialization.
+const DIAG_RAW_PAYLOAD_MAX_LEN: usize = DIAG_MAX_LEN * 8;
+
 /// Cap page diagnostics per session so a misbehaving (or malicious) page
 /// script can't grow the log without bound. The page already rate-limits to
 /// one report per key per minute; this is the backstop.
 const DIAG_SESSION_CAP: u32 = 200;
+
+/// Keep the app log bounded even if page diagnostics keep reporting over time.
+const LOG_FILE_MAX_BYTES: u128 = 5 * 1024 * 1024;
 
 /// Open the folder holding Carrier's log file, for attaching to bug reports.
 /// Called from the (local-origin) Settings window.
@@ -2281,6 +2294,8 @@ pub fn run() {
                 ])
                 .level(log::LevelFilter::Warn)
                 .level_for("carrier_lib", log::LevelFilter::Info)
+                .max_file_size(LOG_FILE_MAX_BYTES)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .build(),
         )
         .manage(AppState {
@@ -2401,7 +2416,7 @@ pub fn run() {
                     }
                     return;
                 }
-                if let Ok(d) = serde_json::from_str::<DiagMsg>(event.payload()) {
+                if let Some(d) = parse_diag_payload(event.payload()) {
                     let key = sanitize_diag(&d.key);
                     let msg = sanitize_diag(&d.msg);
                     if !key.is_empty() {
@@ -2472,6 +2487,22 @@ mod tests {
         assert_eq!(sanitize_diag("  spaced  "), "spaced");
         assert_eq!(sanitize_diag(""), "");
         assert_eq!(sanitize_diag("\n\r\t"), "");
+    }
+
+    #[test]
+    fn parse_diag_payload_accepts_small_reports() {
+        let diag = parse_diag_payload(r#"{"key":"selector","msg":"missing"}"#).unwrap();
+        assert_eq!(diag.key, "selector");
+        assert_eq!(diag.msg, "missing");
+    }
+
+    #[test]
+    fn parse_diag_payload_rejects_oversized_reports() {
+        let payload = format!(
+            r#"{{"key":"selector","msg":"{}"}}"#,
+            "x".repeat(DIAG_RAW_PAYLOAD_MAX_LEN)
+        );
+        assert!(parse_diag_payload(&payload).is_none());
     }
 
     fn u(s: &str) -> Url {
