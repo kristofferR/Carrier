@@ -503,6 +503,22 @@ fn apply_global_hotkey(app: &tauri::AppHandle, want: bool) {
     }
 }
 
+/// On startup, a persisted enabled hotkey can become invalid because the
+/// desktop session changed or another app claimed the fixed shortcut. Keep the
+/// stored setting aligned with the actual registration state.
+fn reconcile_startup_global_hotkey(app: &tauri::AppHandle, s: &mut Settings) {
+    if !s.global_hotkey {
+        return;
+    }
+    if let Err(e) = sync_global_hotkey(app, true) {
+        eprintln!("carrier: {e}");
+        s.global_hotkey = false;
+        if let Err(save_err) = save_settings(app, s) {
+            eprintln!("carrier: failed to save disabled Global Hotkey setting: {save_err}");
+        }
+    }
+}
+
 /// Apply the settings that have an immediate runtime effect (window topmost
 /// state, the injected-prefs refresh, the global hotkey, and the tray).
 /// Autostart and store-time hotkey changes are handled separately so failures
@@ -2306,7 +2322,7 @@ pub fn run() {
         .setup(move |app| {
             clear_pending_webview_data(app.handle());
 
-            let settings = load_settings(app.handle());
+            let mut settings = load_settings(app.handle());
             *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
 
             let window = build_app_window(app.handle(), "main", &settings)?;
@@ -2323,6 +2339,8 @@ pub fn run() {
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
+            reconcile_startup_global_hotkey(app.handle(), &mut settings);
+            *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
             apply_settings(app.handle(), &settings);
 
             // Start hidden only when a tray was actually created to reopen from.
