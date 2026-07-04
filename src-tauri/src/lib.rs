@@ -6,16 +6,19 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
+use std::hash::{BuildHasher, Hasher};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::{
-    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
+    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     webview::{Color, DownloadEvent},
     Listener, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
@@ -123,14 +126,23 @@ struct Settings {
     menu_bar_only: bool,
     /// Suppress all desktop notifications for new messages.
     mute_notifications: bool,
+    /// Play the OS notification sound for new-message notifications.
+    notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
     hide_notification_preview: bool,
+    /// Do-not-disturb window start, local wall-clock "HH:MM" (empty = off).
+    dnd_start: String,
+    /// Do-not-disturb window end, local wall-clock "HH:MM" (empty = off).
+    dnd_end: String,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     system_emoji: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     zoom: i32,
+    /// Block Facebook's analytics/logging requests (banzai, quick metrics,
+    /// error reporting) in the page. Never touches messaging endpoints.
+    block_telemetry: bool,
 }
 
 /// Valid page-zoom range in percent (matches the keyboard zoom in
@@ -166,10 +178,14 @@ impl Default for Settings {
             theme: "system".into(),
             menu_bar_only: false,
             mute_notifications: false,
+            notification_sound: true,
             hide_notification_preview: false,
+            dnd_start: String::new(),
+            dnd_end: String::new(),
             hide_names_avatars: false,
             system_emoji: false,
             zoom: 100,
+            block_telemetry: true,
         }
     }
 }
@@ -181,6 +197,9 @@ struct AppState {
     /// True while [`recreate_themed_windows`] is between destroying and
     /// rebuilding, so the run loop doesn't exit when the window count hits zero.
     recreating: std::sync::atomic::AtomicBool,
+    /// The page-scraped recent-conversations list backing the Dock/tray menus.
+    /// In memory only — never persisted (see `carrier:recent-threads`).
+    recent_threads: Mutex<Vec<RecentThread>>,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
@@ -415,8 +434,30 @@ fn wants_tray(s: &Settings) -> bool {
 }
 
 fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let quit_item = MenuItem::with_id(app, "quit", "Quit Carrier", true, None::<&str>)?;
-    Menu::with_items(app, &[&quit_item])
+    let menu = Menu::new(app)?;
+    // Most recent conversations first (mirrors the macOS Dock menu); clicking
+    // one opens that thread. Empty until the page has pushed a list.
+    let threads = recent_threads_for_menu(app);
+    for t in &threads {
+        menu.append(&MenuItem::with_id(
+            app,
+            recent_menu_id(t),
+            &t.name,
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    if !threads.is_empty() {
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
+    }
+    menu.append(&MenuItem::with_id(
+        app,
+        "quit",
+        "Quit Carrier",
+        true,
+        None::<&str>,
+    )?)?;
+    Ok(menu)
 }
 
 #[cfg(target_os = "macos")]
@@ -439,11 +480,7 @@ fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     }
 }
 
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<TrayIcon> {
-    // Left-click toggles the window; right-click offers only Quit (showing is the
-    // click itself, so a separate "Open" item would be redundant).
-    let menu = build_tray_menu(app)?;
-
+fn build_tray_with_menu(app: &tauri::AppHandle, menu: Menu<tauri::Wry>) -> tauri::Result<TrayIcon> {
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -534,11 +571,22 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // reach a Dock-less app), so force it on then.
     let want_tray = wants_tray(s);
     let state = app.state::<AppState>();
+    let needs_tray = {
+        let tray = state.tray.lock().unwrap();
+        want_tray && tray.is_none()
+    };
+    let new_tray_menu = if needs_tray {
+        build_tray_menu(app).ok()
+    } else {
+        None
+    };
     let mut tray = state.tray.lock().unwrap();
     match (want_tray, tray.is_some()) {
         (true, false) => {
-            if let Ok(t) = build_tray(app) {
-                *tray = Some(t);
+            if let Some(menu) = new_tray_menu {
+                if let Ok(t) = build_tray_with_menu(app, menu) {
+                    *tray = Some(t);
+                }
             }
         }
         (false, true) => {
@@ -571,6 +619,222 @@ fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         });
         if s.menu_bar_only && !tray_available {
             show_main(app);
+        }
+    }
+
+    // Keep the recent-conversations menus in step with the settings — most
+    // importantly, flipping Hide Names & Avatars on must clear them at once.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || rebuild_recent_menus(&handle));
+}
+
+// ---------------------------------------------------------------------------
+// Recent conversations (Dock / tray menu)
+// ---------------------------------------------------------------------------
+
+/// One entry of the recent-conversations list the page scrapes from the chat
+/// list and pushes over `carrier:recent-threads` (see inject/messenger.js).
+/// Held in memory only; conversation names/ids are never written to disk.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct RecentThread {
+    name: String,
+    href: String,
+}
+
+/// The `carrier:recent-threads` payload crosses from the remote Facebook page,
+/// so validate it hard: names are trimmed and truncated, hrefs must be a bare
+/// `/t/<digits>/` thread path (they're re-embedded into an eval'd navigation),
+/// duplicates are dropped, and the list is capped.
+fn sanitize_recent_threads(threads: Vec<RecentThread>) -> Vec<RecentThread> {
+    const MAX_THREADS: usize = 9;
+    const MAX_NAME_CHARS: usize = 60;
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<RecentThread> = Vec::new();
+    for t in threads {
+        let name: String = t.name.trim().chars().take(MAX_NAME_CHARS).collect();
+        let Some(id) = t
+            .href
+            .strip_prefix("/t/")
+            .map(|rest| rest.trim_end_matches('/'))
+        else {
+            continue;
+        };
+        if name.is_empty()
+            || id.is_empty()
+            || id.len() > 32
+            || !id.bytes().all(|b| b.is_ascii_digit())
+            || t.href != format!("/t/{id}/")
+        {
+            continue;
+        }
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        out.push(RecentThread {
+            name,
+            href: format!("/t/{id}/"),
+        });
+        if out.len() >= MAX_THREADS {
+            break;
+        }
+    }
+    out
+}
+
+fn recent_thread_id(href: &str) -> Option<&str> {
+    let id = href.strip_prefix("/t/")?.trim_end_matches('/');
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(id)
+}
+
+fn recent_menu_id(thread: &RecentThread) -> String {
+    let id = recent_thread_id(&thread.href).expect("recent thread href is sanitized");
+    format!("recent:{id}")
+}
+
+fn recent_href_from_menu_id(menu_id: &str) -> Option<String> {
+    let id = menu_id.strip_prefix("recent:")?;
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("/t/{id}/"))
+}
+
+/// The recent-threads list as native menus should show it: empty while Hide
+/// Names & Avatars is on, so contact names never surface in the Dock/tray menu
+/// of a screen-shared machine.
+fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThread> {
+    let state = app.state::<AppState>();
+    if state.settings.lock().unwrap().hide_names_avatars {
+        return Vec::new();
+    }
+    let threads = state.recent_threads.lock().unwrap().clone();
+    threads
+}
+
+/// Open a conversation picked from the Dock/tray menu: surface the app and ask
+/// the page to navigate to the thread (it clicks the chat-list row for SPA
+/// navigation, falling back to a hard navigation). The href is encoded into the
+/// menu id when the menu is built, so a later recents refresh cannot make a
+/// visible native menu item open a different thread.
+fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
+    show_main(app);
+    if let Some(w) = target_window(app) {
+        // `href` is validated to `/t/<digits>/`; JSON-encode it anyway so the
+        // eval always receives a well-formed JS string literal.
+        if let Ok(arg) = serde_json::to_string(&href) {
+            let _ = w.eval(format!(
+                "window.__carrierOpenThread && window.__carrierOpenThread({arg});"
+            ));
+        }
+    }
+}
+
+/// The NSMenu currently served as the Dock menu. AppKit re-queries
+/// `applicationDockMenu:` on every Dock right-click, so swapping this pointer
+/// (and the keepalive below) is all a rebuild takes. Null = no custom menu.
+#[cfg(target_os = "macos")]
+static DOCK_NS_MENU: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+// Keeps the muda menu backing DOCK_NS_MENU alive between rebuilds. Main-thread
+// only: muda menus aren't Send, and AppKit menus must be touched there anyway.
+#[cfg(target_os = "macos")]
+thread_local! {
+    static DOCK_MENU_KEEPALIVE: std::cell::RefCell<Option<muda::Menu>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The `applicationDockMenu:` implementation grafted onto tao's NSApplication
+/// delegate: hand AppKit whatever menu the last rebuild published.
+#[cfg(target_os = "macos")]
+extern "C-unwind" fn application_dock_menu(
+    _this: *mut objc2::runtime::AnyObject,
+    _cmd: objc2::runtime::Sel,
+    _sender: *mut objc2::runtime::AnyObject,
+) -> *mut objc2::runtime::AnyObject {
+    DOCK_NS_MENU.load(Ordering::SeqCst) as *mut objc2::runtime::AnyObject
+}
+
+/// Add `applicationDockMenu:` to the live app delegate so the Dock icon's
+/// context menu can list recent conversations — neither tauri, tao, nor muda
+/// exposes a Dock-menu API, but the delegate hook is the one AppKit blesses.
+/// Called once from `RunEvent::Ready` (the delegate exists by then); the added
+/// method reads [`DOCK_NS_MENU`], so later rebuilds don't touch the delegate.
+#[cfg(target_os = "macos")]
+fn install_dock_menu_provider() {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send, sel};
+
+    // SAFETY: main-thread AppKit reads (RunEvent::Ready runs there); the
+    // delegate outlives the app, and class_addMethod is a documented runtime
+    // call — it fails harmlessly (returns NO) if the method ever exists.
+    unsafe {
+        let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let delegate: *mut AnyObject = msg_send![app, delegate];
+        if delegate.is_null() {
+            return;
+        }
+        let cls = (*delegate).class() as *const objc2::runtime::AnyClass;
+        // "@@:@": returns id, takes self + _cmd + the NSApplication sender.
+        let imp: objc2::runtime::Imp = std::mem::transmute(
+            application_dock_menu
+                as extern "C-unwind" fn(
+                    *mut AnyObject,
+                    objc2::runtime::Sel,
+                    *mut AnyObject,
+                ) -> *mut AnyObject,
+        );
+        objc2::ffi::class_addMethod(
+            cls.cast_mut(),
+            sel!(applicationDockMenu:),
+            imp,
+            c"@@:@".as_ptr(),
+        );
+    }
+}
+
+/// Rebuild the native menus that mirror the recent-threads list: the macOS
+/// Dock menu, and the tray menu on Windows/Linux (the macOS tray builds its
+/// menu fresh on every right-click, so it needs no push). Must run on the main
+/// thread — menu construction is main-thread-only on macOS.
+fn rebuild_recent_menus(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let threads = recent_threads_for_menu(app);
+        let ptr = if threads.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            use muda::ContextMenu as _;
+            let menu = muda::Menu::new();
+            for t in &threads {
+                let _ = menu.append(&muda::MenuItem::with_id(
+                    recent_menu_id(t),
+                    &t.name,
+                    true,
+                    None,
+                ));
+            }
+            let ptr = menu.ns_menu();
+            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = Some(menu));
+            ptr
+        };
+        DOCK_NS_MENU.store(ptr, Ordering::SeqCst);
+        if ptr.is_null() {
+            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Ok(menu) = build_tray_menu(app) else {
+            return;
+        };
+        let state = app.state::<AppState>();
+        let tray = state.tray.lock().unwrap();
+        if let Some(tray) = tray.as_ref() {
+            let _ = tray.set_menu(Some(menu));
         }
     }
 }
@@ -1178,7 +1442,7 @@ fn is_dark(s: &Settings) -> bool {
     match s.theme.as_str() {
         "dark" => true,
         "light" => false,
-        _ => matches!(dark_light::detect(), dark_light::Mode::Dark),
+        _ => matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)),
     }
 }
 
@@ -1728,8 +1992,14 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .quit()
         .build()?;
 
+    let new_conversation = mi(
+        "new_conversation",
+        "New Conversation",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
     let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+N"))?;
     let file = SubmenuBuilder::new(app, "File")
+        .item(&new_conversation)
         .item(&new_window)
         .separator()
         .close_window()
@@ -1773,10 +2043,11 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "Toggle Conversation Information",
         Some("CmdOrCtrl+Shift+I"),
     )?;
+    // Shift+N belongs to New Conversation, so "hide" gets Shift+H.
     let hide_names = mi(
         "hide_names",
         "Hide Names && Avatars",
-        Some("CmdOrCtrl+Shift+N"),
+        Some("CmdOrCtrl+Shift+H"),
     )?;
     let aot = mi("always_on_top", "Toggle Always on Top", None)?;
     let devtools = mi(
@@ -1869,7 +2140,18 @@ fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
+        "new_conversation" => {
+            eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
+        }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
+        // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
+        // here (the app-wide menu handler) only — the tray's own handler must
+        // not repeat this, since every menu event is broadcast to all handlers.
+        id if id.starts_with("recent:") => {
+            if let Some(href) = recent_href_from_menu_id(id) {
+                open_recent_thread(app, &href);
+            }
+        }
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
             if let Some(w) = target_window(app) {
@@ -1995,6 +2277,7 @@ struct NotifyMsg {
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
+static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Decode the avatar the page sent as a PNG data URL into a temp file the native
 /// notification can point at. Returns `None` (→ a text-only notification) on any
@@ -2020,10 +2303,10 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     if bytes.len() > MAX_AVATAR_BYTES || !bytes.starts_with(PNG_MAGIC) {
         return None;
     }
-    // A per-process directory keeps `multi_instance` runs from colliding on
-    // temp-file names or deleting each other's in-flight avatars.
-    let dir = avatar_cache_dir();
-    std::fs::create_dir_all(&dir).ok()?;
+    // A private per-process directory keeps `multi_instance` runs from colliding
+    // on temp-file names or deleting each other's in-flight avatars.
+    let dir = avatar_cache_dir()?;
+    sweep_stale_avatars(&dir);
     // A unique name per notification avoids any race between writing the file
     // here and the OS reading it when the notification is shown.
     let seq = AVATAR_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -2032,20 +2315,81 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-/// This process's private avatar-cache directory. Keying it on the PID keeps
-/// concurrent `multi_instance` runs from colliding on temp-file names or wiping
-/// each other's in-flight avatars (see [`clear_avatar_cache`]).
-fn avatar_cache_dir() -> PathBuf {
-    std::env::temp_dir().join(format!("carrier-avatars-{}", std::process::id()))
+/// Best-effort sweep of stale avatars from this process's own directory. On
+/// macOS a shown notification's file is deliberately left behind for the OS to
+/// read asynchronously (see [`show_message_notification`]) and would otherwise
+/// accumulate for the whole session; anything this old is long past delivery
+/// and safe to drop.
+fn sweep_stale_avatars(dir: &Path) {
+    const MAX_AVATAR_AGE: Duration = Duration::from_secs(10 * 60);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("png") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > MAX_AVATAR_AGE);
+        if stale {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// This process's private avatar-cache directory. The random suffix prevents a
+/// different local user from pre-creating the path as a symlink before the first
+/// notification.
+fn avatar_cache_dir() -> Option<PathBuf> {
+    AVATAR_CACHE_DIR
+        .get_or_init(create_avatar_cache_dir)
+        .clone()
+}
+
+fn create_avatar_cache_dir() -> Option<PathBuf> {
+    let temp_dir = std::env::temp_dir();
+    for attempt in 0..16 {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        hasher.write_usize(attempt);
+        let dir = temp_dir.join(format!(
+            "carrier-avatars-{}-{:016x}",
+            std::process::id(),
+            hasher.finish()
+        ));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {
+                #[cfg(unix)]
+                if std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).is_err() {
+                    let _ = std::fs::remove_dir(&dir);
+                    return None;
+                }
+                return Some(dir);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 /// Best-effort cleanup of avatar temp files, so the temp directory doesn't grow
-/// without bound. Called once at startup. Removes this process's own directory
-/// (e.g. leftovers from a previously crashed run that reused the PID) and sweeps
-/// *empty* sibling directories left by cleanly-exited runs — but never a
-/// non-empty one, which could belong to another live instance mid-notification.
+/// without bound. Called once at startup. Sweeps old files from sibling cache
+/// directories and removes directories that are then empty, but never follows
+/// symlinks or removes a non-empty directory that could belong to a live
+/// instance mid-notification.
 fn clear_avatar_cache() {
-    let _ = std::fs::remove_dir_all(avatar_cache_dir());
     if let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) {
         for entry in entries.flatten() {
             if entry
@@ -2053,12 +2397,61 @@ fn clear_avatar_cache() {
                 .to_string_lossy()
                 .starts_with("carrier-avatars-")
             {
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let path = entry.path();
+                sweep_stale_avatars(&path);
                 // `remove_dir` only succeeds on an empty directory, so a live
                 // instance's avatars are never deleted out from under it.
-                let _ = std::fs::remove_dir(entry.path());
+                let _ = std::fs::remove_dir(path);
             }
         }
     }
+}
+
+/// Parse a `"HH:MM"` wall-clock string into minutes since midnight. Strict:
+/// digits only (1–2 hour digits, exactly 2 minute digits, as `<input
+/// type="time">` produces), hour 0–23, minute 0–59. Anything else → `None`.
+fn parse_hhmm(s: &str) -> Option<u32> {
+    let (h, m) = s.split_once(':')?;
+    if h.is_empty()
+        || h.len() > 2
+        || m.len() != 2
+        || !h.bytes().all(|b| b.is_ascii_digit())
+        || !m.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
+    (h <= 23 && m <= 59).then_some(h * 60 + m)
+}
+
+/// Whether the do-not-disturb window covers `now_minutes` (minutes since local
+/// midnight). The window is half-open `[start, end)` so back-to-back windows
+/// can't overlap, and it may wrap past midnight (e.g. `22:00`–`07:00`). The
+/// schedule is off — never active — when either bound is empty, malformed, or
+/// when start == end (a zero-length window rather than "all day").
+fn dnd_active(start: &str, end: &str, now_minutes: u32) -> bool {
+    let (Some(s), Some(e)) = (parse_hhmm(start.trim()), parse_hhmm(end.trim())) else {
+        return false;
+    };
+    match s.cmp(&e) {
+        std::cmp::Ordering::Equal => false,
+        std::cmp::Ordering::Less => now_minutes >= s && now_minutes < e,
+        // Overnight wrap: active from `start` to midnight and midnight to `end`.
+        std::cmp::Ordering::Greater => now_minutes >= s || now_minutes < e,
+    }
+}
+
+/// Minutes since local midnight, for [`dnd_active`].
+fn local_now_minutes() -> u32 {
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    now.hour() * 60 + now.minute()
 }
 
 /// Show a native OS notification for a new message and, if it's clicked, bring
@@ -2073,6 +2466,18 @@ fn clear_avatar_cache() {
 /// gets its own thread that blocks until the user clicks or dismisses it (it
 /// only parks, doesn't spin), and on click it routes back to the page.
 fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
+    let (sound, dnd_start, dnd_end) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (s.notification_sound, s.dnd_start.clone(), s.dnd_end.clone())
+    };
+    // Do-not-disturb schedule: drop the notification entirely inside the window.
+    // Only delivery is suppressed — the unread badge/tray count still updates
+    // (that rides the separate `carrier:unread` event).
+    if dnd_active(&dnd_start, &dnd_end, local_now_minutes()) {
+        return;
+    }
+
     let title = if msg.title.trim().is_empty() {
         "Messenger".to_string()
     } else {
@@ -2089,12 +2494,12 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
         let _ = app;
-        deliver_notification_macos(&title, &body, id, image.as_deref());
+        deliver_notification_macos(&title, &body, id, image.as_deref(), sound);
     }
 
     #[cfg(not(target_os = "macos"))]
     std::thread::spawn(move || {
-        let clicked = show_native_notification(&title, &body, image.as_deref());
+        let clicked = show_native_notification(&title, &body, image.as_deref(), sound);
         // The notification has been shown and dismissed/clicked, so the OS is
         // done with the avatar file — delete it now rather than leaving it for
         // the next startup's clear_avatar_cache().
@@ -2109,7 +2514,8 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
 
 /// Deliver a new-message notification through the modern
 /// `UNUserNotificationCenter` (macOS). Builds a `UNMutableNotificationContent`
-/// (title = sender, body = preview, default sound), stashes the conversation
+/// (title = sender, body = preview, the default sound when `sound` is on —
+/// leaving it unset delivers silently), stashes the conversation
 /// `id` in `userInfo` so [`NotifyDelegate`] can recover it on click, attaches
 /// the avatar as a `UNNotificationAttachment` when one decoded (best-effort),
 /// and adds the request for immediate delivery (`trigger: nil`).
@@ -2117,7 +2523,7 @@ fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
 /// Replaces the dead legacy `NSUserNotification` path (mac-notification-sys),
 /// which macOS 26/27 no longer presents for third-party apps.
 #[cfg(target_os = "macos")]
-fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&Path>) {
+fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&Path>, sound: bool) {
     use objc2::rc::Retained;
     use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
     use objc2_user_notifications::{
@@ -2128,7 +2534,9 @@ fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&P
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
-    content.setSound(Some(&UNNotificationSound::defaultSound()));
+    if sound {
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
+    }
 
     // Carry the conversation id so the delegate's click handler can recover it.
     // Built typed (NSString → NSNumber) then cast to the bare `NSDictionary`
@@ -2170,7 +2578,12 @@ fn deliver_notification_macos(title: &str, body: &str, id: u64, image: Option<&P
 /// explicit `default` action for a body click to be reported (it shows no
 /// button), which Windows toasts don't.
 #[cfg(not(target_os = "macos"))]
-fn show_native_notification(title: &str, body: &str, image: Option<&std::path::Path>) -> bool {
+fn show_native_notification(
+    title: &str,
+    body: &str,
+    image: Option<&std::path::Path>,
+    sound: bool,
+) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary(title);
     if !body.is_empty() {
@@ -2178,6 +2591,19 @@ fn show_native_notification(title: &str, body: &str, image: Option<&std::path::P
     }
     if let Some(path) = image.and_then(|p| p.to_str()) {
         n.icon(path);
+    }
+    // Windows toasts are silent unless a sound is named (notify-rust maps an
+    // unset `sound_name` to a silent toast), so name the system default when
+    // sound is on; when it's off, leaving `sound_name` unset already delivers
+    // silently.
+    #[cfg(windows)]
+    if sound {
+        n.sound_name("Default");
+    }
+    // XDG servers pick their own default sound, so ask them not to play it.
+    #[cfg(unix)]
+    if !sound {
+        n.hint(notify_rust::Hint::SuppressSound(true));
     }
     #[cfg(unix)]
     n.action("default", "Open");
@@ -2260,6 +2686,7 @@ pub fn run() {
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
             recreating: std::sync::atomic::AtomicBool::new(false),
+            recent_threads: Mutex::new(Vec::new()),
         })
         .menu(build_menu)
         .on_menu_event(handle_menu_event)
@@ -2370,6 +2797,27 @@ pub fn run() {
                 apply_settings(&h, &s);
             });
 
+            // Recent conversations scraped from the page's chat list → the
+            // macOS Dock menu / tray menu. Kept in memory only; the menus are
+            // rebuilt on the main thread (menu APIs require it on macOS).
+            let h = app.handle().clone();
+            app.listen_any("carrier:recent-threads", move |event| {
+                let Ok(threads) = serde_json::from_str::<Vec<RecentThread>>(event.payload()) else {
+                    return;
+                };
+                let threads = sanitize_recent_threads(threads);
+                {
+                    let state = h.state::<AppState>();
+                    let mut current = state.recent_threads.lock().unwrap();
+                    if *current == threads {
+                        return;
+                    }
+                    *current = threads;
+                }
+                let handle = h.clone();
+                let _ = h.run_on_main_thread(move || rebuild_recent_menus(&handle));
+            });
+
             // New-message notifications: the page's `Notification` bridge sends
             // sender/preview/avatar here; we render them natively (with the
             // avatar), notify you while Carrier is in the background, and open the
@@ -2398,6 +2846,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Ready = event {
                 setup_macos_notifications(app);
+                // The Dock-menu delegate hook also needs the app fully
+                // launched (tao installs its NSApplication delegate by now).
+                install_dock_menu_provider();
             }
 
             #[cfg(target_os = "macos")]
@@ -2441,6 +2892,61 @@ mod tests {
         assert!(!should_disable_webkit_dmabuf_renderer(false, false));
         assert!(!should_disable_webkit_dmabuf_renderer(true, true));
         assert!(!should_disable_webkit_dmabuf_renderer(false, true));
+    }
+
+    #[test]
+    fn dnd_is_off_when_unset_or_malformed() {
+        // Empty = the schedule is disabled.
+        assert!(!dnd_active("", "", 0));
+        assert!(!dnd_active("22:00", "", 23 * 60));
+        assert!(!dnd_active("", "07:00", 3 * 60));
+        // Malformed inputs never activate.
+        assert!(!dnd_active("24:00", "07:00", 3 * 60));
+        assert!(!dnd_active("22:60", "07:00", 3 * 60));
+        assert!(!dnd_active("22", "07:00", 3 * 60));
+        assert!(!dnd_active("2a:00", "07:00", 3 * 60));
+        assert!(!dnd_active("+2:00", "07:00", 3 * 60));
+        assert!(!dnd_active("22:0", "07:00", 3 * 60));
+        assert!(!dnd_active("garbage", "also garbage", 3 * 60));
+        // start == end is a zero-length window, not "all day".
+        assert!(!dnd_active("09:00", "09:00", 9 * 60));
+    }
+
+    #[test]
+    fn dnd_normal_range_is_half_open() {
+        let at = |m| dnd_active("09:00", "17:30", m);
+        assert!(at(9 * 60)); // start boundary: active
+        assert!(at(12 * 60));
+        assert!(at(17 * 60 + 29)); // last minute inside
+        assert!(!at(17 * 60 + 30)); // end boundary: inactive
+        assert!(!at(8 * 60 + 59)); // minute before start
+        assert!(!at(23 * 60));
+    }
+
+    #[test]
+    fn dnd_overnight_range_wraps_midnight() {
+        let at = |m| dnd_active("22:00", "07:00", m);
+        assert!(at(22 * 60)); // start boundary: active
+        assert!(at(23 * 60 + 59)); // just before midnight
+        assert!(at(0)); // midnight itself
+        assert!(at(6 * 60 + 59)); // last minute inside
+        assert!(!at(7 * 60)); // end boundary: inactive
+        assert!(!at(12 * 60)); // daytime is outside the window
+        assert!(!at(21 * 60 + 59)); // minute before start
+    }
+
+    #[test]
+    fn hhmm_parses_strict_wall_clock_times() {
+        assert_eq!(parse_hhmm("00:00"), Some(0));
+        assert_eq!(parse_hhmm("7:05"), Some(7 * 60 + 5)); // single hour digit ok
+        assert_eq!(parse_hhmm("23:59"), Some(23 * 60 + 59));
+        assert_eq!(parse_hhmm("24:00"), None);
+        assert_eq!(parse_hhmm("12:60"), None);
+        assert_eq!(parse_hhmm("12:5"), None);
+        assert_eq!(parse_hhmm("120:00"), None);
+        assert_eq!(parse_hhmm(""), None);
+        assert_eq!(parse_hhmm(":30"), None);
+        assert_eq!(parse_hhmm("1230"), None);
     }
 
     #[test]
@@ -2947,6 +3453,66 @@ mod tests {
             tray_unread_title(&Settings::default(), 7),
             Some("7".to_string())
         );
+    }
+
+    fn thread(name: &str, href: &str) -> RecentThread {
+        RecentThread {
+            name: name.into(),
+            href: href.into(),
+        }
+    }
+
+    #[test]
+    fn recent_threads_keep_only_valid_thread_paths() {
+        let out = sanitize_recent_threads(vec![
+            thread("Alice", "/t/12345/"),
+            thread("Mallory", "https://evil.example/t/1/"),
+            thread("Mallory", "/t/1'; alert(1);//"),
+            thread("Mallory", "/t/12345/../../settings/"),
+            thread("Mallory", "/t//"),
+            thread("Bob", "/t/67890/"),
+        ]);
+        assert_eq!(
+            out,
+            vec![thread("Alice", "/t/12345/"), thread("Bob", "/t/67890/")]
+        );
+    }
+
+    #[test]
+    fn recent_threads_drop_empty_names_and_duplicates_and_cap_the_list() {
+        let mut input = vec![
+            thread("   ", "/t/1/"),
+            thread("Alice", "/t/2/"),
+            thread("Alice again", "/t/2/"),
+        ];
+        for i in 0..20 {
+            input.push(thread("More", &format!("/t/{}/", 100 + i)));
+        }
+        let out = sanitize_recent_threads(input);
+        assert_eq!(out.len(), 9);
+        assert_eq!(out[0], thread("Alice", "/t/2/"));
+        // Duplicate thread id keeps only the first entry.
+        assert!(!out.iter().any(|t| t.name == "Alice again"));
+    }
+
+    #[test]
+    fn recent_threads_truncate_long_names_on_char_boundaries() {
+        let name = "ø".repeat(100);
+        let out = sanitize_recent_threads(vec![thread(&name, "/t/5/")]);
+        assert_eq!(out[0].name.chars().count(), 60);
+    }
+
+    #[test]
+    fn recent_menu_ids_round_trip_thread_ids() {
+        let t = thread("Alice", "/t/12345/");
+        assert_eq!(recent_menu_id(&t), "recent:12345");
+        assert_eq!(
+            recent_href_from_menu_id("recent:12345").as_deref(),
+            Some("/t/12345/")
+        );
+        assert_eq!(recent_href_from_menu_id("recent:"), None);
+        assert_eq!(recent_href_from_menu_id("recent:abc"), None);
+        assert_eq!(recent_href_from_menu_id("recent:12345/../../"), None);
     }
 
     #[cfg(target_os = "macos")]

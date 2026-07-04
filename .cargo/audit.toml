@@ -1,0 +1,15 @@
+# cargo-audit configuration (used by the CI `audit` job).
+#
+# Ignored advisories need a reason here and should be re-checked when the
+# pinning dependency updates (Dependabot will surface those bumps).
+[advisories]
+ignore = [
+  # quick-xml parsing DoS (quadratic duplicate-attribute check / unbounded
+  # namespace allocation). All three vendored versions are transitive pins we
+  # can't bump from here: plist <- tauri (0.39), tauri-winrt-notification
+  # (0.37), xcb (0.30). In Carrier every quick-xml input is local and trusted
+  # (the app's own bundle plists, toast XML the app generates, X11 protocol
+  # descriptors) — never attacker-controlled documents.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
