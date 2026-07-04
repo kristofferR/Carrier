@@ -475,32 +475,40 @@ fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
 const SUMMON_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
 
 /// Register or unregister the global summon hotkey to match the setting.
-/// Best-effort like the rest of [`apply_settings`]: registration can fail when
-/// another app already owns the combination, and Carrier still works without it.
-fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) {
+fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
     let shortcuts = app.global_shortcut();
     let registered = shortcuts.is_registered(SUMMON_SHORTCUT);
     if want && !registered {
-        let res = shortcuts.on_shortcut(SUMMON_SHORTCUT, |app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                toggle_main(app);
-            }
-        });
-        if let Err(e) = res {
-            eprintln!("carrier: failed to register the global hotkey: {e}");
-        }
+        shortcuts
+            .on_shortcut(SUMMON_SHORTCUT, |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    toggle_main(app);
+                }
+            })
+            .map_err(|e| format!("Couldn't enable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
     } else if !want && registered {
-        let _ = shortcuts.unregister(SUMMON_SHORTCUT);
+        shortcuts
+            .unregister(SUMMON_SHORTCUT)
+            .map_err(|e| format!("Couldn't disable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Best-effort hotkey sync used outside the Settings save path. Store-time
+/// changes call [`sync_global_hotkey`] directly so failures can be shown in UI.
+fn apply_global_hotkey(app: &tauri::AppHandle, want: bool) {
+    if let Err(e) = sync_global_hotkey(app, want) {
+        eprintln!("carrier: {e}");
     }
 }
 
 /// Apply the settings that have an immediate runtime effect (window topmost
 /// state, the injected-prefs refresh, the global hotkey, and the tray).
-/// Autostart is handled separately by [`sync_autostart`]; everything here is
-/// best-effort.
+/// Autostart and store-time hotkey changes are handled separately so failures
+/// can be returned to Settings; everything else here is best-effort.
 fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
-    sync_global_hotkey(app, s.global_hotkey);
+    apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
     for (label, window) in app.webview_windows() {
@@ -1052,40 +1060,55 @@ fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
 }
 
-/// Persist `new`, syncing the OS autostart registration first so a failed sync
-/// doesn't commit an autostart preference the OS rejected. Other preferences are
-/// always saved; an autostart failure is returned (after saving the rest) so the
-/// UI can surface it.
+/// Persist `new`, syncing OS-backed preferences first so a failed sync doesn't
+/// commit a preference the OS rejected. Other preferences are always saved;
+/// sync failures are returned (after saving the rest) so the UI can surface them.
 fn store_settings(
     app: &tauri::AppHandle,
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    let prev_theme = state.settings.lock().unwrap().theme.clone();
-    let prev_autostart = state.settings.lock().unwrap().autostart;
+    let (prev_theme, prev_autostart, prev_global_hotkey) = {
+        let prev = state.settings.lock().unwrap();
+        (prev.theme.clone(), prev.autostart, prev.global_hotkey)
+    };
     let mut effective = new.clone();
-    let autostart_err = if new.autostart != prev_autostart {
+    let mut sync_errors = Vec::new();
+
+    if new.autostart != prev_autostart {
         match sync_autostart(app, new.autostart) {
-            Ok(()) => None,
+            Ok(()) => {}
             // Keep the previous autostart value rather than persisting one the OS
             // didn't accept; still save/apply every other preference.
             Err(e) => {
                 effective.autostart = prev_autostart;
-                Some(e)
+                sync_errors.push(e);
             }
         }
-    } else {
-        None
-    };
+    }
+    if new.global_hotkey != prev_global_hotkey {
+        match sync_global_hotkey(app, new.global_hotkey) {
+            Ok(()) => {}
+            // Keep the checkbox aligned with whether the shortcut is actually
+            // registered. This also covers Linux Wayland sessions where the
+            // plugin cannot register the fixed global shortcut.
+            Err(e) => {
+                effective.global_hotkey = prev_global_hotkey;
+                sync_errors.push(e);
+            }
+        }
+    }
+
     save_settings(app, &effective)?;
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
     // macOS needs a window rebuild to re-theme the title bar; other platforms
     // already re-themed the chrome live in apply_settings.
     recreate_on_theme_change(app, &prev_theme, &effective.theme);
-    match autostart_err {
-        Some(e) => Err(e),
-        None => Ok(effective),
+    if sync_errors.is_empty() {
+        Ok(effective)
+    } else {
+        Err(sync_errors.join("\n"))
     }
 }
 
