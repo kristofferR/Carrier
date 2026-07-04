@@ -42,6 +42,8 @@
       }
       .row:hover { background: #f0f2f5; }
       .row input { margin-top: 2px; width: 16px; height: 16px; }
+      /* Time pickers keep their natural size (the 16px box above is for checkboxes). */
+      .row input[type="time"] { width: auto; height: auto; font: inherit; margin-top: 0; }
       .label { font-weight: 500; }
       .hint { color: #65676b; font-size: 12px; margin-top: 2px; }
       footer {
@@ -91,11 +93,15 @@
         ["hide_on_close", "Hide on Close", "Closing the window hides it instead of quitting."],
         ["unread_badge", "Unread Badge", "Show the unread count on the Dock / taskbar icon."],
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
+        ["notification_sound", "Notification sound", "Play the system sound when a notification arrives."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
-        ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+N)."],
+        ["dnd_start", "Do not disturb from", "Suppress notifications from this time. Set both times to enable."],
+        ["dnd_end", "Do not disturb until", "Suppress notifications until this time — overnight ranges (e.g. 22:00 to 07:00) work."],
+        ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+H)."],
         ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
         ["menu_bar_only", "Menu Bar Only", "macOS: hide the Dock icon and live in the menu bar (needs the tray)."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
+        ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["multi_instance", "Multi Instance", "Allow more than one window (experimental, needs restart)."],
       ];
       const FIELD_META = Object.fromEntries(FIELDS.map(([k, label, hint]) => [k, { label, hint }]));
@@ -117,9 +123,10 @@
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: ["show_tray", "start_to_tray", "autostart", "menu_bar_only"] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
-          fields: ["mute_notifications", "hide_notification_preview", "unread_badge", "badge_mode"] },
+          fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
+                   "dnd_start", "dnd_end", "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["multi_instance"] },
+          fields: ["block_telemetry", "multi_instance"] },
       ];
 
       let activeTab = "general";
@@ -211,6 +218,22 @@
         );
       }
 
+      // Build an <input type="time"> row bound to a string setting ("" = unset;
+      // clearing the picker persists "" and disables the schedule).
+      function timeRow(key) {
+        const meta = FIELD_META[key];
+        const row = document.createElement("label");
+        row.className = "row";
+        const input = document.createElement("input");
+        input.type = "time";
+        input.value = settings[key] || "";
+        input.onchange = () => persist(key, input.value);
+        const text = document.createElement("div");
+        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${meta.hint}</div>`;
+        row.append(input, text);
+        return row;
+      }
+
       function checkboxRow(key) {
         const meta = FIELD_META[key];
         const row = document.createElement("label");
@@ -286,8 +309,14 @@
         document.getElementById("rows").setAttribute("aria-labelledby", "tab-" + activeTab);
       }
 
-      // Pseudo-fields ("theme", "badge_mode") are <select> rows; everything else is a checkbox.
-      const CUSTOM_ROWS = { theme: themeRow, badge_mode: badgeModeRow };
+      // Pseudo-fields ("theme", "badge_mode") are <select> rows, the DND bounds
+      // are <input type="time"> rows; everything else is a checkbox.
+      const CUSTOM_ROWS = {
+        theme: themeRow,
+        badge_mode: badgeModeRow,
+        dnd_start: () => timeRow("dnd_start"),
+        dnd_end: () => timeRow("dnd_end"),
+      };
 
       function renderBody() {
         const root = document.getElementById("rows");
