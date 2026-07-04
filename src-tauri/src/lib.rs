@@ -2346,10 +2346,8 @@ pub fn run() {
             });
 
             // Keyboard/menu zoom from the page → persist it in settings so the
-            // Settings window and the next launch pick it up. Deliberately does
-            // NOT call apply_settings: the page already applied the zoom, and
-            // pushing settings back at it could feed back into another zoom
-            // event. The payload comes from the remote-origin page, so treat it
+            // Settings window, other Messenger windows, and the next launch pick
+            // it up. The payload comes from the remote-origin page, so treat it
             // as untrusted: parse, clamp, and ignore junk.
             let h = app.handle().clone();
             app.listen_any("carrier:zoom", move |event| {
@@ -2369,6 +2367,7 @@ pub fn run() {
                 if let Err(e) = save_settings(&h, &s) {
                     eprintln!("carrier: failed to save settings: {e}");
                 }
+                apply_settings(&h, &s);
             });
 
             // New-message notifications: the page's `Notification` bridge sends
