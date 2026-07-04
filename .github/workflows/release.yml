@@ -18,6 +18,52 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # A tag can land on a commit CI never checked (e.g. tagged before push, or CI
+  # skipped), so gate the expensive 6-target build matrix on the same
+  # fmt/clippy/test/syntax checks CI runs. Runs in parallel with
+  # prepare_release; `build` needs both, so this adds no wall-clock time.
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          # Release validation should not restore or publish reusable build artifacts.
+          lookup-only: true
+          save-if: false
+
+      - name: Format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Injected-script syntax
+        run: |
+          node --check src-tauri/inject/messenger.js
+          node --check src-tauri/inject/panel.js
+
   # Generate the public-facing release copy before any build job touches the
   # draft. The build matrix reuses these exact values so tauri-action cannot
   # overwrite the release with a generic placeholder body.
@@ -71,7 +117,7 @@ jobs:
           fi
 
   build:
-    needs: prepare_release
+    needs: [check, prepare_release]
     strategy:
       fail-fast: false
       # Run targets one at a time: tauri-action's updater step reads the

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`.",
+  "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`. Keep this list minimal: every listed origin's own page scripts (not just ours) can call the allowed commands. meta.com/oculus.com are deliberately absent — they only appear during Meta-account login redirects, where the injected features can fail soft (an external link clicked there won't open until back on Messenger).",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -12,11 +12,7 @@
       "https://fbcdn.net",
       "https://*.fbcdn.net",
       "https://fbsbx.com",
-      "https://*.fbsbx.com",
-      "https://meta.com",
-      "https://*.meta.com",
-      "https://oculus.com",
-      "https://*.oculus.com"
+      "https://*.fbsbx.com"
     ]
   },
   "permissions": [
