@@ -30,6 +30,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
+# Global summon hotkey (Settings → Global Hotkey): show/hide Carrier from
+# anywhere. Registered purely from Rust, so it needs no capability entry.
+tauri-plugin-global-shortcut = "2"
 # New-message notifications are built natively (not via the notification plugin)
 # so the sender's avatar survives: the plugin drops images on desktop, whereas
 # notify-rust attaches them (a thumbnail on macOS, the icon on Linux/Windows).

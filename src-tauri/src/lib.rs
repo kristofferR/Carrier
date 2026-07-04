@@ -140,6 +140,9 @@ struct Settings {
     system_emoji: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     zoom: i32,
+    /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
+    /// anywhere. Off by default so it can't clash with other apps' shortcuts.
+    global_hotkey: bool,
     /// Block Facebook's analytics/logging requests (banzai, quick metrics,
     /// error reporting) in the page. Never touches messaging endpoints.
     block_telemetry: bool,
@@ -185,6 +188,7 @@ impl Default for Settings {
             hide_names_avatars: false,
             system_emoji: false,
             zoom: 100,
+            global_hotkey: false,
             block_telemetry: true,
         }
     }
@@ -525,10 +529,62 @@ fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
     res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
 }
 
+/// The fixed global summon shortcut ("CmdOrCtrl" resolves to Cmd on macOS and
+/// Ctrl on Windows/Linux). No recorder UI yet, so the combination isn't
+/// configurable — see issue #52.
+const SUMMON_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
+
+/// Register or unregister the global summon hotkey to match the setting.
+fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let shortcuts = app.global_shortcut();
+    let registered = shortcuts.is_registered(SUMMON_SHORTCUT);
+    if want && !registered {
+        shortcuts
+            .on_shortcut(SUMMON_SHORTCUT, |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    toggle_main(app);
+                }
+            })
+            .map_err(|e| format!("Couldn't enable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
+    } else if !want && registered {
+        shortcuts
+            .unregister(SUMMON_SHORTCUT)
+            .map_err(|e| format!("Couldn't disable Global Hotkey ({SUMMON_SHORTCUT}): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Best-effort hotkey sync used outside the Settings save path. Store-time
+/// changes call [`sync_global_hotkey`] directly so failures can be shown in UI.
+fn apply_global_hotkey(app: &tauri::AppHandle, want: bool) {
+    if let Err(e) = sync_global_hotkey(app, want) {
+        eprintln!("carrier: {e}");
+    }
+}
+
+/// On startup, a persisted enabled hotkey can become invalid because the
+/// desktop session changed or another app claimed the fixed shortcut. Keep the
+/// stored setting aligned with the actual registration state.
+fn reconcile_startup_global_hotkey(app: &tauri::AppHandle, s: &mut Settings) {
+    if !s.global_hotkey {
+        return;
+    }
+    if let Err(e) = sync_global_hotkey(app, true) {
+        eprintln!("carrier: {e}");
+        s.global_hotkey = false;
+        if let Err(save_err) = save_settings(app, s) {
+            eprintln!("carrier: failed to save disabled Global Hotkey setting: {save_err}");
+        }
+    }
+}
+
 /// Apply the settings that have an immediate runtime effect (window topmost
-/// state, the injected-prefs refresh, and the tray). Autostart is handled
-/// separately by [`sync_autostart`]; everything here is best-effort.
+/// state, the injected-prefs refresh, the global hotkey, and the tray).
+/// Autostart and store-time hotkey changes are handled separately so failures
+/// can be returned to Settings; everything else here is best-effort.
 fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
+    apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
     for (label, window) in app.webview_windows() {
@@ -1307,40 +1363,55 @@ fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
 }
 
-/// Persist `new`, syncing the OS autostart registration first so a failed sync
-/// doesn't commit an autostart preference the OS rejected. Other preferences are
-/// always saved; an autostart failure is returned (after saving the rest) so the
-/// UI can surface it.
+/// Persist `new`, syncing OS-backed preferences first so a failed sync doesn't
+/// commit a preference the OS rejected. Other preferences are always saved;
+/// sync failures are returned (after saving the rest) so the UI can surface them.
 fn store_settings(
     app: &tauri::AppHandle,
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    let prev_theme = state.settings.lock().unwrap().theme.clone();
-    let prev_autostart = state.settings.lock().unwrap().autostart;
+    let (prev_theme, prev_autostart, prev_global_hotkey) = {
+        let prev = state.settings.lock().unwrap();
+        (prev.theme.clone(), prev.autostart, prev.global_hotkey)
+    };
     let mut effective = new.clone().sanitized();
-    let autostart_err = if new.autostart != prev_autostart {
+    let mut sync_errors = Vec::new();
+
+    if new.autostart != prev_autostart {
         match sync_autostart(app, new.autostart) {
-            Ok(()) => None,
+            Ok(()) => {}
             // Keep the previous autostart value rather than persisting one the OS
             // didn't accept; still save/apply every other preference.
             Err(e) => {
                 effective.autostart = prev_autostart;
-                Some(e)
+                sync_errors.push(e);
             }
         }
-    } else {
-        None
-    };
+    }
+    if new.global_hotkey != prev_global_hotkey {
+        match sync_global_hotkey(app, new.global_hotkey) {
+            Ok(()) => {}
+            // Keep the checkbox aligned with whether the shortcut is actually
+            // registered. This also covers Linux Wayland sessions where the
+            // plugin cannot register the fixed global shortcut.
+            Err(e) => {
+                effective.global_hotkey = prev_global_hotkey;
+                sync_errors.push(e);
+            }
+        }
+    }
+
     save_settings(app, &effective)?;
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
     // macOS needs a window rebuild to re-theme the title bar; other platforms
     // already re-themed the chrome live in apply_settings.
     recreate_on_theme_change(app, &prev_theme, &effective.theme);
-    match autostart_err {
-        Some(e) => Err(e),
-        None => Ok(effective),
+    if sync_errors.is_empty() {
+        Ok(effective)
+    } else {
+        Err(sync_errors.join("\n"))
     }
 }
 
@@ -2664,6 +2735,9 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // The summon shortcut itself is (un)registered in `apply_settings`,
+        // following the Global Hotkey setting.
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -2700,7 +2774,7 @@ pub fn run() {
         .setup(move |app| {
             clear_pending_webview_data(app.handle());
 
-            let settings = load_settings(app.handle());
+            let mut settings = load_settings(app.handle());
             *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
 
             let window = build_app_window(app.handle(), "main", &settings)?;
@@ -2717,6 +2791,8 @@ pub fn run() {
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
+            reconcile_startup_global_hotkey(app.handle(), &mut settings);
+            *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
             apply_settings(app.handle(), &settings);
 
             // Start hidden only when a tray was actually created to reopen from.

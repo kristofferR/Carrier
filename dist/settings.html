@@ -87,6 +87,7 @@
       // Per-field metadata: [key, label, hint]. Grouping into tabs is below.
       const FIELDS = [
         ["always_on_top", "Always on Top", "Keep the window above other apps."],
+        ["global_hotkey", "Global Hotkey", "Show or hide Carrier from anywhere (Cmd/Ctrl+Shift+M)."],
         ["show_tray", "Show System Tray", "Show a Carrier icon in the system tray."],
         ["start_to_tray", "Start to Tray", "Launch hidden, into the tray."],
         ["autostart", "Start on System Startup", "Launch Carrier when you log in."],
@@ -119,7 +120,7 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["theme", "zoom", "hide_names_avatars", "system_emoji", "always_on_top", "hide_on_close", "spellcheck"] },
+          fields: ["theme", "zoom", "hide_names_avatars", "system_emoji", "always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: ["show_tray", "start_to_tray", "autostart", "menu_bar_only"] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
