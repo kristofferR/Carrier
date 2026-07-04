@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly, so new RUSTSEC advisories surface even without commits.
+    - cron: "30 5 * * 1"
 
 permissions:
   contents: read
@@ -47,6 +50,22 @@ jobs:
 
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # Audit Cargo.lock against the RUSTSEC advisory database. Needs no build, so
+  # it skips the GTK dependency install the other jobs pay for.
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: cargo-audit
+
+      - name: Audit
+        run: cargo audit --file src-tauri/Cargo.lock
 
   # The `rust` job above only runs on Linux, so the macOS-only objc2 code
   # (make_webview_transparent, set_macos_window_bg, recreate_themed_windows, …)

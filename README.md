@@ -69,6 +69,8 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - **Lightweight & native** — one WebView window, no bundled Chromium.
 - **Native notifications** — new messages raise real OS notifications even when
   Carrier is in the background.
+- **Notification sound & do not disturb** — deliver notifications silently, or
+  suppress them entirely on a daily schedule (overnight ranges work).
 - **Unread badge** — the unread count appears on the Dock / taskbar icon.
 - **Force light / dark theme** — keep Messenger (and the window chrome, including
   the macOS title bar) light or dark regardless of the system theme, or follow
@@ -105,10 +107,24 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 ## Keyboard shortcuts
 
 - <kbd>Cmd/Ctrl</kbd>+<kbd>1</kbd>–<kbd>9</kbd> — jump to the Nth conversation
+- <kbd>Ctrl</kbd>+<kbd>Tab</kbd>/<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> (or
+  <kbd>Cmd/Ctrl</kbd>+<kbd>]</kbd>/<kbd>[</kbd>) — next / previous conversation
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — new conversation
+  (<kbd>Cmd/Ctrl</kbd>+<kbd>N</kbd> — new window)
+- <kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> — search conversations
+- <kbd>Cmd/Ctrl</kbd>+<kbd>F</kbd> — search in conversation
+- <kbd>Cmd/Ctrl</kbd>+<kbd>L</kbd> — focus the message input
+- <kbd>Cmd/Ctrl</kbd>+<kbd>E</kbd>/<kbd>G</kbd>/<kbd>T</kbd> — emoji / GIF / attach files
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> — toggle conversation information
+<<<<<<< HEAD
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — hide names &amp; avatars
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> — show or hide Carrier from
   anywhere (system-wide; off by default)
+||||||| 8c7c5a3
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — hide names &amp; avatars
+=======
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> — hide names &amp; avatars
+>>>>>>> origin/main
 - <kbd>F2</kbd> check for updates &middot; <kbd>F3</kbd> settings &middot;
   <kbd>F5</kbd>/<kbd>Cmd-R</kbd> reload
 - <kbd>Cmd</kbd>+<kbd>-</kbd>/<kbd>=</kbd>/<kbd>0</kbd> — zoom out / in / reset
