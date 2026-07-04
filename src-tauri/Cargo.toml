@@ -33,6 +33,9 @@ tauri-plugin-log = "2"
 # The `log` macros behind tauri-plugin-log; failures that used to vanish into
 # `let _ =` / eprintln! go through these so release builds capture them.
 log = "0.4"
+# Global summon hotkey (Settings → Global Hotkey): show/hide Carrier from
+# anywhere. Registered purely from Rust, so it needs no capability entry.
+tauri-plugin-global-shortcut = "2"
 # New-message notifications are built natively (not via the notification plugin)
 # so the sender's avatar survives: the plugin drops images on desktop, whereas
 # notify-rust attaches them (a thumbnail on macOS, the icon on Linux/Windows).
@@ -40,16 +43,20 @@ log = "0.4"
 # build cost. `base64` decodes the avatar the page hands us as a PNG data URL.
 notify-rust = "4"
 base64 = "0.22"
+# Local wall-clock time for the do-not-disturb schedule (std only exposes UTC).
+# Already in the tree transitively, so it adds no extra build cost.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 open = "5"
-dark-light = "1"
+dark-light = "2"
 # Already in the tree via Tauri; the short delay when recreating a window on a
 # theme switch (the macOS title bar can only be re-themed at window creation).
 tokio = { version = "1", features = ["time"] }
 # Dev-only (the `mcp` feature): webview inspection over a local socket.
-tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", optional = true }
+# Pinned to a rev: an unpinned git dep is a supply-chain/reproducibility snag.
+tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "d5e0b807f14c79de14bac15146fd5e730d4a1b89", optional = true }
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window
@@ -70,6 +77,11 @@ objc2-user-notifications = { version = "0.3.2", features = ["UNUserNotificationC
 # Still pulled in transitively via notify-rust (which Linux/Windows use), so it
 # adds no build cost; the macOS notification code no longer references it.
 mac-notification-sys = "0.6"
+# The Dock menu (recent conversations): Tauri exposes no Dock-menu API, so the
+# NSMenu is built with muda directly (the same crate Tauri's menus wrap — same
+# version, no extra build cost) and served via an `applicationDockMenu:` hook.
+# Menu events still flow through Tauri's regular menu-event plumbing.
+muda = "0.19"
 
 [profile.release]
 panic = "abort"
