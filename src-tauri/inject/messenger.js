@@ -746,14 +746,36 @@
       } catch (_) {}
     };
 
+    function parseDndTime(value) {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
+      if (!m) return null;
+      const hour = Number(m[1]);
+      const minute = Number(m[2]);
+      if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59)
+        return null;
+      return hour * 60 + minute;
+    }
+
+    function dndActive(settings) {
+      const start = parseDndTime(settings?.dnd_start);
+      const end = parseDndTime(settings?.dnd_end);
+      if (start == null || end == null || start === end) return false;
+      const now = new Date();
+      const minutes = now.getHours() * 60 + now.getMinutes();
+      return start < end
+        ? minutes >= start && minutes < end
+        : minutes >= start || minutes < end;
+    }
+
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
       const s = window.__CARRIER_SETTINGS__ || {};
       // Surface every new-message notification Facebook fires — even while
       // Carrier is focused (the native side presents it as a banner regardless of
-      // focus) — unless notifications are muted. (The auto-refresh nudge below
-      // still runs when muted so the window keeps catching up.)
-      if (!s.mute_notifications) {
+      // focus) — unless notifications are muted or DND is active. (The
+      // auto-refresh nudge below still runs when muted/DND so the window keeps
+      // catching up.)
+      if (!s.mute_notifications && !dndActive(s)) {
         const id = ++notifySeq;
         // Facebook assigns `this.onclick` right after construction; hold onto
         // this instance so the click route can call it. Cap the map so a long
