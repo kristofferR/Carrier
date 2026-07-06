@@ -99,30 +99,13 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
   (wheel to zoom, drag or arrow keys to pan, <kbd>Esc</kbd> to close).
 - **Calls work** — camera/microphone are requested for Messenger voice & video.
 - **Remembers its window** — size and position persist between launches.
-<<<<<<< HEAD
 - **Settings window** (<kbd>F3</kbd>) — theme, page zoom, unread badge, hide
-  names & avatars, system emoji, menu-bar mode, always-on-top, tray,
-||||||| 7896313
-- **Settings window** (<kbd>F3</kbd>) — theme, unread badge, hide names &
-  avatars, system emoji, menu-bar mode, always-on-top, tray, start-to-tray, start
-  on login, hide-on-close, spell-check, and experimental multi-window.
-=======
-- **Settings window** (<kbd>F3</kbd>) — theme, unread badge, hide names &
-<<<<<<< HEAD
-  avatars, system emoji, menu-bar mode, always-on-top, tray, start-to-tray, start
-  on login, hide-on-close, spell-check, and experimental multi-window.
+  names & avatars, system emoji, menu-bar mode, always-on-top, global hotkey,
+  tray, start-to-tray, start on login, hide-on-close, spell-check, and
+  experimental multi-window.
 - **Diagnostics log** — warnings and page-integration failures (e.g. a Messenger
   markup change breaking a feature) are logged to a file: **Settings → Advanced
   → Open log folder**.
-||||||| 8c7c5a3
-  avatars, system emoji, menu-bar mode, always-on-top, tray, start-to-tray, start
-  on login, hide-on-close, spell-check, and experimental multi-window.
-=======
-  avatars, system emoji, menu-bar mode, always-on-top, global hotkey, tray,
->>>>>>> origin/main
-  start-to-tray, start on login, hide-on-close, spell-check, and experimental
-  multi-window.
->>>>>>> origin/main
 
 ## Keyboard shortcuts
 
@@ -136,15 +119,9 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
 - <kbd>Cmd/Ctrl</kbd>+<kbd>L</kbd> — focus the message input
 - <kbd>Cmd/Ctrl</kbd>+<kbd>E</kbd>/<kbd>G</kbd>/<kbd>T</kbd> — emoji / GIF / attach files
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>I</kbd> — toggle conversation information
-<<<<<<< HEAD
-- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — hide names &amp; avatars
+- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> — hide names &amp; avatars
 - <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> — show or hide Carrier from
   anywhere (system-wide; off by default)
-||||||| 8c7c5a3
-- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> — hide names &amp; avatars
-=======
-- <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> — hide names &amp; avatars
->>>>>>> origin/main
 - <kbd>F2</kbd> check for updates &middot; <kbd>F3</kbd> settings &middot;
   <kbd>F5</kbd>/<kbd>Cmd-R</kbd> reload
 - <kbd>Cmd</kbd>+<kbd>-</kbd>/<kbd>=</kbd>/<kbd>0</kbd> — zoom out / in / reset
