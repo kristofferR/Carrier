@@ -259,10 +259,26 @@ fn install_with_admin_privileges(
     source_app: &std::path::Path,
     destination_app: &std::path::Path,
 ) -> Result<(), String> {
+    // Back up the current bundle to a sibling path (same volume, so the move is
+    // atomic) before overwriting, and restore it if `ditto` fails — otherwise a
+    // failed privileged copy (disk full, interrupted read) would leave the user
+    // with no app at all. This mirrors the rename/rollback the non-privileged
+    // branch does, and the whole sequence runs inside one privileged shell so
+    // the rollback is itself privileged.
     let script = format!(
-        "do shell script \"rm -rf \" & quoted form of {destination} & \" && ditto \" & quoted form of {source} & \" \" & quoted form of {destination} with administrator privileges",
+        concat!(
+            "do shell script \"",
+            "rm -rf \" & quoted form of {backup} & \" ; ",
+            "mv \" & quoted form of {destination} & \" \" & quoted form of {backup} & \" || exit 1 ; ",
+            "if ditto \" & quoted form of {source} & \" \" & quoted form of {destination} & \" ; ",
+            "then rm -rf \" & quoted form of {backup} & \" ; ",
+            "else rm -rf \" & quoted form of {destination} & \" ; ",
+            "mv \" & quoted form of {backup} & \" \" & quoted form of {destination} & \" ; exit 1 ; fi",
+            "\" with administrator privileges"
+        ),
         source = applescript_string(&source_app.display().to_string()),
         destination = applescript_string(&destination_app.display().to_string()),
+        backup = applescript_string(&format!("{}.carrier-backup", destination_app.display())),
     );
     let mut command = std::process::Command::new("osascript");
     command.arg("-e").arg(script);
