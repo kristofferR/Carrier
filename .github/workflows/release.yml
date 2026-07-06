@@ -201,9 +201,17 @@ jobs:
           releaseBody: ${{ needs.prepare_release.outputs.release_body }}
           releaseDraft: true
           prerelease: false
-          # Versioned names; the publish job keeps the README's versioned
-          # download links pointed at the latest release.
-          assetNamePattern: "Carrier_[version]_${{ env.ASSET_PLATFORM }}_${{ env.ASSET_ARCH }}[_setup][ext]"
+          # Versioned, friendly asset names (Carrier_1.2.1_lin_x64.AppImage,
+          # _win_x64_setup.exe, …); the publish job's README links and the
+          # Homebrew cask both reference these exact names.
+          # NB: tauri-action v1.0.0 renamed this input from `assetNamePattern`
+          # to `releaseAssetNamePattern`. The old key is silently ignored (only
+          # a warning), so every tauri-action bundle (AppImage, NSIS .exe, deb,
+          # rpm) fell back to tauri's default names — which broke the "Update
+          # Homebrew tap" step and the README's Windows/Linux download links
+          # since v1.2.0. Only the DMG and portable zip stayed correct because
+          # they're renamed by explicit steps below.
+          releaseAssetNamePattern: "Carrier_[version]_${{ env.ASSET_PLATFORM }}_${{ env.ASSET_ARCH }}[_setup][ext]"
           # The release config enables createUpdaterArtifacts (kept out of the
           # base config so a local `tauri build` doesn't require the signing key).
           # macOS generates Tauri's stock .app.tar.gz updater archive first; the
