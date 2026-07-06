@@ -140,11 +140,12 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
-    # Predictable, versioned asset names (e.g. Carrier_1.0.0_mac_arm.dmg). The
-    # publish job rewrites the README download links to each release's version.
+    # Predictable, versioned asset names (e.g. Carrier_1.0.0_mac_arm.dmg and
+    # Carrier_1.0.0_mac_intel.dmg). The publish job rewrites the README download
+    # links to each release's version.
     env:
       ASSET_PLATFORM: ${{ contains(matrix.target, 'apple-darwin') && 'mac' || contains(matrix.target, 'windows') && 'win' || 'lin' }}
-      ASSET_ARCH: ${{ startsWith(matrix.target, 'aarch64') && 'arm' || 'x64' }}
+      ASSET_ARCH: ${{ contains(matrix.target, 'apple-darwin') && startsWith(matrix.target, 'x86_64') && 'intel' || startsWith(matrix.target, 'aarch64') && 'arm' || 'x64' }}
 
     steps:
       - name: Checkout
@@ -205,6 +206,9 @@ jobs:
           assetNamePattern: "Carrier_[version]_${{ env.ASSET_PLATFORM }}_${{ env.ASSET_ARCH }}[_setup][ext]"
           # The release config enables createUpdaterArtifacts (kept out of the
           # base config so a local `tauri build` doesn't require the signing key).
+          # macOS generates Tauri's stock .app.tar.gz updater archive first; the
+          # notarization step below rewrites latest.json to use the stapled .dmg
+          # instead, then deletes the archive so the public release stays clean.
           args: --target ${{ matrix.target }} --config src-tauri/tauri.conf.release.json
 
       # tauri-action notarizes the .app but not the .dmg, so a downloaded .dmg
@@ -217,6 +221,10 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_MAC_ARCH: ${{ startsWith(matrix.target, 'aarch64') && 'aarch64' || 'x64' }}
+          TAURI_UPDATER_PLATFORM: ${{ startsWith(matrix.target, 'aarch64') && 'darwin-aarch64' || 'darwin-x86_64' }}
         run: |
           set -euo pipefail
           if [ -z "${APPLE_ID}" ] || [ -z "${APPLE_PASSWORD}" ] || [ -z "${APPLE_TEAM_ID}" ]; then
@@ -236,11 +244,78 @@ jobs:
           xcrun stapler staple "${SRC}"
           DEST="Carrier_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.dmg"
           cp "${SRC}" "${DEST}"
+          bun run tauri signer sign "${DEST}"
+          DMG_SIGNATURE=$(cat "${DEST}.sig")
           # Use the built-in $GITHUB_REF_NAME env var, not a GitHub Actions
           # template expansion: a crafted tag name could otherwise inject shell
           # code here. (Don't write a literal Actions expression in this comment:
           # it would be interpolated and an empty one fails the whole workflow.)
           gh release upload "$GITHUB_REF_NAME" "${DEST}" --clobber
+
+          rel_id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            | jq -r --arg tag "$GITHUB_REF_NAME" '.[] | select(.tag_name == $tag) | .id' \
+            | head -n1)
+          if [ -z "$rel_id" ]; then
+            echo "No draft release found for $GITHUB_REF_NAME; skipping mac asset cleanup."
+            exit 0
+          fi
+
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" --paginate)
+          dmg_asset_id=$(printf '%s\n' "$assets" \
+            | jq -r --arg name "$DEST" '.[] | select(.name == $name) | .id' \
+            | head -n1)
+          if [ -z "$dmg_asset_id" ]; then
+            echo "Uploaded .dmg asset ${DEST} was not found." >&2
+            exit 1
+          fi
+
+          latest_id=$(printf '%s\n' "$assets" \
+            | jq -r '.[] | select(.name == "latest.json") | .id' \
+            | head -n1)
+          if [ -z "$latest_id" ]; then
+            echo "latest.json was not found; cannot point mac updater at the .dmg." >&2
+            exit 1
+          fi
+
+          tmp_latest=$(mktemp -d)
+          gh api \
+            -H "Accept: application/octet-stream" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$latest_id" \
+            > "$tmp_latest/latest.json"
+          dmg_url="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$dmg_asset_id"
+          jq \
+            --arg platform "$TAURI_UPDATER_PLATFORM" \
+            --arg url "$dmg_url" \
+            --arg signature "$DMG_SIGNATURE" \
+            '.platforms[$platform].url = $url
+              | .platforms[$platform].signature = $signature
+              | .platforms[($platform + "-app")].url = $url
+              | .platforms[($platform + "-app")].signature = $signature' \
+            "$tmp_latest/latest.json" > "$tmp_latest/latest.next.json"
+          mv "$tmp_latest/latest.next.json" "$tmp_latest/latest.json"
+          gh release upload "$GITHUB_REF_NAME" "$tmp_latest/latest.json" --clobber
+
+          default_dmg="Carrier_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.dmg"
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" --paginate)
+          default_dmg_id=$(printf '%s\n' "$assets" \
+            | jq -r --arg name "$default_dmg" '.[] | select(.name == $name) | .id' \
+            | head -n1)
+          if [ -n "$default_dmg_id" ]; then
+            echo "Deleting unstapled default mac .dmg asset ${default_dmg}."
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$default_dmg_id"
+          fi
+
+          updater_src="Carrier_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.app.tar.gz"
+          updater_dest="Carrier_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.app.tar.gz"
+          for updater_asset in "$updater_src" "$updater_dest"; do
+            updater_id=$(printf '%s\n' "$assets" \
+              | jq -r --arg name "$updater_asset" '.[] | select(.name == $name) | .id' \
+              | head -n1)
+            if [ -n "$updater_id" ]; then
+              echo "Deleting mac updater archive asset ${updater_asset}; latest.json uses the .dmg."
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$updater_id"
+            fi
+          done
 
       # A no-installer option for Windows: just the standalone .exe (WebView2 is
       # provided by the OS on Win10+/11). The app exe is the only top-level *.exe
@@ -365,7 +440,7 @@ jobs:
           mkdir -p /tmp/assets
           for asset in \
             "Carrier_${VERSION}_mac_arm.dmg" \
-            "Carrier_${VERSION}_mac_x64.dmg" \
+            "Carrier_${VERSION}_mac_intel.dmg" \
             "Carrier_${VERSION}_lin_arm.AppImage" \
             "Carrier_${VERSION}_lin_x64.AppImage"; do
             GH_TOKEN="$RELEASE_TOKEN" gh release download "$GITHUB_REF_NAME" --repo "$REPO" --pattern "$asset" --dir /tmp/assets
@@ -373,7 +448,7 @@ jobs:
 
           # Compute SHA256 hashes (fails if any asset is missing).
           SHA_MAC_ARM=$(sha256sum "/tmp/assets/Carrier_${VERSION}_mac_arm.dmg" | cut -d' ' -f1)
-          SHA_MAC_X64=$(sha256sum "/tmp/assets/Carrier_${VERSION}_mac_x64.dmg" | cut -d' ' -f1)
+          SHA_MAC_INTEL=$(sha256sum "/tmp/assets/Carrier_${VERSION}_mac_intel.dmg" | cut -d' ' -f1)
           SHA_LIN_ARM=$(sha256sum "/tmp/assets/Carrier_${VERSION}_lin_arm.AppImage" | cut -d' ' -f1)
           SHA_LIN_X64=$(sha256sum "/tmp/assets/Carrier_${VERSION}_lin_x64.AppImage" | cut -d' ' -f1)
 
@@ -390,9 +465,9 @@ jobs:
               end
 
               on_intel do
-                sha256 "${SHA_MAC_X64}"
+                sha256 "${SHA_MAC_INTEL}"
 
-                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_mac_x64.dmg",
+                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_mac_intel.dmg",
                     verified: "github.com/${REPO}/"
               end
             end

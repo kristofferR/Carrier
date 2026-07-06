@@ -86,6 +86,7 @@ pub(crate) fn reset_settings(
 }
 
 /// Check GitHub releases for an update; download & install if found.
+#[cfg(not(target_os = "macos"))]
 pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
@@ -102,9 +103,193 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
     }
 }
 
+/// Check GitHub releases for a macOS update and install the signed release DMG.
+///
+/// Tauri's stock macOS installer expects an `.app.tar.gz` updater payload. Carrier
+/// publishes only the user-facing DMG, so we keep Tauri's update check and
+/// minisign verification, then mount/copy the verified DMG ourselves.
+#[cfg(target_os = "macos")]
+pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let bytes = update
+                .download(|_, _| {}, || {})
+                .await
+                .map_err(|e| e.to_string())?;
+            install_macos_dmg_update(&bytes)?;
+            app.restart();
+        }
+        Ok(None) => Ok("up-to-date".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
     run_update_check(&app).await
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_dmg_update(bytes: &[u8]) -> Result<(), String> {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis();
+    let work_dir =
+        std::env::temp_dir().join(format!("carrier-update-{}-{nonce}", std::process::id()));
+    let result = (|| {
+        fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
+        let dmg_path = work_dir.join("Carrier-update.dmg");
+        fs::write(&dmg_path, bytes).map_err(|e| e.to_string())?;
+
+        let mountpoint = work_dir.join("mount");
+        fs::create_dir(&mountpoint).map_err(|e| e.to_string())?;
+        let mut attach = std::process::Command::new("hdiutil");
+        attach
+            .arg("attach")
+            .arg("-nobrowse")
+            .arg("-readonly")
+            .arg("-mountpoint")
+            .arg(&mountpoint)
+            .arg(&dmg_path);
+        run_macos_command(&mut attach)?;
+        let _mounted = MountedDmg {
+            mountpoint: mountpoint.clone(),
+        };
+
+        let source_app = find_app_bundle(&mountpoint)?;
+        let destination_app = current_app_bundle()?;
+        replace_app_bundle(&source_app, &destination_app, &work_dir)?;
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&work_dir);
+    result
+}
+
+#[cfg(target_os = "macos")]
+struct MountedDmg {
+    mountpoint: std::path::PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for MountedDmg {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("hdiutil")
+            .arg("detach")
+            .arg(&self.mountpoint)
+            .arg("-quiet")
+            .status();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_app_bundle() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    for ancestor in exe.ancestors() {
+        if ancestor.extension().is_some_and(|ext| ext == "app") {
+            return Ok(ancestor.to_path_buf());
+        }
+    }
+    Err("Could not locate the running .app bundle.".into())
+}
+
+#[cfg(target_os = "macos")]
+fn find_app_bundle(mountpoint: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let mut fallback = None;
+    for entry in std::fs::read_dir(mountpoint).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|ext| ext == "app") {
+            if path.file_name().is_some_and(|name| name == "Carrier.app") {
+                return Ok(path);
+            }
+            fallback = Some(path);
+        }
+    }
+    fallback.ok_or_else(|| "The update DMG did not contain an app bundle.".into())
+}
+
+#[cfg(target_os = "macos")]
+fn replace_app_bundle(
+    source_app: &std::path::Path,
+    destination_app: &std::path::Path,
+    work_dir: &std::path::Path,
+) -> Result<(), String> {
+    let backup_dir = work_dir.join("backup");
+    std::fs::create_dir(&backup_dir).map_err(|e| e.to_string())?;
+    let backup_app = backup_dir.join("Carrier.app");
+
+    match std::fs::rename(destination_app, &backup_app) {
+        Ok(()) => {
+            if let Err(err) = ditto(source_app, destination_app) {
+                let _ = std::fs::remove_dir_all(destination_app);
+                let _ = std::fs::rename(&backup_app, destination_app);
+                return Err(err);
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            install_with_admin_privileges(source_app, destination_app)?;
+        }
+        Err(err) => return Err(err.to_string()),
+    }
+
+    let _ = std::process::Command::new("touch")
+        .arg(destination_app)
+        .status();
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn ditto(source: &std::path::Path, destination: &std::path::Path) -> Result<(), String> {
+    let mut command = std::process::Command::new("ditto");
+    command.arg(source).arg(destination);
+    run_macos_command(&mut command)
+}
+
+#[cfg(target_os = "macos")]
+fn install_with_admin_privileges(
+    source_app: &std::path::Path,
+    destination_app: &std::path::Path,
+) -> Result<(), String> {
+    let script = format!(
+        "do shell script \"rm -rf \" & quoted form of {destination} & \" && ditto \" & quoted form of {source} & \" \" & quoted form of {destination} with administrator privileges",
+        source = applescript_string(&source_app.display().to_string()),
+        destination = applescript_string(&destination_app.display().to_string()),
+    );
+    let mut command = std::process::Command::new("osascript");
+    command.arg("-e").arg(script);
+    run_macos_command(&mut command)
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(target_os = "macos")]
+fn run_macos_command(command: &mut std::process::Command) -> Result<(), String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let output = command.output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        Err(format!("{program} failed: {details}"))
+    }
 }
 
 fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
