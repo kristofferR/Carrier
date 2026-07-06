@@ -6,6 +6,18 @@ import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 
+// True when the response advertises a Content-Length over the cap. Absent or
+// unparseable headers yield 0 (falsy), so callers fall back to the blob check.
+const oversizeByHeader = (res: Response) => Number(res.headers.get("content-length")) > MAX_BLOB;
+
+// Copy a URL to the clipboard with the same success/failure toasting the
+// download actions use (writeText can reject on a denied clipboard grant).
+const copyAddress = (text: string) =>
+  navigator.clipboard
+    ?.writeText(text)
+    .then(() => toast("Address copied"))
+    .catch(() => toast("Copy failed"));
+
 // Download a media src by letting the WebView initiate the download, which the
 // Rust `on_download` handler then writes to Downloads. (Custom commands can't
 // be called from the remote Facebook origin, only plugins / WebView hooks.)
@@ -14,6 +26,9 @@ export async function downloadSrc(src: string, fallbackName: string) {
   // ignored for cross-origin URLs) and so we can derive the real extension.
   const res = await fetch(src);
   if (!res.ok) throw new Error(`download failed (${res.status})`);
+  // Best-effort early reject before buffering the whole body into memory (a
+  // response can omit or misreport Content-Length, so keep the post-read cap).
+  if (oversizeByHeader(res)) throw new Error("file too large");
   const blob = await res.blob();
   if (blob.size > MAX_BLOB) throw new Error("file too large");
   const href = URL.createObjectURL(blob);
@@ -35,6 +50,7 @@ export async function downloadSrc(src: string, fallbackName: string) {
 async function copyImageSrc(src: string) {
   const res = await fetch(src);
   if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+  if (oversizeByHeader(res)) throw new Error("image too large");
   const blob = await res.blob();
   if (blob.size > MAX_BLOB) throw new Error("image too large");
   await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
@@ -76,10 +92,7 @@ export function initContextMenu() {
               .then(() => toast("Saved to Downloads"))
               .catch(() => toast("Download failed")),
         ]);
-        items.push([
-          "Copy image address",
-          () => navigator.clipboard?.writeText(imgSrc).then(() => toast("Address copied")),
-        ]);
+        items.push(["Copy image address", () => copyAddress(imgSrc)]);
         items.push(["Open image in browser", () => openUrl(imgSrc)]);
       } else if (vidSrc) {
         items.push([
@@ -89,15 +102,9 @@ export function initContextMenu() {
               .then(() => toast("Saved to Downloads"))
               .catch(() => toast("Download failed")),
         ]);
-        items.push([
-          "Copy video address",
-          () => navigator.clipboard?.writeText(vidSrc).then(() => toast("Address copied")),
-        ]);
+        items.push(["Copy video address", () => copyAddress(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        items.push([
-          "Copy link address",
-          () => navigator.clipboard?.writeText(linkHref).then(() => toast("Address copied")),
-        ]);
+        items.push(["Copy link address", () => copyAddress(linkHref)]);
         items.push(["Open link in browser", () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)

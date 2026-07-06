@@ -21,9 +21,9 @@ interface CarrierSettings {
   spellcheck?: boolean;
   unread_badge?: boolean;
   /** "messages" (page-title total) or "conversations" (bold chat rows). */
-  badge_mode?: string;
+  badge_mode?: "messages" | "conversations";
   /** "system", "light", or "dark". */
-  theme?: string;
+  theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
   mute_notifications?: boolean;
   notification_sound?: boolean;

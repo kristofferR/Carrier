@@ -12,10 +12,8 @@ export const rgb = (
 };
 
 /** A near-opaque light fill (Facebook's login wrappers) we want to clear so
- * the dark backdrop shows through. */
+ * the dark backdrop shows through. Reuses `rgb()` as the single parse. */
 export const isLightFill = (bg: string | null | undefined): boolean => {
-  const m = bg?.match(/rgba?\(([^)]+)\)/);
-  if (!m) return false;
-  const [r = NaN, g = NaN, b = NaN, a = 1] = m[1]!.split(",").map((s) => parseFloat(s));
-  return a > 0.9 && (r + g + b) / 3 > 200;
+  const c = rgb(bg);
+  return !!c && c.a > 0.9 && (c.r + c.g + c.b) / 3 > 200;
 };

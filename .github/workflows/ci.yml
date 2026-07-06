@@ -55,6 +55,7 @@ jobs:
   # typecheck, bun test for the pure logic, and a freshness check that the
   # committed bundles in src-tauri/inject/ match a rebuild of inject/src/.
   inject:
+    name: Inject scripts (lint, typecheck, test, build)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

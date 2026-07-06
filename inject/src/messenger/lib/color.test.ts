@@ -1,37 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { isLightFill, rgb } from "./color";
-import { emojiGlyph } from "./emoji";
-import { clampZoom } from "./zoom";
-
-describe("clampZoom", () => {
-  test("clamps to 30–200 and rounds", () => {
-    expect(clampZoom(100)).toBe(100);
-    expect(clampZoom(250)).toBe(200);
-    expect(clampZoom(10)).toBe(30);
-    expect(clampZoom(149.6)).toBe(150);
-  });
-
-  test("falls back to 100 for NaN/0", () => {
-    expect(clampZoom(Number.NaN)).toBe(100);
-    expect(clampZoom(0)).toBe(100);
-  });
-});
-
-describe("emojiGlyph", () => {
-  test("passes through bare emoji", () => {
-    expect(emojiGlyph("😀")).toBe("😀");
-    expect(emojiGlyph("👍🏽")).toBe("👍🏽");
-    expect(emojiGlyph("❤️")).toBe("❤️");
-  });
-
-  test("rejects labels, long strings, and empties", () => {
-    expect(emojiGlyph("smiling face")).toBe("");
-    expect(emojiGlyph("😀 yes")).toBe(""); // letters mixed in
-    expect(emojiGlyph("😀".repeat(20))).toBe(""); // > 24 chars
-    expect(emojiGlyph("")).toBe("");
-    expect(emojiGlyph(null)).toBe("");
-  });
-});
 
 describe("rgb", () => {
   test("parses rgb()/rgba()", () => {

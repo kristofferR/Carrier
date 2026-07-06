@@ -122,9 +122,12 @@
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
+  var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
+  var copyAddress = (text) => navigator.clipboard?.writeText(text).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
   async function downloadSrc(src, fallbackName) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
+    if (oversizeByHeader(res)) throw new Error("file too large");
     const blob = await res.blob();
     if (blob.size > MAX_BLOB) throw new Error("file too large");
     const href = URL.createObjectURL(blob);
@@ -145,6 +148,7 @@
   async function copyImageSrc(src) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+    if (oversizeByHeader(res)) throw new Error("image too large");
     const blob = await res.blob();
     if (blob.size > MAX_BLOB) throw new Error("image too large");
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
@@ -177,25 +181,16 @@
             "Download image",
             () => downloadSrc(imgSrc, "image").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))
           ]);
-          items.push([
-            "Copy image address",
-            () => navigator.clipboard?.writeText(imgSrc).then(() => toast("Address copied"))
-          ]);
+          items.push(["Copy image address", () => copyAddress(imgSrc)]);
           items.push(["Open image in browser", () => openUrl(imgSrc)]);
         } else if (vidSrc) {
           items.push([
             "Download video",
             () => downloadSrc(vidSrc, "video").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))
           ]);
-          items.push([
-            "Copy video address",
-            () => navigator.clipboard?.writeText(vidSrc).then(() => toast("Address copied"))
-          ]);
+          items.push(["Copy video address", () => copyAddress(vidSrc)]);
         } else if (linkHref && !linkHref.startsWith("javascript:")) {
-          items.push([
-            "Copy link address",
-            () => navigator.clipboard?.writeText(linkHref).then(() => toast("Address copied"))
-          ]);
+          items.push(["Copy link address", () => copyAddress(linkHref)]);
           items.push(["Open link in browser", () => openUrl(linkHref)]);
         }
         if (!items.length) return;
@@ -250,10 +245,8 @@
     return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) ? { r, g, b, a } : null;
   };
   var isLightFill = (bg) => {
-    const m = bg?.match(/rgba?\(([^)]+)\)/);
-    if (!m) return false;
-    const [r = NaN, g = NaN, b = NaN, a = 1] = m[1].split(",").map((s) => parseFloat(s));
-    return a > 0.9 && (r + g + b) / 3 > 200;
+    const c = rgb(bg);
+    return !!c && c.a > 0.9 && (c.r + c.g + c.b) / 3 > 200;
   };
 
   // inject/src/messenger/features/cookie-consent.ts
