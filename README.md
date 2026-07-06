@@ -179,7 +179,8 @@ at document start:
   chrome (carefully keeping the media-viewer controls).
 - [`inject/messenger.js`](src-tauri/inject/messenger.js) — keyboard shortcuts,
   page zoom, the image/video viewer, notifications, the unread badge, theme
-  forcing, and the adaptive context menu.
+  forcing, and the adaptive context menu. Generated from the TypeScript
+  sources in [`inject/src/`](inject/src/) by `bun run build:inject`.
 
 Because Facebook is a remote origin, page features reach the backend through Tauri
 plugins (opener, notification) and core events rather than custom commands. Off-site

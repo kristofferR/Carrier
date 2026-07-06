@@ -1,0 +1,18 @@
+{
+  // Typechecks the bun-test files (Bun globals + `bun:test` imports). Kept
+  // separate from tsconfig.json so Bun's ambient types never bleed into the
+  // browser-side sources.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "types": ["bun"],
+    "noEmit": true
+  },
+  "include": ["inject/src/**/*.test.ts", "inject/build.ts"]
+}

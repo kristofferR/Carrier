@@ -30,8 +30,15 @@ xattr -dr com.apple.quarantine "/Applications/Carrier.app"
 **Gate before every commit** (CI mirrors this):
 ```bash
 cd src-tauri && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test --lib
-node --check inject/messenger.js
+bun run check   # Biome lint + tsgo typecheck + bun test + rebuild the inject bundles
 ```
+
+The injected scripts are TypeScript now: **edit `inject/src/`, never
+`src-tauri/inject/*.js`** (generated; `messenger.css` and the dev-only
+`mcp-bridge.js` are still hand-maintained). After changing `inject/src/`, run
+`bun run build:inject` and commit the regenerated bundles alongside the source
+— CI fails if they drift. Pure logic lives in `inject/src/messenger/lib/` with
+`bun test` coverage; add tests there when extending it.
 
 Releases are tag-driven: push `v*` → `.github/workflows/release.yml` builds 6
 targets, signs + notarizes macOS, and auto-publishes (Apple/Tauri secrets are set
@@ -71,7 +78,13 @@ On `main` (committed `d8a25a6`).
   chrome + theme/compact/login CSS), `messenger.js` (shortcuts, zoom, image
   viewer, notifications incl. mute / hide-preview privacy, unread badge,
   force-theme, hide names & avatars, login tidy), `panel.js` (toast,
-  settings/update bridge).
+  settings/update bridge). `messenger.js`/`panel.js` are **generated** — the
+  typed sources live in **`inject/src/`** (one module per feature; pure,
+  unit-tested logic under `inject/src/messenger/lib/`), bundled back to single
+  IIFE files by `bun run build:inject` (esbuild, config in `inject/build.ts`).
+  Init order in `inject/src/messenger/index.ts` mirrors the old single-file
+  section order — capture-phase listeners on the same event fire in
+  registration order, so keep it.
 - **`dist/settings.html`** — the standalone Settings window.
 - **IPC model (important):** the FB page is a **remote origin**, so it **cannot
   call Carrier's own commands**. Page→backend goes through Tauri **plugins**

@@ -1,0 +1,21 @@
+{
+  // Typechecks the injected-script sources (browser code: DOM lib, no Bun
+  // globals). Tests are covered by tsconfig.test.json. `bun run typecheck`
+  // runs both through tsgo; nothing is emitted — esbuild does the bundling.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["inject/src"],
+  "exclude": ["inject/src/**/*.test.ts"]
+}
