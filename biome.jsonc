@@ -1,0 +1,42 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
+  // Scoped to the typed inject sources; the generated bundles in
+  // src-tauri/inject/ and the dev-only mcp-bridge.js are not linted.
+  "files": {
+    "includes": ["inject/**"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        // The injected code deliberately assigns inside expressions in a few
+        // hot paths (TreeWalker iteration, style toggles) — kept verbatim from
+        // the proven injected script rather than restructured for the linter.
+        "noAssignInExpressions": "off",
+        // Not type-aware: it flags every expression-bodied forEach callback,
+        // including void-returning DOM calls like el.removeAttribute(...).
+        "useIterableCallbackReturn": "off"
+      },
+      "style": {
+        // `noUncheckedIndexedAccess` is on, so regex capture groups read as
+        // possibly-undefined; `!` on a capture that the match guarantees is
+        // the sanctioned pattern here.
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  }
+}
