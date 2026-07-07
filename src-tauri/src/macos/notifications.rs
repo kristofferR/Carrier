@@ -101,6 +101,8 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     use objc2_foundation::NSError;
     use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
 
+    refresh_launch_services_registration();
+
     let center = UNUserNotificationCenter::currentNotificationCenter();
 
     // Install the delegate before requesting authorization so we never miss an
@@ -134,6 +136,41 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
         }
     });
     center.requestAuthorizationWithOptions_completionHandler(options, &handler);
+}
+
+/// Refresh this bundle's LaunchServices registration before asking for
+/// notification authorization. When the bundle id is registered at several
+/// paths — typically a still-mounted release DMG alongside the installed copy —
+/// `usernoted` can resolve the id to the wrong copy and the authorization
+/// request fails silently: banners never show while badges keep working.
+/// Re-registering the copy that's actually running keeps its record fresh so
+/// the lookup lands here.
+fn refresh_launch_services_registration() {
+    use objc2::rc::Retained;
+    use objc2_foundation::{NSString, NSURL};
+
+    // LSRegisterURL(CFURLRef, Boolean) — CFURLRef is toll-free bridged from
+    // NSURL, and `Boolean` is a u8.
+    #[link(name = "CoreServices", kind = "framework")]
+    extern "C" {
+        fn LSRegisterURL(in_url: *const std::ffi::c_void, in_update: u8) -> i32;
+    }
+
+    // Not running from an .app bundle (`tauri dev` runs the bare binary) —
+    // there's nothing LaunchServices could register.
+    let Ok(bundle) = crate::commands::current_app_bundle() else {
+        return;
+    };
+    let Some(path) = bundle.to_str() else {
+        return;
+    };
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    // SAFETY: `url` is a valid NSURL (a CFURLRef via toll-free bridging) that
+    // outlives the call.
+    let status = unsafe { LSRegisterURL(Retained::as_ptr(&url).cast(), 1) };
+    if status != 0 {
+        log::warn!("LSRegisterURL({path}) failed with status {status}");
+    }
 }
 
 /// Deliver a new-message notification through the modern
