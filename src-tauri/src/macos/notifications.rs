@@ -115,10 +115,24 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     let options = UNAuthorizationOptions::Badge
         | UNAuthorizationOptions::Alert
         | UNAuthorizationOptions::Sound;
-    // The completion handler is required by the API; the OS persists the grant,
-    // so there's nothing to do with the result. The framework copies the block,
-    // so letting our `RcBlock` drop when this returns is fine.
-    let handler = RcBlock::new(|_granted: Bool, _error: *mut NSError| {});
+    // The completion handler is required by the API and the OS persists the
+    // grant. Log the outcome: authorization can fail silently (e.g. duplicate
+    // LaunchServices registrations of the bundle id from a still-mounted
+    // release DMG), which presents as "badges work but no banners" with no
+    // trace in the log file. The framework copies the block, so letting our
+    // `RcBlock` drop when this returns is fine.
+    let handler = RcBlock::new(|granted: Bool, error: *mut NSError| {
+        // SAFETY: the framework passes a valid NSError or null.
+        let error = unsafe { error.as_ref() };
+        match error {
+            Some(e) => log::warn!(
+                "notification authorization failed: {}",
+                e.localizedDescription()
+            ),
+            None if granted.as_bool() => log::info!("notification authorization granted"),
+            None => log::warn!("notification authorization denied (banners will not show)"),
+        }
+    });
     center.requestAuthorizationWithOptions_completionHandler(options, &handler);
 }
 
