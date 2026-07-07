@@ -192,7 +192,7 @@ impl Drop for MountedDmg {
 }
 
 #[cfg(target_os = "macos")]
-fn current_app_bundle() -> Result<std::path::PathBuf, String> {
+pub(crate) fn current_app_bundle() -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     for ancestor in exe.ancestors() {
         if ancestor.extension().is_some_and(|ext| ext == "app") {
