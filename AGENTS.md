@@ -30,7 +30,7 @@ xattr -dr com.apple.quarantine "/Applications/Carrier.app"
 **Gate before every commit** (CI mirrors this):
 ```bash
 cd src-tauri && cargo fmt && cargo clippy --all-targets -- -D warnings && cargo test --lib
-bun run check   # Biome lint + tsgo typecheck + bun test + rebuild the inject bundles
+bun run check   # Biome lint + tsc typecheck + bun test + rebuild the inject bundles
 ```
 
 The injected scripts are TypeScript now: **edit `inject/src/`, never
