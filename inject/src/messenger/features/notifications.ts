@@ -80,6 +80,13 @@ export function initNotificationBridge() {
   ) {
     const opts = options || {};
     const s = window.__CARRIER_SETTINGS__ || {};
+    // Content-free breadcrumb: proves Facebook fired a Notification at all
+    // (the unread badge rides a separate path, so "badge but no banner"
+    // reports need this to split page-side from native-side failures).
+    diag(
+      "notify.fired",
+      `page constructed a Notification (visibility: ${document.visibilityState})`,
+    );
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below

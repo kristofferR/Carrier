@@ -38,6 +38,14 @@ pub(crate) struct NotifyMsg {
     icon: String,
 }
 
+impl NotifyMsg {
+    /// The page's handle for this notification (safe to log — it's a counter,
+    /// not message content).
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();

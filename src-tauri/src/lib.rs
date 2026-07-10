@@ -337,8 +337,15 @@ pub fn run() {
             // app is ready), so there's no per-process registration to do here.
             let notify_handle = app.handle().clone();
             app.listen_any("carrier:notify", move |event| {
-                if let Ok(msg) = serde_json::from_str::<NotifyMsg>(event.payload()) {
-                    show_message_notification(notify_handle.clone(), msg);
+                // Content-free receipt breadcrumb: with the page-side
+                // `notify.fired` diag and the macOS delivery logging, every
+                // hop of the notification pipeline is visible in the log.
+                match serde_json::from_str::<NotifyMsg>(event.payload()) {
+                    Ok(msg) => {
+                        log::info!("carrier:notify received (id {})", msg.id());
+                        show_message_notification(notify_handle.clone(), msg);
+                    }
+                    Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
                 }
             });
 

@@ -1383,6 +1383,10 @@
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
       const s = window.__CARRIER_SETTINGS__ || {};
+      diag(
+        "notify.fired",
+        `page constructed a Notification (visibility: ${document.visibilityState})`
+      );
       if (!s.mute_notifications) {
         const id = ++notifySeq;
         notifyHandlers.set(id, this);
