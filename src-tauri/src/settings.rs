@@ -48,10 +48,6 @@ pub(crate) struct Settings {
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
     pub(crate) hide_notification_preview: bool,
-    /// Do-not-disturb window start, local wall-clock "HH:MM" (empty = off).
-    pub(crate) dnd_start: String,
-    /// Do-not-disturb window end, local wall-clock "HH:MM" (empty = off).
-    pub(crate) dnd_end: String,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     pub(crate) hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
@@ -101,8 +97,6 @@ impl Default for Settings {
             mute_notifications: false,
             notification_sound: true,
             hide_notification_preview: false,
-            dnd_start: String::new(),
-            dnd_end: String::new(),
             hide_names_avatars: false,
             system_emoji: false,
             zoom: 100,

@@ -2,7 +2,6 @@
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
 import { diag, invoke } from "../bridge";
-import { dndActive } from "../lib/dnd";
 
 interface CarrierNotificationInstance {
   title?: string;
@@ -83,10 +82,9 @@ export function initNotificationBridge() {
     const s = window.__CARRIER_SETTINGS__ || {};
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
-    // focus) — unless notifications are muted or DND is active. (The
-    // auto-refresh nudge below still runs when muted/DND so the window keeps
-    // catching up.)
-    if (!s.mute_notifications && !dndActive(s)) {
+    // focus) — unless notifications are muted. (The auto-refresh nudge below
+    // still runs when muted so the window keeps catching up.)
+    if (!s.mute_notifications) {
       const id = ++notifySeq;
       // Facebook assigns `this.onclick` right after construction; hold onto
       // this instance so the click route can call it. Cap the map so a long

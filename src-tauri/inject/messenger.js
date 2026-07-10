@@ -1334,23 +1334,6 @@
     );
   }
 
-  // inject/src/messenger/lib/dnd.ts
-  function parseDndTime(value) {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
-    if (!m) return null;
-    const hour = Number(m[1]);
-    const minute = Number(m[2]);
-    if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour > 23 || minute > 59) return null;
-    return hour * 60 + minute;
-  }
-  function dndActive(settings, now = /* @__PURE__ */ new Date()) {
-    const start = parseDndTime(settings?.dnd_start);
-    const end = parseDndTime(settings?.dnd_end);
-    if (start == null || end == null || start === end) return false;
-    const minutes = now.getHours() * 60 + now.getMinutes();
-    return start < end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
-  }
-
   // inject/src/messenger/features/notifications.ts
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -1400,7 +1383,7 @@
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
       const s = window.__CARRIER_SETTINGS__ || {};
-      if (!s.mute_notifications && !dndActive(s)) {
+      if (!s.mute_notifications) {
         const id = ++notifySeq;
         notifyHandlers.set(id, this);
         if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
