@@ -235,6 +235,16 @@ pub(crate) fn deliver_notification_macos(
     // `&content` coerces from the mutable subclass to `&UNNotificationContent`.
     let request =
         UNNotificationRequest::requestWithIdentifier_content_trigger(&request_id, &content, None);
+    // A rejected request (revoked authorization, malformed content) is
+    // otherwise invisible — same silent failure mode the authorization
+    // logging in `setup_macos_notifications` exists for — so log it. The
+    // framework copies the block; dropping our `RcBlock` on return is fine.
+    let handler = block2::RcBlock::new(|error: *mut objc2_foundation::NSError| {
+        // SAFETY: the framework passes a valid NSError or null.
+        if let Some(e) = unsafe { error.as_ref() } {
+            log::warn!("notification delivery failed: {}", e.localizedDescription());
+        }
+    });
     UNUserNotificationCenter::currentNotificationCenter()
-        .addNotificationRequest_withCompletionHandler(&request, None);
+        .addNotificationRequest_withCompletionHandler(&request, Some(&handler));
 }
