@@ -53,6 +53,22 @@ fn is_auth_url(url: &Url) -> bool {
         && (host.starts_with("accounts.") || url.path().starts_with("/accounts/"))
 }
 
+/// Captcha frames Facebook embeds during login checkpoints. Facebook wraps
+/// Google reCAPTCHA in an `fbsbx.com` iframe (already internal), which itself
+/// frames `google.com/recaptcha/…` (or `recaptcha.net`, Google's alternative
+/// captcha domain for networks where google.com is unreachable). wry feeds
+/// *subframe* navigations through `on_navigation` too, so without this the
+/// reCAPTCHA iframe is cancelled in-app and shunted to the default browser,
+/// where the verification token can never reach the login page (Ref #78).
+fn is_captcha_url(url: &Url) -> bool {
+    let path = url.path();
+    if !(path.starts_with("/recaptcha/") || path == "/recaptcha") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    is_google_owned_host(&host) || host == "recaptcha.net" || host.ends_with(".recaptcha.net")
+}
+
 /// A host whose registrable domain is Google's: `youtube.com` or `google.<tld>`
 /// for a plausible country/gTLD (each label 2–3 ASCII letters, e.g. `com`, `no`,
 /// `co.uk`). The boundary + TLD checks reject lookalikes like
@@ -94,7 +110,7 @@ pub(crate) fn is_internal(url: &Url) -> bool {
         "http" | "https" => {}
         _ => return false,
     }
-    if is_auth_url(url) {
+    if is_auth_url(url) || is_captcha_url(url) {
         return true;
     }
     // Reject hostless HTTP(S) rather than treating it as internal.
@@ -201,6 +217,35 @@ mod tests {
         assert!(!is_auth_url(&u("https://accounts.google.evil.com/SetSID")));
         assert!(!is_auth_url(&u("https://accounts.google.example/SetSID")));
         assert!(!is_auth_url(&u("https://accounts.googleX.com/SetSID")));
+    }
+
+    #[test]
+    fn captcha_frames_stay_in_app() {
+        // The reCAPTCHA anchor/challenge iframes Facebook's login checkpoint
+        // embeds (Ref #78) — anchor renders the checkbox, bframe the challenge.
+        assert!(is_internal(&u(
+            "https://www.google.com/recaptcha/api2/anchor?ar=1&k=sitekey&co=aHR0cHM"
+        )));
+        assert!(is_internal(&u(
+            "https://www.google.com/recaptcha/api2/bframe?hl=en&v=abc&k=sitekey"
+        )));
+        assert!(is_internal(&u(
+            "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=sitekey"
+        )));
+        assert!(is_internal(&u(
+            "https://www.recaptcha.net/recaptcha/api2/anchor?k=sitekey"
+        )));
+        // The rest of Google / lookalikes stay external.
+        assert!(!is_internal(&u(
+            "https://www.google.com/search?q=recaptcha"
+        )));
+        assert!(!is_internal(&u(
+            "https://www.google.evil.com/recaptcha/api2/anchor"
+        )));
+        assert!(!is_internal(&u("https://evil.com/recaptcha/api2/anchor")));
+        assert!(!is_internal(&u(
+            "https://notrecaptcha.net/recaptcha/api2/anchor"
+        )));
     }
 
     #[test]
