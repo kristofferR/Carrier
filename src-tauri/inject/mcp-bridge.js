@@ -131,6 +131,30 @@
           reply(shortcutProbe());
           return;
         }
+        // CSP-safe end-to-end notification test: constructs a Notification
+        // through the (shimmed) constructor so the full page → Rust →
+        // Notification Center pipeline runs without waiting for a real
+        // message. Reports the shim/permission state alongside.
+        if (code === "__carrier_mcp_notify_test__") {
+          var N = window.Notification;
+          if (typeof N !== "function") {
+            reply({ error: "window.Notification is not a function: " + typeof N });
+            return;
+          }
+          var settings = window.__CARRIER_SETTINGS__ || {};
+          new N("Carrier test", { body: "tauri-mcp pipeline test" });
+          reply({
+            constructed: true,
+            // The shim is plain JS; the native constructor stringifies with
+            // "[native code]".
+            shimmed: String(N).indexOf("[native code]") === -1,
+            permission: N.permission,
+            mute_notifications: !!settings.mute_notifications,
+            hide_notification_preview: !!settings.hide_notification_preview,
+            visibility: document.visibilityState,
+          });
+          return;
+        }
         // CSP-safe invoker for the page's own shortcut helpers (Facebook's CSP
         // blocks new Function, so `execute_js` can't reach them otherwise).
         // Restricted to the __carrierShortcuts registry — no arbitrary globals.

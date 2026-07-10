@@ -28,10 +28,6 @@ interface CarrierSettings {
   mute_notifications?: boolean;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;
-  /** Local wall-clock "HH:MM" (empty = off). */
-  dnd_start?: string;
-  /** Local wall-clock "HH:MM" (empty = off). */
-  dnd_end?: string;
   hide_names_avatars?: boolean;
   system_emoji?: boolean;
   /** Page zoom in percent (30–200; 100 = no zoom). */

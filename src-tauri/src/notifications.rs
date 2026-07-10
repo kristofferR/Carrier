@@ -38,6 +38,14 @@ pub(crate) struct NotifyMsg {
     icon: String,
 }
 
+impl NotifyMsg {
+    /// The page's handle for this notification (safe to log — it's a counter,
+    /// not message content).
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -176,47 +184,6 @@ pub(crate) fn clear_avatar_cache() {
     }
 }
 
-/// Parse a `"HH:MM"` wall-clock string into minutes since midnight. Strict:
-/// digits only (1–2 hour digits, exactly 2 minute digits, as `<input
-/// type="time">` produces), hour 0–23, minute 0–59. Anything else → `None`.
-fn parse_hhmm(s: &str) -> Option<u32> {
-    let (h, m) = s.split_once(':')?;
-    if h.is_empty()
-        || h.len() > 2
-        || m.len() != 2
-        || !h.bytes().all(|b| b.is_ascii_digit())
-        || !m.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    let (h, m) = (h.parse::<u32>().ok()?, m.parse::<u32>().ok()?);
-    (h <= 23 && m <= 59).then_some(h * 60 + m)
-}
-
-/// Whether the do-not-disturb window covers `now_minutes` (minutes since local
-/// midnight). The window is half-open `[start, end)` so back-to-back windows
-/// can't overlap, and it may wrap past midnight (e.g. `22:00`–`07:00`). The
-/// schedule is off — never active — when either bound is empty, malformed, or
-/// when start == end (a zero-length window rather than "all day").
-fn dnd_active(start: &str, end: &str, now_minutes: u32) -> bool {
-    let (Some(s), Some(e)) = (parse_hhmm(start.trim()), parse_hhmm(end.trim())) else {
-        return false;
-    };
-    match s.cmp(&e) {
-        std::cmp::Ordering::Equal => false,
-        std::cmp::Ordering::Less => now_minutes >= s && now_minutes < e,
-        // Overnight wrap: active from `start` to midnight and midnight to `end`.
-        std::cmp::Ordering::Greater => now_minutes >= s || now_minutes < e,
-    }
-}
-
-/// Minutes since local midnight, for [`dnd_active`].
-fn local_now_minutes() -> u32 {
-    use chrono::Timelike;
-    let now = chrono::Local::now();
-    now.hour() * 60 + now.minute()
-}
-
 /// Show a native OS notification for a new message and, if it's clicked, bring
 /// Carrier forward and open the conversation. The avatar is attached where the
 /// platform allows (a thumbnail on macOS — the app icon always owns the main
@@ -230,17 +197,11 @@ fn local_now_minutes() -> u32 {
 /// until the user clicks or dismisses it (it only parks, doesn't spin), and on
 /// click it routes back to the page.
 pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
-    let (sound, dnd_start, dnd_end) = {
+    let sound = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
-        (s.notification_sound, s.dnd_start.clone(), s.dnd_end.clone())
+        s.notification_sound
     };
-    // Do-not-disturb schedule: drop the notification entirely inside the window.
-    // Only delivery is suppressed — the unread badge/tray count still updates
-    // (that rides the separate `carrier:unread` event).
-    if dnd_active(&dnd_start, &dnd_end, local_now_minutes()) {
-        return;
-    }
 
     let title = if msg.title.trim().is_empty() {
         "Messenger".to_string()
@@ -338,61 +299,6 @@ pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dnd_is_off_when_unset_or_malformed() {
-        // Empty = the schedule is disabled.
-        assert!(!dnd_active("", "", 0));
-        assert!(!dnd_active("22:00", "", 23 * 60));
-        assert!(!dnd_active("", "07:00", 3 * 60));
-        // Malformed inputs never activate.
-        assert!(!dnd_active("24:00", "07:00", 3 * 60));
-        assert!(!dnd_active("22:60", "07:00", 3 * 60));
-        assert!(!dnd_active("22", "07:00", 3 * 60));
-        assert!(!dnd_active("2a:00", "07:00", 3 * 60));
-        assert!(!dnd_active("+2:00", "07:00", 3 * 60));
-        assert!(!dnd_active("22:0", "07:00", 3 * 60));
-        assert!(!dnd_active("garbage", "also garbage", 3 * 60));
-        // start == end is a zero-length window, not "all day".
-        assert!(!dnd_active("09:00", "09:00", 9 * 60));
-    }
-
-    #[test]
-    fn dnd_normal_range_is_half_open() {
-        let at = |m| dnd_active("09:00", "17:30", m);
-        assert!(at(9 * 60)); // start boundary: active
-        assert!(at(12 * 60));
-        assert!(at(17 * 60 + 29)); // last minute inside
-        assert!(!at(17 * 60 + 30)); // end boundary: inactive
-        assert!(!at(8 * 60 + 59)); // minute before start
-        assert!(!at(23 * 60));
-    }
-
-    #[test]
-    fn dnd_overnight_range_wraps_midnight() {
-        let at = |m| dnd_active("22:00", "07:00", m);
-        assert!(at(22 * 60)); // start boundary: active
-        assert!(at(23 * 60 + 59)); // just before midnight
-        assert!(at(0)); // midnight itself
-        assert!(at(6 * 60 + 59)); // last minute inside
-        assert!(!at(7 * 60)); // end boundary: inactive
-        assert!(!at(12 * 60)); // daytime is outside the window
-        assert!(!at(21 * 60 + 59)); // minute before start
-    }
-
-    #[test]
-    fn hhmm_parses_strict_wall_clock_times() {
-        assert_eq!(parse_hhmm("00:00"), Some(0));
-        assert_eq!(parse_hhmm("7:05"), Some(7 * 60 + 5)); // single hour digit ok
-        assert_eq!(parse_hhmm("23:59"), Some(23 * 60 + 59));
-        assert_eq!(parse_hhmm("24:00"), None);
-        assert_eq!(parse_hhmm("12:60"), None);
-        assert_eq!(parse_hhmm("12:5"), None);
-        assert_eq!(parse_hhmm("120:00"), None);
-        assert_eq!(parse_hhmm(""), None);
-        assert_eq!(parse_hhmm(":30"), None);
-        assert_eq!(parse_hhmm("1230"), None);
-    }
 
     #[test]
     fn avatar_data_url_is_decoded_to_a_temp_png() {
