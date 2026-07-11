@@ -16,7 +16,7 @@
     "check": "bun run lint && bun run typecheck && bun test && bun run build:inject"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.2",
+    "@biomejs/biome": "^2.5.3",
     "@tauri-apps/cli": "^2",
     "@types/bun": "^1.3.14",
     "esbuild": "^0.28.1",
