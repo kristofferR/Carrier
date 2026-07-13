@@ -300,13 +300,30 @@ fn init_script(settings: &Settings) -> String {
     document.head.appendChild(s);
     return true;
   }}
-  if (!inject()) {{
-    new MutationObserver(function (_, obs) {{ if (inject()) obs.disconnect(); }})
-      .observe(document.documentElement, {{ childList: true, subtree: true }});
-  }}
+  var carrierStarted = false;
+  function startCarrier() {{
+    // WebView2 runs document-created scripts before the HTML document is
+    // parsed. In that phase documentElement and head are both null; observing
+    // documentElement would throw and abort the entire injected bundle.
+    if (!document.documentElement) return false;
+    if (carrierStarted) return true;
+    carrierStarted = true;
+    if (!inject()) {{
+      new MutationObserver(function (_, obs) {{ if (inject()) obs.disconnect(); }})
+        .observe(document.documentElement, {{ childList: true, subtree: true }});
+    }}
 {INJECT_JS}
 {INJECT_PANEL}
 {INJECT_MCP_BRIDGE}
+    return true;
+  }}
+  if (!startCarrier()) {{
+    // Document itself already exists in WebView2's pre-parse phase and is a
+    // valid MutationObserver target. Start the bundle as soon as <html> lands.
+    new MutationObserver(function (_, obs) {{
+      if (startCarrier()) obs.disconnect();
+    }}).observe(document, {{ childList: true, subtree: true }});
+  }}
 }})();"#
     )
 }
@@ -374,5 +391,20 @@ mod tests {
             splash_background(&with_theme("light")),
             Color(255, 255, 255, 255)
         );
+    }
+
+    #[test]
+    fn init_script_waits_for_webview2_document_element() {
+        let script = init_script(&Settings::default());
+        assert!(script.contains("if (!document.documentElement) return false;"));
+        assert!(script.contains(").observe(document, { childList: true, subtree: true });"));
+
+        let start = script.find("function startCarrier() {").unwrap();
+        let messenger = script.find("GENERATED FILE — DO NOT EDIT.").unwrap();
+        let fallback = script
+            .find("if (!startCarrier()) {\n    // Document itself")
+            .unwrap();
+        assert!(start < messenger);
+        assert!(messenger < fallback);
     }
 }
