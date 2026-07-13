@@ -249,8 +249,8 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let _settings_window =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title(format!("{APP_TITLE} Settings"))
-            .inner_size(560.0, 720.0)
-            .min_inner_size(460.0, 620.0)
+            .inner_size(680.0, 720.0)
+            .min_inner_size(560.0, 620.0)
             .resizable(true)
             .maximizable(false)
             .minimizable(false)

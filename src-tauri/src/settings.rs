@@ -91,7 +91,7 @@ impl Default for Settings {
             autostart: false,
             hide_on_close: true,
             multi_instance: false,
-            spellcheck: true,
+            spellcheck: false,
             unread_badge: true,
             badge_mode: "messages".into(),
             theme: "system".into(),
@@ -412,6 +412,7 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
+        assert!(!s.spellcheck, "spellcheck should default to false");
         assert!(!s.system_emoji, "system_emoji should default to false");
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
     }
@@ -456,5 +457,12 @@ mod tests {
         // Pre-existing installs have no `hide_menu_bar` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.hide_menu_bar);
+    }
+
+    #[test]
+    fn settings_json_missing_spellcheck_defaults_to_false() {
+        // Pre-existing installs without this key should not opt in implicitly.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.spellcheck);
     }
 }

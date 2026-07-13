@@ -2207,7 +2207,7 @@
   // inject/src/messenger/features/spellcheck.ts
   var SPELL_SEL = '[contenteditable="true"], textarea, input[type="text"], input[type="search"]';
   function applySpellcheckNow() {
-    const on = window.__CARRIER_SETTINGS__?.spellcheck !== false;
+    const on = window.__CARRIER_SETTINGS__?.spellcheck === true;
     document.querySelectorAll(SPELL_SEL).forEach((el) => {
       el.setAttribute?.("spellcheck", on ? "true" : "false");
     });
@@ -2215,7 +2215,7 @@
   function applySpellcheck() {
     applySpellcheckNow();
     registerAddedNodeSweep((root) => {
-      const on = window.__CARRIER_SETTINGS__?.spellcheck !== false;
+      const on = window.__CARRIER_SETTINGS__?.spellcheck === true;
       const want = on ? "true" : "false";
       const set = (el) => {
         if (el.getAttribute?.("spellcheck") !== want) el.setAttribute?.("spellcheck", want);

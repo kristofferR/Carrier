@@ -106,10 +106,12 @@
       ];
       const FIELD_META = Object.fromEntries(FIELDS.map(([k, label, hint]) => [k, { label, hint }]));
 
-      // Inline lucide-style icons (no dependency / build step). `theme` lives in General.
+      // Inline lucide-style icons (no dependency / build step).
       const ICONS = {
         general:
           '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+        appearance:
+          '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
         tray: '<path d="M12 2v10"/><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>',
         notifications:
           '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
@@ -121,9 +123,11 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["theme", "zoom", "hide_names_avatars", "system_emoji", "always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
+          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
+        { id: "appearance", label: "Appearance", icon: ICONS.appearance,
+          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
-          fields: ["show_tray", "start_to_tray", "autostart", IS_MAC ? "menu_bar_only" : "hide_menu_bar"] },
+          fields: ["show_tray", "start_to_tray", "autostart", ...(IS_MAC ? ["menu_bar_only"] : [])] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
