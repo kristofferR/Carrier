@@ -1351,7 +1351,9 @@
         currentKeys.add(conversation.key);
         const previous = this.signatures.get(conversation.key);
         this.signatures.set(conversation.key, conversation.signature);
-        if (this.primed && previous !== conversation.signature) changed.push(conversation.key);
+        if (this.primed && previous !== void 0 && previous !== conversation.signature) {
+          changed.push(conversation.key);
+        }
       }
       for (const key of observedKeys || currentKeys) {
         if (!currentKeys.has(key)) this.signatures.delete(key);
@@ -1360,14 +1362,54 @@
       return changed;
     }
   };
+  var PageNotificationQueue = class {
+    constructor() {
+      __publicField(this, "signals", []);
+    }
+    add(signal) {
+      this.signals.push(signal);
+      if (this.signals.length > 20) this.signals.shift();
+    }
+    consumeMatching(row, rowChangeAt, matchWindowMs) {
+      for (let index = this.signals.length - 1; index >= 0; index--) {
+        const signal = this.signals[index];
+        const age = rowChangeAt - signal.at;
+        if (age > matchWindowMs) {
+          this.signals.splice(index, 1);
+          continue;
+        }
+        if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
+          this.signals.splice(index, 1);
+          return true;
+        }
+      }
+      return false;
+    }
+  };
+  var UnreadArrivalTracker = class {
+    constructor() {
+      __publicField(this, "changedAt", /* @__PURE__ */ new Map());
+      __publicField(this, "unreadCount", null);
+    }
+    markRowsChanged(keys, at) {
+      for (const key of keys) this.changedAt.set(key, at);
+    }
+    observeUnreadCount(count, at, maxMutationAgeMs) {
+      for (const [key, changedAt] of this.changedAt) {
+        if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+      }
+      const previous = this.unreadCount;
+      this.unreadCount = count;
+      if (previous === null || count <= previous) return [];
+      const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
+      for (const key of candidates) this.changedAt.delete(key);
+      return candidates;
+    }
+  };
   function isOwnMessagePreview(value) {
     return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
       value.trim().replace(/\s+/g, " ")
     );
-  }
-  function pageNotificationMatches(pageNotificationAt, rowChangeAt, matchWindowMs) {
-    const age = rowChangeAt - pageNotificationAt;
-    return pageNotificationAt > 0 && age >= 0 && age <= matchWindowMs;
   }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
     const normalize = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
@@ -1387,6 +1429,12 @@
     return m ? m[1] : null;
   }
   var SEPARATOR_RE = /^[·•.,\s]+$/;
+
+  // inject/src/messenger/lib/unread.ts
+  function unreadCountFromTitle(title) {
+    const m = (title || "").match(/\((\d+)\)/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
 
   // inject/src/messenger/features/conversation-actions.ts
   function isShown(el) {
@@ -1501,7 +1549,7 @@
   var FALLBACK_DELAY_MS = 1500;
   var PAGE_NOTIFICATION_MATCH_MS = 2e3;
   var FALLBACK_POLL_MS = 1e3;
-  var INITIAL_ROW_STABILITY_MS = 2e3;
+  var ROW_MUTATION_MATCH_MS = 2e3;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
@@ -1556,16 +1604,15 @@
       })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
     };
     const pendingFallbacks = /* @__PURE__ */ new Map();
-    let unmatchedPageNotification = null;
+    const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
       for (const [key, pending] of pendingFallbacks) {
         if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
-        unmatchedPageNotification = null;
         return;
       }
-      unmatchedPageNotification = { at: Date.now(), title, body };
+      unmatchedPageNotifications.add({ at: Date.now(), title, body });
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -1632,7 +1679,7 @@
       const values = [];
       for (const el of leaves) {
         const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (text && values.at(-1) !== text) values.push(text);
+        if (text && values[values.length - 1] !== text) values.push(text);
       }
       const image = row.querySelector("img[src]");
       let unread = false;
@@ -1653,17 +1700,11 @@
       };
     };
     const scheduleFallback = (conversation, detectedAt) => {
-      if (unmatchedPageNotification && pageNotificationMatches(
-        unmatchedPageNotification.at,
+      if (unmatchedPageNotifications.consumeMatching(
+        conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS
-      ) && notificationTextMatches(
-        unmatchedPageNotification.title,
-        unmatchedPageNotification.body,
-        conversation.title,
-        conversation.body
       )) {
-        unmatchedPageNotification = null;
         return;
       }
       const previous = pendingFallbacks.get(conversation.key);
@@ -1702,7 +1743,7 @@
     };
     let scanRunning = false;
     let scanPending = false;
-    let scannerReadyAt = 0;
+    const unreadArrivals = new UnreadArrivalTracker();
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -1712,20 +1753,25 @@
       try {
         const links = chatRows();
         if (!links.length) return;
-        if (!scannerReadyAt) scannerReadyAt = Date.now() + INITIAL_ROW_STABILITY_MS;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
+        const detectedAt = Date.now();
         const changed = new Set(
           conversationTracker.observe(
             conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
             observed.map(({ key }) => key)
           )
         );
-        if (Date.now() < scannerReadyAt) return;
+        for (const key of unreadArrivals.observeUnreadCount(
+          unreadCountFromTitle(document.title || ""),
+          detectedAt,
+          ROW_MUTATION_MATCH_MS
+        )) {
+          changed.add(key);
+        }
         if (!changed.size) return;
-        const detectedAt = Date.now();
         try {
           window.__carrierOnNotification?.();
         } catch (_) {
@@ -1742,7 +1788,26 @@
       }
     };
     let scanScheduled = false;
-    const scheduleScan = () => {
+    const scheduleScan = (records = []) => {
+      const changedKeys = /* @__PURE__ */ new Set();
+      const inspect = (node) => {
+        if (!(node instanceof Element)) return;
+        const links = /* @__PURE__ */ new Set();
+        const closest = node.closest('a[href*="/t/"]');
+        if (closest) links.add(closest);
+        for (const link of node.querySelectorAll('a[href*="/t/"]')) {
+          links.add(link);
+        }
+        for (const link of links) {
+          const key = threadIdFromHref(link.getAttribute("href"));
+          if (key) changedKeys.add(key);
+        }
+      };
+      for (const record of records) {
+        inspect(record.target);
+        for (const node of record.addedNodes) inspect(node);
+      }
+      unreadArrivals.markRowsChanged(changedKeys, Date.now());
       if (scanScheduled) return;
       scanScheduled = true;
       setTimeout(() => {
@@ -2316,12 +2381,6 @@
       toast("Open a conversation first");
       return false;
     };
-  }
-
-  // inject/src/messenger/lib/unread.ts
-  function unreadCountFromTitle(title) {
-    const m = (title || "").match(/\((\d+)\)/);
-    return m ? parseInt(m[1], 10) : 0;
   }
 
   // inject/src/messenger/features/unread-badge.ts

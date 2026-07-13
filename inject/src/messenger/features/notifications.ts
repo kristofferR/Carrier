@@ -6,9 +6,11 @@ import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
   notificationTextMatches,
-  pageNotificationMatches,
+  PageNotificationQueue,
+  UnreadArrivalTracker,
 } from "../lib/notification-fallback";
 import { threadIdFromHref } from "../lib/threads";
+import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 
 interface CarrierNotificationInstance {
@@ -20,7 +22,7 @@ interface CarrierNotificationInstance {
 const FALLBACK_DELAY_MS = 1500;
 const PAGE_NOTIFICATION_MATCH_MS = 2000;
 const FALLBACK_POLL_MS = 1000;
-const INITIAL_ROW_STABILITY_MS = 2000;
+const ROW_MUTATION_MATCH_MS = 2000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -97,7 +99,7 @@ export function initNotificationBridge() {
     body: string;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
-  let unmatchedPageNotification: { at: number; title: string; body: string } | null = null;
+  const unmatchedPageNotifications = new PageNotificationQueue();
 
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
@@ -107,10 +109,9 @@ export function initNotificationBridge() {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
-      unmatchedPageNotification = null;
       return;
     }
-    unmatchedPageNotification = { at: Date.now(), title, body };
+    unmatchedPageNotifications.add({ at: Date.now(), title, body });
   };
 
   function CarrierNotification(
@@ -207,7 +208,7 @@ export function initNotificationBridge() {
     const values: string[] = [];
     for (const el of leaves) {
       const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (text && values.at(-1) !== text) values.push(text);
+      if (text && values[values.length - 1] !== text) values.push(text);
     }
     const image = row.querySelector<HTMLImageElement>("img[src]");
     let unread = false;
@@ -232,20 +233,12 @@ export function initNotificationBridge() {
 
   const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
     if (
-      unmatchedPageNotification &&
-      pageNotificationMatches(
-        unmatchedPageNotification.at,
+      unmatchedPageNotifications.consumeMatching(
+        conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS,
-      ) &&
-      notificationTextMatches(
-        unmatchedPageNotification.title,
-        unmatchedPageNotification.body,
-        conversation.title,
-        conversation.body,
       )
     ) {
-      unmatchedPageNotification = null;
       return;
     }
     const previous = pendingFallbacks.get(conversation.key);
@@ -288,7 +281,7 @@ export function initNotificationBridge() {
 
   let scanRunning = false;
   let scanPending = false;
-  let scannerReadyAt = 0;
+  const unreadArrivals = new UnreadArrivalTracker();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -300,24 +293,27 @@ export function initNotificationBridge() {
       // A grid can exist briefly before its rows hydrate. Do not prime an empty
       // list or the first real render would look like a burst of new messages.
       if (!links.length) return;
-      if (!scannerReadyAt) scannerReadyAt = Date.now() + INITIAL_ROW_STABILITY_MS;
       const observed = links
         .map(conversationFromLink)
         .filter((conversation): conversation is Conversation => conversation !== null);
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
+      const detectedAt = Date.now();
       const changed = new Set(
         conversationTracker.observe(
           conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
           observed.map(({ key }) => key),
         ),
       );
-      // Keep refreshing the baseline while Messenger hydrates its initial row
-      // text and unread styles; none of those startup mutations are messages.
-      if (Date.now() < scannerReadyAt) return;
+      for (const key of unreadArrivals.observeUnreadCount(
+        unreadCountFromTitle(document.title || ""),
+        detectedAt,
+        ROW_MUTATION_MATCH_MS,
+      )) {
+        changed.add(key);
+      }
       if (!changed.size) return;
-      const detectedAt = Date.now();
       try {
         window.__carrierOnNotification?.();
       } catch (_) {}
@@ -334,7 +330,26 @@ export function initNotificationBridge() {
   };
 
   let scanScheduled = false;
-  const scheduleScan = () => {
+  const scheduleScan = (records: MutationRecord[] = []) => {
+    const changedKeys = new Set<string>();
+    const inspect = (node: Node) => {
+      if (!(node instanceof Element)) return;
+      const links = new Set<HTMLAnchorElement>();
+      const closest = node.closest<HTMLAnchorElement>('a[href*="/t/"]');
+      if (closest) links.add(closest);
+      for (const link of node.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')) {
+        links.add(link);
+      }
+      for (const link of links) {
+        const key = threadIdFromHref(link.getAttribute("href"));
+        if (key) changedKeys.add(key);
+      }
+    };
+    for (const record of records) {
+      inspect(record.target);
+      for (const node of record.addedNodes) inspect(node);
+    }
+    unreadArrivals.markRowsChanged(changedKeys, Date.now());
     if (scanScheduled) return;
     scanScheduled = true;
     setTimeout(() => {
