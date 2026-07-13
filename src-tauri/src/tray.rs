@@ -41,13 +41,27 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     }
 }
 
-/// Show the main window if it's hidden/unfocused, or hide it if it's already the
-/// focused window — so a tray click toggles the app.
+#[cfg(target_os = "macos")]
+fn should_hide_main(visible: bool, minimized: bool, focused: bool) -> bool {
+    visible && !minimized && focused
+}
+
+#[cfg(not(target_os = "macos"))]
+fn should_hide_main(visible: bool, minimized: bool, _focused: bool) -> bool {
+    // Clicking a Windows/Linux notification-area icon moves focus away before
+    // Tauri delivers the event, so focus cannot distinguish an already-shown
+    // window there. Visibility + minimized state provides a stable toggle.
+    visible && !minimized
+}
+
+/// Show the main window if it's hidden/minimized, or hide it if the current
+/// platform considers it already shown — so a tray click toggles the app.
 pub(crate) fn toggle_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
+        let minimized = window.is_minimized().unwrap_or(false);
         let focused = window.is_focused().unwrap_or(false);
-        if visible && focused {
+        if should_hide_main(visible, minimized, focused) {
             let _ = window.hide();
         } else {
             reveal_window(&window);
@@ -202,6 +216,24 @@ mod tests {
             ..Default::default()
         };
         assert!(!wants_tray(&s), "no tray when both are off");
+    }
+
+    #[test]
+    fn hidden_or_minimized_main_window_is_revealed() {
+        assert!(!should_hide_main(false, false, false));
+        assert!(!should_hide_main(true, true, true));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn visible_unfocused_main_window_is_hidden_off_macos() {
+        assert!(should_hide_main(true, false, false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn visible_unfocused_main_window_is_revealed_on_macos() {
+        assert!(!should_hide_main(true, false, false));
     }
 
     #[cfg(target_os = "macos")]
