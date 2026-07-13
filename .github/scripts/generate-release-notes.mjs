@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
-
-const tag = process.argv[2] || process.env.RELEASE_TAG || process.env.GITHUB_REF_NAME;
-const notesPath = process.argv[3] || "release-notes.md";
-
-if (!tag) {
-  console.error("Usage: generate-release-notes.mjs <tag> [notes-path]");
-  process.exit(1);
-}
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function run(command, args, options = {}) {
   try {
@@ -128,7 +122,7 @@ function mergedPullRequests(previousTag, currentTag) {
     "--limit",
     "100",
     "--json",
-    "number,title,body,url,mergedAt",
+    "number,title,body,url,mergedAt,labels",
   ]);
   if (!json) return null;
 
@@ -149,7 +143,7 @@ function cleanTitle(subject) {
     .replace(/^Merge pull request #\d+ from \S+\s*/i, "")
     .replace(/^Merge PR #\d+:\s*/i, "")
     .replace(/\s+\(#\d+\)$/i, "")
-    .replace(/^(fix|add|improve|extend|gate|use|keep)\s+/i, "")
+    .replace(/^(?:feat|fix|chore|docs|ci|build)(?:\([^)]*\))?:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -161,69 +155,53 @@ function sentenceFromTitle(title) {
 }
 
 function classify(entry) {
-  if (entry.section) return entry.section;
-  const text = `${entry.title} ${entry.summary.join(" ")}`.toLowerCase();
-  if (/\bfix|bug|release publish|ci\b/.test(text)) {
+  const rawTitle = entry.title.toLowerCase();
+  const title = cleanTitle(entry.title).toLowerCase();
+  const labels = (entry.labels || []).map((label) => label.toLowerCase());
+  if (
+    labels.includes("dependencies") ||
+    /^(?:chore|ci|build)(?:\([^)]*\))?:/.test(rawTitle) ||
+    /^(?:bump|update)\b/.test(title) ||
+    /\b(?:dependabot|toolchain|internal|ci|workflow)\b/.test(title)
+  ) {
+    return "internal";
+  }
+  if (
+    /^fix(?:\([^)]*\))?:/.test(rawTitle) ||
+    /^(?:fix|restore|prevent|correct|resolve|repair)\b/.test(title) ||
+    /\bbug\b/.test(title)
+  ) {
     return "fixes";
   }
-  if (/\badd|setting|new|privacy|hide names|avatar|emoji\b/.test(text)) {
+  if (/^feat(?:\([^)]*\))?:/.test(rawTitle) || /^(?:add|introduce|support|implement|enable)\b/.test(title)) {
     return "new";
   }
   return "improvements";
 }
 
-function topic(entry) {
-  const text = `${entry.title} ${entry.summary.join(" ")}`.toLowerCase();
-  if (/hide names|privacy|avatar|identity/.test(text)) return "Privacy";
-  if (/download|filename|media/.test(text)) return "Downloads";
-  if (/dock|tray|reopen|wayland|linux|dmabuf|desktop/.test(text)) return "Desktop Polish";
-  if (/notification|unread|badge/.test(text)) return "Notifications";
-  if (/settings|emoji/.test(text)) return "Settings";
-  if (/release|ci|workflow|readme/.test(text)) return "Release Polish";
-  return "";
-}
-
 function displayHeading(entry) {
-  const text = entry.title.toLowerCase();
-  if (/hide names|privacy/.test(text)) return "Stronger Hide Names & Avatars";
-  if (/system emoji|emoji/.test(text)) return "System emoji setting";
   return sentenceFromTitle(entry.title);
 }
 
 function displayCopy(entry) {
-  const text = entry.title.toLowerCase();
-  if (/system emoji|emoji/.test(text)) {
-    return "Prefer your platform's native emoji rendering instead of Messenger's emoji style from Settings.";
-  }
-  if (/hide names|privacy/.test(text)) {
-    return "Privacy mode now covers more Messenger identity surfaces while keeping message text readable.";
-  }
-  if (/media.*download|download.*filename|filename.*download/.test(text)) {
-    return "Messenger image and video saves now default to readable filenames, preserve the right extension, and avoid clobbering existing files with numbered names.";
-  }
-  if (/dock and tray|dock reopen|tray unread|reopen/.test(text)) {
-    return "Reopening Carrier from the Dock returns to the main Messenger window more reliably, tray/window behavior is tighter, and unread tray text clears when the count hits zero.";
-  }
-  if (/wayland|dmabuf/.test(text)) {
-    return "Carrier applies the WebKit DMABUF workaround on affected Wayland sessions unless you have explicitly supplied your own override.";
-  }
-  if (/release publishing|release polish/.test(text)) {
-    return "Draft release cleanup, README download links and platform-specific CI helpers are handled without blocking the publish step.";
-  }
-  if (entry.summary.length > 0) {
-    const [first, second] = entry.summary;
-    return `${first}${second ? `, and ${second.charAt(0).toLowerCase()}${second.slice(1)}` : ""}.`;
-  }
-  return `${sentenceFromTitle(entry.title)}.`;
+  return entry.summary
+    .map((item) => {
+      const sentence = `${item.charAt(0).toUpperCase()}${item.slice(1)}`;
+      return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+    })
+    .join(" ");
 }
 
 function suffix(entry) {
-  const refs = [];
-  if (entry.pr) refs.push(`#${entry.pr}`);
-  for (const ref of entry.refs) {
-    if (!refs.includes(`#${ref}`)) refs.push(`#${ref}`);
+  const parts = [];
+  if (entry.pr) parts.push(`#${entry.pr}`);
+  const refs = entry.refs.filter((ref) => ref !== entry.pr);
+  if (refs.length === 1) {
+    parts.push(`ref #${refs[0]}`);
+  } else if (refs.length > 1) {
+    parts.push(`refs ${refs.map((ref) => `#${ref}`).join(", ")}`);
   }
-  return refs.length ? ` (${refs.join(", ")})` : "";
+  return parts.length ? ` (${parts.join(", ")})` : "";
 }
 
 function output(name, value) {
@@ -232,150 +210,108 @@ function output(name, value) {
   appendFileSync(process.env.GITHUB_OUTPUT, `${name}<<${delimiter}\n${value}\n${delimiter}\n`);
 }
 
-const version = tag.replace(/^v/, "");
-const lineVersion = parseSemver(tag);
-const lineName = lineVersion ? `${lineVersion.major}.${lineVersion.minor}` : version;
-const previousTag = previousReleaseTag(tag);
-const range = previousTag ? `${previousTag}..${tag}` : tag;
-const commits = parseCommits(range).filter((commit) => !isNoiseSubject(commit.subject));
-const entries = [];
-const seenPrs = new Set();
+export function formatReleaseNotes(
+  tag,
+  previousTag,
+  entries,
+  repository = process.env.GITHUB_REPOSITORY || "kristofferR/Carrier",
+) {
+  const version = tag.replace(/^v/, "");
+  const sections = {
+    new: [],
+    improvements: [],
+    fixes: [],
+    internal: [],
+  };
 
-for (const pr of mergedPullRequests(previousTag, tag) || []) {
-  const number = String(pr.number);
-  seenPrs.add(number);
-  entries.push({
-    title: pr.title,
-    pr: number,
-    refs: [],
-    summary: summaryBullets(pr.body || ""),
-  });
+  for (const entry of entries) {
+    sections[classify(entry)].push(entry);
+  }
+
+  const releaseTitle = tag.startsWith("v") ? tag : `v${version}`;
+  const lines = [];
+
+  function appendSection(heading, items) {
+    if (!items.length) return;
+    lines.push(`## ${heading}`, "");
+    for (const entry of items) {
+      const copy = displayCopy(entry);
+      lines.push(`- **${displayHeading(entry)}**${copy ? ` — ${copy}` : ""}${suffix(entry)}`);
+    }
+    lines.push("");
+  }
+
+  appendSection("What's New", sections.new);
+  appendSection("Improvements", sections.improvements);
+  appendSection("Bug Fixes", sections.fixes);
+  appendSection("Internal", sections.internal);
+
+  if (previousTag) {
+    lines.push(`**Full changelog:** https://github.com/${repository}/compare/${previousTag}...${tag}`);
+  }
+
+  return { releaseTitle, releaseBody: lines.join("\n") };
 }
 
-for (const commit of commits) {
-  const pr = prNumberFromSubject(commit.subject);
-  if (pr) {
-    if (seenPrs.has(pr)) continue;
-    seenPrs.add(pr);
+function main() {
+  const tag = process.argv[2] || process.env.RELEASE_TAG || process.env.GITHUB_REF_NAME;
+  const notesPath = process.argv[3] || "release-notes.md";
+  if (!tag) {
+    console.error("Usage: generate-release-notes.mjs <tag> [notes-path]");
+    process.exit(1);
+  }
+
+  const previousTag = previousReleaseTag(tag);
+  const range = previousTag ? `${previousTag}..${tag}` : tag;
+  const commits = parseCommits(range).filter((commit) => !isNoiseSubject(commit.subject));
+  const entries = [];
+  const seenPrs = new Set();
+
+  for (const pr of mergedPullRequests(previousTag, tag) || []) {
+    const number = String(pr.number);
+    seenPrs.add(number);
     entries.push({
-      title: cleanTitle(commit.subject),
-      pr,
-      refs: [],
-      summary: summaryBullets(commit.body),
+      title: pr.title,
+      pr: number,
+      refs: issueRefs(pr.body || ""),
+      summary: summaryBullets(pr.body || ""),
+      labels: (pr.labels || []).map((label) => label.name),
     });
-    continue;
   }
 
-  const subjectRefs = issueRefs(`${commit.subject}\n${commit.body}`);
-  const coveredByPr = entries.some((entry) => {
-    const text = `${entry.title} ${entry.summary.join(" ")}`.toLowerCase();
-    const subject = commit.subject.toLowerCase();
-    return (
-      (subjectRefs.length && subjectRefs.some((ref) => entry.refs.includes(ref))) ||
-      (/(dock|tray|reopen|unread)/.test(subject) && /(dock|tray|reopen|unread)/.test(text)) ||
-      (/(download|filename)/.test(subject) && /(download|filename)/.test(text))
-    );
-  });
-  if (coveredByPr) continue;
+  for (const commit of commits) {
+    const pr = prNumberFromSubject(commit.subject);
+    if (pr) {
+      if (seenPrs.has(pr)) continue;
+      seenPrs.add(pr);
+      entries.push({
+        title: commit.subject,
+        pr,
+        refs: [],
+        summary: summaryBullets(commit.body),
+        labels: [],
+      });
+      continue;
+    }
 
-  entries.push({
-    title: commit.subject,
-    pr: "",
-    refs: subjectRefs,
-    summary: summaryBullets(commit.body),
-  });
-}
-
-function combineEntries(items, predicate, combined) {
-  const matched = items.filter(predicate);
-  if (!matched.length) return items;
-  const unmatched = items.filter((entry) => !predicate(entry));
-  const refs = [...new Set(matched.flatMap((entry) => [...entry.refs, ...(entry.pr ? [entry.pr] : [])]))];
-  unmatched.push({
-    ...combined,
-    pr: "",
-    refs,
-    summary: [],
-  });
-  return unmatched;
-}
-
-let releaseEntries = entries;
-releaseEntries = combineEntries(
-  releaseEntries,
-  (entry) => /dock|tray|reopen|unread/i.test(`${entry.title} ${entry.summary.join(" ")}`),
-  {
-    title: "macOS Dock and tray behavior",
-    section: "improvements",
-  },
-);
-releaseEntries = combineEntries(
-  releaseEntries,
-  (entry) => /release|workflow|readme|non-macos ci|push_macos_webview_store_paths|\.sig/i.test(`${entry.title} ${entry.summary.join(" ")}`),
-  {
-    title: "Release publishing",
-    section: "fixes",
-  },
-);
-
-const sections = {
-  new: [],
-  improvements: [],
-  fixes: [],
-};
-
-for (const entry of releaseEntries) {
-  sections[classify(entry)].push(entry);
-}
-
-const topicPriority = ["Privacy", "Downloads", "Desktop Polish", "Notifications", "Settings", "Release Polish"];
-const topics = [...new Set(releaseEntries.map(topic).filter(Boolean))]
-  .sort((a, b) => topicPriority.indexOf(a) - topicPriority.indexOf(b))
-  .filter((item, index, all) => item !== "Release Polish" || all.length === 1)
-  .slice(0, 3);
-const headline = topics.length ? topics.join(", ").replace(/, ([^,]*)$/, " & $1") : "Desktop Polish";
-const titleEmoji = topics.includes("Privacy") ? " 🕶️" : "";
-const releaseTitle = `Carrier ${version} — ${headline}${titleEmoji}`;
-const highlightText = topics.length
-  ? `${topics.join(", ").replace(/, ([^,]*)$/, " and $1").toLowerCase()}`
-  : "desktop fixes and polish";
-
-const lines = [
-  `Carrier ${version} is a focused polish release for the ${lineName} line. This update brings ${highlightText}, with the same signed macOS, Windows and Linux downloads as usual.`,
-  "",
-];
-
-if (sections.new.length) {
-  lines.push("## What's New", "");
-  for (const entry of sections.new) {
-    lines.push(`### ${displayHeading(entry)}`, "");
-    lines.push(`${displayCopy(entry)}${suffix(entry)}`, "");
+    entries.push({
+      title: commit.subject,
+      pr: "",
+      refs: issueRefs(`${commit.subject}\n${commit.body}`),
+      summary: summaryBullets(commit.body),
+      labels: [],
+    });
   }
+
+  const { releaseTitle, releaseBody } = formatReleaseNotes(tag, previousTag, entries);
+  writeFileSync(notesPath, `${releaseBody}\n`);
+  output("release_title", releaseTitle);
+  output("release_body", releaseBody);
+
+  console.log(releaseTitle);
+  console.log(`Wrote ${notesPath}${previousTag ? ` from ${previousTag}..${tag}` : ""}`);
 }
 
-if (sections.improvements.length) {
-  lines.push("## Improvements", "");
-  for (const entry of sections.improvements) {
-    lines.push(`- **${displayHeading(entry)}.** ${displayCopy(entry)}${suffix(entry)}`);
-  }
-  lines.push("");
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }
-
-if (sections.fixes.length) {
-  lines.push("## Bug Fixes", "");
-  for (const entry of sections.fixes) {
-    lines.push(`- **${displayHeading(entry)}.** ${displayCopy(entry)}${suffix(entry)}`);
-  }
-  lines.push("");
-}
-
-lines.push("---", "");
-lines.push("**Thanks** for using Carrier! Hit a bug or want a feature? [Open an issue](https://github.com/kristofferR/Carrier/issues). 🙂");
-
-const releaseBody = lines.join("\n");
-writeFileSync(notesPath, `${releaseBody}\n`);
-output("release_title", releaseTitle);
-output("release_body", releaseBody);
-
-console.log(releaseTitle);
-console.log(`Wrote ${notesPath}${previousTag ? ` from ${previousTag}..${tag}` : ""}`);
