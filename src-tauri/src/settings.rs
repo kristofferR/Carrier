@@ -42,6 +42,8 @@ pub(crate) struct Settings {
     pub(crate) theme: String,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,
+    /// Windows/Linux: hide the native application menu from Messenger windows.
+    pub(crate) hide_menu_bar: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
     /// Play the OS notification sound for new-message notifications.
@@ -94,6 +96,7 @@ impl Default for Settings {
             badge_mode: "messages".into(),
             theme: "system".into(),
             menu_bar_only: false,
+            hide_menu_bar: false,
             mute_notifications: false,
             notification_sound: true,
             hide_notification_preview: false,
@@ -283,7 +286,8 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 }
 
 /// Apply the settings that have an immediate runtime effect (window topmost
-/// state, the injected-prefs refresh, the global hotkey, and the tray).
+/// state, native menu visibility, the injected-prefs refresh, the global
+/// hotkey, and the tray).
 /// Autostart and store-time hotkey changes are handled separately so failures
 /// can be returned to Settings; everything else here is best-effort.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
@@ -314,6 +318,12 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         #[cfg(not(target_os = "macos"))]
         let _ = window.set_background_color(Some(splash_background(s)));
         if label != "settings" {
+            #[cfg(not(target_os = "macos"))]
+            let _ = if s.hide_menu_bar {
+                window.hide_menu()
+            } else {
+                window.show_menu()
+            };
             // Push the new prefs to the running page so JS-side settings
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {
@@ -401,6 +411,7 @@ mod tests {
         assert!(s.unread_badge, "unread_badge should default to true");
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
+        assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
         assert!(!s.system_emoji, "system_emoji should default to false");
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
     }
@@ -438,5 +449,12 @@ mod tests {
         // Pre-existing installs have no `zoom` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.zoom, 100);
+    }
+
+    #[test]
+    fn settings_json_missing_hide_menu_bar_defaults_to_false() {
+        // Pre-existing installs have no `hide_menu_bar` key in settings.json.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.hide_menu_bar);
     }
 }

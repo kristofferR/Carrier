@@ -25,6 +25,7 @@ interface CarrierSettings {
   /** "system", "light", or "dark". */
   theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
+  hide_menu_bar?: boolean;
   mute_notifications?: boolean;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;

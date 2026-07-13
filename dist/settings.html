@@ -99,6 +99,7 @@
         ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+H)."],
         ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
         ["menu_bar_only", "Menu Bar Only", "macOS: hide the Dock icon and live in the menu bar (needs the tray)."],
+        ["hide_menu_bar", "Hide Top Menu", "Windows/Linux: hide the Carrier / File / Edit / View / Window row. Settings remains available from the gear button or F3."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["multi_instance", "Multi Instance", "Allow more than one window (experimental, needs restart)."],
@@ -116,11 +117,13 @@
           '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
       };
 
+      const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["theme", "zoom", "hide_names_avatars", "system_emoji", "always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
-          fields: ["show_tray", "start_to_tray", "autostart", "menu_bar_only"] },
+          fields: ["show_tray", "start_to_tray", "autostart", IS_MAC ? "menu_bar_only" : "hide_menu_bar"] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },

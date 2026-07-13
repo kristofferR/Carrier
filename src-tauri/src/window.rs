@@ -118,6 +118,10 @@ pub(crate) fn build_app_window(
         .inspect(|window| {
             // New windows inherit the current always-on-top preference.
             let _ = window.set_always_on_top(settings.always_on_top);
+            #[cfg(not(target_os = "macos"))]
+            if settings.hide_menu_bar {
+                let _ = window.hide_menu();
+            }
             // macOS: let the themed window background show through the title bar.
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
@@ -245,15 +249,16 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let _settings_window =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title(format!("{APP_TITLE} Settings"))
-            .inner_size(460.0, 620.0)
-            .resizable(false)
+            .inner_size(560.0, 720.0)
+            .min_inner_size(460.0, 620.0)
+            .resizable(true)
             .maximizable(false)
             .minimizable(false)
             .always_on_top(aot)
             .theme(theme)
             .build();
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     if let Ok(window) = _settings_window {
         let _ = window.remove_menu();
     }
