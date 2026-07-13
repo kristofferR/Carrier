@@ -242,15 +242,21 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         let s = state.settings.lock().unwrap();
         (s.always_on_top, theme_for(&s))
     };
-    let _ = WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title(format!("{APP_TITLE} Settings"))
-        .inner_size(460.0, 620.0)
-        .resizable(false)
-        .maximizable(false)
-        .minimizable(false)
-        .always_on_top(aot)
-        .theme(theme)
-        .build();
+    let _settings_window =
+        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+            .title(format!("{APP_TITLE} Settings"))
+            .inner_size(460.0, 620.0)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
+            .always_on_top(aot)
+            .theme(theme)
+            .build();
+
+    #[cfg(target_os = "windows")]
+    if let Ok(window) = _settings_window {
+        let _ = window.remove_menu();
+    }
 }
 
 fn init_script(settings: &Settings) -> String {
