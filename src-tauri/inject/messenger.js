@@ -4,6 +4,10 @@
  */
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
     const PERIODIC_MS = 15 * 60 * 1e3;
@@ -1334,98 +1338,43 @@
     );
   }
 
-  // inject/src/messenger/features/notifications.ts
-  function initNotificationBridge() {
-    if (!window.__TAURI_INTERNALS__) return;
-    invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
-    const avatarToDataUrl = (url) => new Promise((resolve) => {
-      if (!url) return resolve("");
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      let settled = false;
-      const done = (v) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(v);
-      };
-      const timer = setTimeout(() => done(""), 2500);
-      img.onload = () => {
-        try {
-          const size = 64;
-          const c = document.createElement("canvas");
-          c.width = size;
-          c.height = size;
-          c.getContext("2d").drawImage(img, 0, 0, size, size);
-          done(c.toDataURL("image/png"));
-        } catch (_) {
-          done("");
-        }
-      };
-      img.onerror = () => done("");
-      img.src = url;
-    });
-    let notifySeq = 0;
-    const notifyHandlers = /* @__PURE__ */ new Map();
-    window.__carrierNotifyClick = (id) => {
-      const n = notifyHandlers.get(id);
-      if (!n) return;
-      notifyHandlers.delete(id);
-      try {
-        window.focus();
-      } catch (_) {
-      }
-      try {
-        n.onclick?.(new Event("click"));
-      } catch (_) {
-      }
-    };
-    function CarrierNotification(title, options = {}) {
-      const opts = options || {};
-      const s = window.__CARRIER_SETTINGS__ || {};
-      diag(
-        "notify.fired",
-        `page constructed a Notification (visibility: ${document.visibilityState})`
-      );
-      if (!s.mute_notifications) {
-        const id = ++notifySeq;
-        notifyHandlers.set(id, this);
-        if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
-        const hidePreview = s.hide_notification_preview;
-        avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
-          invoke("plugin:event|emit", {
-            event: "carrier:notify",
-            payload: {
-              id,
-              title: hidePreview ? "Messenger" : String(title || "Messenger"),
-              body: hidePreview ? "New message" : String(opts.body || ""),
-              icon
-            }
-          })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
-        });
-      }
-      try {
-        window.__carrierOnNotification?.();
-      } catch (_) {
-      }
-      this.title = title;
-      this.onclick = null;
-      this.close = () => {
-      };
+  // inject/src/messenger/lib/notification-fallback.ts
+  var ConversationNotificationTracker = class {
+    constructor() {
+      __publicField(this, "signatures", /* @__PURE__ */ new Map());
+      __publicField(this, "primed", false);
     }
-    CarrierNotification.permission = "granted";
-    CarrierNotification.requestPermission = (cb) => {
-      if (cb) cb("granted");
-      return Promise.resolve("granted");
-    };
-    try {
-      Object.defineProperty(window, "Notification", {
-        value: CarrierNotification,
-        writable: true,
-        configurable: true
-      });
-    } catch (_) {
+    observe(current, observedKeys) {
+      const currentKeys = /* @__PURE__ */ new Set();
+      const changed = [];
+      for (const conversation of current) {
+        currentKeys.add(conversation.key);
+        const previous = this.signatures.get(conversation.key);
+        this.signatures.set(conversation.key, conversation.signature);
+        if (this.primed && previous !== conversation.signature) changed.push(conversation.key);
+      }
+      for (const key of observedKeys || currentKeys) {
+        if (!currentKeys.has(key)) this.signatures.delete(key);
+      }
+      this.primed = true;
+      return changed;
     }
+  };
+  function isOwnMessagePreview(value) {
+    return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
+      value.trim().replace(/\s+/g, " ")
+    );
+  }
+  function pageNotificationMatches(pageNotificationAt, rowChangeAt, matchWindowMs) {
+    const age = rowChangeAt - pageNotificationAt;
+    return pageNotificationAt > 0 && age >= 0 && age <= matchWindowMs;
+  }
+  function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
+    const normalize = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+    const titlesMatch = normalize(pageTitle) === normalize(rowTitle);
+    const normalizedPageBody = normalize(pageBody);
+    const normalizedRowBody = normalize(rowBody);
+    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody);
   }
 
   // inject/src/messenger/lib/threads.ts
@@ -1546,6 +1495,284 @@
     }
     location.assign("/messages/new/");
     return true;
+  }
+
+  // inject/src/messenger/features/notifications.ts
+  var FALLBACK_DELAY_MS = 1500;
+  var PAGE_NOTIFICATION_MATCH_MS = 2e3;
+  var FALLBACK_POLL_MS = 1e3;
+  var INITIAL_ROW_STABILITY_MS = 2e3;
+  function initNotificationBridge() {
+    if (!window.__TAURI_INTERNALS__) return;
+    invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
+    const avatarToDataUrl = (url) => new Promise((resolve) => {
+      if (!url) return resolve("");
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      let settled = false;
+      const done = (v) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const timer = setTimeout(() => done(""), 2500);
+      img.onload = () => {
+        try {
+          const size = 64;
+          const c = document.createElement("canvas");
+          c.width = size;
+          c.height = size;
+          c.getContext("2d").drawImage(img, 0, 0, size, size);
+          done(c.toDataURL("image/png"));
+        } catch (_) {
+          done("");
+        }
+      };
+      img.onerror = () => done("");
+      img.src = url;
+    });
+    let notifySeq = 0;
+    const notifyHandlers = /* @__PURE__ */ new Map();
+    window.__carrierNotifyClick = (id) => {
+      const handler = notifyHandlers.get(id);
+      notifyHandlers.delete(id);
+      try {
+        window.focus();
+      } catch (_) {
+      }
+      try {
+        handler?.();
+      } catch (_) {
+      }
+    };
+    const emitNotification = (title, body, icon, onClick) => {
+      const id = ++notifySeq;
+      notifyHandlers.set(id, onClick);
+      if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
+      invoke("plugin:event|emit", {
+        event: "carrier:notify",
+        payload: { id, title, body, icon }
+      })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+    };
+    const pendingFallbacks = /* @__PURE__ */ new Map();
+    let unmatchedPageNotification = null;
+    const markPageNotification = (title, body) => {
+      for (const [key, pending] of pendingFallbacks) {
+        if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
+        clearTimeout(pending.timer);
+        pendingFallbacks.delete(key);
+        unmatchedPageNotification = null;
+        return;
+      }
+      unmatchedPageNotification = { at: Date.now(), title, body };
+    };
+    function CarrierNotification(title, options = {}) {
+      const opts = options || {};
+      const s = window.__CARRIER_SETTINGS__ || {};
+      diag(
+        "notify.fired",
+        `page constructed a Notification (visibility: ${document.visibilityState})`
+      );
+      markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      if (!s.mute_notifications) {
+        const hidePreview = s.hide_notification_preview;
+        avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
+          emitNotification(
+            hidePreview ? "Messenger" : String(title || "Messenger"),
+            hidePreview ? "New message" : String(opts.body || ""),
+            icon,
+            () => {
+              this.onclick?.(new Event("click"));
+            }
+          );
+        });
+      }
+      try {
+        window.__carrierOnNotification?.();
+      } catch (_) {
+      }
+      this.title = title;
+      this.onclick = null;
+      this.close = () => {
+      };
+    }
+    CarrierNotification.permission = "granted";
+    CarrierNotification.requestPermission = (cb) => {
+      if (cb) cb("granted");
+      return Promise.resolve("granted");
+    };
+    try {
+      Object.defineProperty(window, "Notification", {
+        value: CarrierNotification,
+        writable: true,
+        configurable: true
+      });
+    } catch (_) {
+    }
+    const conversationTracker = new ConversationNotificationTracker();
+    const conversationFromLink = (link) => {
+      const id = threadIdFromHref(link?.getAttribute("href"));
+      if (!id) return null;
+      const row = link.closest('[role="row"]') || link;
+      const leaves = [...row.querySelectorAll("span")].filter((el) => {
+        if (el.getAttribute("aria-hidden") === "true" || el.closest("abbr")) return false;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) return false;
+        for (const child of el.children) {
+          if ((child.textContent || "").trim()) return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 1 && rect.height > 1;
+      }).sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return ar.y - br.y || ar.x - br.x;
+      });
+      const values = [];
+      for (const el of leaves) {
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (text && values.at(-1) !== text) values.push(text);
+      }
+      const image = row.querySelector("img[src]");
+      let unread = false;
+      for (const span of row.querySelectorAll("span")) {
+        const weight = Number.parseInt(getComputedStyle(span).fontWeight, 10) || 0;
+        if (weight >= 600 && (span.textContent || "").trim().length > 1) {
+          unread = true;
+          break;
+        }
+      }
+      return {
+        key: id,
+        threadPath: `/t/${id}/`,
+        title: (values[0] || "Messenger").slice(0, 80),
+        body: (values[1] || "New message").slice(0, 240),
+        icon: image?.currentSrc || image?.src || "",
+        unread
+      };
+    };
+    const scheduleFallback = (conversation, detectedAt) => {
+      if (unmatchedPageNotification && pageNotificationMatches(
+        unmatchedPageNotification.at,
+        detectedAt,
+        PAGE_NOTIFICATION_MATCH_MS
+      ) && notificationTextMatches(
+        unmatchedPageNotification.title,
+        unmatchedPageNotification.body,
+        conversation.title,
+        conversation.body
+      )) {
+        unmatchedPageNotification = null;
+        return;
+      }
+      const previous = pendingFallbacks.get(conversation.key);
+      if (previous) clearTimeout(previous.timer);
+      const timer = setTimeout(() => {
+        const settings = window.__CARRIER_SETTINGS__ || {};
+        if (settings.mute_notifications) {
+          if (pendingFallbacks.get(conversation.key)?.timer === timer) {
+            pendingFallbacks.delete(conversation.key);
+          }
+          return;
+        }
+        const hidePreview = settings.hide_notification_preview === true;
+        avatarToDataUrl(hidePreview ? "" : conversation.icon).then((icon) => {
+          if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
+          pendingFallbacks.delete(conversation.key);
+          diag(
+            "notify.fallback",
+            `unread row changed without a page Notification (visibility: ${document.visibilityState})`
+          );
+          emitNotification(
+            hidePreview ? "Messenger" : conversation.title,
+            hidePreview ? "New message" : conversation.body,
+            icon,
+            () => {
+              window.__carrierOpenThread?.(conversation.threadPath);
+            }
+          );
+        });
+      }, FALLBACK_DELAY_MS);
+      pendingFallbacks.set(conversation.key, {
+        timer,
+        title: conversation.title,
+        body: conversation.body
+      });
+    };
+    let scanRunning = false;
+    let scanPending = false;
+    let scannerReadyAt = 0;
+    const scanUnreadConversations = () => {
+      if (scanRunning) {
+        scanPending = true;
+        return;
+      }
+      scanRunning = true;
+      try {
+        const links = chatRows();
+        if (!links.length) return;
+        if (!scannerReadyAt) scannerReadyAt = Date.now() + INITIAL_ROW_STABILITY_MS;
+        const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
+        const conversations = observed.filter(
+          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
+        );
+        const changed = new Set(
+          conversationTracker.observe(
+            conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
+            observed.map(({ key }) => key)
+          )
+        );
+        if (Date.now() < scannerReadyAt) return;
+        if (!changed.size) return;
+        const detectedAt = Date.now();
+        try {
+          window.__carrierOnNotification?.();
+        } catch (_) {
+        }
+        for (const conversation of conversations) {
+          if (changed.has(conversation.key)) scheduleFallback(conversation, detectedAt);
+        }
+      } finally {
+        scanRunning = false;
+        if (scanPending) {
+          scanPending = false;
+          queueMicrotask(scanUnreadConversations);
+        }
+      }
+    };
+    let scanScheduled = false;
+    const scheduleScan = () => {
+      if (scanScheduled) return;
+      scanScheduled = true;
+      setTimeout(() => {
+        scanScheduled = false;
+        scanUnreadConversations();
+      }, 120);
+    };
+    const startScanner = (grid2) => {
+      const observer = new MutationObserver(scheduleScan);
+      observer.observe(grid2, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["class", "src", "alt", "style"]
+      });
+      scanUnreadConversations();
+      setInterval(scanUnreadConversations, FALLBACK_POLL_MS);
+    };
+    const grid = document.querySelector('[role="navigation"] [role="grid"]');
+    if (grid) startScanner(grid);
+    else {
+      const waitForGrid = new MutationObserver(() => {
+        const found = document.querySelector('[role="navigation"] [role="grid"]');
+        if (!found) return;
+        waitForGrid.disconnect();
+        startScanner(found);
+      });
+      waitForGrid.observe(document.documentElement, { childList: true, subtree: true });
+    }
   }
 
   // inject/src/messenger/features/recent-threads.ts
