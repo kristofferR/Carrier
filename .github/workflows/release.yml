@@ -1,9 +1,10 @@
 name: Release
 
 # Build installers for macOS, Windows and Linux (per-arch), sign + notarize the
-# macOS artifacts, and attach everything to a GitHub Release. Triggered by
-# pushing a tag like `v1.0.0`, or manually. The release is created as a draft and
-# only published once every build has uploaded (the `publish` job).
+# macOS artifacts, and attach everything to a curated GitHub draft release.
+# Create and write that draft before pushing a tag like `v1.0.0`; this workflow
+# deliberately never generates or rewrites public-facing release notes. The
+# draft is published only once every build has uploaded (the `publish` job).
 on:
   push:
     tags:
@@ -12,7 +13,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -64,14 +64,15 @@ jobs:
           node --check src-tauri/inject/messenger.js
           node --check src-tauri/inject/panel.js
 
-  # Generate the public-facing release copy before any build job touches the
-  # draft. The build matrix reuses these exact values so tauri-action cannot
-  # overwrite the release with a generic placeholder body.
+  # Release notes are authored with human/agent judgment before the tag is
+  # pushed, like ha-adjustable-bed. Require that curated draft and pass its body
+  # to tauri-action only for latest.json; uploads target the draft by numeric id,
+  # so the action cannot create or rewrite the GitHub release.
   prepare_release:
     runs-on: ubuntu-latest
     outputs:
-      release_title: ${{ steps.notes.outputs.release_title }}
-      release_body: ${{ steps.notes.outputs.release_body }}
+      release_id: ${{ steps.draft.outputs.release_id }}
+      release_body: ${{ steps.draft.outputs.release_body }}
     steps:
       - name: Validate release ref
         run: |
@@ -81,40 +82,46 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Generate release notes
-        id: notes
+      - name: Require curated draft release
+        id: draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          node --check .github/scripts/generate-release-notes.mjs
-          node .github/scripts/generate-release-notes.mjs "$GITHUB_REF_NAME" release-notes.md
-
-      - name: Create or update draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TITLE: ${{ steps.notes.outputs.release_title }}
-        run: |
-          set -euo pipefail
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$RELEASE_TITLE" \
-              --notes-file release-notes.md
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
-              --draft \
-              --title "$RELEASE_TITLE" \
-              --notes-file release-notes.md
+          release=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -sc --arg tag "$GITHUB_REF_NAME" 'add | .[] | select(.tag_name == $tag)' \
+            | head -n1)
+          if [ -z "$release" ]; then
+            echo "No curated draft release exists for $GITHUB_REF_NAME." >&2
+            echo "Author it before tagging, for example:" >&2
+            echo "  gh release create $GITHUB_REF_NAME --draft --target main --title $GITHUB_REF_NAME --notes-file release-notes.md" >&2
+            exit 1
           fi
+
+          if [ "$(jq -r '.draft' <<< "$release")" != "true" ]; then
+            echo "Release $GITHUB_REF_NAME already exists but is not a draft." >&2
+            exit 1
+          fi
+
+          name=$(jq -r '.name // ""' <<< "$release")
+          body=$(jq -r '.body // ""' <<< "$release")
+          if [ -z "${name//[[:space:]]/}" ]; then
+            echo "Draft release $GITHUB_REF_NAME has no title." >&2
+            exit 1
+          fi
+          if [ -z "${body//[[:space:]]/}" ] || ! grep -q '^## ' <<< "$body"; then
+            echo "Draft release $GITHUB_REF_NAME needs curated Markdown notes with at least one ## section." >&2
+            exit 1
+          fi
+
+          echo "release_id=$(jq -r '.id' <<< "$release")" >> "$GITHUB_OUTPUT"
+          delimiter="RELEASE_BODY_$(date +%s%N)"
+          {
+            echo "release_body<<$delimiter"
+            printf '%s\n' "$body"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+          echo "Using curated draft release: $name"
 
   build:
     needs: [check, prepare_release]
@@ -196,11 +203,11 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: ${{ needs.prepare_release.outputs.release_title }}
+          # Upload to the exact pre-existing draft. releaseBody is used for the
+          # updater changelog in latest.json; with releaseId set, tauri-action
+          # cannot create or modify the GitHub release itself.
+          releaseId: ${{ needs.prepare_release.outputs.release_id }}
           releaseBody: ${{ needs.prepare_release.outputs.release_body }}
-          releaseDraft: true
-          prerelease: false
           # Versioned, friendly asset names (Carrier_1.2.1_lin_x64.AppImage,
           # _win_x64_setup.exe, …); the publish job's README links and the
           # Homebrew cask both reference these exact names.
@@ -358,7 +365,7 @@ jobs:
 
   # Flip the draft to public only after every build has uploaded its assets.
   publish:
-    needs: build
+    needs: [build, prepare_release]
     runs-on: ubuntu-latest
     steps:
       # The Tauri updater reads each bundle's signature from latest.json (it is
@@ -392,10 +399,37 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
           done
 
-      - name: Publish release
+      - name: Publish curated release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
+          RELEASE_ID: ${{ needs.prepare_release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          if [ "$(jq -r '.tag_name' <<< "$release")" != "$GITHUB_REF_NAME" ]; then
+            echo "Release id $RELEASE_ID no longer belongs to $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' <<< "$release")" != "true" ]; then
+            echo "Release $GITHUB_REF_NAME is no longer a draft." >&2
+            exit 1
+          fi
+          name=$(jq -r '.name // ""' <<< "$release")
+          if [ -z "${name//[[:space:]]/}" ]; then
+            echo "Refusing to publish $GITHUB_REF_NAME with an empty title." >&2
+            exit 1
+          fi
+          body=$(jq -r '.body // ""' <<< "$release")
+          if [ -z "${body//[[:space:]]/}" ]; then
+            echo "Refusing to publish $GITHUB_REF_NAME with empty release notes." >&2
+            exit 1
+          fi
+          if ! grep -q '^## ' <<< "$body"; then
+            echo "Refusing to publish $GITHUB_REF_NAME: notes lost their curated ## sections." >&2
+            exit 1
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false >/dev/null
 
       # Keep the README's versioned download links pointed at this release, so
       # they never go stale. Commit straight back to the default branch via the

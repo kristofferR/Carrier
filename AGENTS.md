@@ -40,9 +40,20 @@ The injected scripts are TypeScript now: **edit `inject/src/`, never
 — CI fails if they drift. Pure logic lives in `inject/src/messenger/lib/` with
 `bun test` coverage; add tests there when extending it.
 
-Releases are tag-driven: push `v*` → `.github/workflows/release.yml` builds 6
-targets, signs + notarizes macOS, and auto-publishes (Apple/Tauri secrets are set
-in the repo).
+Releases use curated notes, not a generator. Before pushing a `v*` tag, inspect
+the exact tag range and merged PRs and write the release title/body with human or
+agent judgment, using direct sections such as **What's New**, **Bug Fixes**, and
+**Internal** only when useful. Create the GitHub draft first, for example:
+
+```bash
+gh release create v1.4.0 --draft --target main --title v1.4.0 --notes-file release-notes.md
+git tag v1.4.0 <release-commit>
+git push origin v1.4.0
+```
+
+`.github/workflows/release.yml` requires that non-empty curated draft, builds 6
+targets, signs + notarizes macOS, attaches artifacts without rewriting the title
+or body, and publishes it. Apple/Tauri secrets are set in the repo.
 
 ---
 
