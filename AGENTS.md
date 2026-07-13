@@ -51,7 +51,7 @@ git tag v1.4.0 <release-commit>
 git push origin v1.4.0
 ```
 
-`.github/workflows/release.yml` requires that non-empty curated draft, builds 6
+`.github/workflows/release.yml` requires a non-empty curated draft, builds 6
 targets, signs + notarizes macOS, attaches artifacts without rewriting the title
 or body, and publishes it. Apple/Tauri secrets are set in the repo.
 
