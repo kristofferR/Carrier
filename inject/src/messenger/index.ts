@@ -24,6 +24,7 @@ import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
 import { initRecentThreads } from "./features/recent-threads";
 import { initSelectorHealth } from "./features/selector-health";
+import { initSettingsButton } from "./features/settings-button";
 import { initFunctionKeys, initShortcutRegistry, initShortcuts } from "./features/shortcuts";
 import { initSpellcheck } from "./features/spellcheck";
 import { initSystemEmoji } from "./features/system-emoji";
@@ -36,6 +37,7 @@ function main() {
   initShortcuts();
   initZoom();
   initSelectorHealth();
+  initSettingsButton();
   initFunctionKeys();
   initShortcutRegistry();
   initLinkHandling();

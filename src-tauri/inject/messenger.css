@@ -43,6 +43,50 @@ div[role="banner"] div[role="navigation"] {
   display: none !important;
 }
 
+/* Carrier Settings beside Messenger's chat-list overflow control. The slot is
+   inserted by messenger.js; Facebook's own theme variables keep it native in
+   both light and dark mode. */
+[data-carrier-settings-slot] {
+  flex: 0 0 auto !important;
+  width: 36px !important;
+  height: 36px !important;
+  margin-left: 12px !important;
+}
+
+[data-carrier-settings-button] {
+  all: unset;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 999px !important;
+  background: var(--secondary-button-background, rgba(0, 0, 0, 0.1)) !important;
+  color: var(--primary-icon, #65676b) !important;
+  cursor: pointer !important;
+}
+
+[data-carrier-settings-button]:hover {
+  background: var(--hover-overlay, rgba(0, 0, 0, 0.08)) !important;
+}
+
+[data-carrier-settings-button]:active {
+  transform: scale(0.96);
+}
+
+[data-carrier-settings-button]:focus-visible {
+  outline: 2px solid var(--accent, #0866ff) !important;
+  outline-offset: 2px !important;
+}
+
+[data-carrier-settings-button] svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+
 /* Remove the bright focus ring inside the media viewer. */
 div[role="dialog"][aria-label] {
   --focus-ring-shadow-default: none !important;
