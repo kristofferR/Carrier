@@ -48,6 +48,10 @@
     Intel Mac, Windows ARM, Linux ARM, <code>.deb</code>/<code>.rpm</code>?
     <a href="https://github.com/kristofferR/carrier/releases/latest">See all files →</a>
   </sub>
+  <br />
+  <sub>
+    Homebrew for macOS/Linux is mentioned further down.
+  </sub>
 </p>
 
 ---
@@ -128,6 +132,28 @@ Electron app's RAM. The macOS build is Developer-ID signed and notarized.
   (also **Settings → Page zoom**; the level persists across restarts)
 
 ## Install
+
+### Homebrew
+
+Tap repo: [kristofferR/homebrew-tap](https://github.com/kristofferR/homebrew-tap)
+
+Homebrew uses the same cask token on macOS and Linux. Third-party casks must be
+trusted before installation:
+
+```bash
+brew tap kristofferR/tap
+brew trust kristofferR/tap
+brew install carrier
+```
+
+On macOS, the cask installs `Carrier.app` into `/Applications`. If it is already
+there, use:
+
+```bash
+brew install --adopt carrier
+```
+
+### All platforms
 
 Grab the installer for your platform from the **Download** box above or the
 [Releases](https://github.com/kristofferR/carrier/releases) page. The macOS build
