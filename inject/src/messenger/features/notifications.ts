@@ -2,12 +2,27 @@
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
 import { diag, invoke } from "../bridge";
+import {
+  ConversationNotificationTracker,
+  isOwnMessagePreview,
+  notificationTextMatches,
+  PageNotificationQueue,
+  UnreadArrivalTracker,
+} from "../lib/notification-fallback";
+import { threadIdFromHref } from "../lib/threads";
+import { unreadCountFromTitle } from "../lib/unread";
+import { chatRows } from "./conversation-actions";
 
 interface CarrierNotificationInstance {
   title?: string;
   onclick: ((e: Event) => unknown) | null;
   close: () => void;
 }
+
+const FALLBACK_DELAY_MS = 1500;
+const PAGE_NOTIFICATION_MATCH_MS = 2000;
+const FALLBACK_POLL_MS = 1000;
+const ROW_MUTATION_MATCH_MS = 2000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -56,21 +71,47 @@ export function initNotificationBridge() {
   // Notification (that's what opens the right thread). A small bounded map keeps
   // those handlers alive between "notification shown" and "notification clicked".
   let notifySeq = 0;
-  const notifyHandlers = new Map<number, CarrierNotificationInstance>();
+  const notifyHandlers = new Map<number, () => void>();
   window.__carrierNotifyClick = (id: number) => {
-    const n = notifyHandlers.get(id);
-    if (!n) return;
+    const handler = notifyHandlers.get(id);
     notifyHandlers.delete(id);
     try {
       window.focus();
     } catch (_) {}
     try {
-      // Facebook's onclick expects the click Event (it can read it / call
-      // preventDefault); a native notification click carries no DOM event, so
-      // hand it a synthetic one. Called as `n.onclick(...)` so `this` stays
-      // bound to the Notification instance.
-      n.onclick?.(new Event("click"));
+      handler?.();
     } catch (_) {}
+  };
+
+  const emitNotification = (title: string, body: string, icon: string, onClick: () => void) => {
+    const id = ++notifySeq;
+    notifyHandlers.set(id, onClick);
+    if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
+    invoke("plugin:event|emit", {
+      event: "carrier:notify",
+      payload: { id, title, body, icon },
+    })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+  };
+
+  interface PendingFallback {
+    timer: number;
+    title: string;
+    body: string;
+  }
+  const pendingFallbacks = new Map<string, PendingFallback>();
+  const unmatchedPageNotifications = new PageNotificationQueue();
+
+  // Facebook may construct its Notification just before or just after its
+  // conversation row changes. Pair the two signals so the row-driven safety
+  // net below never duplicates Facebook's normal native notification.
+  const markPageNotification = (title: string, body: string) => {
+    for (const [key, pending] of pendingFallbacks) {
+      if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
+      clearTimeout(pending.timer);
+      pendingFallbacks.delete(key);
+      return;
+    }
+    unmatchedPageNotifications.add({ at: Date.now(), title, body });
   };
 
   function CarrierNotification(
@@ -87,30 +128,30 @@ export function initNotificationBridge() {
       "notify.fired",
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
+    markPageNotification(String(title || "Messenger"), String(opts.body || ""));
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
     // still runs when muted so the window keeps catching up.)
     if (!s.mute_notifications) {
-      const id = ++notifySeq;
-      // Facebook assigns `this.onclick` right after construction; hold onto
-      // this instance so the click route can call it. Cap the map so a long
-      // session of unclicked notifications can't grow it without bound.
-      notifyHandlers.set(id, this);
-      if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
+      // Facebook assigns `this.onclick` right after construction; the callback
+      // below captures this instance so a native click can call it later.
       // Hide preview: replace the sender name and message text with a generic
       // notification, and skip the avatar so the sender's face never leaks.
       const hidePreview = s.hide_notification_preview;
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
-        invoke("plugin:event|emit", {
-          event: "carrier:notify",
-          payload: {
-            id,
-            title: hidePreview ? "Messenger" : String(title || "Messenger"),
-            body: hidePreview ? "New message" : String(opts.body || ""),
-            icon,
+        emitNotification(
+          hidePreview ? "Messenger" : String(title || "Messenger"),
+          hidePreview ? "New message" : String(opts.body || ""),
+          icon,
+          () => {
+            // Facebook's onclick expects the click Event (it can read it / call
+            // preventDefault); a native notification click carries no DOM
+            // event, so hand it a synthetic one. Called through the captured
+            // instance so `this` stays bound to the Notification.
+            this.onclick?.(new Event("click"));
           },
-        })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+        );
       });
     }
     // Nudge the auto-refresh so the conversation view catches up even when
@@ -134,4 +175,211 @@ export function initNotificationBridge() {
       configurable: true,
     });
   } catch (_) {}
+
+  // Meta no longer reliably constructs Web Notifications for Messenger. Use
+  // the conversation list as the source of truth: prime existing unread rows,
+  // then notify only when an unread conversation's preview signature changes.
+  // This is the modern Caprine/Wheemer strategy, adapted to Carrier's stable
+  // role/link selectors and kept as a delayed fallback to the page bridge.
+  const conversationTracker = new ConversationNotificationTracker();
+
+  const conversationFromLink = (link: HTMLAnchorElement) => {
+    const id = threadIdFromHref(link?.getAttribute("href"));
+    if (!id) return null;
+    const row = link.closest('[role="row"]') || link;
+    const leaves = [...row.querySelectorAll<HTMLElement>("span")]
+      .filter((el) => {
+        if (el.getAttribute("aria-hidden") === "true" || el.closest("abbr")) return false;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text) return false;
+        // Keep only the deepest text surface so nested Messenger wrappers do
+        // not duplicate the sender or preview.
+        for (const child of el.children) {
+          if ((child.textContent || "").trim()) return false;
+        }
+        const rect = el.getBoundingClientRect();
+        return rect.width > 1 && rect.height > 1;
+      })
+      .sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        return ar.y - br.y || ar.x - br.x;
+      });
+    const values: string[] = [];
+    for (const el of leaves) {
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (text && values[values.length - 1] !== text) values.push(text);
+    }
+    const image = row.querySelector<HTMLImageElement>("img[src]");
+    let unread = false;
+    for (const span of row.querySelectorAll("span")) {
+      const weight = Number.parseInt(getComputedStyle(span).fontWeight, 10) || 0;
+      if (weight >= 600 && (span.textContent || "").trim().length > 1) {
+        unread = true;
+        break;
+      }
+    }
+    return {
+      key: id,
+      threadPath: `/t/${id}/`,
+      title: (values[0] || "Messenger").slice(0, 80),
+      body: (values[1] || "New message").slice(0, 240),
+      icon: image?.currentSrc || image?.src || "",
+      unread,
+    };
+  };
+
+  type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
+
+  const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
+    if (
+      unmatchedPageNotifications.consumeMatching(
+        conversation,
+        detectedAt,
+        PAGE_NOTIFICATION_MATCH_MS,
+      )
+    ) {
+      return;
+    }
+    const previous = pendingFallbacks.get(conversation.key);
+    if (previous) clearTimeout(previous.timer);
+    const timer = setTimeout(() => {
+      const settings = window.__CARRIER_SETTINGS__ || {};
+      if (settings.mute_notifications) {
+        if (pendingFallbacks.get(conversation.key)?.timer === timer) {
+          pendingFallbacks.delete(conversation.key);
+        }
+        return;
+      }
+      const hidePreview = settings.hide_notification_preview === true;
+      avatarToDataUrl(hidePreview ? "" : conversation.icon).then((icon) => {
+        // Keep the entry cancellable until the avatar conversion finishes. A
+        // late page Notification must still win instead of producing a second
+        // native notification while this fallback is in flight.
+        if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
+        pendingFallbacks.delete(conversation.key);
+        diag(
+          "notify.fallback",
+          `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
+        );
+        emitNotification(
+          hidePreview ? "Messenger" : conversation.title,
+          hidePreview ? "New message" : conversation.body,
+          icon,
+          () => {
+            window.__carrierOpenThread?.(conversation.threadPath);
+          },
+        );
+      });
+    }, FALLBACK_DELAY_MS);
+    pendingFallbacks.set(conversation.key, {
+      timer,
+      title: conversation.title,
+      body: conversation.body,
+    });
+  };
+
+  let scanRunning = false;
+  let scanPending = false;
+  const unreadArrivals = new UnreadArrivalTracker();
+  const scanUnreadConversations = () => {
+    if (scanRunning) {
+      scanPending = true;
+      return;
+    }
+    scanRunning = true;
+    try {
+      const links = chatRows();
+      // A grid can exist briefly before its rows hydrate. Do not prime an empty
+      // list or the first real render would look like a burst of new messages.
+      if (!links.length) return;
+      const observed = links
+        .map(conversationFromLink)
+        .filter((conversation): conversation is Conversation => conversation !== null);
+      const conversations = observed.filter(
+        (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
+      );
+      const detectedAt = Date.now();
+      const changed = new Set(
+        conversationTracker.observe(
+          conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
+          observed.map(({ key }) => key),
+        ),
+      );
+      for (const key of unreadArrivals.observeUnreadCount(
+        unreadCountFromTitle(document.title || ""),
+        detectedAt,
+        ROW_MUTATION_MATCH_MS,
+      )) {
+        changed.add(key);
+      }
+      if (!changed.size) return;
+      try {
+        window.__carrierOnNotification?.();
+      } catch (_) {}
+      for (const conversation of conversations) {
+        if (changed.has(conversation.key)) scheduleFallback(conversation, detectedAt);
+      }
+    } finally {
+      scanRunning = false;
+      if (scanPending) {
+        scanPending = false;
+        queueMicrotask(scanUnreadConversations);
+      }
+    }
+  };
+
+  let scanScheduled = false;
+  const scheduleScan = (records: MutationRecord[] = []) => {
+    const changedKeys = new Set<string>();
+    const inspect = (node: Node) => {
+      if (!(node instanceof Element)) return;
+      const links = new Set<HTMLAnchorElement>();
+      const closest = node.closest<HTMLAnchorElement>('a[href*="/t/"]');
+      if (closest) links.add(closest);
+      for (const link of node.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')) {
+        links.add(link);
+      }
+      for (const link of links) {
+        const key = threadIdFromHref(link.getAttribute("href"));
+        if (key) changedKeys.add(key);
+      }
+    };
+    for (const record of records) {
+      inspect(record.target);
+      for (const node of record.addedNodes) inspect(node);
+    }
+    unreadArrivals.markRowsChanged(changedKeys, Date.now());
+    if (scanScheduled) return;
+    scanScheduled = true;
+    setTimeout(() => {
+      scanScheduled = false;
+      scanUnreadConversations();
+    }, 120);
+  };
+
+  const startScanner = (grid: Element) => {
+    const observer = new MutationObserver(scheduleScan);
+    observer.observe(grid, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class", "src", "alt", "style"],
+    });
+    scanUnreadConversations();
+    setInterval(scanUnreadConversations, FALLBACK_POLL_MS);
+  };
+
+  const grid = document.querySelector('[role="navigation"] [role="grid"]');
+  if (grid) startScanner(grid);
+  else {
+    const waitForGrid = new MutationObserver(() => {
+      const found = document.querySelector('[role="navigation"] [role="grid"]');
+      if (!found) return;
+      waitForGrid.disconnect();
+      startScanner(found);
+    });
+    waitForGrid.observe(document.documentElement, { childList: true, subtree: true });
+  }
 }
