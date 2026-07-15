@@ -55,7 +55,9 @@ struct NotificationDeduper {
 impl NotificationDeduper {
     fn fingerprint(msg: &NotifyMsg) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        if msg.dedupe_key.len() <= 128 && !msg.dedupe_key.trim().is_empty() {
+        let valid_dedupe_key = msg.dedupe_key.len() == 16
+            && msg.dedupe_key.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if valid_dedupe_key {
             0_u8.hash(&mut hasher);
             msg.dedupe_key.hash(&mut hasher);
         } else {
@@ -387,13 +389,13 @@ mod tests {
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
-            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"abc123"}"#,
+            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef"}"#,
         )
         .expect("payload parses");
         assert_eq!(msg.id, 7);
         assert_eq!(msg.title, "Jane");
         assert_eq!(msg.body, "hi there");
-        assert_eq!(msg.dedupe_key, "abc123");
+        assert_eq!(msg.dedupe_key, "0123456789abcdef");
         // Missing fields fall back to defaults rather than failing the parse.
         let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
         assert_eq!(bare.id, 0);
@@ -441,8 +443,8 @@ mod tests {
     fn notification_deduper_suppresses_replays_and_refreshes_the_window() {
         let start = Instant::now();
         let mut deduper = NotificationDeduper::default();
-        let first = notify_msg(1, "Jane", "Hello", "same-message");
-        let replay = notify_msg(2, "Jane", "Hello", "same-message");
+        let first = notify_msg(1, "Jane", "Hello", "0123456789abcdef");
+        let replay = notify_msg(2, "Jane", "Hello", "0123456789abcdef");
 
         assert!(deduper.should_deliver_at(&first, start));
         assert!(!deduper.should_deliver_at(&replay, start + Duration::from_secs(20)));
@@ -454,8 +456,8 @@ mod tests {
     fn notification_deduper_keeps_hidden_previews_distinct() {
         let now = Instant::now();
         let mut deduper = NotificationDeduper::default();
-        let jane = notify_msg(1, "Messenger", "New message", "jane-message");
-        let john = notify_msg(2, "Messenger", "New message", "john-message");
+        let jane = notify_msg(1, "Messenger", "New message", "1111111111111111");
+        let john = notify_msg(2, "Messenger", "New message", "2222222222222222");
 
         assert!(deduper.should_deliver_at(&jane, now));
         assert!(deduper.should_deliver_at(&john, now));
@@ -472,5 +474,18 @@ mod tests {
         assert!(deduper.should_deliver_at(&first, now));
         assert!(!deduper.should_deliver_at(&replay, now));
         assert!(deduper.should_deliver_at(&different, now));
+    }
+
+    #[test]
+    fn notification_deduper_rejects_malformed_keys() {
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let jane = notify_msg(1, "Jane", "Hello", "malformed-key");
+        let john = notify_msg(2, "John", "Different", "malformed-key");
+        let jane_replay = notify_msg(3, "Jane", "Hello", "malformed-key");
+
+        assert!(deduper.should_deliver_at(&jane, now));
+        assert!(deduper.should_deliver_at(&john, now));
+        assert!(!deduper.should_deliver_at(&jane_replay, now));
     }
 }
