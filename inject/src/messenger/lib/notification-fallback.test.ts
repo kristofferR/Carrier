@@ -2,10 +2,26 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
+  notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
   UnreadArrivalTracker,
 } from "./notification-fallback";
+
+describe("notificationDedupeKey", () => {
+  test("normalizes equivalent notification text to the same opaque key", () => {
+    const key = notificationDedupeKey(" Jane ", "Hello\nthere");
+    expect(notificationDedupeKey("jane", "hello there")).toBe(key);
+    expect(key).toMatch(/^[0-9a-f]{16}$/);
+    expect(key).not.toContain("jane");
+  });
+
+  test("distinguishes different senders and message previews", () => {
+    const key = notificationDedupeKey("Jane", "First");
+    expect(notificationDedupeKey("John", "First")).not.toBe(key);
+    expect(notificationDedupeKey("Jane", "Second")).not.toBe(key);
+  });
+});
 
 describe("ConversationNotificationTracker", () => {
   test("primes existing unread conversations without notifying", () => {

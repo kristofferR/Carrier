@@ -40,6 +40,25 @@ interface PageNotificationSignal extends NotificationText {
   at: number;
 }
 
+const normalizeNotificationText = (value: string) =>
+  value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+
+/**
+ * A content-safe, deterministic identity shared by the page and row-driven
+ * notification paths. Hash the original text before privacy redaction so
+ * hidden-preview notifications from different conversations stay distinct.
+ */
+export function notificationDedupeKey(title: string, body: string): string {
+  const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
 /** Keeps concurrent page signals until their matching row update arrives. */
 export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
@@ -107,10 +126,9 @@ export function notificationTextMatches(
   rowTitle: string,
   rowBody: string,
 ): boolean {
-  const normalize = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-  const titlesMatch = normalize(pageTitle) === normalize(rowTitle);
-  const normalizedPageBody = normalize(pageBody);
-  const normalizedRowBody = normalize(rowBody);
+  const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+  const normalizedPageBody = normalizeNotificationText(pageBody);
+  const normalizedRowBody = normalizeNotificationText(rowBody);
   return (
     titlesMatch &&
     (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody)

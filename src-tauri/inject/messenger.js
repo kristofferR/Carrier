@@ -1413,6 +1413,17 @@
       return changed;
     }
   };
+  var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  function notificationDedupeKey(title, body) {
+    const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
+    let hash = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    for (const byte of new TextEncoder().encode(value)) {
+      hash ^= BigInt(byte);
+      hash = BigInt.asUintN(64, hash * prime);
+    }
+    return hash.toString(16).padStart(16, "0");
+  }
   var PageNotificationQueue = class {
     constructor() {
       __publicField(this, "signals", []);
@@ -1463,10 +1474,9 @@
     );
   }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
-    const normalize = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-    const titlesMatch = normalize(pageTitle) === normalize(rowTitle);
-    const normalizedPageBody = normalize(pageBody);
-    const normalizedRowBody = normalize(rowBody);
+    const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+    const normalizedPageBody = normalizeNotificationText(pageBody);
+    const normalizedRowBody = normalizeNotificationText(rowBody);
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody);
   }
 
@@ -1645,13 +1655,13 @@
       } catch (_) {
       }
     };
-    const emitNotification = (title, body, icon, onClick) => {
+    const emitNotification = (title, body, icon, dedupeKey, onClick) => {
       const id = ++notifySeq;
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       invoke("plugin:event|emit", {
         event: "carrier:notify",
-        payload: { id, title, body, icon }
+        payload: { id, title, body, icon, dedupe_key: dedupeKey }
       })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
     };
     const pendingFallbacks = /* @__PURE__ */ new Map();
@@ -1675,11 +1685,14 @@
       markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       if (!s.mute_notifications) {
         const hidePreview = s.hide_notification_preview;
+        const originalTitle = String(title || "Messenger");
+        const originalBody = String(opts.body || "");
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
           emitNotification(
-            hidePreview ? "Messenger" : String(title || "Messenger"),
-            hidePreview ? "New message" : String(opts.body || ""),
+            hidePreview ? "Messenger" : originalTitle,
+            hidePreview ? "New message" : originalBody,
             icon,
+            notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
             }
@@ -1780,6 +1793,7 @@
             hidePreview ? "Messenger" : conversation.title,
             hidePreview ? "New message" : conversation.body,
             icon,
+            notificationDedupeKey(conversation.title, conversation.body),
             () => {
               window.__carrierOpenThread?.(conversation.threadPath);
             }

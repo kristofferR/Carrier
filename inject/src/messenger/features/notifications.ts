@@ -5,6 +5,7 @@ import { diag, invoke } from "../bridge";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
+  notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
   UnreadArrivalTracker,
@@ -83,13 +84,19 @@ export function initNotificationBridge() {
     } catch (_) {}
   };
 
-  const emitNotification = (title: string, body: string, icon: string, onClick: () => void) => {
+  const emitNotification = (
+    title: string,
+    body: string,
+    icon: string,
+    dedupeKey: string,
+    onClick: () => void,
+  ) => {
     const id = ++notifySeq;
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
     invoke("plugin:event|emit", {
       event: "carrier:notify",
-      payload: { id, title, body, icon },
+      payload: { id, title, body, icon, dedupe_key: dedupeKey },
     })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
   };
 
@@ -139,11 +146,14 @@ export function initNotificationBridge() {
       // Hide preview: replace the sender name and message text with a generic
       // notification, and skip the avatar so the sender's face never leaks.
       const hidePreview = s.hide_notification_preview;
+      const originalTitle = String(title || "Messenger");
+      const originalBody = String(opts.body || "");
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
         emitNotification(
-          hidePreview ? "Messenger" : String(title || "Messenger"),
-          hidePreview ? "New message" : String(opts.body || ""),
+          hidePreview ? "Messenger" : originalTitle,
+          hidePreview ? "New message" : originalBody,
           icon,
+          notificationDedupeKey(originalTitle, originalBody),
           () => {
             // Facebook's onclick expects the click Event (it can read it / call
             // preventDefault); a native notification click carries no DOM
@@ -266,6 +276,7 @@ export function initNotificationBridge() {
           hidePreview ? "Messenger" : conversation.title,
           hidePreview ? "New message" : conversation.body,
           icon,
+          notificationDedupeKey(conversation.title, conversation.body),
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
