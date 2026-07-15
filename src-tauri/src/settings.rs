@@ -62,6 +62,9 @@ pub(crate) struct Settings {
     /// Block Facebook's analytics/logging requests (banzai, quick metrics,
     /// error reporting) in the page. Never touches messaging endpoints.
     pub(crate) block_telemetry: bool,
+    /// Require Cmd+Enter on macOS or Ctrl+Enter elsewhere to send a message.
+    /// Plain Enter inserts a line break. Off by default.
+    pub(crate) send_with_accelerator: bool,
 }
 
 /// Valid page-zoom range in percent (matches the keyboard zoom in
@@ -105,6 +108,7 @@ impl Default for Settings {
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
+            send_with_accelerator: false,
         }
     }
 }
@@ -414,6 +418,10 @@ mod tests {
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
         assert!(!s.spellcheck, "spellcheck should default to false");
         assert!(!s.system_emoji, "system_emoji should default to false");
+        assert!(
+            !s.send_with_accelerator,
+            "send_with_accelerator should default to false"
+        );
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
     }
 
@@ -464,5 +472,12 @@ mod tests {
         // Pre-existing installs without this key should not opt in implicitly.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.spellcheck);
+    }
+
+    #[test]
+    fn settings_json_missing_send_with_accelerator_defaults_to_false() {
+        // Existing installs keep Enter-to-send unless they explicitly opt in.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.send_with_accelerator);
     }
 }

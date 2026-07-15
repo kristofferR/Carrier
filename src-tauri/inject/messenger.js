@@ -70,6 +70,57 @@
     }, 60 * 1e3);
   }
 
+  // inject/src/messenger/lib/composer-keys.ts
+  function shouldKeepEnterInComposer(state) {
+    if (state.key !== "Enter") return false;
+    if (state.isComposing || state.compositionActive || state.keyCode === 229) return true;
+    return state.requireAccelerator && !state.acceleratorPressed && !state.shiftKey;
+  }
+
+  // inject/src/messenger/features/composer-keys.ts
+  var isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  var composerSelector = '[contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"], textarea';
+  function isComposerTarget(target) {
+    if (!(target instanceof Element)) return false;
+    const editor = target.closest(composerSelector);
+    return !!editor?.closest('[role="main"]');
+  }
+  function initComposerKeys() {
+    let compositionActive = false;
+    document.addEventListener(
+      "compositionstart",
+      (event) => {
+        if (isComposerTarget(event.target)) compositionActive = true;
+      },
+      true
+    );
+    document.addEventListener(
+      "compositionend",
+      () => {
+        compositionActive = false;
+      },
+      true
+    );
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (!isComposerTarget(event.target)) return;
+        if (!shouldKeepEnterInComposer({
+          key: event.key,
+          isComposing: event.isComposing,
+          compositionActive,
+          keyCode: event.keyCode,
+          requireAccelerator: window.__CARRIER_SETTINGS__?.send_with_accelerator === true,
+          acceleratorPressed: isMac ? event.metaKey : event.ctrlKey,
+          shiftKey: event.shiftKey
+        }))
+          return;
+        event.stopImmediatePropagation();
+      },
+      true
+    );
+  }
+
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
   var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
@@ -2130,8 +2181,8 @@
   }
 
   // inject/src/messenger/features/shortcuts.ts
-  var isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-  var accel = (e) => isMac ? e.metaKey : e.ctrlKey;
+  var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  var accel = (e) => isMac2 ? e.metaKey : e.ctrlKey;
   var shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),
@@ -2581,6 +2632,7 @@
 
   // inject/src/messenger/index.ts
   function main() {
+    initComposerKeys();
     initShortcuts();
     initZoom();
     initSelectorHealth();

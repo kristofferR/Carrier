@@ -11,6 +11,7 @@
  * in registration order, so this order is part of the behaviour.
  */
 import { initAutoRefresh } from "./features/auto-refresh";
+import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
 import { initCookieAutoDecline } from "./features/cookie-consent";
 import { initDownloadAnchors } from "./features/download-anchors";
@@ -34,6 +35,7 @@ import { initUnreadBadge } from "./features/unread-badge";
 import { initZoom } from "./features/zoom";
 
 function main() {
+  initComposerKeys();
   initShortcuts();
   initZoom();
   initSelectorHealth();

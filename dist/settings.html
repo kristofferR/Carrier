@@ -103,6 +103,7 @@
         ["hide_menu_bar", "Hide Top Menu", "Windows/Linux: hide the Carrier / File / Edit / View / Window row. Settings remains available from the gear button or F3."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
+        ["send_with_accelerator", "Require Cmd/Ctrl+Enter to Send", "Plain Enter inserts a line break; use Cmd+Enter on macOS or Ctrl+Enter on Windows/Linux to send."],
         ["multi_instance", "Multi Instance", "Allow more than one window (experimental, needs restart)."],
       ];
       const FIELD_META = Object.fromEntries(FIELDS.map(([k, label, hint]) => [k, { label, hint }]));
@@ -133,7 +134,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["block_telemetry", "multi_instance", "open_logs"] },
+          fields: ["send_with_accelerator", "block_telemetry", "multi_instance", "open_logs"] },
       ];
 
       let activeTab = "general";

@@ -35,6 +35,8 @@ interface CarrierSettings {
   zoom?: number;
   global_hotkey?: boolean;
   block_telemetry?: boolean;
+  /** Require Cmd+Enter (macOS) or Ctrl+Enter (elsewhere) to send. */
+  send_with_accelerator?: boolean;
 }
 
 interface Window {
