@@ -3,13 +3,14 @@
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux/Windows
 //! use notify-rust).
 
-use std::hash::{BuildHasher, Hasher};
+use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde::Deserialize;
@@ -36,7 +37,66 @@ pub(crate) struct NotifyMsg {
     body: String,
     #[serde(default)]
     icon: String,
+    /// Opaque fingerprint of the original sender and preview, computed before
+    /// hidden-preview redaction so unrelated private notifications do not
+    /// collapse into one. Older page bundles omit it and fall back to text.
+    #[serde(default)]
+    dedupe_key: String,
 }
+
+const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
+const MAX_RECENT_NOTIFICATIONS: usize = 256;
+
+#[derive(Default)]
+struct NotificationDeduper {
+    seen: HashMap<u64, Instant>,
+}
+
+impl NotificationDeduper {
+    fn fingerprint(msg: &NotifyMsg) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        if msg.dedupe_key.len() <= 128 && !msg.dedupe_key.trim().is_empty() {
+            0_u8.hash(&mut hasher);
+            msg.dedupe_key.hash(&mut hasher);
+        } else {
+            // Compatibility with an already-loaded older injected bundle.
+            1_u8.hash(&mut hasher);
+            msg.title.trim().hash(&mut hasher);
+            msg.body.trim().hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Atomically reserve a logical notification for delivery. Repeated
+    /// sightings refresh the window, so a noisy source cannot leak another
+    /// copy every 30 seconds while it keeps replaying the same event.
+    fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
+        self.seen.retain(|_, seen_at| {
+            now.saturating_duration_since(*seen_at) <= NOTIFICATION_DEDUPE_WINDOW
+        });
+
+        let fingerprint = Self::fingerprint(msg);
+        if let Some(seen_at) = self.seen.get_mut(&fingerprint) {
+            *seen_at = now;
+            return false;
+        }
+
+        if self.seen.len() >= MAX_RECENT_NOTIFICATIONS {
+            if let Some(oldest) = self
+                .seen
+                .iter()
+                .min_by_key(|(_, seen_at)| **seen_at)
+                .map(|(fingerprint, _)| *fingerprint)
+            {
+                self.seen.remove(&oldest);
+            }
+        }
+        self.seen.insert(fingerprint, now);
+        true
+    }
+}
+
+static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
 
 impl NotifyMsg {
     /// The page's handle for this notification (safe to log — it's a counter,
@@ -197,6 +257,16 @@ pub(crate) fn clear_avatar_cache() {
 /// until the user clicks or dismisses it (it only parks, doesn't spin), and on
 /// click it routes back to the page.
 pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
+    let should_deliver = NOTIFICATION_DEDUPER
+        .get_or_init(|| Mutex::new(NotificationDeduper::default()))
+        .lock()
+        .unwrap()
+        .should_deliver_at(&msg, Instant::now());
+    if !should_deliver {
+        log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
+        return;
+    }
+
     let sound = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
@@ -317,12 +387,13 @@ mod tests {
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
-            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk="}"#,
+            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"abc123"}"#,
         )
         .expect("payload parses");
         assert_eq!(msg.id, 7);
         assert_eq!(msg.title, "Jane");
         assert_eq!(msg.body, "hi there");
+        assert_eq!(msg.dedupe_key, "abc123");
         // Missing fields fall back to defaults rather than failing the parse.
         let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
         assert_eq!(bare.id, 0);
@@ -354,5 +425,52 @@ mod tests {
         // before it's decoded, so a hostile page can't force a huge write.
         let huge = format!("data:image/png;base64,{}", "A".repeat(4 << 20));
         assert!(avatar_to_temp_png(&huge).is_none());
+    }
+
+    fn notify_msg(id: u64, title: &str, body: &str, dedupe_key: &str) -> NotifyMsg {
+        NotifyMsg {
+            id,
+            title: title.into(),
+            body: body.into(),
+            icon: String::new(),
+            dedupe_key: dedupe_key.into(),
+        }
+    }
+
+    #[test]
+    fn notification_deduper_suppresses_replays_and_refreshes_the_window() {
+        let start = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let first = notify_msg(1, "Jane", "Hello", "same-message");
+        let replay = notify_msg(2, "Jane", "Hello", "same-message");
+
+        assert!(deduper.should_deliver_at(&first, start));
+        assert!(!deduper.should_deliver_at(&replay, start + Duration::from_secs(20)));
+        assert!(!deduper.should_deliver_at(&replay, start + Duration::from_secs(40)));
+        assert!(deduper.should_deliver_at(&replay, start + Duration::from_secs(71)));
+    }
+
+    #[test]
+    fn notification_deduper_keeps_hidden_previews_distinct() {
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let jane = notify_msg(1, "Messenger", "New message", "jane-message");
+        let john = notify_msg(2, "Messenger", "New message", "john-message");
+
+        assert!(deduper.should_deliver_at(&jane, now));
+        assert!(deduper.should_deliver_at(&john, now));
+    }
+
+    #[test]
+    fn notification_deduper_supports_payloads_without_a_key() {
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let first = notify_msg(1, "Jane", "Hello", "");
+        let replay = notify_msg(2, "Jane", "Hello", "");
+        let different = notify_msg(3, "Jane", "Different", "");
+
+        assert!(deduper.should_deliver_at(&first, now));
+        assert!(!deduper.should_deliver_at(&replay, now));
+        assert!(deduper.should_deliver_at(&different, now));
     }
 }
