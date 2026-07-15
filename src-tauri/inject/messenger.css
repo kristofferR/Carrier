@@ -11,7 +11,10 @@
  * media dialog is open.
  */
 
-/* Kill the page-level scrollbar the hidden header would otherwise leave behind. */
+/* Kill the page-level scrollbar the hidden header would otherwise leave behind.
+   Facebook reasserts overflow-y with an ID-qualified selector, so match that
+   specificity while keeping the generic fallback for nonstandard auth pages. */
+html#facebook:has(body),
 html:has(body) {
   overflow: hidden !important;
 }
