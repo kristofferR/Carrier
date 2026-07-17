@@ -255,8 +255,10 @@
         }
         if (!items.length) return;
         e.preventDefault();
+        const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+        const previouslyFocused = document.activeElement;
         closeMenu();
-        ctxMenuReturnFocus = t instanceof HTMLElement ? t : t.closest?.("[tabindex], button, a[href]") ?? null;
+        ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null);
         ctxMenu = document.createElement("div");
         ctxMenu.setAttribute("role", "menu");
         ctxMenu.setAttribute("aria-label", "Media actions");
@@ -352,7 +354,7 @@
   // inject/src/messenger/lib/login-page.ts
   var FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
   function isLanguageFooterLink(link) {
-    return link.href.trim() === "#" || link.href.trim().endsWith("#");
+    return link.href.trim() === "#";
   }
   function isFooterNoiseLink(link) {
     return FOOTER_NOISE_RE.test(link.text.replace(/\s+/g, " ").trim());
@@ -383,12 +385,20 @@
     if (!COOKIE_TEXT_RE.test(text)) return false;
     return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
   };
+  var accessibleLabelText = (el) => {
+    let text = el.getAttribute("aria-label") || "";
+    const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    const doc = el.ownerDocument;
+    for (const id of ids) {
+      text += ` ${doc?.getElementById(id)?.textContent || ""}`;
+    }
+    return text.slice(0, 4e3);
+  };
   var hasCookieConsentLabel = (el) => {
-    const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-    if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
+    const matches = (text) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
+    if (matches(accessibleLabelText(el))) return true;
     for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
-      const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-      if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
+      if (matches(accessibleLabelText(node))) return true;
     }
     return false;
   };
@@ -1477,10 +1487,10 @@
     const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
     return shorter.length >= 40 && longer.startsWith(shorter);
   };
-  var withoutGroupSender = (value) => {
+  var splitGroupSender = (value) => {
     const separator = value.indexOf(": ");
-    if (separator <= 0 || separator > 80) return value;
-    return value.slice(separator + 2);
+    if (separator <= 0 || separator > 80) return { sender: null, message: value };
+    return { sender: value.slice(0, separator), message: value.slice(separator + 2) };
   };
   function notificationDedupeKey(title, body) {
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
@@ -1575,7 +1585,13 @@
     add(signal) {
       this.signals.push(signal);
       if (this.signals.length > 20) this.signals.shift();
+      return signal;
     }
+    /**
+     * Return (and remove) the queued page signal that matches this row, or null.
+     * Returning the signal — rather than a boolean — lets the caller reach its
+     * `nativeId` and route the already-emitted page-first notification.
+     */
     consumeMatching(row, rowChangeAt, matchWindowMs) {
       for (let index = this.signals.length - 1; index >= 0; index--) {
         const signal = this.signals[index];
@@ -1586,10 +1602,10 @@
         }
         if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
           this.signals.splice(index, 1);
-          return true;
+          return signal;
         }
       }
-      return false;
+      return null;
     }
   };
   var UnreadArrivalTracker = class {
@@ -1623,9 +1639,10 @@
     const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
     const normalizedPageBody = normalizeNotificationText(pageBody);
     const normalizedRowBody = normalizeNotificationText(rowBody);
-    const pageWithoutSender = withoutGroupSender(normalizedPageBody);
-    const rowWithoutSender = withoutGroupSender(normalizedRowBody);
-    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || matchesExactOrTruncated(pageWithoutSender, rowWithoutSender));
+    const page = splitGroupSender(normalizedPageBody);
+    const row = splitGroupSender(normalizedRowBody);
+    const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
+    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
 
   // inject/src/messenger/lib/threads.ts
@@ -1805,14 +1822,19 @@
       }
       return handler !== void 0;
     };
-    const emitNotification = (title, body, icon, dedupeKey, onClick, threadPath) => {
-      const id = ++notifySeq;
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       invoke("plugin:event|emit", {
         event: "carrier:notify",
         payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
       })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+    };
+    const updateNotificationRoute = (id, threadPath) => {
+      invoke("plugin:event|emit", {
+        event: "carrier:notify-route",
+        payload: { id, thread_path: threadPath }
+      })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
     const notifiedStore = new NotifiedSignatureStore(
       (() => {
@@ -1831,10 +1853,9 @@
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
         notifiedStore.markNotified(key, pending.fingerprint);
-        return pending.threadPath;
+        return { threadPath: pending.threadPath };
       }
-      unmatchedPageNotifications.add({ at: Date.now(), title, body });
-      return void 0;
+      return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -1843,16 +1864,16 @@
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
-      const matchedThreadPath = markPageNotification(
-        String(title || "Messenger"),
-        String(opts.body || "")
-      );
+      const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       if (!s.mute_notifications) {
         const hidePreview = s.hide_notification_preview;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
+        const id = ++notifySeq;
+        if (pageMatch.signal) pageMatch.signal.nativeId = id;
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
           emitNotification(
+            id,
             hidePreview ? "Messenger" : originalTitle,
             hidePreview ? "New message" : originalBody,
             icon,
@@ -1860,7 +1881,7 @@
             () => {
               this.onclick?.(new Event("click"));
             },
-            matchedThreadPath
+            pageMatch.threadPath
           );
         });
       }
@@ -1927,11 +1948,15 @@
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const previous = pendingFallbacks.get(conversation.key);
       if (previous) clearTimeout(previous.timer);
-      if (unmatchedPageNotifications.consumeMatching(
+      const pageSignal = unmatchedPageNotifications.consumeMatching(
         conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS
-      )) {
+      );
+      if (pageSignal) {
+        if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
+          updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+        }
         notifiedStore.markNotified(conversation.key, fingerprint);
         pendingFallbacks.delete(conversation.key);
         return;
@@ -1955,6 +1980,7 @@
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
         emitNotification(
+          ++notifySeq,
           hidePreview ? "Messenger" : conversation.title,
           hidePreview ? "New message" : conversation.body,
           icon,

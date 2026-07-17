@@ -23,6 +23,19 @@ describe("login footer links", () => {
   test("requires at least two language candidates", () => {
     expect(topLanguageLinkIndexes([{ href: "#", text: "English" }])).toEqual([]);
   });
+
+  test("rejects real destinations that merely end in '#'", () => {
+    // A raw href like "/help#" is a genuine link, not a language switch.
+    expect(isLanguageFooterLink({ href: "/help#", text: "Help center" })).toBe(false);
+    expect(isLanguageFooterLink({ href: "#", text: "English (US)" })).toBe(true);
+    // Such a link must not be picked up even alongside a real "#" strip.
+    expect(
+      topLanguageLinkIndexes([
+        { href: "#", text: "English (US)" },
+        { href: "/help#", text: "Deutsch" },
+      ]),
+    ).toEqual([]);
+  });
 });
 
 describe("cookie action rows", () => {

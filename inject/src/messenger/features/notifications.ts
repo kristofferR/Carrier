@@ -10,6 +10,7 @@ import {
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
+  type PageNotificationSignal,
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
 import { threadIdFromHref } from "../lib/threads";
@@ -91,6 +92,7 @@ export function initNotificationBridge() {
   };
 
   const emitNotification = (
+    id: number,
     title: string,
     body: string,
     icon: string,
@@ -98,13 +100,24 @@ export function initNotificationBridge() {
     onClick: () => void,
     threadPath?: string,
   ) => {
-    const id = ++notifySeq;
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
     invoke("plugin:event|emit", {
       event: "carrier:notify",
       payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" },
     })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+  };
+
+  // Attach (or refresh) the native-side route for an already-emitted
+  // notification. Used when a page Notification fired before its conversation
+  // row was known: the row-driven pairing supplies the route here so a click
+  // still opens the conversation after the auto-refresh reload drops the
+  // in-page handler map.
+  const updateNotificationRoute = (id: number, threadPath: string) => {
+    invoke("plugin:event|emit", {
+      event: "carrier:notify-route",
+      payload: { id, thread_path: threadPath },
+    })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
   };
 
   // The trackers die with every page reload, and the auto-refresh reloads an
@@ -133,16 +146,20 @@ export function initNotificationBridge() {
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
   // net below never duplicates Facebook's normal native notification.
-  const markPageNotification = (title: string, body: string): string | undefined => {
+  const markPageNotification = (
+    title: string,
+    body: string,
+  ): { threadPath?: string; signal?: PageNotificationSignal } => {
     for (const [key, pending] of pendingFallbacks) {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
       notifiedStore.markNotified(key, pending.fingerprint);
-      return pending.threadPath;
+      return { threadPath: pending.threadPath };
     }
-    unmatchedPageNotifications.add({ at: Date.now(), title, body });
-    return undefined;
+    // Page-first: no row matched yet. Return the queued signal so the emitter
+    // can stamp it with the native id, letting the row-driven pairing route it.
+    return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
   };
 
   function CarrierNotification(
@@ -159,10 +176,7 @@ export function initNotificationBridge() {
       "notify.fired",
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
-    const matchedThreadPath = markPageNotification(
-      String(title || "Messenger"),
-      String(opts.body || ""),
-    );
+    const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
@@ -175,8 +189,15 @@ export function initNotificationBridge() {
       const hidePreview = s.hide_notification_preview;
       const originalTitle = String(title || "Messenger");
       const originalBody = String(opts.body || "");
+      // Reserve the native id synchronously and stamp it onto the queued
+      // page-first signal now, before the avatar (async) resolves — otherwise a
+      // fast row match could consume the signal before it learned its id and the
+      // reload-safe route would never be attached.
+      const id = ++notifySeq;
+      if (pageMatch.signal) pageMatch.signal.nativeId = id;
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
         emitNotification(
+          id,
           hidePreview ? "Messenger" : originalTitle,
           hidePreview ? "New message" : originalBody,
           icon,
@@ -188,7 +209,7 @@ export function initNotificationBridge() {
             // instance so `this` stays bound to the Notification.
             this.onclick?.(new Event("click"));
           },
-          matchedThreadPath,
+          pageMatch.threadPath,
         );
       });
     }
@@ -267,14 +288,18 @@ export function initNotificationBridge() {
     // stale timer remains armed and later produces a duplicate.
     const previous = pendingFallbacks.get(conversation.key);
     if (previous) clearTimeout(previous.timer);
-    if (
-      unmatchedPageNotifications.consumeMatching(
-        conversation,
-        detectedAt,
-        PAGE_NOTIFICATION_MATCH_MS,
-      )
-    ) {
-      // The page path already delivered this logical notification.
+    const pageSignal = unmatchedPageNotifications.consumeMatching(
+      conversation,
+      detectedAt,
+      PAGE_NOTIFICATION_MATCH_MS,
+    );
+    if (pageSignal) {
+      // The page path already delivered this logical notification. If it fired
+      // before this row was known, its native notification carries no route —
+      // attach one now so a click survives the auto-refresh reload.
+      if (pageSignal.nativeId !== undefined && conversation.threadPath) {
+        updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+      }
       notifiedStore.markNotified(conversation.key, fingerprint);
       pendingFallbacks.delete(conversation.key);
       return;
@@ -305,6 +330,7 @@ export function initNotificationBridge() {
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
       emitNotification(
+        ++notifySeq,
         hidePreview ? "Messenger" : conversation.title,
         hidePreview ? "New message" : conversation.body,
         icon,

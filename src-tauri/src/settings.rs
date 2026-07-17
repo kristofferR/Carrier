@@ -2,10 +2,11 @@
 //! [`AppState`], applying settings at runtime, and the webview-data
 //! ("Clear Cache") machinery.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::{tray::TrayIcon, Manager};
@@ -128,7 +129,14 @@ pub(crate) struct AppState {
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
+// Orders concurrent settings writes: each call takes a monotonically increasing
+// ticket, and the publish step below refuses to overwrite a destination that a
+// higher-ticket (newer) snapshot has already reached.
 static SETTINGS_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
+// Serializes the publish (rename) step and records, per destination, the newest
+// ticket already on disk. Keyed by path so writes to unrelated files never block
+// or skip one another (in production there is only ever one settings file).
+static SETTINGS_PUBLISHED: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 
 fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
@@ -225,10 +233,27 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
         file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
+
+        // Publish under a lock so concurrent saves rename in a defined order,
+        // and drop this write if a newer snapshot already reached the file —
+        // otherwise a slow older writer could clobber newer settings.
+        let mut published = SETTINGS_PUBLISHED
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        if published.get(path).is_some_and(|latest| sequence < *latest) {
+            let _ = std::fs::remove_file(&temp);
+            return Ok(());
+        }
         replace_file(&temp, path).map_err(|e| e.to_string())?;
+        published.insert(path.to_path_buf(), sequence);
+        // Fsync the parent directory so the rename itself survives a crash. A
+        // failure means that durability can't be promised, so surface it rather
+        // than reporting a clean save (the new bytes are already on disk).
         #[cfg(unix)]
-        if let Ok(directory) = std::fs::File::open(parent) {
-            let _ = directory.sync_all();
+        {
+            let directory = std::fs::File::open(parent).map_err(|e| e.to_string())?;
+            directory.sync_all().map_err(|e| e.to_string())?;
         }
         Ok(())
     })();
@@ -599,6 +624,49 @@ mod tests {
             std::fs::read_dir(&directory).unwrap().count(),
             1,
             "temporary settings file should be renamed away"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_settings_write_does_not_replace_a_newer_snapshot() {
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-settings-stale-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+
+        // Pretend a newer snapshot (the maximum ticket) already reached this
+        // path, and seed the file with its content so we can prove it survives.
+        SETTINGS_PUBLISHED
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert(path.clone(), usize::MAX);
+        let newer = Settings {
+            zoom: 175,
+            ..Default::default()
+        };
+        std::fs::write(&path, serde_json::to_string_pretty(&newer).unwrap()).unwrap();
+
+        // A slower older write (a lower ticket) must be dropped, not published.
+        let older = Settings {
+            zoom: 60,
+            ..Default::default()
+        };
+        write_settings_to_path(&path, &older).unwrap();
+
+        assert_eq!(
+            load_settings_from_path(&path).zoom,
+            175,
+            "an older snapshot must not overwrite a newer one"
+        );
+        assert_eq!(
+            std::fs::read_dir(&directory).unwrap().count(),
+            1,
+            "the dropped write must leave no temporary file behind"
         );
         std::fs::remove_dir_all(directory).unwrap();
     }

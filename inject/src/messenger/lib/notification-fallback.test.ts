@@ -158,14 +158,23 @@ describe("PageNotificationQueue", () => {
     queue.add({ at: 1_000, title: "Jane", body: "First" });
     queue.add({ at: 1_100, title: "John", body: "Second" });
 
-    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 1_200, 2_000)).toBe(true);
-    expect(queue.consumeMatching({ title: "John", body: "Second" }, 1_300, 2_000)).toBe(true);
+    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 1_200, 2_000)).not.toBeNull();
+    expect(queue.consumeMatching({ title: "John", body: "Second" }, 1_300, 2_000)).not.toBeNull();
+  });
+
+  test("returns the matched signal so its native id can be routed later", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "First", nativeId: 42 });
+    expect(signal.nativeId).toBe(42);
+    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 1_100, 2_000)?.nativeId).toBe(
+      42,
+    );
   });
 
   test("expires stale signals without consuming unrelated ones", () => {
     const queue = new PageNotificationQueue();
     queue.add({ at: 1_000, title: "Jane", body: "First" });
-    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 3_001, 2_000)).toBe(false);
+    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 3_001, 2_000)).toBeNull();
   });
 });
 
@@ -238,5 +247,17 @@ describe("notificationTextMatches", () => {
     expect(notificationTextMatches("Jane", "Hello", "John", "Hello")).toBe(false);
     expect(notificationTextMatches("Jane", "First", "Jane", "Second")).toBe(false);
     expect(notificationTextMatches("Jane", "OK", "Jane", "OK then")).toBe(false);
+  });
+
+  test("keeps different group senders of the same short text separate", () => {
+    // Two members posting identical short previews close together must each
+    // notify — stripping both senders would wrongly collapse them into one.
+    expect(notificationTextMatches("Project group", "Jane: OK", "Project group", "John: OK")).toBe(
+      false,
+    );
+    // The same sender still pairs (page and row describe one message).
+    expect(notificationTextMatches("Project group", "Jane: OK", "Project group", "Jane: OK")).toBe(
+      true,
+    );
   });
 });

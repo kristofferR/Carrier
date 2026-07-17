@@ -6,8 +6,11 @@ export interface LoginLinkDescriptor {
 const FOOTER_NOISE_RE =
   /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
 
+// Facebook's login-page language strip is a row of raw `href="#"` anchors. Match
+// only that exact contract — a path that merely ends in "#" (e.g. "/help#") is a
+// real destination, not a language switch, and must not be treated as one.
 export function isLanguageFooterLink(link: LoginLinkDescriptor): boolean {
-  return link.href.trim() === "#" || link.href.trim().endsWith("#");
+  return link.href.trim() === "#";
 }
 
 export function isFooterNoiseLink(link: LoginLinkDescriptor): boolean {

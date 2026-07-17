@@ -13,13 +13,27 @@ export const hasCookieConsentText = (el: Element) => {
   return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
 };
 
+// `aria-labelledby` holds space-separated element IDs, not label text, so its
+// accessible name is the text of the referenced elements. Resolve them (capped
+// so a stray huge target can't drive the regex) and fold that in with the direct
+// `aria-label` text — matching the raw ID tokens would miss externally labelled
+// consent dialogs and let required login UI slip through.
+const accessibleLabelText = (el: Element) => {
+  let text = el.getAttribute("aria-label") || "";
+  const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+  const doc = el.ownerDocument;
+  for (const id of ids) {
+    text += ` ${doc?.getElementById(id)?.textContent || ""}`;
+  }
+  return text.slice(0, 4000);
+};
+
 export const hasCookieConsentLabel = (el: Element) => {
-  const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-  if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
+  const matches = (text: string) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
+  if (matches(accessibleLabelText(el))) return true;
 
   for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
-    const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-    if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
+    if (matches(accessibleLabelText(node))) return true;
   }
   return false;
 };

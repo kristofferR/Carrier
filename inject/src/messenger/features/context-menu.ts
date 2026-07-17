@@ -114,11 +114,20 @@ export function initContextMenu() {
       if (!items.length) return; // fall through to the native menu (text etc.)
 
       e.preventDefault();
+      // Capture the restore target before closeMenu()/menu creation shifts
+      // focus. The right-click target is usually a non-focusable image or span,
+      // so climb to the nearest focusable ancestor and fall back to whatever
+      // held focus before the menu opened — never a bare image that .focus()
+      // would silently no-op on, losing the user's place.
+      const focusableSelector =
+        'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+      const previouslyFocused = document.activeElement;
       closeMenu();
       ctxMenuReturnFocus =
-        t instanceof HTMLElement
-          ? t
-          : ((t.closest?.("[tabindex], button, a[href]") as HTMLElement | null) ?? null);
+        (t.closest?.(focusableSelector) as HTMLElement | null) ??
+        (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
+          ? previouslyFocused
+          : null);
       ctxMenu = document.createElement("div");
       ctxMenu.setAttribute("role", "menu");
       ctxMenu.setAttribute("aria-label", "Media actions");

@@ -114,6 +114,14 @@ fn validated_thread_path(value: &str) -> Option<String> {
 }
 
 fn remember_notification_route(id: u64, value: &str) {
+    // `id` is the page's unique per-notification handle. A missing or zero id
+    // (older or malformed payloads deserialize `id` to 0) is not unique: every
+    // such notification would overwrite the same slot, so a click on an older
+    // notification could open the newest thread. Skip native routing for a
+    // non-unique id — the in-page handler still routes it while the page lives.
+    if id == 0 {
+        return;
+    }
     let Some(path) = validated_thread_path(value) else {
         return;
     };
@@ -141,6 +149,24 @@ impl NotifyMsg {
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
+}
+
+/// A late route update for an already-emitted notification (the
+/// `carrier:notify-route` event). Sent when a page `Notification` fired before
+/// its conversation row was known: the row-driven pairing later supplies the
+/// route so a click still opens the conversation after a page reload.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct NotifyRouteMsg {
+    #[serde(default)]
+    id: u64,
+    #[serde(default)]
+    thread_path: String,
+}
+
+/// Attach (or refresh) the reload-safe route for a notification the page has
+/// already emitted. A no-op for a non-unique id or an invalid path.
+pub(crate) fn update_notification_route(msg: &NotifyRouteMsg) {
+    remember_notification_route(msg.id, &msg.thread_path);
 }
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
@@ -494,6 +520,36 @@ mod tests {
         assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
         assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
         assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
+    }
+
+    #[test]
+    fn distinct_notification_ids_keep_independent_routes() {
+        // Two notifications with unique ids must not clobber each other's route,
+        // so clicking an older one still opens its own thread.
+        remember_notification_route(9_001, "/t/111/");
+        remember_notification_route(9_002, "/t/222/");
+        assert_eq!(take_notification_route(9_001).as_deref(), Some("/t/111/"));
+        assert_eq!(take_notification_route(9_002).as_deref(), Some("/t/222/"));
+    }
+
+    #[test]
+    fn non_unique_zero_id_is_never_routed() {
+        // A missing/zero id is not unique: storing it would let a later message
+        // hijack an earlier notification's click, so no route is kept at all.
+        remember_notification_route(0, "/t/111/");
+        remember_notification_route(0, "/t/222/");
+        assert_eq!(take_notification_route(0), None);
+    }
+
+    #[test]
+    fn update_notification_route_refreshes_an_emitted_route() {
+        // The page-first path emits with no route, then supplies it once the row
+        // is known; the later value must win for that id.
+        update_notification_route(&NotifyRouteMsg {
+            id: 9_010,
+            thread_path: "/t/555/".into(),
+        });
+        assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
     }
 
     #[test]

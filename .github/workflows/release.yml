@@ -405,41 +405,12 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
           done
 
-      - name: Publish curated release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ needs.prepare_release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
-          if [ "$(jq -r '.tag_name' <<< "$release")" != "$GITHUB_REF_NAME" ]; then
-            echo "Release id $RELEASE_ID no longer belongs to $GITHUB_REF_NAME." >&2
-            exit 1
-          fi
-          if [ "$(jq -r '.draft' <<< "$release")" != "true" ]; then
-            echo "Release $GITHUB_REF_NAME is no longer a draft." >&2
-            exit 1
-          fi
-          name=$(jq -r '.name // ""' <<< "$release")
-          if [ -z "${name//[[:space:]]/}" ]; then
-            echo "Refusing to publish $GITHUB_REF_NAME with an empty title." >&2
-            exit 1
-          fi
-          body=$(jq -r '.body // ""' <<< "$release")
-          if [ -z "${body//[[:space:]]/}" ]; then
-            echo "Refusing to publish $GITHUB_REF_NAME with empty release notes." >&2
-            exit 1
-          fi
-          if ! grep -q '^## ' <<< "$body"; then
-            echo "Refusing to publish $GITHUB_REF_NAME: notes lost their curated ## sections." >&2
-            exit 1
-          fi
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false >/dev/null
-
-      # Keep the README and landing page pointed at this release. Commit the
-      # updated files straight back to the default branch through the Contents
-      # API (same approach the IPTVChecker release flow uses).
+      # Point the README and landing page at this release BEFORE publishing, so a
+      # failed Contents API push leaves the release a draft and the whole job stays
+      # retryable. (Publishing first and failing here would strand stale download
+      # links: the rerun aborts on the "no longer a draft" guard below.) Commit the
+      # updated files straight back to the default branch through the Contents API
+      # (same approach the IPTVChecker release flow uses).
       - name: Point public download links at this release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -474,6 +445,38 @@ jobs:
           }
           update_release_file README.md
           update_release_file docs/index.html
+
+      - name: Publish curated release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare_release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          if [ "$(jq -r '.tag_name' <<< "$release")" != "$GITHUB_REF_NAME" ]; then
+            echo "Release id $RELEASE_ID no longer belongs to $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
+          if [ "$(jq -r '.draft' <<< "$release")" != "true" ]; then
+            echo "Release $GITHUB_REF_NAME is no longer a draft." >&2
+            exit 1
+          fi
+          name=$(jq -r '.name // ""' <<< "$release")
+          if [ -z "${name//[[:space:]]/}" ]; then
+            echo "Refusing to publish $GITHUB_REF_NAME with an empty title." >&2
+            exit 1
+          fi
+          body=$(jq -r '.body // ""' <<< "$release")
+          if [ -z "${body//[[:space:]]/}" ]; then
+            echo "Refusing to publish $GITHUB_REF_NAME with empty release notes." >&2
+            exit 1
+          fi
+          if ! grep -q '^## ' <<< "$body"; then
+            echo "Refusing to publish $GITHUB_REF_NAME: notes lost their curated ## sections." >&2
+            exit 1
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false >/dev/null
 
       # Update the Homebrew cask in kristofferR/homebrew-tap so users get
       # `brew install --cask carrier` and `brew upgrade`. Skips automatically if
