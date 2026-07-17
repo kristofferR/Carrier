@@ -140,7 +140,9 @@ export class NotifiedSignatureStore {
    */
   observeRead(unreadKeys: ReadonlySet<string>, observedKeys: Iterable<string>): void {
     let dropped = false;
-    for (const key of observedKeys) {
+    // Dedupe: the DOM can briefly render two anchors for one thread, and a
+    // key must count as at most one observation per scan.
+    for (const key of new Set(observedKeys)) {
       if (unreadKeys.has(key)) {
         this.readStreak.delete(key);
         continue;

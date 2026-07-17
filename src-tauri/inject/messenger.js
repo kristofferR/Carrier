@@ -1482,7 +1482,7 @@
      */
     observeRead(unreadKeys, observedKeys) {
       let dropped = false;
-      for (const key of observedKeys) {
+      for (const key of new Set(observedKeys)) {
         if (unreadKeys.has(key)) {
           this.readStreak.delete(key);
           continue;

@@ -103,6 +103,16 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
   });
 
+  test("counts repeated keys in one scan as a single observation", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
   test("keeps entries for unread rows that are merely still rendered", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
