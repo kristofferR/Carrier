@@ -5,6 +5,7 @@ import { diag, invoke } from "../bridge";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
+  NotifiedSignatureStore,
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
@@ -193,6 +194,21 @@ export function initNotificationBridge() {
   // role/link selectors and kept as a delayed fallback to the page bridge.
   const conversationTracker = new ConversationNotificationTracker();
 
+  // The trackers above die with every page reload, and the auto-refresh
+  // reloads an unfocused window every ~15 minutes. Re-priming them races
+  // Facebook's hydration (placeholder previews, a late "(N)" title), which
+  // used to re-notify conversations that had been sitting unread for an hour.
+  // This store persists "already delivered" fingerprints across reloads.
+  const notifiedStore = new NotifiedSignatureStore(
+    (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })(),
+  );
+
   const conversationFromLink = (link: HTMLAnchorElement) => {
     const id = threadIdFromHref(link?.getAttribute("href"));
     if (!id) return null;
@@ -242,6 +258,13 @@ export function initNotificationBridge() {
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
 
   const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
+    // Record up front: whether this change is matched to Facebook's own page
+    // Notification, delivered by the timer below, or dropped because muted,
+    // it has been handled and must not fire again after a reload re-prime.
+    notifiedStore.markNotified(
+      conversation.key,
+      notificationDedupeKey(conversation.title, conversation.body),
+    );
     if (
       unmatchedPageNotifications.consumeMatching(
         conversation,
@@ -310,6 +333,13 @@ export function initNotificationBridge() {
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
+      // "Read" means the row is no longer unread — not merely filtered from
+      // `conversations` (an unread row whose preview currently shows your own
+      // reply must keep its entry; hydration can flap the preview form).
+      notifiedStore.observeRead(
+        new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
+        observed.map(({ key }) => key),
+      );
       const detectedAt = Date.now();
       const changed = new Set(
         conversationTracker.observe(
@@ -325,11 +355,33 @@ export function initNotificationBridge() {
         changed.add(key);
       }
       if (!changed.size) return;
+      // A "changed" verdict for a preview that already produced a notification
+      // is a replay (typically the post-reload hydration race), not news.
+      const stale = new Set<string>();
+      for (const conversation of conversations) {
+        if (
+          changed.has(conversation.key) &&
+          notifiedStore.alreadyNotified(
+            conversation.key,
+            notificationDedupeKey(conversation.title, conversation.body),
+          )
+        ) {
+          stale.add(conversation.key);
+        }
+      }
+      if (stale.size) {
+        diag("notify.stale", "suppressed replay of an already-delivered preview");
+      }
+      // Skip the auto-refresh nudge too when nothing genuinely changed, so a
+      // stale replay cannot schedule the very reload that re-triggers it.
+      if ([...changed].every((key) => stale.has(key))) return;
       try {
         window.__carrierOnNotification?.();
       } catch (_) {}
       for (const conversation of conversations) {
-        if (changed.has(conversation.key)) scheduleFallback(conversation, detectedAt);
+        if (changed.has(conversation.key) && !stale.has(conversation.key)) {
+          scheduleFallback(conversation, detectedAt);
+        }
       }
     } finally {
       scanRunning = false;

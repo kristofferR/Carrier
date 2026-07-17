@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
+  NotifiedSignatureStore,
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
@@ -48,6 +49,106 @@ describe("ConversationNotificationTracker", () => {
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
     expect(tracker.observe([], ["1"])).toEqual([]);
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
+  });
+});
+
+describe("NotifiedSignatureStore", () => {
+  const memoryStorage = () => {
+    const data = new Map<string, string>();
+    return {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+    };
+  };
+
+  test("recognizes a fingerprint it delivered and distinguishes new ones", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(store.alreadyNotified("1", "bbbb")).toBe(false);
+    expect(store.alreadyNotified("2", "aaaa")).toBe(false);
+  });
+
+  test("survives a page reload via the backing storage", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    // A reload constructs a fresh store over the same storage.
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("forgets a conversation after stable read observations", () => {
+    const storage = memoryStorage();
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", "aaaa");
+    // Rendered rows: "1" no longer unread, "2" was never tracked.
+    store.observeRead(new Set(["2"]), ["1", "2"]);
+    store.observeRead(new Set(["2"]), ["1", "2"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    store.observeRead(new Set(["2"]), ["1", "2"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
+  test("a transient read flicker does not clear a delivered entry", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    // Two hydration scans render the row as read, then it settles unread
+    // again — the streak resets and the suppression entry survives further
+    // read flickers short of a stable streak.
+    store.observeRead(new Set(), ["1"]);
+    store.observeRead(new Set(), ["1"]);
+    store.observeRead(new Set(["1"]), ["1"]);
+    store.observeRead(new Set(), ["1"]);
+    store.observeRead(new Set(), ["1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("counts repeated keys in one scan as a single observation", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    store.observeRead(new Set(), ["1", "1", "1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
+  test("keeps entries for unread rows that are merely still rendered", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    for (let scan = 0; scan < 5; scan++) store.observeRead(new Set(["1"]), ["1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("evicts the oldest entry beyond the limit; re-marking refreshes position", () => {
+    const store = new NotifiedSignatureStore();
+    for (let n = 0; n < 300; n++) store.markNotified(`k${n}`, "f");
+    // Refreshing "k0" moves it to the newest slot, so "k1" is now oldest.
+    store.markNotified("k0", "f2");
+    store.markNotified("k300", "f");
+    expect(store.alreadyNotified("k1", "f")).toBe(false);
+    expect(store.alreadyNotified("k0", "f2")).toBe(true);
+    expect(store.alreadyNotified("k300", "f")).toBe(true);
+  });
+
+  test("trims oversized persisted state to the newest entries and persists the trim", () => {
+    const storage = memoryStorage();
+    const oversized = Array.from({ length: 301 }, (_, n) => [`k${n}`, "f"]);
+    storage.setItem("__carrier_notified_previews__", JSON.stringify(oversized));
+    const store = new NotifiedSignatureStore(storage);
+    expect(store.alreadyNotified("k0", "f")).toBe(false);
+    expect(store.alreadyNotified("k300", "f")).toBe(true);
+    const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
+    expect(persisted.length).toBe(300);
+  });
+
+  test("tolerates malformed persisted state", () => {
+    const storage = memoryStorage();
+    storage.setItem("__carrier_notified_previews__", "{not json");
+    const store = new NotifiedSignatureStore(storage);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+    store.markNotified("1", "aaaa");
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 });
 
