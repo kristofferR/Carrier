@@ -1425,11 +1425,14 @@
     return hash.toString(16).padStart(16, "0");
   }
   var NOTIFIED_STORE_LIMIT = 300;
+  var STABLE_READ_SCANS = 3;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
+      /** In-memory only: read-observation streaks per conversation (see observeRead). */
+      __publicField(this, "readStreak", /* @__PURE__ */ new Map());
       try {
         const raw = this.storage?.getItem(this.storageKey);
         if (!raw) return;
@@ -1442,9 +1445,12 @@
         }
       } catch (_) {
       }
+      let trimmed = false;
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         this.entries.delete(this.entries.keys().next().value);
+        trimmed = true;
       }
+      if (trimmed) this.persist();
     }
     persist() {
       try {
@@ -1456,22 +1462,40 @@
       return this.entries.get(conversationKey) === fingerprint;
     }
     markNotified(conversationKey, fingerprint) {
+      this.readStreak.delete(conversationKey);
       if (this.entries.get(conversationKey) === fingerprint) return;
       this.entries.delete(conversationKey);
       this.entries.set(conversationKey, fingerprint);
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
-        this.entries.delete(this.entries.keys().next().value);
+        const oldest = this.entries.keys().next().value;
+        this.entries.delete(oldest);
+        this.readStreak.delete(oldest);
       }
       this.persist();
     }
     /**
-     * Forget conversations that were rendered without an unread preview — the
+     * Forget conversations that are rendered without an unread preview — the
      * user has read them, so an identical future preview must notify again.
+     * Requires STABLE_READ_SCANS consecutive read observations (an unread
+     * observation resets the count) because hydration can transiently render
+     * an unread row as read, and one flicker must not clear the suppression.
      */
     observeRead(unreadKeys, observedKeys) {
       let dropped = false;
       for (const key of observedKeys) {
-        if (!unreadKeys.has(key) && this.entries.delete(key)) dropped = true;
+        if (unreadKeys.has(key)) {
+          this.readStreak.delete(key);
+          continue;
+        }
+        if (!this.entries.has(key)) continue;
+        const streak = (this.readStreak.get(key) || 0) + 1;
+        if (streak < STABLE_READ_SCANS) {
+          this.readStreak.set(key, streak);
+          continue;
+        }
+        this.readStreak.delete(key);
+        this.entries.delete(key);
+        dropped = true;
       }
       if (dropped) this.persist();
     }

@@ -60,6 +60,10 @@ export function notificationDedupeKey(title: string, body: string): string {
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
+// Consecutive read observations required before a delivered entry is dropped —
+// hydration can transiently render an unread row as read, and a single such
+// flicker must not clear the replay suppression.
+const STABLE_READ_SCANS = 3;
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -73,6 +77,8 @@ const NOTIFIED_STORE_LIMIT = 300;
  */
 export class NotifiedSignatureStore {
   private readonly entries = new Map<string, string>();
+  /** In-memory only: read-observation streaks per conversation (see observeRead). */
+  private readonly readStreak = new Map<string, number>();
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
@@ -90,10 +96,14 @@ export class NotifiedSignatureStore {
       }
     } catch (_) {}
     // Persisted state is bounded by persist(), but never trust storage: keep
-    // only the newest entries if an oversized payload is ever encountered.
+    // only the newest entries if an oversized payload is ever encountered,
+    // and write the trimmed state back so the bound holds at rest too.
+    let trimmed = false;
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       this.entries.delete(this.entries.keys().next().value!);
+      trimmed = true;
     }
+    if (trimmed) this.persist();
   }
 
   private persist(): void {
@@ -107,24 +117,43 @@ export class NotifiedSignatureStore {
   }
 
   markNotified(conversationKey: string, fingerprint: string): void {
+    // A fresh delivery means the row is unread again — restart read counting.
+    this.readStreak.delete(conversationKey);
     if (this.entries.get(conversationKey) === fingerprint) return;
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
     this.entries.set(conversationKey, fingerprint);
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
-      this.entries.delete(this.entries.keys().next().value!);
+      const oldest = this.entries.keys().next().value!;
+      this.entries.delete(oldest);
+      this.readStreak.delete(oldest);
     }
     this.persist();
   }
 
   /**
-   * Forget conversations that were rendered without an unread preview — the
+   * Forget conversations that are rendered without an unread preview — the
    * user has read them, so an identical future preview must notify again.
+   * Requires STABLE_READ_SCANS consecutive read observations (an unread
+   * observation resets the count) because hydration can transiently render
+   * an unread row as read, and one flicker must not clear the suppression.
    */
   observeRead(unreadKeys: ReadonlySet<string>, observedKeys: Iterable<string>): void {
     let dropped = false;
     for (const key of observedKeys) {
-      if (!unreadKeys.has(key) && this.entries.delete(key)) dropped = true;
+      if (unreadKeys.has(key)) {
+        this.readStreak.delete(key);
+        continue;
+      }
+      if (!this.entries.has(key)) continue;
+      const streak = (this.readStreak.get(key) || 0) + 1;
+      if (streak < STABLE_READ_SCANS) {
+        this.readStreak.set(key, streak);
+        continue;
+      }
+      this.readStreak.delete(key);
+      this.entries.delete(key);
+      dropped = true;
     }
     if (dropped) this.persist();
   }
