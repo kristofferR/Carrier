@@ -2,7 +2,12 @@
 // On the logged-out page, hide Facebook's marketing collage and centre the
 // login box, so the window shows just the login form.
 import { isLightFill } from "../lib/color";
-import { findOptionalCookieDeclineButton, onFacebookHost } from "./cookie-consent";
+import {
+  findOptionalCookieDeclineButton,
+  hasCookieConsentLabel,
+  hasCookieConsentText,
+  onFacebookHost,
+} from "./cookie-consent";
 
 const HIDE = "data-carrier-hide";
 const COL = "data-carrier-login-col";
@@ -32,29 +37,6 @@ export function initLoginTidy() {
 
   // Only Facebook's own login page — not the in-app OAuth provider pages
   // (Google/Apple/Microsoft), which also have password fields.
-  const COOKIE_TEXT_RE =
-    /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-  const COOKIE_ACTION_RE =
-    /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-
-  const hasCookieConsentText = (el: Element) => {
-    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4000);
-    if (!COOKIE_TEXT_RE.test(text)) return false;
-    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
-  };
-
-  const hasCookieConsentLabel = (el: Element) => {
-    const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-    if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
-
-    const nodes = el.querySelectorAll?.("[aria-label], [aria-labelledby]") || [];
-    for (const node of nodes) {
-      const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-      if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
-    }
-    return false;
-  };
-
   const isRequiredLoginUi = (el: Element | null): boolean => {
     if (el?.nodeType !== 1) return false;
     if (el === document.documentElement || el === document.body) return false;

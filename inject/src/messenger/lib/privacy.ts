@@ -28,6 +28,8 @@ export function previewIdentity(value: string): { prefix: string; colon: boolean
 
   const prefix = match[1]!.trim();
   if (!prefix || prefix.length < 2 || /^(you|du|me|meg)$/i.test(prefix)) return null;
-  if (/[\d:;!?]/.test(prefix)) return null;
+  // Digits are valid in names ("Anna 2", band/group names). Reject only
+  // punctuation/time-shaped prefixes rather than every digit-bearing sender.
+  if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
   return { prefix, colon: !!colon };
 }

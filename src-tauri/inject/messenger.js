@@ -30,10 +30,11 @@
       }
       return false;
     };
+    const pageIsActive = () => !document.hidden || document.hasFocus();
     const maybeReload = () => {
       timer = void 0;
       if (!pending) return;
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         clearPending();
         return;
       }
@@ -46,7 +47,7 @@
       location.reload();
     };
     const schedule = (delay) => {
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         lastFresh = Date.now();
         return;
       }
@@ -56,13 +57,13 @@
     };
     window.addEventListener("focus", clearPending);
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && document.hasFocus()) clearPending();
+      if (!document.hidden) clearPending();
     });
     window.__carrierOnNotification = () => {
-      if (!document.hasFocus() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4e3);
+      if (!pageIsActive() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4e3);
     };
     setInterval(() => {
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         lastFresh = Date.now();
         return;
       }
@@ -305,6 +306,23 @@
   };
 
   // inject/src/messenger/features/cookie-consent.ts
+  var COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
+  var COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
+  var hasCookieConsentText = (el) => {
+    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
+    if (!COOKIE_TEXT_RE.test(text)) return false;
+    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+  };
+  var hasCookieConsentLabel = (el) => {
+    const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
+    if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
+    for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
+      const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
+      if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
+    }
+    return false;
+  };
+  var hasCookieConsentContext = (el) => hasCookieConsentText(el) || hasCookieConsentLabel(el);
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
   var visibleBox = (el) => {
@@ -369,7 +387,7 @@
       let node = button.parentElement;
       for (let depth = 0; node && node !== document.body && depth < 12; depth++, node = node.parentElement) {
         const row = bottomActionRow(node);
-        if (row?.length === 2 && !node.querySelector?.('input[name="email"], input[name="pass"], input[type="password"]')) {
+        if (row?.length === 2 && hasCookieConsentContext(node) && !node.querySelector?.('input[name="email"], input[name="pass"], input[type="password"]')) {
           roots.add(node);
         }
       }
@@ -602,13 +620,12 @@
     if (!match) return null;
     const prefix = match[1].trim();
     if (!prefix || prefix.length < 2 || /^(you|du|me|meg)$/i.test(prefix)) return null;
-    if (/[\d:;!?]/.test(prefix)) return null;
+    if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
     return { prefix, colon: !!colon };
   }
 
   // inject/src/messenger/features/hide-names.ts
   var IDENTITY_ATTR = "data-carrier-private-identity";
-  var WRAPPER_ATTR = "data-carrier-private-wrapper";
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -621,8 +638,14 @@
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
+    function normalizedRect(el) {
+      const rect = el.getBoundingClientRect();
+      const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
+      const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
+      return new DOMRect(rect.x / scale, rect.y / scale, rect.width / scale, rect.height / scale);
+    }
     function visible(el) {
-      const r = el?.getBoundingClientRect?.();
+      const r = el ? normalizedRect(el) : null;
       if (!r || r.width <= 0 || r.height <= 0) return false;
       const cs = getComputedStyle(el);
       return cs.display !== "none" && cs.visibility !== "hidden";
@@ -630,14 +653,7 @@
     function mark(el) {
       if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
     }
-    function unwrap(el) {
-      const parent = el?.parentNode;
-      if (!parent) return;
-      parent.replaceChild(document.createTextNode(el.textContent || ""), el);
-      parent.normalize?.();
-    }
     function clearMarkers() {
-      document.querySelectorAll(`[${WRAPPER_ATTR}]`).forEach(unwrap);
       document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
         el.removeAttribute(IDENTITY_ATTR);
       });
@@ -653,8 +669,8 @@
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.y - br.y || ar.x - br.x;
       });
     }
@@ -666,13 +682,13 @@
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.y - br.y || ar.x - br.x || ar.height - br.height;
       });
     }
     function area(el) {
-      const r = el.getBoundingClientRect();
+      const r = normalizedRect(el);
       return r.width * r.height;
     }
     function deepest(elements) {
@@ -681,8 +697,8 @@
     function markDeepest(elements) {
       let count = 0;
       deepest(elements).sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.x - br.x || area(a) - area(b);
       }).forEach((el) => {
         if (isMetaText(textValue(el))) return;
@@ -706,55 +722,7 @@
         mark(candidates[0]);
         return true;
       }
-      if (wrapPreviewPrefix(el, identity)) return true;
-      if (!identity.colon && value.length <= 90) {
-        mark(el);
-        return true;
-      }
-      return false;
-    }
-    function wrapPreviewPrefix(el, identity) {
-      const needle = identity.prefix + (identity.colon ? ":" : "");
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-        acceptNode(node2) {
-          if (!node2.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
-          const parent = node2.parentElement;
-          if (!parent || parent.closest(`[${WRAPPER_ATTR}]`) || parent.closest("abbr")) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      });
-      let node;
-      while (node = walker.nextNode()) {
-        const text = node.nodeValue || "";
-        const start2 = text.search(/\S/);
-        if (start2 < 0) continue;
-        if (text.slice(start2, start2 + needle.length) === needle) {
-          return wrapTextRange(node, start2, needle.length);
-        }
-        if (!identity.colon && text.slice(start2, start2 + identity.prefix.length) === identity.prefix) {
-          return wrapTextRange(node, start2, identity.prefix.length);
-        }
-      }
-      return false;
-    }
-    function wrapTextRange(node, start2, length) {
-      const parent = node.parentNode;
-      const text = node.nodeValue || "";
-      if (!parent || length <= 0 || start2 < 0 || start2 + length > text.length) return false;
-      const fragment = document.createDocumentFragment();
-      const before = text.slice(0, start2);
-      const selected = text.slice(start2, start2 + length);
-      const after = text.slice(start2 + length);
-      if (before) fragment.appendChild(document.createTextNode(before));
-      const span = document.createElement("span");
-      span.setAttribute(IDENTITY_ATTR, "");
-      span.setAttribute(WRAPPER_ATTR, "");
-      span.textContent = selected;
-      fragment.appendChild(span);
-      if (after) fragment.appendChild(document.createTextNode(after));
-      parent.replaceChild(fragment, node);
+      mark(el);
       return true;
     }
     function markConversationRows() {
@@ -763,10 +731,10 @@
         const href = row.getAttribute("href") || "";
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
-        const rr = row.getBoundingClientRect();
+        const rr = normalizedRect(row);
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
           const rightReceipt = r.right > rr.right - 56 && r.width >= 12 && r.width <= 34 && r.height >= 12 && r.height <= 34;
           if (leftAvatar || rightReceipt) mark(el);
@@ -774,14 +742,14 @@
         const surfaces = textSurfaces(row).filter((el) => {
           if (el.getAttribute("aria-hidden") === "true") return false;
           if (el.closest("abbr")) return false;
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           return r.left > rr.left + 56;
         });
         if (!surfaces.length) continue;
-        const firstLineY = Math.min(...surfaces.map((el) => el.getBoundingClientRect().top));
+        const firstLineY = Math.min(...surfaces.map((el) => normalizedRect(el).top));
         const firstLine = [];
         surfaces.forEach((el) => {
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
           else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
         });
@@ -792,16 +760,16 @@
       return document.querySelector('[role="main"]') || document.querySelector("main");
     }
     function markThreadHeader(main2) {
-      const mr = main2.getBoundingClientRect();
+      const mr = normalizedRect(main2);
       const headerBottom = mr.top + 96;
       const actionStart = mr.right - 150;
       textLeaves(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
       });
       main2.querySelectorAll(VISUAL_SEL).forEach((el) => {
         if (!visible(el)) return;
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
           mark(el);
         }
@@ -822,7 +790,7 @@
         });
       });
       textSurfaces(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
           mark(el);
         }
@@ -963,23 +931,6 @@
       if (t === "dark") return true;
       if (t === "light") return false;
       return prefersDark();
-    };
-    const COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-    const COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-    const hasCookieConsentText = (el) => {
-      const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
-      if (!COOKIE_TEXT_RE.test(text)) return false;
-      return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
-    };
-    const hasCookieConsentLabel = (el) => {
-      const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-      if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
-      const nodes = el.querySelectorAll?.("[aria-label], [aria-labelledby]") || [];
-      for (const node of nodes) {
-        const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-        if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
-      }
-      return false;
     };
     const isRequiredLoginUi = (el) => {
       if (el?.nodeType !== 1) return false;
@@ -1257,6 +1208,7 @@
     const STEP = 1.15;
     const PAN = 40;
     let target = null;
+    let targetCssText = "";
     let scale = 1;
     let tx = 0;
     let ty = 0;
@@ -1294,9 +1246,10 @@
         document.removeEventListener(t, f, o);
       });
       if (target) {
-        target.style.cssText = target.style.cssText.replace(/transform[^;]*;?/g, "").replace(/transition[^;]*;?/g, "").replace(/max-(width|height)[^;]*;?/g, "").replace(/z-index[^;]*;?/g, "").replace(/cursor[^;]*;?/g, "");
+        target.style.cssText = targetCssText;
       }
       target = null;
+      targetCssText = "";
       scale = 1;
       tx = 0;
       ty = 0;
@@ -1376,6 +1329,7 @@
         if (active) return exit();
         active = true;
         target = t;
+        targetCssText = t.style.cssText;
         const r = t.getBoundingClientRect();
         scale = 2;
         tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
@@ -2518,6 +2472,14 @@
       ensureGlyph(root);
       root.querySelectorAll?.(CANDIDATE_SEL).forEach(ensureGlyph);
     }
+    function sweepOrphanGlyphs() {
+      for (const glyph of document.querySelectorAll(`[${GLYPH_ATTR}]`)) {
+        const source = glyph.previousElementSibling;
+        if (!source?.hasAttribute(SOURCE_ATTR) || source.__carrierSystemEmojiGlyph !== glyph || !source.isConnected) {
+          glyph.remove();
+        }
+      }
+    }
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
@@ -2532,6 +2494,7 @@
         const roots = [...queuedRoots];
         queuedRoots.clear();
         roots.forEach(scan);
+        sweepOrphanGlyphs();
       });
     }
     function start() {
@@ -2541,6 +2504,7 @@
           if (m.type === "attributes") {
             schedule(m.target);
           } else {
+            schedule(m.target);
             for (const n of m.addedNodes) schedule(n);
           }
         }

@@ -1,6 +1,31 @@
 /* ------------------ Facebook optional-cookie refusal ------------------ */
 import { rgb } from "../lib/color";
 
+export const COOKIE_TEXT_RE =
+  /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
+export const COOKIE_ACTION_RE =
+  /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
+
+export const hasCookieConsentText = (el: Element) => {
+  const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4000);
+  if (!COOKIE_TEXT_RE.test(text)) return false;
+  return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+};
+
+export const hasCookieConsentLabel = (el: Element) => {
+  const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
+  if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
+
+  for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
+    const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
+    if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
+  }
+  return false;
+};
+
+export const hasCookieConsentContext = (el: Element) =>
+  hasCookieConsentText(el) || hasCookieConsentLabel(el);
+
 export const onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
 
 export const onFacebookLoginSurface = () =>
@@ -95,6 +120,7 @@ export function findOptionalCookieDeclineButton(
       const row = bottomActionRow(node);
       if (
         row?.length === 2 &&
+        hasCookieConsentContext(node) &&
         !node.querySelector?.('input[name="email"], input[name="pass"], input[type="password"]')
       ) {
         roots.add(node);

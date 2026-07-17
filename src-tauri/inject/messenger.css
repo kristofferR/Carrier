@@ -11,11 +11,12 @@
  * media dialog is open.
  */
 
-/* Kill the page-level scrollbar the hidden header would otherwise leave behind.
-   Facebook reasserts overflow-y with an ID-qualified selector, so match that
-   specificity while keeping the generic fallback for nonstandard auth pages. */
-html#facebook:has(body),
-html:has(body) {
+/* Kill the logged-in app scrollbar the hidden header would otherwise leave
+   behind. Scope this to the hydrated conversation grid so checkpoint, consent,
+   and other tall auth pages remain scrollable. Facebook reasserts overflow-y
+   with an ID-qualified selector, so preserve that specificity. */
+html#facebook:has(body [role="navigation"] [role="grid"]),
+html:has(body [role="navigation"] [role="grid"]) {
   overflow: hidden !important;
 }
 
@@ -31,9 +32,9 @@ body:not(:has(div[role="dialog"][aria-label]:not([hidden] *))) div[role="banner"
 }
 
 /* Media viewer open: bring back a slim header so its controls are reachable. */
-body:has(div[role="dialog"][aria-label]:not([hidden] *)) :root,
-body:has(div[role="dialog"][aria-label]:not([hidden] *)) .__fb-light-mode,
-body:has(div[role="dialog"][aria-label]:not([hidden] *)) .__fb-dark-mode {
+:root:has(body div[role="dialog"][aria-label]:not([hidden] *)),
+:root.__fb-light-mode:has(body div[role="dialog"][aria-label]:not([hidden] *)),
+:root.__fb-dark-mode:has(body div[role="dialog"][aria-label]:not([hidden] *)) {
   --header-height: 56px !important;
 }
 

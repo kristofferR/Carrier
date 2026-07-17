@@ -8,6 +8,7 @@ export function initMediaViewer() {
   const STEP = 1.15;
   const PAN = 40;
   let target: HTMLElement | null = null;
+  let targetCssText = "";
   let scale = 1;
   let tx = 0;
   let ty = 0;
@@ -50,14 +51,10 @@ export function initMediaViewer() {
       document.removeEventListener(t, f, o);
     });
     if (target) {
-      target.style.cssText = target.style.cssText
-        .replace(/transform[^;]*;?/g, "")
-        .replace(/transition[^;]*;?/g, "")
-        .replace(/max-(width|height)[^;]*;?/g, "")
-        .replace(/z-index[^;]*;?/g, "")
-        .replace(/cursor[^;]*;?/g, "");
+      target.style.cssText = targetCssText;
     }
     target = null;
+    targetCssText = "";
     scale = 1;
     tx = 0;
     ty = 0;
@@ -140,6 +137,7 @@ export function initMediaViewer() {
       if (active) return exit();
       active = true;
       target = t;
+      targetCssText = t.style.cssText;
       const r = t.getBoundingClientRect();
       scale = 2;
       tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
