@@ -2,8 +2,9 @@
 //! [`AppState`], applying settings at runtime, and the webview-data
 //! ("Clear Cache") machinery.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,7 @@ pub(crate) struct AppState {
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
+static SETTINGS_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
@@ -136,10 +138,8 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     settings_file(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        .map(|path| load_settings_from_path(&path))
         .unwrap_or_default()
-        .sanitized()
 }
 
 /// Read persisted settings directly from disk before the Tauri app is built
@@ -147,10 +147,31 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
 pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
         .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        .map(|path| load_settings_from_path(&path))
         .unwrap_or_default()
-        .sanitized()
+}
+
+fn load_settings_from_path(path: &Path) -> Settings {
+    match std::fs::read_to_string(path) {
+        Ok(json) => match serde_json::from_str::<Settings>(&json) {
+            Ok(settings) => settings.sanitized(),
+            Err(error) => {
+                log::warn!(
+                    "settings file {} is corrupt; using defaults: {error}",
+                    path.display()
+                );
+                Settings::default()
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(error) => {
+            log::warn!(
+                "could not read settings file {}; using defaults: {error}",
+                path.display()
+            );
+            Settings::default()
+        }
+    }
 }
 
 fn dirs_config_dir() -> Option<std::path::PathBuf> {
@@ -175,8 +196,80 @@ fn dirs_config_dir() -> Option<std::path::PathBuf> {
 
 pub(crate) fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
     let path = settings_file(app).ok_or("no config directory available")?;
+    write_settings_to_path(&path, s)
+}
+
+fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    let parent = path
+        .parent()
+        .ok_or("settings path has no parent directory")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("settings path has no valid file name")?;
+    let sequence = SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        sequence
+    ));
+
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| e.to_string())?;
+        file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        replace_file(&temp, path).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        if let Ok(directory) = std::fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers that remain alive
+    // for the duration of the call.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 const CLEAR_WEBVIEW_DATA_MARKER: &str = ".clear-webview-data-on-next-launch";
@@ -479,5 +572,47 @@ mod tests {
         // Existing installs keep Enter-to-send unless they explicitly opt in.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.send_with_accelerator);
+    }
+
+    #[test]
+    fn settings_write_replaces_the_file_atomically() {
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-settings-test-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+        std::fs::write(&path, "{ partial").unwrap();
+
+        let settings = Settings {
+            zoom: 140,
+            hide_names_avatars: true,
+            ..Default::default()
+        };
+        write_settings_to_path(&path, &settings).unwrap();
+
+        let loaded = load_settings_from_path(&path);
+        assert_eq!(loaded.zoom, 140);
+        assert!(loaded.hide_names_avatars);
+        assert_eq!(
+            std::fs::read_dir(&directory).unwrap().count(),
+            1,
+            "temporary settings file should be renamed away"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn corrupt_settings_fall_back_to_defaults() {
+        let path = std::env::temp_dir().join(format!(
+            "carrier-corrupt-settings-{}-{}.json",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, "{ partial").unwrap();
+        let loaded = load_settings_from_path(&path);
+        assert_eq!(loaded.zoom, Settings::default().zoom);
+        let _ = std::fs::remove_file(path);
     }
 }

@@ -82,6 +82,9 @@ mac-notification-sys = "0.6"
 # Menu events still flow through Tauri's regular menu-event plumbing.
 muda = "0.19"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
