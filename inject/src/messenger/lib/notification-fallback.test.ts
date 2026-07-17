@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
+  NotifiedSignatureStore,
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
@@ -48,6 +49,57 @@ describe("ConversationNotificationTracker", () => {
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
     expect(tracker.observe([], ["1"])).toEqual([]);
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
+  });
+});
+
+describe("NotifiedSignatureStore", () => {
+  const memoryStorage = () => {
+    const data = new Map<string, string>();
+    return {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => void data.set(key, value),
+    };
+  };
+
+  test("recognizes a fingerprint it delivered and distinguishes new ones", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(store.alreadyNotified("1", "bbbb")).toBe(false);
+    expect(store.alreadyNotified("2", "aaaa")).toBe(false);
+  });
+
+  test("survives a page reload via the backing storage", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    // A reload constructs a fresh store over the same storage.
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("forgets a conversation once it is observed read", () => {
+    const storage = memoryStorage();
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", "aaaa");
+    // Rendered rows: "1" no longer unread, "2" was never tracked.
+    store.observeRead(new Set(["2"]), ["1", "2"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
+  test("keeps entries for unread rows that are merely still rendered", () => {
+    const store = new NotifiedSignatureStore();
+    store.markNotified("1", "aaaa");
+    store.observeRead(new Set(["1"]), ["1"]);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("tolerates malformed persisted state", () => {
+    const storage = memoryStorage();
+    storage.setItem("__carrier_notified_previews__", "{not json");
+    const store = new NotifiedSignatureStore(storage);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+    store.markNotified("1", "aaaa");
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 });
 

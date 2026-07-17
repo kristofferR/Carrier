@@ -59,6 +59,77 @@ export function notificationDedupeKey(title: string, body: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
+const NOTIFIED_STORE_LIMIT = 300;
+
+/**
+ * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
+ * never raw text) that produced a native notification per conversation,
+ * persisted via the given storage (localStorage in production) so the memory
+ * survives the auto-refresh reload and app restarts. Without it, re-priming
+ * the trackers after a reload races Facebook's hydration and can re-notify a
+ * conversation that has been sitting unread for an hour. Entries are dropped
+ * once the conversation is observed read, so a genuinely new message that
+ * repeats the same preview text still notifies.
+ */
+export class NotifiedSignatureStore {
+  private readonly entries = new Map<string, string>();
+
+  constructor(
+    private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
+    private readonly storageKey = "__carrier_notified_previews__",
+  ) {
+    try {
+      const raw = this.storage?.getItem(this.storageKey);
+      if (!raw) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      for (const entry of parsed) {
+        if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string") {
+          this.entries.set(entry[0], entry[1]);
+        }
+      }
+    } catch (_) {}
+    // Persisted state is bounded by persist(), but never trust storage: keep
+    // only the newest entries if an oversized payload is ever encountered.
+    while (this.entries.size > NOTIFIED_STORE_LIMIT) {
+      this.entries.delete(this.entries.keys().next().value!);
+    }
+  }
+
+  private persist(): void {
+    try {
+      this.storage?.setItem(this.storageKey, JSON.stringify([...this.entries]));
+    } catch (_) {}
+  }
+
+  alreadyNotified(conversationKey: string, fingerprint: string): boolean {
+    return this.entries.get(conversationKey) === fingerprint;
+  }
+
+  markNotified(conversationKey: string, fingerprint: string): void {
+    if (this.entries.get(conversationKey) === fingerprint) return;
+    // Re-insert so the map stays ordered oldest-notified-first for eviction.
+    this.entries.delete(conversationKey);
+    this.entries.set(conversationKey, fingerprint);
+    while (this.entries.size > NOTIFIED_STORE_LIMIT) {
+      this.entries.delete(this.entries.keys().next().value!);
+    }
+    this.persist();
+  }
+
+  /**
+   * Forget conversations that were rendered without an unread preview — the
+   * user has read them, so an identical future preview must notify again.
+   */
+  observeRead(unreadKeys: ReadonlySet<string>, observedKeys: Iterable<string>): void {
+    let dropped = false;
+    for (const key of observedKeys) {
+      if (!unreadKeys.has(key) && this.entries.delete(key)) dropped = true;
+    }
+    if (dropped) this.persist();
+  }
+}
+
 /** Keeps concurrent page signals until their matching row update arrives. */
 export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
