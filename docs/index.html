@@ -1311,11 +1311,11 @@
   // Friendly OS detection: spotlight the matching download bubble
   (function () {
     var ua = navigator.userAgent;
-    var os = null;
-    if (/Android/i.test(ua)) { os = null; }
-    else if (/Mac/i.test(ua)) { os = 'mac'; }
-    else if (/Win/i.test(ua)) { os = 'win'; }
-    else if (/Linux|X11/i.test(ua)) { os = 'lin'; }
+    // No recommendation on phones/tablets or ChromeOS (its UA matches X11),
+    // and iPadOS in desktop mode masquerades as a Mac but exposes multitouch.
+    if (/Android|iPad|iPhone|iPod|CrOS/i.test(ua)) return;
+    if (/Mac/i.test(ua) && navigator.maxTouchPoints > 1) return;
+    var os = /Mac/i.test(ua) ? 'mac' : /Win/i.test(ua) ? 'win' : /Linux|X11/i.test(ua) ? 'lin' : null;
     if (!os) return;
 
     var rec = document.getElementById('dl-' + os);
