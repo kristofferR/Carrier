@@ -131,6 +131,40 @@
           reply(shortcutProbe());
           return;
         }
+        // Sanitized layout/palette probe for design-replica work (landing
+        // page): geometry plus computed styles sampled under both themes.
+        if (code === "__carrier_mcp_design_probe__") {
+          reply(designProbe());
+          return;
+        }
+        // UI icon glyphs for design-replica work: serialized <svg> markup
+        // from the nav/main chrome, with identity-bearing svgs skipped.
+        if (code === "__carrier_mcp_icon_probe__") {
+          reply(iconProbe());
+          return;
+        }
+        // How the composer's like/send control is rendered (inline svg vs
+        // sprite/mask). Raster sources are reported as "[image]" only.
+        if (code === "__carrier_mcp_like_probe__") {
+          reply(likeProbe());
+          return;
+        }
+        // Force a page theme through Carrier's own force-theme machinery so
+        // screenshots can be taken in either mode; ":system" restores.
+        var themeSet = /^__carrier_mcp_theme_set__:(dark|light|system)$/.exec(code);
+        if (themeSet) {
+          reply(setThemeForScreenshot(themeSet[1]));
+          return;
+        }
+        // Persist a theme into the localStorage settings cache and reload, so
+        // Facebook re-renders with it from document-start (a live class flip
+        // does not restyle already-rendered components). ":restore" puts the
+        // stashed original back. Page-local only; Rust settings are untouched.
+        var themePersist = /^__carrier_mcp_theme_persist__:(dark|light|restore)$/.exec(code);
+        if (themePersist) {
+          reply(persistThemeAndReload(themePersist[1]));
+          return;
+        }
         // CSP-safe end-to-end notification test: constructs a Notification
         // through the (shimmed) constructor so the full page → Rust →
         // Notification Center pipeline runs without waiting for a real
@@ -473,6 +507,439 @@
           main: landmark('[role="main"]'),
         },
         helpers: Object.keys(window.__carrierShortcuts || {}),
+      };
+    }
+
+    // Force the page theme through force-theme's own settings path (in-memory
+    // only; nothing is persisted). ":system" restores the original setting.
+    function setThemeForScreenshot(mode) {
+      var settings = window.__CARRIER_SETTINGS__ || (window.__CARRIER_SETTINGS__ = {});
+      if (!window.__CARRIER_MCP_ORIG_THEME__) {
+        window.__CARRIER_MCP_ORIG_THEME__ = { theme: settings.theme };
+      }
+      if (mode === "system") {
+        settings.theme = window.__CARRIER_MCP_ORIG_THEME__.theme;
+        delete window.__CARRIER_MCP_ORIG_THEME__;
+      } else {
+        settings.theme = mode;
+      }
+      window.dispatchEvent(new Event("carrier:settings"));
+      return {
+        theme: settings.theme || "(system)",
+        htmlClasses: document.documentElement.className.match(/__fb-\w+-mode/g) || [],
+      };
+    }
+
+    // Rewrite the theme in the localStorage settings cache (the same cache
+    // apply_settings maintains; init_script prefers it over the baked
+    // snapshot) and reload. The pre-change cache value is stashed so
+    // ":restore" can put back exactly what was there — including removing the
+    // key if it did not exist.
+    function persistThemeAndReload(mode) {
+      var CACHE = "__carrier_settings";
+      var STASH = "__carrier_mcp_theme_stash";
+      var raw = localStorage.getItem(CACHE);
+      if (mode === "restore") {
+        var stash = localStorage.getItem(STASH);
+        if (stash === null) return { error: "nothing stashed to restore" };
+        if (stash === " missing") {
+          localStorage.removeItem(CACHE);
+        } else {
+          localStorage.setItem(CACHE, stash);
+        }
+        localStorage.removeItem(STASH);
+      } else {
+        if (localStorage.getItem(STASH) === null) {
+          localStorage.setItem(STASH, raw === null ? " missing" : raw);
+        }
+        var settings;
+        try {
+          settings = JSON.parse(raw || "null");
+        } catch (_) {
+          settings = null;
+        }
+        if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+          settings = Object.assign({}, window.__CARRIER_SETTINGS__ || {});
+        }
+        settings.theme = mode;
+        localStorage.setItem(CACHE, JSON.stringify(settings));
+      }
+      setTimeout(function () {
+        location.reload();
+      }, 300);
+      return { persisted: mode, reloading: true };
+    }
+
+    // Shared DOM-based SVG sanitizer for the design/icon probes: removes
+    // text-bearing nodes (title/desc/text/tspan) and raster/reference
+    // content outright, then strips identity/tracking-bearing attributes.
+    function sanitizeSvgMarkup(svg) {
+      var clone = svg.cloneNode(true);
+      Array.prototype.forEach.call(
+        clone.querySelectorAll("title, desc, text, tspan, image, use, foreignObject, script, style, metadata"),
+        function (n) {
+          if (n.parentNode) n.parentNode.removeChild(n);
+        },
+      );
+      // Scrub raw text and comment nodes everywhere (glyph markup is
+      // element-only; whitespace text is layout-irrelevant).
+      (function scrub(node) {
+        Array.prototype.slice.call(node.childNodes).forEach(function (child) {
+          if (child.nodeType === 1) scrub(child);
+          else node.removeChild(child);
+        });
+      })(clone);
+      var KEEP = {
+        viewbox: 1, width: 1, height: 1, d: 1, fill: 1, stroke: 1,
+        "stroke-width": 1, "stroke-linecap": 1, "stroke-linejoin": 1,
+        "fill-rule": 1, "clip-rule": 1, transform: 1, opacity: 1,
+        "fill-opacity": 1, "stroke-opacity": 1,
+        cx: 1, cy: 1, r: 1, rx: 1, ry: 1,
+        x: 1, y: 1, x1: 1, x2: 1, y1: 1, y2: 1, points: 1,
+      };
+      var nodes = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll("*")));
+      nodes.forEach(function (el) {
+        Array.prototype.slice.call(el.attributes || []).forEach(function (attr) {
+          // allowlist of geometry/paint attributes; anything URL-bearing goes
+          if (!KEEP[attr.name.toLowerCase()] || attr.value.indexOf("url(") !== -1) {
+            el.removeAttribute(attr.name);
+          }
+        });
+      });
+      return clone.outerHTML;
+    }
+
+    // Functional UI glyphs (search, call, video, plus, GIF, …) for the
+    // landing-page replica. Path data only: svgs containing <image>, <use>,
+    // or <foreignObject> (avatars, photos) are skipped, and the shared
+    // sanitizer drops text nodes and identity-bearing attributes, so no
+    // identity or tracking state leaks. Brand logos are not collected here —
+    // the chrome areas scanned hold plain UI controls.
+    function iconProbe() {
+      // Classify by the host control's aria-label without leaking raw text.
+      function kindOf(el) {
+        var host = el.closest('[aria-label], [role="button"], a[href]');
+        var s = ((host && host.getAttribute("aria-label")) || "").toLowerCase();
+        if (!s) return "";
+        if (/search/.test(s)) return "search";
+        if (/new message|new chat|compose/.test(s)) return "compose";
+        if (/settings|preference/.test(s)) return "settings";
+        if (/video/.test(s)) return "video";
+        if (/audio|call/.test(s)) return "call";
+        if (/information|info/.test(s)) return "info";
+        if (/more|menu|options|actions/.test(s)) return "more-or-plus";
+        if (/emoji/.test(s)) return "emoji";
+        if (/gif/.test(s)) return "gif";
+        if (/sticker/.test(s)) return "sticker";
+        if (/attach|file/.test(s)) return "attach";
+        if (/photo|image|media/.test(s)) return "photo";
+        if (/voice|record/.test(s)) return "voice";
+        if (/like|thumb/.test(s)) return "like";
+        if (/send/.test(s)) return "send";
+        return "[other]";
+      }
+      var out = [];
+      var seen = {};
+      document
+        .querySelectorAll('[role="navigation"] svg, [role="main"] svg')
+        .forEach(function (svg) {
+          if (out.length >= 40 || !visible(svg)) return;
+          if (svg.querySelector("image, use, foreignObject")) return;
+          var markup = sanitizeSvgMarkup(svg);
+          if (markup.length > 4000 || seen[markup]) return;
+          seen[markup] = true;
+          var cs = getComputedStyle(svg);
+          out.push({
+            kind: kindOf(svg),
+            rect: rect(svg),
+            inNav: !!svg.closest('[role="navigation"]'),
+            fill: cs.fill,
+            color: cs.color,
+            markup: markup,
+          });
+        });
+      return { page: /\/messages\//.test(location.pathname) ? "messages" : "other", icons: out };
+    }
+
+    // Structure of the composer's like/send control (bottom-right of main),
+    // to identify how the thumb glyph is rendered. Svg markup is sanitized
+    // like iconProbe; raster sources are reported as "[image]"/"[sprite]".
+    function likeProbe() {
+      var main = document.querySelector('[role="main"]');
+      if (!main) return { error: "no main" };
+      var mainRect = main.getBoundingClientRect();
+      var buttons = [];
+      main.querySelectorAll('[role="button"], button').forEach(function (btn) {
+        if (buttons.length >= 4 || !visible(btn)) return;
+        var r = btn.getBoundingClientRect();
+        // Composer row: bottom 60px of main, right third.
+        if (r.top < mainRect.bottom - 60) return;
+        if (r.left < mainRect.left + mainRect.width * 0.7) return;
+        var nodes = [];
+        var budget = 40;
+        (function walk(el, depth) {
+          if (!el || depth > 7 || budget-- <= 0) return;
+          var tag = el.tagName.toLowerCase();
+          var cs = getComputedStyle(el);
+          var entry = { tag: tag, depth: depth, rect: rect(el) };
+          if (tag === "svg") entry.markup = sanitizeSvgMarkup(el).slice(0, 3000);
+          if (tag === "img") entry.src = el.getAttribute("src") ? "[image]" : "";
+          if (cs.backgroundImage && cs.backgroundImage !== "none") {
+            entry.backgroundImage =
+              cs.backgroundImage.indexOf("url(") !== -1
+                ? "[sprite]"
+                : cs.backgroundImage.slice(0, 120);
+          }
+          var mask = cs.webkitMaskImage || cs.maskImage;
+          if (mask && mask !== "none") {
+            entry.maskImage = mask.indexOf("url(") !== -1 ? "[mask-sprite]" : mask.slice(0, 120);
+            entry.backgroundColor = cs.backgroundColor;
+          }
+          nodes.push(entry);
+          if (tag !== "svg") {
+            Array.prototype.forEach.call(el.children, function (child) {
+              walk(child, depth + 1);
+            });
+          }
+        })(btn, 0);
+        buttons.push({ rect: rect(btn), nodes: nodes });
+      });
+      return { buttons: buttons };
+    }
+
+    // Sanitized design probe: geometry, computed colors/typography, and a
+    // depth-limited structure outline of the live chat UI. Palettes are
+    // sampled under both themes by toggling the __fb-*-mode class
+    // synchronously (restored before returning, so nothing repaints).
+    // Reports rects, computed styles, tag/role outlines, and counts only —
+    // never text, hrefs, IDs, or image sources.
+    function designProbe() {
+      var html = document.documentElement;
+      var PROPS = [
+        "background-color",
+        "background-image",
+        "background-attachment",
+        "color",
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-left-radius",
+        "border-bottom-right-radius",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "line-height",
+        "padding",
+        "border",
+        "box-shadow",
+      ];
+
+      function styleOf(el) {
+        if (!el) return null;
+        var cs = getComputedStyle(el);
+        var out = { rect: rect(el) };
+        PROPS.forEach(function (p) {
+          var v = cs.getPropertyValue(p);
+          // computed backgrounds can embed identity-bearing url(...) sources
+          out[p] = v && v.indexOf("url(") !== -1 ? "[image]" : v;
+        });
+        return out;
+      }
+
+      function withThemeClass(mode, fn) {
+        var had = {
+          dark: html.classList.contains("__fb-dark-mode"),
+          light: html.classList.contains("__fb-light-mode"),
+        };
+        html.classList.remove("__fb-dark-mode", "__fb-light-mode");
+        html.classList.add(mode === "dark" ? "__fb-dark-mode" : "__fb-light-mode");
+        try {
+          return fn();
+        } finally {
+          html.classList.remove("__fb-dark-mode", "__fb-light-mode");
+          if (had.dark) html.classList.add("__fb-dark-mode");
+          if (had.light) html.classList.add("__fb-light-mode");
+        }
+      }
+
+      function roundedBg(el, minRadius) {
+        var cs = getComputedStyle(el);
+        var bg = cs.backgroundColor;
+        // Outgoing bubbles paint a background-image gradient over a
+        // transparent background-color, so accept either form of paint.
+        var hasPaint =
+          (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") ||
+          (cs.backgroundImage || "").indexOf("gradient") !== -1;
+        if (!hasPaint) return false;
+        return (
+          (parseFloat(cs.borderTopLeftRadius) || 0) >= minRadius ||
+          (parseFloat(cs.borderBottomRightRadius) || 0) >= minRadius
+        );
+      }
+
+      // Discover elements once; styles are then sampled per theme.
+      var nav = document.querySelector('[role="navigation"]');
+      var main = document.querySelector('[role="main"]');
+      var mainRect = main ? main.getBoundingClientRect() : { x: 0, width: innerWidth };
+      var mainCenter = mainRect.x + mainRect.width / 2;
+
+      var rows = [];
+      document
+        .querySelectorAll('[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]')
+        .forEach(function (row) {
+          if (rows.length >= 3 || !visible(row)) return;
+          rows.push(row);
+        });
+
+      function rowParts(row) {
+        var avatar = null;
+        row.querySelectorAll("img").forEach(function (img) {
+          if (avatar || !visible(img)) return;
+          if (getComputedStyle(img).borderRadius.indexOf("50%") !== -1) avatar = img;
+        });
+        if (!avatar) avatar = row.querySelector("img");
+        var texts = [];
+        var seen = {};
+        row.querySelectorAll("span").forEach(function (el) {
+          if (texts.length >= 3 || !visible(el)) return;
+          if (!(el.textContent || "").trim()) return;
+          var cs = getComputedStyle(el);
+          var key = cs.fontSize + "/" + cs.fontWeight + "/" + cs.color;
+          if (seen[key]) return;
+          seen[key] = true;
+          texts.push(el);
+        });
+        return { avatar: avatar, texts: texts };
+      }
+
+      var bubbles = [];
+      document.querySelectorAll('[role="main"] [role="article"]').forEach(function (article) {
+        if (bubbles.length >= 6 || !visible(article)) return;
+        var candidate = null;
+        var candidateArea = Infinity;
+        article.querySelectorAll("div, span").forEach(function (el) {
+          if (!visible(el) || !roundedBg(el, 8)) return;
+          var r = el.getBoundingClientRect();
+          if (r.width < 28 || r.height < 20 || r.width > mainRect.width) return;
+          var area = r.width * r.height;
+          if (area < candidateArea) {
+            candidate = el;
+            candidateArea = area;
+          }
+        });
+        if (candidate) {
+          var r = candidate.getBoundingClientRect();
+          bubbles.push({ el: candidate, side: r.x + r.width / 2 > mainCenter ? "out" : "in" });
+        }
+      });
+
+      var composerInput = document.querySelector(
+        '[role="main"] [contenteditable="true"], [role="main"] [role="textbox"]',
+      );
+      var composerBox = null;
+      for (var n = composerInput && composerInput.parentElement, i = 0; n && i < 6; n = n.parentElement, i++) {
+        if (roundedBg(n, 12)) {
+          composerBox = n;
+          break;
+        }
+      }
+
+      var icons = [];
+      document
+        .querySelectorAll('[role="main"] [role="button"] svg, [role="main"] button svg')
+        .forEach(function (svg) {
+          if (icons.length >= 3 || !visible(svg)) return;
+          icons.push(svg);
+        });
+
+      var threadName = document.querySelector('[role="main"] h2');
+      var navHeader = document.querySelector('[role="navigation"] h1');
+      var searchInput = document.querySelector('[role="navigation"] input');
+      var searchBox = null;
+      for (var s = searchInput && searchInput.parentElement, j = 0; s && j < 5; s = s.parentElement, j++) {
+        if (roundedBg(s, 10)) {
+          searchBox = s;
+          break;
+        }
+      }
+
+      // Depth- and budget-limited tag/role outline (structure without content).
+      var outlineBudget = 400;
+      function outline(el, depth) {
+        if (!el || depth < 0 || outlineBudget <= 0 || !visible(el)) return null;
+        outlineBudget--;
+        var out = {
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute("role") || "",
+          textLength: 0,
+          rect: rect(el),
+          children: [],
+        };
+        var exactLen = 0;
+        Array.prototype.forEach.call(el.childNodes, function (child) {
+          if (child.nodeType === 3) {
+            exactLen += (child.textContent || "").trim().length;
+          } else if (child.nodeType === 1 && out.children.length < 8) {
+            var sub = outline(child, depth - 1);
+            if (sub) out.children.push(sub);
+          }
+        });
+        // coarse bucket only — exact lengths could fingerprint short texts
+        out.textLength = exactLen === 0 ? 0 : Math.min(50, Math.ceil(exactLen / 10) * 10);
+        return out;
+      }
+
+      function samplePalette() {
+        return {
+          body: styleOf(document.body),
+          nav: styleOf(nav),
+          navHeader: styleOf(navHeader),
+          searchBox: styleOf(searchBox),
+          rows: rows.map(function (row) {
+            var parts = rowParts(row);
+            return {
+              row: styleOf(row),
+              avatar: styleOf(parts.avatar),
+              texts: parts.texts.map(function (el) {
+                return styleOf(el);
+              }),
+            };
+          }),
+          main: styleOf(main),
+          threadName: styleOf(threadName),
+          bubbles: bubbles.map(function (b) {
+            return { side: b.side, style: styleOf(b.el) };
+          }),
+          composerInput: styleOf(composerInput),
+          composerBox: styleOf(composerBox),
+          icons: icons.map(function (svg) {
+            var cs = getComputedStyle(svg);
+            return { rect: rect(svg), color: cs.color, fill: cs.fill };
+          }),
+        };
+      }
+
+      var articleRects = [];
+      document.querySelectorAll('[role="main"] [role="article"]').forEach(function (a) {
+        if (articleRects.length >= 8 || !visible(a)) return;
+        articleRects.push(rect(a));
+      });
+
+      return {
+        page: /\/messages\//.test(location.pathname) ? "messages" : "other",
+        viewport: { w: innerWidth, h: innerHeight },
+        htmlClasses: html.className.match(/__fb-\w+-mode/g) || [],
+        geometry: {
+          nav: nav ? rect(nav) : null,
+          main: main ? rect(main) : null,
+          articles: articleRects,
+        },
+        structure: {
+          row: rows[0] ? outline(rows[0], 6) : null,
+          article: bubbles[0] ? outline(bubbles[0].el.closest('[role="article"]'), 6) : null,
+          composer: composerBox ? outline(composerBox, 4) : null,
+        },
+        light: withThemeClass("light", samplePalette),
+        dark: withThemeClass("dark", samplePalette),
       };
     }
 
