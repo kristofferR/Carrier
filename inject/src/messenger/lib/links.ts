@@ -21,6 +21,13 @@ function isAuth(u: URL): boolean {
   return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
+// facebook.com paths that belong to the Messenger app or its login/auth flows.
+// Any other facebook.com content (posts, profiles, groups, reels, …) opens in
+// the real browser — Carrier only wraps Messenger, and the stripped-chrome CSS
+// renders the rest of Facebook broken.
+const FACEBOOK_APP_PATH_RE =
+  /^\/(messages|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
+
 /** Classify an href (resolved against `base`) as external (real browser) or not. */
 export function classifyHref(href: string, base: string): { external: boolean } {
   try {
@@ -36,7 +43,10 @@ export function classifyHref(href: string, base: string): { external: boolean } 
       host === "lm.facebook.com" ||
       (host === "facebook.com" && u.pathname === "/l.php");
     const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
-    return { external: tracking || !internal };
+    // On facebook.com only Messenger + auth surfaces stay in-app.
+    const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
+    const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
+    return { external: tracking || !inApp };
   } catch {
     return { external: false };
   }
