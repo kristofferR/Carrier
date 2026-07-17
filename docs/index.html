@@ -1,0 +1,1482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carrier — Messenger, back on your desktop</title>
+<meta name="description" content="Carrier is a free, open-source desktop app for Facebook Messenger. Just your chats in one clean window — for macOS, Windows, and Linux.">
+<link rel="icon" href="./app-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@600;700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700&display=swap" rel="stylesheet">
+<style>
+  /* ============ True Blue — Messenger classic, light & airy ============ */
+  :root {
+    --blue: #0084FF;
+    --grad-a: #00B2FF;
+    --grad-b: #006AFF;
+    --grad-deep: #005FE8;
+    --ink: #14283f;
+    --muted: #4a627a;
+    --page: #ffffff;
+    --section-tint: #eef5ff;
+    --bubble-grey: #f0f2f5;
+    --shadow-soft: 0 8px 30px -12px rgba(15, 60, 130, .18);
+    --shadow-card: 0 14px 40px -18px rgba(15, 60, 130, .22);
+    --radius-bubble: 22px;
+    --font-display: "Figtree", "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-body: "Nunito Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { overflow-x: hidden; overflow-x: clip; scroll-padding-top: 80px; /* clear the 64px sticky header on anchor jumps */ }
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+  body {
+    overflow-x: hidden; overflow-x: clip;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; display: block; }
+  a { color: var(--grad-b); }
+
+  h1, h2, h3 { font-family: var(--font-display); line-height: 1.12; letter-spacing: -0.02em; }
+
+  :focus-visible {
+    outline: 3px solid var(--blue);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  .hero :focus-visible, .download :focus-visible {
+    outline-color: #fff;
+  }
+  .wt-btn:focus-visible { outline-color: var(--grad-b); } /* white ring is invisible on the toggle's white pill */
+
+  .skip-link {
+    position: absolute; left: 1rem; top: -4rem; z-index: 100;
+    background: var(--grad-b); color: #fff; font-weight: 700;
+    padding: .7rem 1.2rem; border-radius: 999px; text-decoration: none;
+    transition: top .2s ease;
+  }
+  .skip-link:focus { top: 1rem; }
+
+  .wrap { max-width: 1120px; margin-inline: auto; padding-inline: clamp(1.1rem, 4vw, 2rem); }
+
+  /* ---------- Header ---------- */
+  .site-head {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.86);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: box-shadow .25s ease;
+  }
+  .site-head.scrolled { box-shadow: 0 6px 24px -12px rgba(15, 60, 130, .25); }
+  .site-head .wrap {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: .6rem;
+    text-decoration: none; color: var(--ink);
+    font-family: var(--font-display); font-weight: 800; font-size: 1.25rem;
+  }
+  .brand img { width: 34px; height: 34px; border-radius: 9px; }
+  .site-nav { display: flex; align-items: center; gap: clamp(.6rem, 2vw, 1.6rem); }
+  .site-nav a { text-decoration: none; font-weight: 700; color: var(--muted); font-size: .97rem; }
+  .site-nav a:hover { color: var(--grad-b); }
+  .nav-cta {
+    background: linear-gradient(100deg, var(--grad-a), var(--grad-b));
+    color: #fff !important; padding: .5rem 1.15rem; border-radius: 999px;
+    box-shadow: var(--shadow-soft);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 26px -10px rgba(0,106,255,.55); }
+  @media (max-width: 560px) { .nav-features { display: none; } }
+
+  /* ---------- Hero: one giant message bubble ---------- */
+  .hero {
+    position: relative;
+    margin: 10px clamp(8px, 1.5vw, 16px) 0;
+    border-radius: clamp(26px, 4vw, 48px);
+    background: linear-gradient(178deg, var(--grad-a) 0%, var(--blue) 12%, var(--grad-b) 34%, var(--grad-deep) 100%);
+    color: #fff;
+    text-align: center;
+    padding: clamp(3.2rem, 7vw, 5.5rem) clamp(1.1rem, 4vw, 2rem) 0;
+  }
+  .hero-deco {
+    position: absolute; inset: 0; overflow: hidden;
+    border-radius: inherit; pointer-events: none;
+  }
+  .hero-deco .orb {
+    position: absolute; border-radius: 50%;
+    background: rgba(255,255,255,.10);
+  }
+  .orb-1 { width: 220px; height: 220px; top: -60px; left: -50px; animation: floaty 9s ease-in-out infinite alternate; }
+  .orb-2 { width: 120px; height: 120px; top: 18%; right: 6%; animation: floaty 7s ease-in-out infinite alternate-reverse; }
+  .orb-3 { width: 70px; height: 70px; top: 52%; left: 7%; animation: floaty 11s ease-in-out infinite alternate; }
+  .orb-4 { width: 160px; height: 160px; bottom: 10%; right: -40px; animation: floaty 8s ease-in-out infinite alternate-reverse; }
+  .mini-bubble {
+    position: absolute; background: rgba(255,255,255,.13);
+    border-radius: 18px 18px 18px 4px; width: 74px; height: 46px;
+  }
+  .mini-bubble.b1 { top: 30%; left: 12%; animation: floaty 10s ease-in-out infinite alternate; }
+  .mini-bubble.b2 { top: 14%; right: 20%; border-radius: 18px 18px 4px 18px; animation: floaty 12s ease-in-out infinite alternate-reverse; }
+  .flight { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .35; }
+  .flight path { stroke-dasharray: 4 10; animation: dashflow 26s linear infinite; }
+  @keyframes dashflow { to { stroke-dashoffset: -700; } }
+  @keyframes floaty { from { transform: translateY(-9px); } to { transform: translateY(11px); } }
+
+  .hero-inner { position: relative; max-width: 780px; margin-inline: auto; }
+
+  .hero-icon {
+    width: clamp(76px, 11vw, 104px); height: auto;
+    margin-inline: auto;
+    border-radius: 24%;
+    box-shadow: 0 18px 44px -12px rgba(0, 30, 90, .5);
+  }
+  .hero-chip {
+    display: inline-flex; align-items: center; gap: .45rem;
+    margin-top: 1.4rem;
+    background: rgba(255,255,255,.94); color: var(--grad-b);
+    font-weight: 700; font-size: .88rem;
+    padding: .42rem 1rem; border-radius: 999px;
+  }
+  .hero h1 {
+    margin-top: 1.1rem;
+    font-size: clamp(2.35rem, 6.4vw, 4.1rem);
+    font-weight: 800;
+  }
+  .hero-sub {
+    margin: 1.1rem auto 0; max-width: 590px;
+    font-size: clamp(1.05rem, 1.6vw, 1.22rem);
+    color: #fff;
+  }
+  .hero-ctas {
+    margin-top: 1.9rem;
+    display: flex; gap: .9rem; justify-content: center; flex-wrap: wrap;
+  }
+  .btn-bubble {
+    position: relative;
+    display: inline-flex; align-items: center; gap: .55rem;
+    font-family: var(--font-display); font-weight: 700; font-size: 1.08rem;
+    text-decoration: none;
+    padding: .95rem 1.9rem;
+    border-radius: 999px;
+    transition: transform .22s cubic-bezier(.2,.7,.3,1.4), box-shadow .22s ease;
+  }
+  .btn-primary {
+    background: #fff; color: var(--grad-b);
+    border-bottom-right-radius: 6px; /* the bubble tail corner */
+    box-shadow: 0 14px 34px -10px rgba(0, 30, 90, .45);
+  }
+  .btn-primary:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 20px 44px -12px rgba(0, 30, 90, .55); }
+  .btn-ghost {
+    color: #fff; border: 2px solid rgba(255,255,255,.75);
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,.14); transform: translateY(-2px); }
+  .hero-fineprint {
+    margin-top: 1rem; font-size: .9rem; font-weight: 700;
+    color: #fff;
+  }
+
+  /* staggered load-in */
+  .h-anim { animation: rise .75s cubic-bezier(.2,.7,.3,1) both; animation-delay: var(--d, 0s); }
+  @keyframes rise { from { opacity: 0; transform: translateY(24px); } }
+
+  /* ---------- Fake app window — native-1:1 Messenger replica ----------
+     Every size, inset, gap, radius, font and color below is the exact value
+     measured in the real app via the dev MCP design probe + a pixel-peeping
+     audit (2026-07-17). The window is built at its native 993px width and
+     uniformly scaled to fit (see the fit script), so proportions can never
+     drift. --------------------------------------------------------------- */
+  .hero-app {
+    position: relative;
+    max-width: 993px;
+    margin: clamp(2.6rem, 5vw, 4rem) auto -110px;
+  }
+  .win-stage {
+    position: relative;
+    -webkit-user-select: none;
+    user-select: none; /* the replica is decoration — selecting its text breaks the illusion */
+  }
+
+  /* theme tokens — the real Messenger palettes */
+  .win {
+    --w-window: #f0f2f5;   /* window bg behind the panels (audited: not white) */
+    --w-surface: #ffffff;
+    --w-titlebar: #f7f8fa;
+    --w-hairline: rgba(0, 0, 0, .10);
+    --w-text: #080809;
+    --w-text2: #65686c;
+    --w-bubble-in: #f0f0f0;
+    --w-bubble-in-text: #1c1e21;
+    --w-pill: #f0f2f5;
+    --w-pill-text: #606770;
+    --w-composer-pill: #f0f2f5;
+    --w-selected: #ebf5ff;
+    --w-chip-bg: #ebf5ff;
+    --w-chip-text: #0064d1;
+    --w-react-bg: #ffffff;
+    --w-accent: #aa00ff;
+    --w-composer: #0070f6; /* composer icons are blue in both themes (sampled) */
+    --w-badge: #0866ff;
+    --w-green: #31a24c;
+  }
+  .win-stage[data-win-theme="dark"] .win {
+    --w-window: #1c1c1d;
+    --w-surface: #242526;
+    --w-titlebar: #1e1f20;
+    --w-hairline: rgba(255, 255, 255, .10);
+    --w-text: #e2e5e9;
+    --w-text2: #b0b3b8;
+    --w-bubble-in: #303030;
+    --w-bubble-in-text: #e4e6eb;
+    --w-pill: rgba(255, 255, 255, .10);
+    --w-pill-text: #b0b3b8;
+    --w-composer-pill: #333334;
+    --w-selected: #3a3a3a;
+    --w-chip-bg: #263951;
+    --w-chip-text: #75b3ff;
+    --w-react-bg: #3a3b3c;
+  }
+  .win, .win * { transition: background-color .35s ease, color .35s ease, border-color .35s ease; }
+
+  .win {
+    width: 993px;
+    background: var(--w-window); color: var(--w-text);
+    border-radius: 16px;
+    text-align: left;
+    overflow: hidden;
+    box-shadow: 0 34px 90px -22px rgba(0, 35, 110, .5), 0 12px 34px -14px rgba(0, 35, 110, .35);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; /* the app really uses the system font */
+    font-size: 15px; line-height: 1.34;
+    transform-origin: top left; /* the fit script scales the whole window uniformly */
+  }
+  .win-bar {
+    display: flex; align-items: center; gap: 11px;
+    height: 31px; padding: 0 14px 0 10px;
+    background: var(--w-titlebar); border-bottom: 1px solid var(--w-hairline);
+  }
+  .win-bar .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .dot.r { background: #ff5f57; } .dot.y { background: #febc2e; } .dot.g { background: #28c840; }
+  .win-title {
+    font-weight: 600; color: var(--w-text2);
+    font-size: 13px; margin-left: 6px; /* title ink starts at x85, beside the lights */
+  }
+  .win-body { display: flex; height: 620px; background: var(--w-window); }
+
+  /* --- sidebar: 360px, flush, hairline at its right edge --- */
+  .side {
+    width: 360px; flex-shrink: 0;
+    background: var(--w-surface);
+    /* hairline as an inset shadow so it doesn't consume layout width */
+    box-shadow: inset -1px 0 var(--w-hairline);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .side-head { display: flex; align-items: center; gap: 12px; padding: 11px 16px 14px; }
+  .side-title { flex: 1; font-weight: 700; font-size: 24px; }
+  .iconbtn {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    background: var(--w-pill); color: var(--w-text);
+    display: grid; place-items: center;
+  }
+  .side-search {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--w-pill); color: var(--w-pill-text);
+    border-radius: 50px; height: 36px; padding: 0 12px; margin: 0 16px 8px;
+    font-size: 15px; flex-shrink: 0;
+  }
+  .side-tabs { display: flex; gap: 8px; padding: 0 16px 8px; }
+  .side-tabs .tab {
+    height: 36px; display: inline-flex; align-items: center;
+    font-size: 15px; font-weight: 600; color: var(--w-text2);
+    padding: 0 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .side-tabs .tab.on { background: var(--w-chip-bg); color: var(--w-chip-text); }
+
+  .rows { display: flex; flex-direction: column; padding: 0 8px; }
+  .chat-row {
+    display: flex; align-items: center; gap: 12px;
+    height: 72px; padding: 0 8px; border-radius: 8px; flex-shrink: 0;
+  }
+  .chat-row.active { background: var(--w-selected); }
+  .chat-row .txt { min-width: 0; flex: 1; }
+  .chat-row .name {
+    display: block; font-weight: 500; font-size: 15px; color: var(--w-text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-row .prev {
+    display: block; color: var(--w-text2); font-size: 13px; margin-top: 7px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .chat-row .prev .t { font-size: 12px; }
+  .chat-row.unread .name, .chat-row.unread .prev { color: var(--w-text); font-weight: 700; }
+  .blue-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w-badge); flex-shrink: 0; margin-right: 8px; }
+  .chat-row .avatar.seen { width: 16px; height: 16px; margin-right: 8px; font-size: 7px; }
+
+  .avatar {
+    width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center;
+    color: #fff; font-weight: 600; font-size: 20px;
+  }
+  /* group chats: two overlapping circles inside the 56px box */
+  .avatar-group { position: relative; width: 56px; height: 56px; flex-shrink: 0; }
+  .avatar-group .avatar { position: absolute; }
+  .avatar-group .ag-b { top: 0; right: 0; width: 37px; height: 37px; font-size: 13px; }
+  .avatar-group .ag-f {
+    bottom: 0; left: 0; width: 41px; height: 41px; font-size: 14px;
+    box-shadow: 0 0 0 2px var(--w-surface);
+  }
+  .av-mom   { background: linear-gradient(135deg, #ff7ab2, #ff9d66); }
+  .av-alex  { background: linear-gradient(135deg, #34c2ff, #7b6bff); }
+  .av-crew  { background: linear-gradient(135deg, #2bd6a3, #10a3c9); }
+  .av-nana  { background: linear-gradient(135deg, #b06bff, #ff6f9e); }
+  .av-sam   { background: linear-gradient(135deg, #ffb340, #ff7d52); }
+  .av-book  { background: linear-gradient(135deg, #6b8bff, #45c4a8); }
+  .av-dad   { background: linear-gradient(135deg, #58c6b2, #3f8fd8); }
+
+  /* --- conversation pane: an inset rounded card floating on the window bg --- */
+  .chatpane {
+    flex: 1; min-width: 0;
+    margin: 16px;
+    border-radius: 8px;
+    background: var(--w-surface);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .chat-head {
+    height: 58px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 14px 0 16px; border-bottom: 1px solid var(--w-hairline);
+  }
+  .chat-head .avatar { width: 36px; height: 36px; font-size: 13px; }
+  .chat-head .who { flex: 1; min-width: 0; }
+  .chat-head .who b { display: block; font-size: 15px; font-weight: 600; }
+  .head-icons { display: flex; gap: 8px; color: var(--w-accent); margin-top: 7px; /* buttons sit low in the 58px header (y30 in the capture) */ }
+  .head-icons > span { width: 36px; height: 36px; display: grid; place-items: center; }
+
+  .msgs {
+    flex: 1; padding: 0 2px;
+    display: flex; flex-direction: column; justify-content: flex-end; gap: 8px;
+    overflow: hidden;
+  }
+  .day { text-align: center; font-size: 12px; font-weight: 500; color: var(--w-text2); margin: 10px 0 2px; }
+
+  /* message groups: 50px avatar column, avatar bottom-aligned with the group */
+  .mgroup { display: flex; align-items: flex-end; }
+  .mgroup .m-col { width: 50px; flex-shrink: 0; display: flex; align-items: flex-end; padding-left: 8px; }
+  .mgroup .m-avatar { width: 28px; height: 28px; font-size: 10px; }
+  .mgroup .stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .mgroup.out { justify-content: flex-end; }
+  .mgroup.out .stack { align-items: flex-end; }
+
+  .msg {
+    max-width: 547px;
+    padding: 8px 12px;
+    border-radius: 18px;
+    width: fit-content;
+    font-size: 15px; line-height: 20.1px;
+    position: relative;
+  }
+  .msg.in { background: var(--w-bubble-in); color: var(--w-bubble-in-text); }
+  /* grouped-corner radii, 18px → 4px on the stacked side (sampled: 18/4) */
+  .stack .msg.in:not(:last-child) { border-bottom-left-radius: 4px; }
+  .stack .msg.in:not(:first-child) { border-top-left-radius: 4px; }
+  .stack .msg.out:not(:last-child) { border-bottom-right-radius: 4px; }
+  .stack .msg.out:not(:first-child) { border-top-right-radius: 4px; }
+
+  /* outgoing: ONE window-anchored gradient (#B02BFA → #2470EE); the fit
+     script slices it per bubble via background-position, like the real app */
+  .msg.out {
+    color: #fff;
+    background-image: linear-gradient(#b02bfa, #2470ee);
+    background-size: 100% 620px;
+    background-repeat: no-repeat;
+  }
+
+  /* single-reaction chip: ~17px circle half-overlapping the bottom-right corner */
+  .msg.has-react { margin-bottom: 10px; }
+  .react-chip {
+    position: absolute; bottom: -8px; right: 2px;
+    width: 17px; height: 17px;
+    display: grid; place-items: center;
+    background: var(--w-react-bg);
+    border-radius: 50%;
+    font-size: 11px; line-height: 1;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
+  }
+
+  .typing { display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px; height: 36px; }
+  .typing i {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--w-text2);
+    animation: blink 1.2s ease-in-out infinite; animation-delay: var(--td, 0s);
+  }
+  @keyframes blink { 0%, 60%, 100% { transform: none; opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+  /* --- composer: flush 36px icon buttons, 403px pill, 36px like --- */
+  .composer {
+    display: flex; align-items: center; flex-shrink: 0;
+    padding: 8px 2px 14px 4px;
+    color: var(--w-composer);
+  }
+  .composer .c-btn {
+    width: 36px; height: 36px; flex-shrink: 0;
+    display: grid; place-items: center; border-radius: 50%;
+  }
+  .comp-input {
+    flex: 1; min-width: 0; position: relative;
+    display: flex; align-items: center;
+    background: var(--w-composer-pill); color: var(--w-pill-text);
+    border-radius: 20px; height: 36px; padding: 0 44px 0 12px;
+    font-size: 15px; margin-left: 8px;
+  }
+  .comp-input .c-btn { position: absolute; right: 0; top: 0; color: var(--w-composer); }
+  .comp-like { margin-left: 4px; }
+
+  /* --- the theme toggle, centered above the window --- */
+  .win-theme-toggle {
+    display: inline-flex; gap: 2px;
+    margin-bottom: 16px;
+    background: #fff; border-radius: 999px; padding: 4px;
+    box-shadow: 0 12px 32px -10px rgba(0, 30, 90, .4);
+  }
+  .wt-btn {
+    border: 0; background: transparent; cursor: pointer;
+    font-family: var(--font-display); font-weight: 700; font-size: .85rem;
+    color: var(--muted);
+    padding: .35rem .85rem; border-radius: 999px;
+    transition: background .25s ease, color .25s ease;
+  }
+  .wt-btn.on {
+    background: linear-gradient(100deg, var(--grad-a), var(--grad-b));
+    color: #fff;
+  }
+
+  /* notification toasts: real macOS notifications — frosted glass panels,
+     app icon left, sender avatar thumbnail right. The stack receives live
+     simulated messages from Alex (see script). */
+  .toast-stack {
+    position: absolute; top: -20px; right: -16px; z-index: 4;
+    display: flex; flex-direction: column; gap: 8px;
+    width: 336px;
+    pointer-events: none;
+  }
+  .toast {
+    display: flex; align-items: center; gap: 11px;
+    background: rgba(247, 247, 249, .68);
+    -webkit-backdrop-filter: blur(32px) saturate(180%);
+    backdrop-filter: blur(32px) saturate(180%);
+    color: #1d1d1f;
+    padding: 11px 13px;
+    border-radius: 22px;
+    border: .5px solid rgba(255, 255, 255, .55);
+    text-align: left;
+    box-shadow: 0 14px 44px rgba(0, 10, 40, .35);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .toast.enter { animation: toastIn .6s cubic-bezier(.2,.9,.3,1.35) both; }
+  .toast--initial { animation: toastIn .6s cubic-bezier(.2,.9,.3,1.35) 1.5s both; }
+  .toast.leave { animation: toastOut .4s ease both; }
+  @keyframes toastOut {
+    to { opacity: 0; transform: translateX(48px); }
+  }
+  .toast .t-app { width: 38px; height: 38px; border-radius: 9px; flex-shrink: 0; }
+  .toast .t-body { flex: 1; min-width: 0; }
+  .toast .t-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .toast .t-title b { font-size: 13.5px; font-weight: 600; }
+  .toast .t-now { font-size: 12px; color: rgba(60, 60, 67, .6); flex-shrink: 0; }
+  .toast .t-msg {
+    display: block; font-size: 13.5px; color: rgba(20, 20, 25, .88);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .toast .t-avatar { width: 34px; height: 34px; font-size: 12px; flex-shrink: 0; }
+  @keyframes toastIn {
+    0% { opacity: 0; transform: translateY(-16px) scale(.85); }
+    70% { transform: translateY(3px) scale(1.02); }
+    100% { opacity: 1; transform: none; }
+  }
+  /* the whole window scales uniformly via the fit script — only the (1:1)
+     notification stack needs responsive help */
+  @media (max-width: 760px) {
+    .toast-stack { right: 6px; top: -16px; }
+  }
+  @media (max-width: 420px) {
+    .toast-stack { width: 240px; }
+    .toast { padding: 9px 12px; }
+    .toast .t-msg { display: none; }
+  }
+
+  /* ---------- Sections shared ---------- */
+  section { padding-block: clamp(3.5rem, 8vw, 6.5rem); }
+  .eyebrow {
+    display: inline-block;
+    font-weight: 800; font-family: var(--font-display);
+    font-size: .85rem; letter-spacing: .09em; text-transform: uppercase;
+    color: #005FD6;
+    margin-bottom: .8rem;
+  }
+  .sec-title { font-size: clamp(1.75rem, 3.8vw, 2.6rem); font-weight: 800; }
+  .sec-sub { color: var(--muted); max-width: 560px; margin-top: .8rem; }
+  .center { text-align: center; }
+  .center .sec-sub { margin-inline: auto; }
+
+  /* scroll reveals */
+  html.js .reveal {
+    opacity: 0; transform: translateY(26px);
+    transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.3,1);
+    transition-delay: var(--d, 0s);
+  }
+  html.js .reveal.revealed { opacity: 1; transform: none; }
+
+  /* ---------- Story: told as a chat ---------- */
+  .story { padding-top: calc(110px + clamp(3rem, 7vw, 5.5rem)); }
+  .story-thread { max-width: 600px; margin: 2.2rem auto 0; display: flex; flex-direction: column; gap: .7rem; text-align: left; }
+  .sb {
+    position: relative;
+    max-width: min(430px, 88%);
+    padding: .85rem 1.25rem;
+    border-radius: var(--radius-bubble);
+    font-size: 1.05rem;
+  }
+  .sb.in { background: var(--bubble-grey); align-self: flex-start; }
+  .sb.out {
+    background: linear-gradient(100deg, var(--blue), var(--grad-b));
+    color: #fff; align-self: flex-end;
+  }
+  /* grouped-corner radii between consecutive same-side bubbles — the real
+     Messenger treatment (no protruding tails) */
+  .sb.out:has(+ .sb.out) { border-bottom-right-radius: 4px; }
+  .sb.out + .sb.out { border-top-right-radius: 4px; margin-top: calc(2px - .7rem); }
+  .sb.in:has(+ .sb.in) { border-bottom-left-radius: 4px; }
+  .sb.in + .sb.in { border-top-left-radius: 4px; margin-top: calc(2px - .7rem); }
+  .delivered {
+    align-self: flex-end; color: #64798e;
+    font-size: .8rem; font-weight: 700; padding-right: .4rem;
+  }
+
+  /* ---------- Features: bubble-tailed cards ---------- */
+  .features { background: var(--section-tint); }
+  .feat-grid {
+    display: grid; gap: clamp(1.2rem, 2.5vw, 1.8rem);
+    grid-template-columns: repeat(3, 1fr);
+    margin-top: 2.6rem;
+  }
+  @media (max-width: 1020px) { .feat-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 660px)  { .feat-grid { grid-template-columns: 1fr; } }
+
+  .feature {
+    --bub: #ffffff;
+    position: relative;
+    background: var(--bub);
+    border-radius: var(--radius-bubble);
+    text-align: left;
+    padding: 1.7rem 1.6rem 1.6rem;
+    box-shadow: var(--shadow-card);
+    transition: transform .25s cubic-bezier(.2,.7,.3,1.3), box-shadow .25s ease;
+  }
+  .feature:hover { transform: translateY(-5px); box-shadow: 0 22px 50px -18px rgba(15, 60, 130, .3); }
+  .feature::before {
+    content: ""; position: absolute; bottom: 0; left: -7px;
+    width: 22px; height: 22px; background: var(--bub);
+    border-bottom-right-radius: 16px;
+  }
+  .feature::after {
+    content: ""; position: absolute; bottom: 0; left: -13px;
+    width: 13px; height: 26px; background: var(--section-tint);
+    border-bottom-right-radius: 12px;
+  }
+  .feature:nth-child(even) { --bub: #e4f0ff; }
+  .feature:nth-child(even)::before { left: auto; right: -7px; border-bottom-right-radius: 0; border-bottom-left-radius: 16px; }
+  .feature:nth-child(even)::after  { left: auto; right: -13px; border-bottom-right-radius: 0; border-bottom-left-radius: 12px; }
+
+  .f-icon {
+    width: 52px; height: 52px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, rgba(0,178,255,.16), rgba(0,106,255,.16));
+    color: var(--grad-b);
+    margin-bottom: 1rem;
+  }
+  .feature h3 { font-size: 1.22rem; font-weight: 800; margin-bottom: .45rem; }
+  .feature p { color: var(--muted); font-size: .99rem; }
+
+  .also-pills {
+    display: flex; flex-wrap: wrap; gap: .6rem; justify-content: center;
+    margin-top: 2.4rem;
+  }
+  .also-pills span {
+    background: #fff; box-shadow: var(--shadow-soft);
+    border-radius: 999px; padding: .5rem 1.1rem;
+    font-weight: 700; font-size: .92rem; color: var(--ink);
+  }
+
+  /* ---------- FAQ: expandable question bubbles ---------- */
+  .faq-list {
+    max-width: 720px; margin: 2.4rem auto 0;
+    display: flex; flex-direction: column; gap: .8rem;
+    text-align: left;
+  }
+  .faq-item {
+    background: var(--bubble-grey);
+    border-radius: var(--radius-bubble);
+    transition: background .25s ease;
+  }
+  .faq-item[open] { background: #e8f2ff; }
+  .faq-item summary {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 1.05rem 1.35rem;
+    font-family: var(--font-display); font-weight: 700; font-size: 1.06rem;
+    border-radius: var(--radius-bubble);
+  }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-q-mark {
+    flex-shrink: 0;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--grad-a), var(--grad-b));
+    color: #fff;
+    transition: transform .25s ease;
+  }
+  .faq-item[open] .faq-q-mark { transform: rotate(45deg); }
+  .faq-a {
+    padding: 0 1.35rem 1.15rem;
+    color: var(--muted); font-size: 1rem;
+    animation: faqIn .3s ease both;
+  }
+  .faq-a a { color: var(--grad-b); font-weight: 700; }
+  .faq-a code {
+    background: rgba(0, 106, 255, .09);
+    padding: .12em .45em; border-radius: 6px;
+    font-size: .88em; word-break: break-all;
+  }
+  .faq-sub {
+    margin-top: 3rem;
+    font-family: var(--font-display); font-weight: 800; font-size: 1.35rem;
+  }
+  .faq-sub small { display: block; margin-top: .3rem; font-family: var(--font-body); font-weight: 600; font-size: .95rem; color: var(--muted); }
+  @keyframes faqIn { from { opacity: 0; transform: translateY(-4px); } }
+
+  /* ---------- Download: the closing bubble ---------- */
+  .download-wrap { padding: clamp(3rem, 7vw, 5.5rem) 0; }
+  .download {
+    position: relative;
+    margin: 0 clamp(8px, 1.5vw, 16px);
+    border-radius: clamp(26px, 4vw, 48px);
+    background: linear-gradient(170deg, var(--grad-a) 0%, var(--blue) 8%, var(--grad-b) 24%, var(--grad-deep) 100%);
+    color: #fff; text-align: center;
+    padding: clamp(3rem, 6vw, 5rem) clamp(1.1rem, 4vw, 2.5rem);
+    overflow: hidden;
+  }
+  .download .orb { position: absolute; border-radius: 50%; background: rgba(255,255,255,.1); pointer-events: none; }
+  .download .orb.d1 { width: 190px; height: 190px; top: -60px; right: -40px; animation: floaty 9s ease-in-out infinite alternate; }
+  .download .orb.d2 { width: 120px; height: 120px; bottom: -30px; left: 6%; animation: floaty 7.5s ease-in-out infinite alternate-reverse; }
+  .download h2 { font-size: clamp(1.9rem, 4.2vw, 2.8rem); font-weight: 800; }
+  .download .sec-sub { color: #fff; margin-inline: auto; }
+  .version-pill {
+    display: inline-block; margin-top: 1.1rem;
+    background: rgba(255,255,255,.94); color: var(--grad-b);
+    padding: .38rem 1.05rem; border-radius: 999px;
+    font-weight: 800; font-size: .88rem;
+    font-family: var(--font-display);
+  }
+  .dl-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(252px, 1fr));
+    gap: 1rem; max-width: 940px; margin: 2.4rem auto 0;
+    align-items: start;
+  }
+  .dl-col { display: flex; flex-direction: column; gap: 10px; }
+  .dl-alts { font-size: .82rem; font-weight: 600; color: rgba(255, 255, 255, .85); text-align: center; }
+  .dl-alts a {
+    color: #fff; font-weight: 700;
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  .dl-alts a:hover { text-decoration-thickness: 2px; }
+  .dl {
+    --react: "👍";
+    position: relative;
+    display: flex; align-items: center; gap: .9rem;
+    background: #fff; color: var(--ink);
+    text-decoration: none; text-align: left;
+    padding: 1rem 1.25rem;
+    border-radius: 999px;
+    box-shadow: 0 14px 34px -12px rgba(0, 30, 90, .4);
+    transition: transform .22s cubic-bezier(.2,.7,.3,1.4), box-shadow .22s ease, opacity .3s ease;
+  }
+  .dl:hover, .dl:focus-visible { transform: translateY(-4px) scale(1.02); box-shadow: 0 22px 48px -14px rgba(0, 30, 90, .5); }
+  .dl::after {
+    content: var(--react);
+    position: absolute; top: -4px; right: 14px;
+    font-size: 1.5rem; opacity: 0;
+    pointer-events: none;
+  }
+  .dl:hover::after, .dl:focus-visible::after { animation: reactPop .55s cubic-bezier(.2,.9,.3,1.4) both; }
+  @keyframes reactPop {
+    0% { opacity: 0; transform: translateY(8px) scale(.4); }
+    60% { opacity: 1; transform: translateY(-16px) scale(1.15); }
+    100% { opacity: 1; transform: translateY(-14px) scale(1); }
+  }
+  .dl-ico {
+    width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+    background: #f2f6fb;
+    display: grid; place-items: center;
+  }
+  .dl b { display: block; font-family: var(--font-display); font-size: 1.06rem; font-weight: 800; }
+  .dl small { color: var(--muted); font-weight: 600; font-size: .82rem; }
+  .dl .rec-chip {
+    display: none;
+    position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+    background: #fff; color: var(--grad-b);
+    border: 2px solid var(--grad-b);
+    font-size: .74rem; font-weight: 800; font-family: var(--font-display);
+    padding: .18rem .75rem; border-radius: 999px; white-space: nowrap;
+  }
+  .dl.rec { box-shadow: 0 0 0 6px rgba(255,255,255,.3), 0 22px 48px -14px rgba(0, 30, 90, .55); }
+  .dl.rec:hover, .dl.rec:focus-visible { box-shadow: 0 0 0 6px rgba(255,255,255,.4), 0 26px 54px -14px rgba(0, 30, 90, .6); }
+  .dl.rec .rec-chip { display: block; }
+  .dl.ghosted { transform: scale(.96); box-shadow: 0 8px 20px -12px rgba(0, 30, 90, .4); }
+  .dl.ghosted:hover, .dl.ghosted:focus-visible { transform: translateY(-4px) scale(1); box-shadow: 0 22px 48px -14px rgba(0, 30, 90, .5); }
+
+  .other-versions { margin-top: 1.6rem; font-weight: 600; color: #fff; }
+  .other-versions a { color: #fff; font-weight: 800; text-underline-offset: 3px; }
+  .dl-trust { margin-top: 1.2rem; font-size: .88rem; font-weight: 700; color: #fff; }
+
+  /* ---------- Footer ---------- */
+  .site-foot { background: #f6f9fd; padding: 3rem 0 2.6rem; }
+  .foot-top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1.2rem; flex-wrap: wrap;
+  }
+  .foot-brand { display: flex; align-items: center; gap: .6rem; font-family: var(--font-display); font-weight: 800; font-size: 1.1rem; }
+  .foot-brand img { width: 30px; height: 30px; border-radius: 8px; }
+  .foot-links { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+  .foot-links a {
+    display: inline-flex; align-items: center; gap: .4rem;
+    color: var(--ink); font-weight: 700; text-decoration: none; font-size: .95rem;
+  }
+  .foot-links a:hover { color: var(--grad-b); }
+  .foot-note { margin-top: 1.6rem; color: var(--muted); font-size: .88rem; max-width: 640px; }
+  .foot-heart { margin-top: .9rem; color: var(--muted); font-size: .88rem; font-weight: 700; }
+
+  /* ---------- Reduced motion ---------- */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-delay: 0s !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+      transition-delay: 0s !important;
+    }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-head" id="siteHead">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Carrier — back to top">
+      <img src="./app-icon.png" alt="" width="34" height="34">
+      Carrier
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a class="nav-features" href="#features">Features</a>
+      <a class="nav-features" href="#faq">FAQ</a>
+      <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero" id="top" aria-labelledby="hero-title">
+    <div class="hero-deco" aria-hidden="true">
+      <span class="orb orb-1"></span>
+      <span class="orb orb-2"></span>
+      <span class="orb orb-3"></span>
+      <span class="orb orb-4"></span>
+      <span class="mini-bubble b1"></span>
+      <span class="mini-bubble b2"></span>
+      <svg class="flight" viewBox="0 0 1200 600" preserveAspectRatio="none" fill="none">
+        <path d="M-40 470 C 240 380, 320 180, 620 200 S 1080 330, 1260 160" stroke="#fff" stroke-width="2.5"/>
+      </svg>
+    </div>
+
+    <div class="hero-inner">
+      <img class="hero-icon h-anim" style="--d:.05s" src="./app-icon.png" alt="Carrier app icon: a white paper plane on a blue and purple tile" width="104" height="104">
+      <p class="hero-chip h-anim" style="--d:.15s">Free &amp; open source&ensp;·&ensp;v1.3.1</p>
+      <h1 id="hero-title" class="h-anim" style="--d:.25s">Messenger, back on your&nbsp;desktop.</h1>
+      <p class="hero-sub h-anim" style="--d:.35s">
+        Meta retired the Messenger desktop app. Carrier brings it home — your chats in one
+        clean, quiet little window, with none of the Facebook extras. Sign in with your
+        usual account and you're all set.
+      </p>
+      <div class="hero-ctas h-anim" style="--d:.45s">
+        <a class="btn-bubble btn-primary" id="heroCta" href="#download">Download free
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 4v12m0 0l-5-5m5 5l5-5"/><path d="M5 20h14"/>
+          </svg>
+        </a>
+        <a class="btn-bubble btn-ghost" href="#features">See what it does</a>
+      </div>
+      <p class="hero-fineprint h-anim" style="--d:.55s">macOS · Windows · Linux — the whole app is about 3&nbsp;MB</p>
+    </div>
+
+    <!-- CSS-drawn app window, replicated from the real app -->
+    <div class="hero-app h-anim" style="--d:.6s">
+      <div class="win-theme-toggle" role="group" aria-label="Preview the app window in light or dark theme">
+        <button type="button" class="wt-btn on" data-theme="light" aria-pressed="true">☀️ Light</button>
+        <button type="button" class="wt-btn" data-theme="dark" aria-pressed="false">🌙 Dark</button>
+      </div>
+      <div class="win-stage" id="winStage" data-win-theme="light" role="img"
+           aria-label="Preview of the Carrier app: a clean window showing only Messenger chats, with a desktop notification popping in. The buttons above it switch the preview between Carrier's forced light and dark themes.">
+        <div class="win" aria-hidden="true">
+          <div class="win-bar">
+            <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+            <span class="win-title">Carrier</span>
+          </div>
+          <div class="win-body">
+            <aside class="side">
+              <div class="side-head">
+                <span class="side-title">Chats</span>
+                <span class="iconbtn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.5 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"></path></svg></span>
+                <span class="iconbtn"><svg viewBox="0 0 20 20" width="20" height="20" fill="currentColor"><path d="M2.25 10a1.75 1.75 0 1 1 3.5 0 1.75 1.75 0 0 1-3.5 0zM10 8.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zm6 0a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5z"></path></svg></span>
+                <span class="iconbtn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M13.884.824a1.25 1.25 0 0 0-1.768 0l-1.628 1.628a.859.859 0 0 0-.036.037l-5.16 5.158A1 1 0 0 0 5 8.354v1.897c0 .414.336.75.75.75h1.896a1 1 0 0 0 .708-.293l6.823-6.823a1.25 1.25 0 0 0 0-1.768L13.884.824z"></path><path d="M8 1h-.244c-1.382 0-2.495 0-3.37.118-.909.122-1.672.383-2.279.99-.606.606-.867 1.37-.99 2.278C1 5.26 1 6.374 1 7.756v.488c0 1.382 0 2.495.118 3.37.122.909.383 1.672.99 2.279.606.606 1.37.867 2.278.99C5.26 15 6.374 15 7.756 15h.488c1.382 0 2.495 0 3.37-.118.909-.122 1.672-.383 2.279-.99.606-.606.867-1.37.99-2.278C15 10.74 15 9.626 15 8.244V8a.75.75 0 0 0-1.5 0v.19c0 1.45-.002 2.46-.104 3.225-.1.742-.283 1.136-.564 1.417-.281.281-.675.464-1.418.564-.763.102-1.775.104-3.225.104h-.378c-1.45 0-2.462-.002-3.226-.104-.742-.1-1.136-.283-1.417-.564-.281-.281-.464-.675-.564-1.418C2.502 10.652 2.5 9.64 2.5 8.19v-.378c0-1.45.002-2.462.104-3.226.1-.742.283-1.136.564-1.417.281-.281.675-.464 1.417-.564.764-.102 1.776-.104 3.226-.104H8A.75.75 0 1 0 8 1z"></path></svg></span>
+              </div>
+              <div class="side-search">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M7.5 1a6.5 6.5 0 1 0 3.835 11.749l1.958 1.958a1 1 0 0 0 1.414-1.414l-1.958-1.958A6.5 6.5 0 0 0 7.5 1zM3 7.5a4.5 4.5 0 1 1 9 0 4.5 4.5 0 0 1-9 0z"></path></svg>
+                Search Messenger
+              </div>
+              <div class="side-tabs">
+                <span class="tab on">All</span><span class="tab">Unread</span><span class="tab">Groups</span><span class="tab">Communities</span>
+              </div>
+              <div class="rows">
+                <div class="chat-row active">
+                  <span class="avatar av-mom">M</span>
+                  <span class="txt"><span class="name">Mom</span><span class="prev">You: Brownies incoming 🍫 <span class="t">· now</span></span></span>
+                </div>
+                <div class="chat-row unread">
+                  <span class="avatar av-alex">A</span>
+                  <span class="txt"><span class="name">Alex</span><span class="prev" id="alexPrev">🎉🎉🎉 <span class="t">· now</span></span></span>
+                  <span class="blue-dot"></span>
+                </div>
+                <div class="chat-row">
+                  <span class="avatar-group"><span class="avatar av-sam ag-b">S</span><span class="avatar av-crew ag-f">W</span></span>
+                  <span class="txt"><span class="name">Weekend Crew 🏕️</span><span class="prev">Sam: who's bringing snacks? <span class="t">· 1h</span></span></span>
+                </div>
+                <div class="chat-row">
+                  <span class="avatar av-nana">N</span>
+                  <span class="txt"><span class="name">Nana</span><span class="prev">Look at these tomatoes! 🍅 <span class="t">· 3h</span></span></span>
+                </div>
+                <div class="chat-row">
+                  <span class="avatar av-sam">S</span>
+                  <span class="txt"><span class="name">Sam</span><span class="prev">haha exactly <span class="t">· 1d</span></span></span>
+                  <span class="avatar av-sam seen">S</span>
+                </div>
+                <div class="chat-row">
+                  <span class="avatar-group"><span class="avatar av-nana ag-b">N</span><span class="avatar av-book ag-f">B</span></span>
+                  <span class="txt"><span class="name">Book Club 📚</span><span class="prev">Meeting moved to Tuesday <span class="t">· 2d</span></span></span>
+                </div>
+                <div class="chat-row">
+                  <span class="avatar av-dad">D</span>
+                  <span class="txt"><span class="name">Dad</span><span class="prev">You: see you sunday! <span class="t">· 3d</span></span></span>
+                </div>
+              </div>
+            </aside>
+            <div class="chatpane">
+              <div class="chat-head">
+                <span class="avatar av-mom">M</span>
+                <span class="who"><b>Mom</b></span>
+                <span class="head-icons">
+                  <span><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M4.776 1.111a1.728 1.728 0 0 0-2.56-.127l-.472.472a4.516 4.516 0 0 0-.739 5.415 21.46 21.46 0 0 0 8.123 8.123 4.516 4.516 0 0 0 5.415-.738L15 13.8a1.75 1.75 0 0 0-.13-2.591l-2.131-1.745a1.75 1.75 0 0 0-2.143-.056L9.22 10.416a.052.052 0 0 1-.06.002 12.077 12.077 0 0 1-3.578-3.58.052.052 0 0 1 .002-.058l1.008-1.375a1.75 1.75 0 0 0-.056-2.143l-1.76-2.15z"></path></svg></span>
+                  <span><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M6.304 2h-.108c-1.133 0-2.058 0-2.79.098-.763.103-1.425.325-1.954.854C.923 3.48.7 4.142.598 4.907.5 5.637.5 6.563.5 7.697v.607c0 1.133 0 2.058.098 2.79.103.763.325 1.425.854 1.954.529.529 1.19.751 1.955.854.73.098 1.656.098 2.79.098h.107c1.133 0 2.058 0 2.79-.098.763-.103 1.425-.325 1.954-.854.529-.529.751-1.19.854-1.955.038-.286.062-.602.076-.949l1.93 1.418a1 1 0 0 0 1.592-.806V5.228a1 1 0 0 0-1.57-.822l-1.956 1.357a9.984 9.984 0 0 0-.072-.856c-.103-.764-.325-1.426-.854-1.955-.529-.529-1.19-.751-1.955-.854C8.363 2 7.437 2 6.303 2z"></path></svg></span>
+                  <span><svg viewBox="0 0 36 36" width="24" height="24"><g transform="translate(18,18)scale(1.2)translate(-18,-18)"><path d="M18,10 C16.6195,10 15.5,11.119 15.5,12.5 C15.5,13.881 16.6195,15 18,15 C19.381,15 20.5,13.881 20.5,12.5 C20.5,11.119 19.381,10 18,10 Z M16,25 C16,25.552 16.448,26 17,26 L19,26 C19.552,26 20,25.552 20,25 L20,18 C20,17.448 19.552,17 19,17 L17,17 C16.448,17 16,17.448 16,18 L16,25 Z M18,30 C11.3725,30 6,24.6275 6,18 C6,11.3725 11.3725,6 18,6 C24.6275,6 30,11.3725 30,18 C30,24.6275 24.6275,30 18,30 Z" fill="currentColor" stroke="currentColor"></path></g></svg></span>
+                </span>
+              </div>
+              <div class="msgs">
+                <div class="day">Today 9:41</div>
+                <div class="mgroup in">
+                  <span class="m-col"><span class="avatar av-mom m-avatar">M</span></span>
+                  <span class="stack"><span class="msg in">Dinner on Sunday? ❤️</span></span>
+                </div>
+                <div class="mgroup out">
+                  <span class="stack"><span class="msg out g1">Wouldn't miss it! What can I bring?</span></span>
+                </div>
+                <div class="mgroup in">
+                  <span class="m-col"><span class="avatar av-mom m-avatar">M</span></span>
+                  <span class="stack">
+                    <span class="msg in">Just yourself 😊</span>
+                    <span class="msg in">…and maybe that dessert you made last time</span>
+                  </span>
+                </div>
+                <div class="mgroup out">
+                  <span class="stack">
+                    <span class="msg out g2">Deal!</span>
+                    <span class="msg out g3 has-react">Brownies incoming 🍫<span class="react-chip">❤️</span></span>
+                  </span>
+                </div>
+                <div class="mgroup in">
+                  <span class="m-col"><span class="avatar av-mom m-avatar">M</span></span>
+                  <span class="stack"><span class="msg in typing"><i style="--td:0s"></i><i style="--td:.15s"></i><i style="--td:.3s"></i></span></span>
+                </div>
+              </div>
+              <div class="composer">
+                <span class="c-btn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15zM8.001 4a.75.75 0 0 1 .75.75v2.5h2.499a.75.75 0 0 1 0 1.5H8.751v2.5a.75.75 0 0 1-1.5 0v-2.5H4.75a.75.75 0 1 1 0-1.5h2.501v-2.5a.75.75 0 0 1 .75-.75z"></path></svg></span>
+                <span class="c-btn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M7 4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0z"></path><path d="M9.302.5H6.698C5.8.5 5.05.5 4.456.58c-.628.084-1.195.27-1.65.725-.456.456-.642 1.023-.726 1.65C2 3.55 2 4.3 2 5.199v5.604c0 .899 0 1.648.08 2.242.084.628.27 1.195.725 1.65a2.3 2.3 0 0 0 .81.522c.237.092.489.152.752.192.571.086 1.281.091 2.122.092h3.174c.795-.002 1.472-.011 2.023-.1.573-.094 1.088-.285 1.509-.705.455-.456.64-1.023.725-1.65.08-.595.08-1.344.08-2.243V5.198c0-.898 0-1.648-.08-2.242-.084-.628-.27-1.195-.726-1.65C12.74.85 12.172.663 11.544.58 10.95.5 10.2.5 9.302.5zm2.602 6.427a1.75 1.75 0 0 0-2.475 0L7 9.356l-.43-.43a1.75 1.75 0 0 0-2.474 0l-.596.597V5.25c0-.964.002-1.612.067-2.095.062-.461.169-.659.3-.789.13-.13.327-.237.788-.3C5.138 2.003 5.786 2 6.75 2h2.5c.964 0 1.612.002 2.095.067.461.062.659.169.789.3.13.13.237.327.3.788.064.483.066 1.131.066 2.095v2.272l-.596-.595z"></path></svg></span>
+                <span class="c-btn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M8.305 1h-.61c-1.368 0-2.47 0-3.337.116-.9.121-1.658.38-2.26.982-.602.602-.86 1.36-.982 2.26C1 5.225 1 6.327 1 7.695v.61c0 1.367 0 2.47.116 3.336.121.9.38 1.658.982 2.26.602.602 1.36.861 2.26.982.867.117 1.97.117 3.337.117.268 0 .537.002.805-.004v-1.034c0-.764 0-1.423.028-1.99a5.007 5.007 0 0 1-3.761-1.149.75.75 0 0 1 .966-1.147c.61.513 1.4.823 2.267.823.212 0 .419-.018.62-.053a.754.754 0 0 1 .137-.012c.127-.404.32-.755.621-1.056.475-.474 1.076-.684 1.812-.783.714-.096 1.626-.096 2.772-.095h1.034c.006-.269.004-.537.004-.805 0-1.368 0-2.47-.117-3.337-.12-.9-.38-1.658-.982-2.26-.601-.602-1.36-.86-2.26-.982C10.774.999 9.673.999 8.306 1zm3.693 4.747a1.249 1.249 0 1 1-2.498 0 1.249 1.249 0 0 1 2.498 0zM5.248 7a1.249 1.249 0 1 1 0-2.498 1.249 1.249 0 0 1 0 2.498z"></path><path d="M14.87 9.5H14c-1.193 0-2.037 0-2.677.087-.625.084-.98.24-1.238.498-.257.258-.414.613-.498 1.238-.086.64-.087 1.484-.087 2.676v.87c.076-.022.15-.048.224-.079.508-.21.899-.602 1.392-1.096l2.578-2.578c.494-.493.886-.884 1.096-1.393.03-.073.057-.148.08-.223z"></path></svg></span>
+                <span class="c-btn"><svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M7.695 1h.61c1.367 0 2.47 0 3.337.117.9.12 1.658.38 2.26.981.602.602.86 1.36.982 2.26.116.867.116 1.97.116 3.337v.61c0 1.367 0 2.47-.117 3.337-.12.9-.38 1.658-.981 2.26-.602.602-1.36.86-2.26.982-.867.116-1.97.116-3.337.116h-.61c-1.367 0-2.47 0-3.337-.117-.9-.12-1.658-.38-2.26-.981-.602-.602-.86-1.36-.981-2.26C1 10.775 1 9.672 1 8.305v-.61c0-1.367 0-2.47.117-3.337.12-.9.38-1.658.981-2.26.602-.602 1.36-.86 2.26-.981C5.225 1 6.328 1 7.695 1zM4.812 5.008A2.062 2.062 0 0 0 2.75 7.07v1.942a1.995 1.995 0 0 0 3.99 0v-.727a.75.75 0 0 0-1.5 0v.727a.495.495 0 0 1-.99 0V7.07c0-.31.252-.562.562-.562H5a.75.75 0 1 0 0-1.5h-.188zm3.438 0a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75zm2.5 0a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-1.5h.5a.75.75 0 0 0 0-1.5h-.5v-.75h1a.75.75 0 0 0 0-1.5h-1.75z"></path></svg></span>
+                <span class="comp-input">
+                  Aa
+                  <span class="c-btn"><svg viewBox="0 0 38 38" width="20" height="20"><g fill="none" fill-rule="evenodd"><g transform="translate(-893.000000, -701.000000)"><g transform="translate(709.000000, 314.000000)"><g><path d="M210.5,405 C209.121,405 208,403.879 208,402.5 C208,401.121 209.121,400 210.5,400 C211.879,400 213,401.121 213,402.5 C213,403.879 211.879,405 210.5,405 M212.572,411.549 C210.428,413.742 206.938,415 203,415 C199.062,415 195.572,413.742 193.428,411.549 C192.849,410.956 192.859,410.007 193.451,409.428 C194.045,408.85 194.993,408.859 195.572,409.451 C197.133,411.047 199.909,412 203,412 C206.091,412 208.867,411.047 210.428,409.451 C211.007,408.859 211.956,408.85 212.549,409.428 C213.141,410.007 213.151,410.956 212.572,411.549 M195.5,400 C196.879,400 198,401.121 198,402.5 C198,403.879 196.879,405 195.5,405 C194.121,405 193,403.879 193,402.5 C193,401.121 194.121,400 195.5,400 M203,387 C192.523,387 184,395.523 184,406 C184,416.477 192.523,425 203,425 C213.477,425 222,416.477 222,406 C222,395.523 213.477,387 203,387" fill="currentColor"></path></g></g></g></g></svg></span>
+                </span>
+                <span class="c-btn comp-like"><svg viewBox="0 0 16 16" width="22" height="22" fill="currentColor"><path d="M1.5 7.3h1.4c.6 0 1 .45 1 1v5.2c0 .55-.44 1-1 1H1.5c-.55 0-1-.45-1-1V8.3c0-.55.45-1 1-1z"/><path d="M5 8.55c0-.5.14-1 .4-1.43l2.06-3.4c.23-.37.63-.6 1.06-.6.98 0 1.78.8 1.78 1.79 0 .68-.16 1.5-.36 2.19h2.72c1.16 0 2.02 1.08 1.76 2.21l-.85 3.7a2.2 2.2 0 0 1-2.14 1.71H6.4c-.77 0-1.4-.63-1.4-1.4v-4.77z"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- notification toasts (fed by the Alex simulation below) -->
+        <div class="toast-stack" aria-hidden="true">
+          <div class="toast toast--initial">
+            <img class="t-app" src="./app-icon.png" alt="" width="38" height="38">
+            <span class="t-body">
+              <span class="t-title"><b>Alex</b><span class="t-now">now</span></span>
+              <span class="t-msg">🎉🎉🎉</span>
+            </span>
+            <span class="avatar av-alex t-avatar">A</span>
+          </div>
+        </div>
+        <template id="toastTpl">
+          <div class="toast">
+            <img class="t-app" src="./app-icon.png" alt="" width="38" height="38">
+            <span class="t-body">
+              <span class="t-title"><b>Alex</b><span class="t-now">now</span></span>
+              <span class="t-msg"></span>
+            </span>
+            <span class="avatar av-alex t-avatar">A</span>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STORY (told as a chat) ============ -->
+  <section class="story center" aria-labelledby="story-title">
+    <div class="wrap">
+      <p class="eyebrow reveal">A quick backstory</p>
+      <h2 id="story-title" class="sec-title reveal" style="--d:.08s">Why Carrier exists</h2>
+      <div class="story-thread">
+        <p class="sb in reveal" style="--d:.05s">Wait… where did the Messenger desktop app go? 😢</p>
+        <p class="sb out reveal" style="--d:.15s">Meta discontinued it a while back.</p>
+        <p class="sb in reveal" style="--d:.25s">Nooo. I loved having my chats in their own window.</p>
+        <p class="sb out reveal" style="--d:.35s">Good news — Carrier brings it back ✈️</p>
+        <p class="sb out reveal" style="--d:.45s">Same Messenger, same account. Just cozier. And it's free.</p>
+        <p class="delivered reveal" style="--d:.55s">Delivered ✓</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES ============ -->
+  <section class="features" id="features" aria-labelledby="features-title">
+    <div class="wrap center">
+      <p class="eyebrow reveal">What's inside</p>
+      <h2 id="features-title" class="sec-title reveal" style="--d:.08s">Everything you missed.<br>Nothing you didn't.</h2>
+
+      <div class="feat-grid">
+        <article class="feature reveal" style="--d:.02s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3.5c-4.8 0-8.5 3.3-8.5 7.5 0 2.4 1.2 4.5 3.1 5.9l-.5 3.6 3.5-1.9c.8.2 1.6.3 2.4.3 4.8 0 8.5-3.3 8.5-7.6S16.8 3.5 12 3.5z"/>
+            </svg>
+          </span>
+          <h3>Just your people</h3>
+          <p>Open Carrier and it's only your conversations. No Feed, no Reels, no Marketplace — and no browser tabs whispering your name.</p>
+        </article>
+
+        <article class="feature reveal" style="--d:.1s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 4.2V5.6"/>
+              <path d="M18.2 15.8H5.8c1.3-1.4 1.7-3.2 1.7-5.3a4.5 4.5 0 0 1 9 0c0 2.1.4 3.9 1.7 5.3z"/>
+              <path d="M10.2 18.7a1.9 1.9 0 0 0 3.6 0"/>
+            </svg>
+          </span>
+          <h3>Notifications that behave</h3>
+          <p>Real desktop notifications with the sender's photo. Set quiet hours for the evening, or hide message previews from curious eyes.</p>
+        </article>
+
+        <article class="feature reveal" style="--d:.18s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="6" width="13.5" height="13.5" rx="3.6"/>
+              <circle cx="18.6" cy="6.4" r="3.2" fill="#ff4d67" stroke="none"/>
+            </svg>
+          </span>
+          <h3>That little red badge</h3>
+          <p>See unread chats at a glance on your Dock or taskbar — or let Carrier wait patiently in the menu bar or tray until someone writes.</p>
+        </article>
+
+        <article class="feature reveal" style="--d:.02s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20.5 3.6 3.8 10.9l6.5 2.7 2.7 6.5 7.5-16.5z"/>
+              <path d="M10.3 13.6l6.2-6"/>
+            </svg>
+          </span>
+          <h3>Light as a paper plane</h3>
+          <p>The whole app is about 3 MB. It opens in a blink and stays lighter than keeping a browser tab around all day.</p>
+        </article>
+
+        <article class="feature reveal" style="--d:.1s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7.2h16"/><circle cx="14.5" cy="7.2" r="2.1"/>
+              <path d="M4 12h16"/><circle cx="8.5" cy="12" r="2.1"/>
+              <path d="M4 16.8h16"/><circle cx="15.5" cy="16.8" r="2.1"/>
+            </svg>
+          </span>
+          <h3>Make it yours</h3>
+          <p>Light or dark, your favorite zoom level, your system's own emoji — plus a screen-share mode that hides names and photos.</p>
+        </article>
+
+        <article class="feature reveal" style="--d:.18s">
+          <span class="f-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3.4 19 6v5.2c0 4.3-3 7.7-7 9.3-4-1.6-7-5-7-9.3V6l7-2.6z"/>
+              <path d="M9.2 11.9l2 2 3.7-4"/>
+            </svg>
+          </span>
+          <h3>Private by default</h3>
+          <p>Carrier adds zero tracking of its own — and it even blocks Facebook's telemetry right out of the box. Your chats are your business.</p>
+        </article>
+      </div>
+
+      <div class="also-pills reveal" style="--d:.1s">
+        <span>⌨️ Fly between chats with shortcuts</span>
+        <span>🔄 Keeps itself up to date</span>
+        <span>😊 Your system's emoji</span>
+        <span>🆓 Free forever · MIT</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FAQ ============ -->
+  <section class="faq center" id="faq" aria-labelledby="faq-title">
+    <div class="wrap">
+      <p class="eyebrow reveal">Good questions</p>
+      <h2 id="faq-title" class="sec-title reveal" style="--d:.08s">Wondering about something?</h2>
+
+      <div class="faq-list">
+        <details class="faq-item reveal" style="--d:.04s">
+          <summary>Is Carrier really free?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Completely. No price tag, no subscription, no ads, no "premium" version waiting around the corner. Carrier is open source under the MIT license — made because we missed having Messenger on the desktop.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.08s">
+          <summary>Do I need a new account?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">No — you sign in with your usual account, and all your chats are just there. Anything you send in Carrier shows up on your phone too, and the other way around.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.12s">
+          <summary>Is this an official Meta app?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">No. Meta discontinued their desktop app, so Carrier is an independent, open-source replacement. It shows you the real Messenger — the same one from your browser — in a clean window of its own, with the Facebook clutter tidied away.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.16s">
+          <summary>Is it safe to use?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Carrier adds zero tracking of its own — it even blocks Facebook's telemetry by default. The Mac version is signed and notarized by Apple, updates are verified before they install, and the <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">complete source code</a> is public for anyone to inspect. Your messages still travel through Messenger itself, so Meta's usual terms apply there.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.2s">
+          <summary>Do voice and video calls work?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Yes — it's the full Messenger, so calls, group chats, reactions, photos, and everything else work like you'd expect.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.24s">
+          <summary>How is the whole app only 3 MB?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Most chat apps ship an entire hidden web browser inside. Carrier uses the one your computer already has — so it downloads in seconds, starts in a blink, and goes easy on your battery.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.28s">
+          <summary>What if something stops working?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Facebook redecorates now and then, and once in a while that nudges something out of place. Carrier keeps itself up to date and fixes usually arrive quickly — and you can always <a href="https://github.com/kristofferR/Carrier/issues" target="_blank" rel="noopener">tell us what broke</a>.</p>
+        </details>
+      </div>
+
+      <h3 class="faq-sub reveal">For the curious 🤓<small>The slightly more technical answers</small></h3>
+
+      <div class="faq-list">
+        <details class="faq-item reveal" style="--d:.04s">
+          <summary>How does it work under the hood?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Carrier is a small Rust shell built on <a href="https://tauri.app" target="_blank" rel="noopener">Tauri&nbsp;2</a> that opens the official Messenger web app in your operating system's own WebView. At page load it injects a focused stylesheet and typed scripts that hide Facebook's surrounding chrome and add the desktop features — notifications, badges, shortcuts, themes. No bundled browser engine, no Electron.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.08s">
+          <summary>What can the injected code see?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Messenger content is processed only on your machine, only where a feature needs it — turning a new message into a native notification, counting unread chats for the badge, blurring names for screen sharing. Carrier has no servers and phones home to no one; the only network calls it adds are update checks against GitHub Releases. Off-site links open in your browser with Facebook's tracking redirect stripped first.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.12s">
+          <summary>How do automatic updates work?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Carrier checks GitHub Releases and cryptographically verifies every update's signature before installing it. On macOS the downloads are also Developer&nbsp;ID signed and notarized by Apple, so Gatekeeper vouches for what you run.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.16s">
+          <summary>Why is the Linux AppImage bigger than the installers?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">The <code>.deb</code> and <code>.rpm</code> packages are about 4&nbsp;MB because they use your distro's WebKitGTK. The AppImage has to carry its own copy to run anywhere, which is why it weighs around 90&nbsp;MB. If your package manager is an option, prefer it.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.2s">
+          <summary>Is there a Homebrew cask?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Yes — <code>brew install --cask kristofferR/tap/carrier</code>, and the same cask token works on macOS and Linux. Already dragged Carrier.app into /Applications? Adopt it with <code>brew install --cask --adopt kristofferR/tap/carrier</code>.</p>
+        </details>
+
+        <details class="faq-item reveal" style="--d:.24s">
+          <summary>Can I build it myself?
+            <span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+          </summary>
+          <p class="faq-a">Of course. With <a href="https://rustup.rs" target="_blank" rel="noopener">Rust</a>, <a href="https://bun.sh" target="_blank" rel="noopener">Bun</a>, and the Tauri prerequisites installed: clone the <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">repo</a>, then <code>bun install</code> and <code>bun run build</code>. The injected scripts are typed TypeScript under <code>inject/src/</code>.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DOWNLOAD ============ -->
+  <div class="download-wrap">
+    <section class="download" id="download" aria-labelledby="dl-title">
+      <span class="orb d1" aria-hidden="true"></span>
+      <span class="orb d2" aria-hidden="true"></span>
+      <h2 id="dl-title" class="reveal">Get Carrier</h2>
+      <p class="sec-sub reveal" style="--d:.08s">Free and open source. Downloads in seconds — it's only about 3&nbsp;MB.</p>
+      <p class="version-pill reveal" style="--d:.14s">Latest version&ensp;v1.3.1</p>
+
+      <div class="dl-grid">
+        <div class="dl-col reveal" style="--d:.05s">
+          <a class="dl" style="--react:'👍'" id="dl-mac"
+             href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_mac_arm.dmg">
+            <span class="rec-chip">✨ For your computer</span>
+            <span class="dl-ico" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="#1d2129">
+                <path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45z"/>
+              </svg>
+            </span>
+            <span><b>Download for Mac</b><small>Apple Silicon · .dmg</small></span>
+          </a>
+          <p class="dl-alts">Older Intel Mac?
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_mac_intel.dmg">Intel&nbsp;.dmg</a>
+          </p>
+        </div>
+
+        <div class="dl-col reveal" style="--d:.12s">
+          <a class="dl" style="--react:'❤️'" id="dl-win"
+             href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_win_x64_setup.exe">
+            <span class="rec-chip">✨ For your computer</span>
+            <span class="dl-ico" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="#0084FF">
+                <path d="M0 3.449 9.75 2.1v9.451H0zM10.949 1.949 24 0v11.4H10.949zM0 12.6h9.75v9.451L0 20.699zM10.949 12.6H24V24l-13.051-1.801z"/>
+              </svg>
+            </span>
+            <span><b>Download for Windows</b><small>Windows 10 &amp; 11 · .exe</small></span>
+          </a>
+          <p class="dl-alts">Also:
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_win_x64_portable.zip">portable&nbsp;.zip</a> ·
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_win_arm_setup.exe">ARM&nbsp;.exe</a> ·
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_win_arm_portable.zip">ARM&nbsp;.zip</a>
+          </p>
+        </div>
+
+        <div class="dl-col reveal" style="--d:.19s">
+          <a class="dl" style="--react:'🎉'" id="dl-lin"
+             href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_lin_x64.AppImage">
+            <span class="rec-chip">✨ For your computer</span>
+            <span class="dl-ico" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24">
+                <ellipse cx="12" cy="15" rx="6.6" ry="7.2" fill="#1d2129"/>
+                <circle cx="12" cy="7" r="4.4" fill="#1d2129"/>
+                <ellipse cx="12" cy="16.6" rx="3.7" ry="4.6" fill="#fff"/>
+                <circle cx="10.4" cy="6.3" r=".75" fill="#fff"/>
+                <circle cx="13.6" cy="6.3" r=".75" fill="#fff"/>
+                <path d="M12 7.2 10.6 8.9h2.8z" fill="#f6a623"/>
+                <ellipse cx="9.2" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/>
+                <ellipse cx="14.8" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/>
+              </svg>
+            </span>
+            <span><b>Download for Linux</b><small>AppImage · x64</small></span>
+          </a>
+          <p class="dl-alts">Also:
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_lin_x64.deb">.deb</a> ·
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_lin_x64.rpm">.rpm</a> ·
+            <a href="https://github.com/kristofferR/carrier/releases/download/v1.3.1/Carrier_1.3.1_lin_arm.AppImage">ARM64</a>
+          </p>
+        </div>
+      </div>
+
+      <p class="other-versions reveal" style="--d:.1s">
+        The full list with checksums lives on
+        <a href="https://github.com/kristofferR/Carrier/releases/latest" target="_blank" rel="noopener">GitHub</a>
+        — or <code style="font-size:.9em">brew install --cask kristofferR/tap/carrier</code>
+      </p>
+      <p class="dl-trust reveal" style="--d:.16s">Works with your regular Messenger account · Keeps itself up to date</p>
+    </section>
+  </div>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <span class="foot-brand">
+        <img src="./app-icon.png" alt="" width="30" height="30">
+        Carrier
+      </span>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+          </svg>
+          GitHub
+        </a>
+        <a href="https://github.com/kristofferR/Carrier/releases/latest" target="_blank" rel="noopener">All releases</a>
+      </nav>
+    </div>
+    <p class="foot-note"><strong>Free &amp; open source · MIT license.</strong></p>
+    <p class="foot-note">Carrier is an independent open-source project, not affiliated with Meta. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc.</p>
+    <p class="foot-heart">Made by Kristoffer Risanger (<a href="https://github.com/kristofferR" target="_blank" rel="noopener">@kristofferR</a>) ❤️</p>
+  </div>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js');
+
+  // Scroll-triggered reveals
+  (function () {
+    var items = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+      items.forEach(function (el) { el.classList.add('revealed'); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('revealed');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15, rootMargin: '0px 0px -40px 0px' });
+    items.forEach(function (el) { io.observe(el); });
+  })();
+
+  // Header shadow once scrolled
+  (function () {
+    var head = document.getElementById('siteHead');
+    var onScroll = function () {
+      head.classList.toggle('scrolled', window.scrollY > 8);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+
+  // Friendly OS detection: spotlight the matching download bubble
+  (function () {
+    var ua = navigator.userAgent;
+    // No recommendation on phones/tablets or ChromeOS (its UA matches X11),
+    // and iPadOS in desktop mode masquerades as a Mac but exposes multitouch.
+    if (/Android|iPad|iPhone|iPod|CrOS/i.test(ua)) return;
+    if (/Mac/i.test(ua) && navigator.maxTouchPoints > 1) return;
+    var os = /Mac/i.test(ua) ? 'mac' : /Win/i.test(ua) ? 'win' : /Linux|X11/i.test(ua) ? 'lin' : null;
+    if (!os) return;
+
+    var rec = document.getElementById('dl-' + os);
+    if (!rec) return;
+    rec.classList.add('rec');
+    ['dl-mac', 'dl-win', 'dl-lin'].forEach(function (id) {
+      if (id !== 'dl-' + os) document.getElementById(id).classList.add('ghosted');
+    });
+
+    var names = { mac: 'Mac', win: 'Windows', lin: 'Linux' };
+    var heroCta = document.getElementById('heroCta');
+    heroCta.firstChild.textContent = 'Download free for ' + names[os] + ' ';
+
+    // Architecture-aware build selection: only swap the spotlighted download
+    // on a POSITIVE architecture match (Chromium's high-entropy hints).
+    // Unknown architecture keeps the platform default, with the alternate
+    // builds linked immediately below the button either way.
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      navigator.userAgentData.getHighEntropyValues(['architecture']).then(function (d) {
+        var base = 'https://github.com/kristofferR/carrier/releases/download/v1.3.1/';
+        if (os === 'mac' && d.architecture === 'x86') {
+          rec.href = base + 'Carrier_1.3.1_mac_intel.dmg';
+          rec.querySelector('small').textContent = 'Intel Mac · .dmg';
+          var macAlt = document.querySelector('.dl-alts a[href*="mac_intel"]');
+          if (macAlt && macAlt.parentNode) {
+            macAlt.parentNode.innerHTML = 'On Apple Silicon? <a href="' + base + 'Carrier_1.3.1_mac_arm.dmg">Apple&nbsp;Silicon&nbsp;.dmg</a>';
+          }
+        } else if (os === 'win' && d.architecture === 'arm') {
+          rec.href = base + 'Carrier_1.3.1_win_arm_setup.exe';
+          rec.querySelector('small').textContent = 'Windows on ARM · .exe';
+        } else if (os === 'lin' && d.architecture === 'arm') {
+          rec.href = base + 'Carrier_1.3.1_lin_arm.AppImage';
+          rec.querySelector('small').textContent = 'AppImage · ARM64';
+        }
+      }).catch(function () {});
+    }
+  })();
+
+  // App-window theme toggle: flips the replica between Carrier's forced
+  // light and dark themes (the page itself stays light).
+  (function () {
+    var stage = document.getElementById('winStage');
+    var buttons = document.querySelectorAll('.wt-btn');
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        stage.setAttribute('data-win-theme', btn.getAttribute('data-theme'));
+        buttons.forEach(function (b) {
+          var on = b === btn;
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-pressed', String(on));
+        });
+      });
+    });
+  })();
+
+  // Fit script: the window is built at its native 993×652 and scaled as one
+  // unit to the container width, so every proportion stays exact. Also slices
+  // the window-anchored outgoing-bubble gradient per bubble, like the real app.
+  (function () {
+    var stage = document.getElementById('winStage');
+    var win = stage && stage.querySelector('.win');
+    if (!stage || !win) return;
+    var NATIVE_W = 993;
+    var NATIVE_H = 652; /* 32 titlebar + 620 body */
+
+    function fit() {
+      var scale = Math.min(1, stage.clientWidth / NATIVE_W);
+      win.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
+      win.style.marginLeft = scale < 1 ? '0' : '';
+      stage.style.height = Math.round(NATIVE_H * scale) + 'px';
+    }
+
+    function sliceGradients() {
+      var body = win.querySelector('.win-body');
+      if (!body) return;
+      var bodyTop = body.getBoundingClientRect().top;
+      win.querySelectorAll('.msg.out').forEach(function (b) {
+        // offsets are pre-transform layout values, so divide the on-screen
+        // delta by the current scale
+        var m = /scale\(([\d.]+)\)/.exec(win.style.transform);
+        var scale = m ? parseFloat(m[1]) : 1;
+        var y = (b.getBoundingClientRect().top - bodyTop) / scale;
+        b.style.backgroundPosition = '0 ' + (-Math.round(y)) + 'px';
+      });
+    }
+
+    function refresh() { fit(); sliceGradients(); }
+    refresh();
+    window.addEventListener('resize', refresh);
+    // re-slice after fonts settle (bubble heights can shift a line)
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(sliceGradients);
+    window.addEventListener('load', refresh);
+  })();
+
+  // Alex-simulation: while the window is in view, Alex shares some good news
+  // — each message arrives as a stacking macOS notification and updates his
+  // sidebar row. Skipped entirely under prefers-reduced-motion (the static
+  // toast stays instead).
+  (function () {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var stack = document.querySelector('.toast-stack');
+    var tpl = document.getElementById('toastTpl');
+    var alexPrev = document.getElementById('alexPrev');
+    var stage = document.getElementById('winStage');
+    if (!stack || !tpl || !stage || !('IntersectionObserver' in window)) return;
+
+    var MSGS = [
+      'guess what!! 👀',
+      'WE GOT A PUPPY 🐶',
+      '🎉🎉🎉',
+      'coming to meet her saturday?? 🥹',
+    ];
+    var i = 0;
+    var timer = null;
+    var running = false;
+    var staticToast = stack.querySelector('.toast--initial');
+
+    function dismiss(node) {
+      if (!node || node.classList.contains('leave')) return;
+      node.classList.add('leave');
+      setTimeout(function () { node.remove(); }, 450);
+    }
+
+    function showToast(msg) {
+      var node = tpl.content.firstElementChild.cloneNode(true);
+      node.querySelector('.t-msg').textContent = msg;
+      node.classList.add('enter');
+      stack.prepend(node);
+      // macOS keeps a short stack: two visible, older ones slide away
+      var toasts = stack.querySelectorAll('.toast:not(.leave)');
+      for (var k = 2; k < toasts.length; k++) dismiss(toasts[k]);
+      setTimeout(function () { dismiss(node); }, 5500);
+      if (alexPrev) alexPrev.textContent = msg + ' · now';
+    }
+
+    // Longer messages take longer to arrive — Alex has to type them.
+    function typingDelay(msg) {
+      return 1100 + Math.min(msg.length * 95, 3800);
+    }
+
+    function tick() {
+      showToast(MSGS[i % MSGS.length]);
+      i++;
+      // pause after the story completes, then tell it again
+      var gap = i % MSGS.length === 0 ? 9000 : typingDelay(MSGS[i % MSGS.length]);
+      timer = setTimeout(tick, gap);
+    }
+
+    new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting && !running) {
+          running = true;
+          if (staticToast) { dismiss(staticToast); staticToast = null; }
+          timer = setTimeout(tick, 1400);
+        } else if (!entry.isIntersecting && running) {
+          running = false;
+          clearTimeout(timer);
+        }
+      });
+    }, { threshold: 0.35 }).observe(stage);
+  })();
+</script>
+</body>
+</html>
