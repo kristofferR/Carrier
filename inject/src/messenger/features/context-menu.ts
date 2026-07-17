@@ -57,11 +57,15 @@ async function copyImageSrc(src: string) {
 }
 
 let ctxMenu: HTMLDivElement | null = null;
-const closeMenu = () => {
+let ctxMenuReturnFocus: HTMLElement | null = null;
+const closeMenuFromPointer = () => closeMenu();
+const closeMenu = (restoreFocus = false) => {
   ctxMenu?.remove();
   ctxMenu = null;
-  document.removeEventListener("click", closeMenu, true);
-  document.removeEventListener("scroll", closeMenu, true);
+  document.removeEventListener("click", closeMenuFromPointer, true);
+  document.removeEventListener("scroll", closeMenuFromPointer, true);
+  if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+  ctxMenuReturnFocus = null;
 };
 
 export function initContextMenu() {
@@ -111,15 +115,21 @@ export function initContextMenu() {
 
       e.preventDefault();
       closeMenu();
+      ctxMenuReturnFocus =
+        t instanceof HTMLElement
+          ? t
+          : ((t.closest?.("[tabindex], button, a[href]") as HTMLElement | null) ?? null);
       ctxMenu = document.createElement("div");
+      ctxMenu.setAttribute("role", "menu");
+      ctxMenu.setAttribute("aria-label", "Media actions");
       Object.assign(ctxMenu.style, {
         position: "fixed",
         left: `${e.clientX}px`,
         top: `${e.clientY}px`,
         zIndex: 2147483647,
-        background: "#242526",
-        color: "#e4e6eb",
-        border: "1px solid #3a3b3c",
+        background: "var(--card-background, Canvas)",
+        color: "var(--primary-text, CanvasText)",
+        border: "1px solid var(--divider, rgba(127,127,127,.3))",
         borderRadius: "8px",
         padding: "4px",
         boxShadow: "0 6px 24px rgba(0,0,0,.4)",
@@ -129,9 +139,19 @@ export function initContextMenu() {
       for (const [label, fn] of items) {
         const el = document.createElement("div");
         el.textContent = label;
-        Object.assign(el.style, { padding: "8px 12px", cursor: "pointer", borderRadius: "6px" });
-        el.onmouseenter = () => (el.style.background = "#3a3b3c");
+        el.setAttribute("role", "menuitem");
+        el.tabIndex = -1;
+        Object.assign(el.style, {
+          padding: "8px 12px",
+          cursor: "pointer",
+          borderRadius: "6px",
+          outline: "none",
+        });
+        el.onmouseenter = () =>
+          (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
         el.onmouseleave = () => (el.style.background = "");
+        el.onfocus = () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
+        el.onblur = () => (el.style.background = "");
         el.onclick = (ev) => {
           ev.stopPropagation();
           closeMenu();
@@ -143,9 +163,37 @@ export function initContextMenu() {
       const r = ctxMenu.getBoundingClientRect();
       if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
       if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+      const menuItems = [...ctxMenu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      ctxMenu.addEventListener("keydown", (event) => {
+        const current = Math.max(0, menuItems.indexOf(document.activeElement as HTMLElement));
+        let next: number | null = null;
+        if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
+        if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+        if (event.key === "Home") next = 0;
+        if (event.key === "End") next = menuItems.length - 1;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeMenu(true);
+          return;
+        }
+        if (event.key === "Tab") {
+          closeMenu(true);
+          return;
+        }
+        if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
+          event.preventDefault();
+          (document.activeElement as HTMLElement).click();
+          return;
+        }
+        if (next !== null) {
+          event.preventDefault();
+          menuItems[next]?.focus();
+        }
+      });
+      menuItems[0]?.focus({ preventScroll: true });
       setTimeout(() => {
-        document.addEventListener("click", closeMenu, true);
-        document.addEventListener("scroll", closeMenu, true);
+        document.addEventListener("click", closeMenuFromPointer, true);
+        document.addEventListener("scroll", closeMenuFromPointer, true);
       }, 0);
     },
     true,

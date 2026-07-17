@@ -1,5 +1,6 @@
 /* ------------------ Facebook optional-cookie refusal ------------------ */
 import { rgb } from "../lib/color";
+import { lowestScoreIndex, qualifiesCookieActionRow } from "../lib/login-page";
 
 export const COOKIE_TEXT_RE =
   /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
@@ -101,7 +102,9 @@ const bottomActionRow = (root: Element) => {
       bottom: Math.max(...row.items.map((i) => i.rect.bottom)),
       primaryScore: Math.max(...row.items.map((i) => primaryBlueScore(i.button))),
     }))
-    .filter((row) => row.primaryScore > 40 || row.items.length === 2)
+    .filter((row) =>
+      qualifiesCookieActionRow(row.items.map((item) => primaryBlueScore(item.button))),
+    )
     .sort((a, b) => b.bottom - a.bottom)[0]?.items;
 };
 
@@ -136,10 +139,8 @@ export function findOptionalCookieDeclineButton(
   for (const candidate of candidates) {
     const row = bottomActionRow(candidate);
     if (!row) continue;
-    const target = row.reduce((best, item) =>
-      primaryBlueScore(item.button) < primaryBlueScore(best.button) ? item : best,
-    );
-    return target.button;
+    const target = lowestScoreIndex(row.map((item) => primaryBlueScore(item.button)));
+    if (target !== null) return row[target]!.button;
   }
   return null;
 }

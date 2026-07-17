@@ -2,6 +2,7 @@
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
 import { diag, invoke } from "../bridge";
+import { conversationTextParts, isUnreadConversationText } from "../lib/conversation-row";
 import {
   ConversationNotificationTracker,
   isOwnMessagePreview,
@@ -224,34 +225,25 @@ export function initNotificationBridge() {
     const id = threadIdFromHref(link?.getAttribute("href"));
     if (!id) return null;
     const row = link.closest('[role="row"]') || link;
-    const leaves = [...row.querySelectorAll<HTMLElement>("span")]
-      .filter((el) => {
-        if (el.getAttribute("aria-hidden") === "true" || el.closest("abbr")) return false;
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (!text) return false;
-        // Keep only the deepest text surface so nested Messenger wrappers do
-        // not duplicate the sender or preview.
-        for (const child of el.children) {
-          if ((child.textContent || "").trim()) return false;
-        }
+    const text = conversationTextParts(
+      [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
         const rect = el.getBoundingClientRect();
-        return rect.width > 1 && rect.height > 1;
-      })
-      .sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return ar.y - br.y || ar.x - br.x;
-      });
-    const values: string[] = [];
-    for (const el of leaves) {
-      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (text && values[values.length - 1] !== text) values.push(text);
-    }
+        return {
+          text: el.textContent || "",
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          ariaHidden: el.getAttribute("aria-hidden") === "true",
+          inAbbreviation: !!el.closest("abbr"),
+          hasTextChild: [...el.children].some((child) => !!(child.textContent || "").trim()),
+        };
+      }),
+    );
     const image = row.querySelector<HTMLImageElement>("img[src]");
     let unread = false;
     for (const span of row.querySelectorAll("span")) {
-      const weight = Number.parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-      if (weight >= 600 && (span.textContent || "").trim().length > 1) {
+      if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
         unread = true;
         break;
       }
@@ -259,8 +251,8 @@ export function initNotificationBridge() {
     return {
       key: id,
       threadPath: `/t/${id}/`,
-      title: (values[0] || "Messenger").slice(0, 80),
-      body: (values[1] || "New message").slice(0, 240),
+      title: text.title,
+      body: text.body,
       icon: image?.currentSrc || image?.src || "",
       unread,
     };

@@ -3,6 +3,11 @@
 // login box, so the window shows just the login form.
 import { isLightFill } from "../lib/color";
 import {
+  isLanguageFooterLink,
+  type LoginLinkDescriptor,
+  topLanguageLinkIndexes,
+} from "../lib/login-page";
+import {
   findOptionalCookieDeclineButton,
   hasCookieConsentLabel,
   hasCookieConsentText,
@@ -70,17 +75,12 @@ export function initLoginTidy() {
       .forEach((el) => el.removeAttribute(LANGUAGE_LINK));
   };
 
-  const FOOTER_NOISE_RE =
-    /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
-
-  const isLanguageFooterLink = (link: Element) => {
-    if (link.hasAttribute(LANGUAGE_LINK)) return true;
-    const href = (link.getAttribute("href") || "").trim();
-    return href === "#" || href.endsWith("#");
-  };
-
-  const isFooterNoiseLink = (link: Element) =>
-    FOOTER_NOISE_RE.test((link.textContent || "").replace(/\s+/g, " ").trim());
+  const linkDescriptor = (link: Element): LoginLinkDescriptor => ({
+    href: link.getAttribute("href") || "",
+    text: link.textContent || "",
+  });
+  const isLanguageLink = (link: Element) =>
+    link.hasAttribute(LANGUAGE_LINK) || isLanguageFooterLink(linkDescriptor(link));
 
   // Facebook's footer language switcher is a row of locale links whose href is
   // just "#" (they swap the page locale via JS). Identify them by that — NOT by
@@ -89,8 +89,7 @@ export function initLoginTidy() {
   // detection was the bug: it failed on the FDSIntlLocaleSelectorList variant
   // that has no #pageFooter, then the strip got swept into the hidden chrome).
   const topLanguageLinks = (links: Element[]) => {
-    const langs = links.filter((link) => isLanguageFooterLink(link) && !isFooterNoiseLink(link));
-    return langs.length >= 2 ? langs : [];
+    return topLanguageLinkIndexes(links.map(linkDescriptor)).map((index) => links[index]!);
   };
 
   const linksOutside = (root: Element, inner: Element) =>
@@ -102,7 +101,7 @@ export function initLoginTidy() {
     const links = linksOutside(el, inner);
     return (
       links.length >= 6 &&
-      (topLanguageLinks(links).length >= 2 || links.filter(isLanguageFooterLink).length >= 2)
+      (topLanguageLinks(links).length >= 2 || links.filter(isLanguageLink).length >= 2)
     );
   };
 

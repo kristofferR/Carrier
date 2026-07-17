@@ -9,6 +9,8 @@ export function initMediaViewer() {
   const PAN = 40;
   let target: HTMLElement | null = null;
   let targetCssText = "";
+  let targetTabIndex: string | null = null;
+  let previousFocus: HTMLElement | null = null;
   let scale = 1;
   let tx = 0;
   let ty = 0;
@@ -50,15 +52,21 @@ export function initMediaViewer() {
     handlers.forEach(([t, f, o]) => {
       document.removeEventListener(t, f, o);
     });
-    if (target) {
-      target.style.cssText = targetCssText;
+    const closedTarget = target;
+    if (closedTarget) {
+      closedTarget.style.cssText = targetCssText;
+      if (targetTabIndex === null) closedTarget.removeAttribute("tabindex");
+      else closedTarget.setAttribute("tabindex", targetTabIndex);
     }
     target = null;
     targetCssText = "";
+    targetTabIndex = null;
     scale = 1;
     tx = 0;
     ty = 0;
     dragging = false;
+    previousFocus?.focus({ preventScroll: true });
+    previousFocus = null;
   }
 
   const onWheel = (e: WheelEvent) => {
@@ -100,6 +108,12 @@ export function initMediaViewer() {
   };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") return exit();
+    if (e.key === "Tab") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      target?.focus({ preventScroll: true });
+      return;
+    }
     const d = {
       ArrowLeft: [PAN, 0],
       ArrowRight: [-PAN, 0],
@@ -138,11 +152,15 @@ export function initMediaViewer() {
       active = true;
       target = t;
       targetCssText = t.style.cssText;
+      targetTabIndex = t.getAttribute("tabindex");
+      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      t.setAttribute("tabindex", "-1");
       const r = t.getBoundingClientRect();
       scale = 2;
       tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
       ty = (e.clientY - (r.top + r.height / 2)) * (1 - scale);
       render(false);
+      t.focus({ preventScroll: true });
       handlers.forEach(([type, f, o]) => {
         document.addEventListener(type, f, o);
       });

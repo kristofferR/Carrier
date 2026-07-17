@@ -210,11 +210,15 @@
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
   }
   var ctxMenu = null;
-  var closeMenu = () => {
+  var ctxMenuReturnFocus = null;
+  var closeMenuFromPointer = () => closeMenu();
+  var closeMenu = (restoreFocus = false) => {
     ctxMenu?.remove();
     ctxMenu = null;
-    document.removeEventListener("click", closeMenu, true);
-    document.removeEventListener("scroll", closeMenu, true);
+    document.removeEventListener("click", closeMenuFromPointer, true);
+    document.removeEventListener("scroll", closeMenuFromPointer, true);
+    if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+    ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
     document.addEventListener(
@@ -252,15 +256,18 @@
         if (!items.length) return;
         e.preventDefault();
         closeMenu();
+        ctxMenuReturnFocus = t instanceof HTMLElement ? t : t.closest?.("[tabindex], button, a[href]") ?? null;
         ctxMenu = document.createElement("div");
+        ctxMenu.setAttribute("role", "menu");
+        ctxMenu.setAttribute("aria-label", "Media actions");
         Object.assign(ctxMenu.style, {
           position: "fixed",
           left: `${e.clientX}px`,
           top: `${e.clientY}px`,
           zIndex: 2147483647,
-          background: "#242526",
-          color: "#e4e6eb",
-          border: "1px solid #3a3b3c",
+          background: "var(--card-background, Canvas)",
+          color: "var(--primary-text, CanvasText)",
+          border: "1px solid var(--divider, rgba(127,127,127,.3))",
           borderRadius: "8px",
           padding: "4px",
           boxShadow: "0 6px 24px rgba(0,0,0,.4)",
@@ -270,9 +277,18 @@
         for (const [label, fn] of items) {
           const el = document.createElement("div");
           el.textContent = label;
-          Object.assign(el.style, { padding: "8px 12px", cursor: "pointer", borderRadius: "6px" });
-          el.onmouseenter = () => el.style.background = "#3a3b3c";
+          el.setAttribute("role", "menuitem");
+          el.tabIndex = -1;
+          Object.assign(el.style, {
+            padding: "8px 12px",
+            cursor: "pointer",
+            borderRadius: "6px",
+            outline: "none"
+          });
+          el.onmouseenter = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
           el.onmouseleave = () => el.style.background = "";
+          el.onfocus = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
+          el.onblur = () => el.style.background = "";
           el.onclick = (ev) => {
             ev.stopPropagation();
             closeMenu();
@@ -284,9 +300,37 @@
         const r = ctxMenu.getBoundingClientRect();
         if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
         if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+        const menuItems = [...ctxMenu.querySelectorAll('[role="menuitem"]')];
+        ctxMenu.addEventListener("keydown", (event) => {
+          const current = Math.max(0, menuItems.indexOf(document.activeElement));
+          let next = null;
+          if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
+          if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (event.key === "Home") next = 0;
+          if (event.key === "End") next = menuItems.length - 1;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeMenu(true);
+            return;
+          }
+          if (event.key === "Tab") {
+            closeMenu(true);
+            return;
+          }
+          if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
+            event.preventDefault();
+            document.activeElement.click();
+            return;
+          }
+          if (next !== null) {
+            event.preventDefault();
+            menuItems[next]?.focus();
+          }
+        });
+        menuItems[0]?.focus({ preventScroll: true });
         setTimeout(() => {
-          document.addEventListener("click", closeMenu, true);
-          document.addEventListener("scroll", closeMenu, true);
+          document.addEventListener("click", closeMenuFromPointer, true);
+          document.addEventListener("scroll", closeMenuFromPointer, true);
         }, 0);
       },
       true
@@ -304,6 +348,32 @@
     const c = rgb(bg);
     return !!c && c.a > 0.9 && (c.r + c.g + c.b) / 3 > 200;
   };
+
+  // inject/src/messenger/lib/login-page.ts
+  var FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
+  function isLanguageFooterLink(link) {
+    return link.href.trim() === "#" || link.href.trim().endsWith("#");
+  }
+  function isFooterNoiseLink(link) {
+    return FOOTER_NOISE_RE.test(link.text.replace(/\s+/g, " ").trim());
+  }
+  function topLanguageLinkIndexes(links) {
+    const indexes = links.flatMap(
+      (link, index) => isLanguageFooterLink(link) && !isFooterNoiseLink(link) ? [index] : []
+    );
+    return indexes.length >= 2 ? indexes : [];
+  }
+  function qualifiesCookieActionRow(scores) {
+    return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
+  }
+  function lowestScoreIndex(scores) {
+    if (!scores.length) return null;
+    let lowest = 0;
+    for (let index = 1; index < scores.length; index++) {
+      if (scores[index] < scores[lowest]) lowest = index;
+    }
+    return lowest;
+  }
 
   // inject/src/messenger/features/cookie-consent.ts
   var COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
@@ -378,7 +448,9 @@
       ...row,
       bottom: Math.max(...row.items.map((i) => i.rect.bottom)),
       primaryScore: Math.max(...row.items.map((i) => primaryBlueScore(i.button)))
-    })).filter((row) => row.primaryScore > 40 || row.items.length === 2).sort((a, b) => b.bottom - a.bottom)[0]?.items;
+    })).filter(
+      (row) => qualifiesCookieActionRow(row.items.map((item) => primaryBlueScore(item.button)))
+    ).sort((a, b) => b.bottom - a.bottom)[0]?.items;
   };
   function findOptionalCookieDeclineButton(root = document) {
     if (!onFacebookLoginSurface()) return null;
@@ -400,10 +472,8 @@
     for (const candidate of candidates) {
       const row = bottomActionRow(candidate);
       if (!row) continue;
-      const target = row.reduce(
-        (best, item) => primaryBlueScore(item.button) < primaryBlueScore(best.button) ? item : best
-      );
-      return target.button;
+      const target = lowestScoreIndex(row.map((item) => primaryBlueScore(item.button)));
+      if (target !== null) return row[target].button;
     }
     return null;
   }
@@ -958,23 +1028,20 @@
       document.querySelectorAll(`[${LANGUAGES}]`).forEach((el) => el.removeAttribute(LANGUAGES));
       document.querySelectorAll(`[${LANGUAGE_LINK}]`).forEach((el) => el.removeAttribute(LANGUAGE_LINK));
     };
-    const FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
-    const isLanguageFooterLink = (link) => {
-      if (link.hasAttribute(LANGUAGE_LINK)) return true;
-      const href = (link.getAttribute("href") || "").trim();
-      return href === "#" || href.endsWith("#");
-    };
-    const isFooterNoiseLink = (link) => FOOTER_NOISE_RE.test((link.textContent || "").replace(/\s+/g, " ").trim());
+    const linkDescriptor = (link) => ({
+      href: link.getAttribute("href") || "",
+      text: link.textContent || ""
+    });
+    const isLanguageLink = (link) => link.hasAttribute(LANGUAGE_LINK) || isLanguageFooterLink(linkDescriptor(link));
     const topLanguageLinks = (links) => {
-      const langs = links.filter((link) => isLanguageFooterLink(link) && !isFooterNoiseLink(link));
-      return langs.length >= 2 ? langs : [];
+      return topLanguageLinkIndexes(links.map(linkDescriptor)).map((index) => links[index]);
     };
     const linksOutside = (root, inner) => [...root.querySelectorAll?.("a[href]") || []].filter((link) => !inner.contains(link));
     const isFooterContainer = (el, inner) => {
       if (!el?.querySelector) return false;
       if (el.querySelector("#pageFooter, .localeSelectorList")) return true;
       const links = linksOutside(el, inner);
-      return links.length >= 6 && (topLanguageLinks(links).length >= 2 || links.filter(isLanguageFooterLink).length >= 2);
+      return links.length >= 6 && (topLanguageLinks(links).length >= 2 || links.filter(isLanguageLink).length >= 2);
     };
     const commonAncestor = (nodes) => {
       let root = nodes[0];
@@ -1209,6 +1276,8 @@
     const PAN = 40;
     let target = null;
     let targetCssText = "";
+    let targetTabIndex = null;
+    let previousFocus = null;
     let scale = 1;
     let tx = 0;
     let ty = 0;
@@ -1245,15 +1314,21 @@
       handlers.forEach(([t, f, o]) => {
         document.removeEventListener(t, f, o);
       });
-      if (target) {
-        target.style.cssText = targetCssText;
+      const closedTarget = target;
+      if (closedTarget) {
+        closedTarget.style.cssText = targetCssText;
+        if (targetTabIndex === null) closedTarget.removeAttribute("tabindex");
+        else closedTarget.setAttribute("tabindex", targetTabIndex);
       }
       target = null;
       targetCssText = "";
+      targetTabIndex = null;
       scale = 1;
       tx = 0;
       ty = 0;
       dragging = false;
+      previousFocus?.focus({ preventScroll: true });
+      previousFocus = null;
     }
     const onWheel = (e) => {
       if (!target) return;
@@ -1294,6 +1369,12 @@
     };
     const onKey = (e) => {
       if (e.key === "Escape") return exit();
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        target?.focus({ preventScroll: true });
+        return;
+      }
       const d = {
         ArrowLeft: [PAN, 0],
         ArrowRight: [-PAN, 0],
@@ -1330,17 +1411,40 @@
         active = true;
         target = t;
         targetCssText = t.style.cssText;
+        targetTabIndex = t.getAttribute("tabindex");
+        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        t.setAttribute("tabindex", "-1");
         const r = t.getBoundingClientRect();
         scale = 2;
         tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
         ty = (e.clientY - (r.top + r.height / 2)) * (1 - scale);
         render(false);
+        t.focus({ preventScroll: true });
         handlers.forEach(([type, f, o]) => {
           document.addEventListener(type, f, o);
         });
       },
       { capture: true }
     );
+  }
+
+  // inject/src/messenger/lib/conversation-row.ts
+  function conversationTextParts(candidates) {
+    const values = [];
+    for (const candidate of candidates.filter(
+      ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
+    ).sort((left, right) => left.y - right.y || left.x - right.x)) {
+      const text = candidate.text.replace(/\s+/g, " ").trim();
+      if (text && values[values.length - 1] !== text) values.push(text);
+    }
+    return {
+      title: (values[0] || "Messenger").slice(0, 80),
+      body: (values[1] || "New message").slice(0, 240)
+    };
+  }
+  function isUnreadConversationText(fontWeight, text) {
+    const weight = typeof fontWeight === "number" ? fontWeight : Number.parseInt(fontWeight, 10) || 0;
+    return weight >= 600 && text.trim().length > 1;
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
@@ -1787,30 +1891,25 @@
       const id = threadIdFromHref(link?.getAttribute("href"));
       if (!id) return null;
       const row = link.closest('[role="row"]') || link;
-      const leaves = [...row.querySelectorAll("span")].filter((el) => {
-        if (el.getAttribute("aria-hidden") === "true" || el.closest("abbr")) return false;
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (!text) return false;
-        for (const child of el.children) {
-          if ((child.textContent || "").trim()) return false;
-        }
-        const rect = el.getBoundingClientRect();
-        return rect.width > 1 && rect.height > 1;
-      }).sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return ar.y - br.y || ar.x - br.x;
-      });
-      const values = [];
-      for (const el of leaves) {
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (text && values[values.length - 1] !== text) values.push(text);
-      }
+      const text = conversationTextParts(
+        [...row.querySelectorAll("span")].map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            text: el.textContent || "",
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            ariaHidden: el.getAttribute("aria-hidden") === "true",
+            inAbbreviation: !!el.closest("abbr"),
+            hasTextChild: [...el.children].some((child) => !!(child.textContent || "").trim())
+          };
+        })
+      );
       const image = row.querySelector("img[src]");
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
-        const weight = Number.parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-        if (weight >= 600 && (span.textContent || "").trim().length > 1) {
+        if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
           unread = true;
           break;
         }
@@ -1818,8 +1917,8 @@
       return {
         key: id,
         threadPath: `/t/${id}/`,
-        title: (values[0] || "Messenger").slice(0, 80),
-        body: (values[1] || "New message").slice(0, 240),
+        title: text.title,
+        body: text.body,
         icon: image?.currentSrc || image?.src || "",
         unread
       };
@@ -2093,7 +2192,11 @@
     // recent threads, hide-names blur.
     { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },
     // The conversation pane: media viewer, hide-names header blur.
-    { key: "main-region", sel: '[role="main"]' }
+    { key: "main-region", sel: '[role="main"]' },
+    // The injected Settings gear depends on Messenger's localized overflow
+    // control/icon. Watch the actual output rather than testing a copied icon
+    // path constant against itself.
+    { key: "settings-button", sel: "[data-carrier-settings-button]" }
   ];
   function initSelectorHealth() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -2693,8 +2796,7 @@
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
         for (const span of row.querySelectorAll("span")) {
-          const w = parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-          if (w >= 600 && (span.textContent || "").trim().length > 1) {
+          if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
             n++;
             break;
           }

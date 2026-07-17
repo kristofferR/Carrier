@@ -13,6 +13,10 @@ const WATCHED_SELECTORS = [
   { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },
   // The conversation pane: media viewer, hide-names header blur.
   { key: "main-region", sel: '[role="main"]' },
+  // The injected Settings gear depends on Messenger's localized overflow
+  // control/icon. Watch the actual output rather than testing a copied icon
+  // path constant against itself.
+  { key: "settings-button", sel: "[data-carrier-settings-button]" },
 ];
 
 export function initSelectorHealth() {

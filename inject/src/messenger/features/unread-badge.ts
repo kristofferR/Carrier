@@ -4,6 +4,7 @@
 // (Facebook's total, parsed from the "(N)" it puts in the page title) or
 // unread *conversations* (chats in the list rendered bold), per `badge_mode`.
 import { diag, invoke } from "../bridge";
+import { isUnreadConversationText } from "../lib/conversation-row";
 import { threadIdFromHref } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 
@@ -26,8 +27,7 @@ export function initUnreadBadge() {
       seen.add(id);
       const row = a.closest('[role="row"]') || a;
       for (const span of row.querySelectorAll("span")) {
-        const w = parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-        if (w >= 600 && (span.textContent || "").trim().length > 1) {
+        if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
           n++;
           break;
         }
