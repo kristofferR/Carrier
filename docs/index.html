@@ -1395,6 +1395,13 @@
       win.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
       win.style.marginLeft = scale < 1 ? '0' : '';
       stage.style.height = Math.round(NATIVE_H * scale) + 'px';
+      // the notification stack lives outside the window (it's OS chrome) but
+      // must shrink with it, pinned to its top-right anchor
+      var stack = stage.querySelector('.toast-stack');
+      if (stack) {
+        stack.style.transformOrigin = 'top right';
+        stack.style.transform = scale < 1 ? 'scale(' + scale + ')' : '';
+      }
     }
 
     function sliceGradients() {
