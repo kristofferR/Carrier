@@ -71,14 +71,14 @@ Carrier uses the operating system's WebView through
 [Tauri](https://tauri.app), rather than shipping another copy of Chromium. The
 macOS and Windows installers are roughly **2–3.5 MB**, while still providing
 native notifications, unread badges, tray integration, global shortcuts, and
-verified automatic updates.
+cryptographically verified updates.
 
 ## Why Carrier?
 
 - **Just your conversations** — no Feed, Reels, Marketplace, or browser tabs.
 - **Small by design** — one system WebView instead of a bundled browser engine.
 - **Real desktop notifications** — including background delivery, notification
-  sound controls, hidden previews, and scheduled do not disturb.
+  sound controls, muted notifications, and hidden previews.
 - **At home on your desktop** — unread badges, tray or menu-bar operation,
   start-on-login, a global show/hide hotkey, and remembered window placement.
 - **Made for focus and screen sharing** — force light or dark mode, adjust page
@@ -92,7 +92,7 @@ verified automatic updates.
 ### Desktop integration
 
 - Native notifications with sender avatars and optional hidden previews
-- Notification sound controls and a daily do-not-disturb schedule
+- Notification sound and mute controls
 - Unread count on the Dock or taskbar icon
 - Tray support, start to tray, start on login, and hide on close
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
@@ -121,7 +121,7 @@ verified automatic updates.
 
 ### Maintenance
 
-- Verified automatic updates via GitHub Releases
+- Signed update checks and installs from Settings or <kbd>F2</kbd>
 - A diagnostics log for Messenger markup changes and integration failures
 - A dedicated Settings window, available with <kbd>F3</kbd>
 
@@ -143,6 +143,10 @@ verified automatic updates.
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Hide names and avatars |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Show or hide Carrier globally, when enabled |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>-</kbd> / <kbd>=</kbd> / <kbd>0</kbd> | Zoom out / in / reset |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>,</kbd> | Settings |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>R</kbd> | Reload |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> | Clear cache and restart |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> | Paste and match style |
 | <kbd>F2</kbd> / <kbd>F3</kbd> / <kbd>F5</kbd> | Check for updates / Settings / reload |
 
 </details>
@@ -159,8 +163,11 @@ GitHub Releases.
   default).
 - Off-site links open in your normal browser; Facebook tracking redirects are
   removed first.
-- Automatic updates are cryptographically verified before installation.
+- Updates are cryptographically verified before installation.
 - macOS downloads are Developer ID signed and notarized by Apple.
+- Windows builds are currently unsigned, so SmartScreen may show an
+  “Unknown publisher” warning on first launch. Download only from this
+  repository’s Releases page while Windows signing is being arranged.
 - The complete source is available here under the MIT license.
 
 Carrier is a privacy-respecting client for Facebook Messenger, not a private
@@ -198,6 +205,12 @@ On macOS, if `Carrier.app` is already present in `/Applications`, adopt it with:
 ```bash
 brew install --cask --adopt kristofferR/tap/carrier
 ```
+
+## Non-goals
+
+Carrier stays deliberately narrow. It does not add its own do-not-disturb
+schedule (use the operating system’s Focus controls), emoji-style pickers, Vim
+keybindings, multiple simultaneous accounts, or automated replies.
 
 ## How it works
 
