@@ -18,8 +18,30 @@ describe("classifyHref", () => {
     ).toBe(true);
     expect(classifyHref("https://lm.facebook.com/l.php?u=x", BASE).external).toBe(true);
     expect(classifyHref("https://www.facebook.com/l.php?u=x", BASE).external).toBe(true);
-    // …but a non-l.php facebook path stays internal.
-    expect(classifyHref("https://www.facebook.com/some/page", BASE).external).toBe(false);
+  });
+
+  test("sends non-Messenger facebook.com content to the real browser", () => {
+    expect(classifyHref("https://www.facebook.com/some.profile", BASE).external).toBe(true);
+    expect(classifyHref("https://www.facebook.com/groups/12345/", BASE).external).toBe(true);
+    expect(classifyHref("https://facebook.com/photo/?fbid=1", BASE).external).toBe(true);
+    expect(classifyHref("https://www.facebook.com/reel/999", BASE).external).toBe(true);
+    expect(classifyHref("https://www.facebook.com/", BASE).external).toBe(true);
+    // Prefix lookalikes of app paths don't count.
+    expect(classifyHref("https://www.facebook.com/messagesarchive", BASE).external).toBe(true);
+    expect(classifyHref("https://www.facebook.com/thing", BASE).external).toBe(true);
+  });
+
+  test("keeps Messenger and auth paths on facebook.com in-app", () => {
+    expect(classifyHref("https://www.facebook.com/messages", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/messages/e2ee/t/5/", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/t/12345", BASE).external).toBe(false);
+    expect(classifyHref("https://web.facebook.com/messages/t/5/", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/login.php?next=x", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/login/identify", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/checkpoint/123", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/recover/initiate", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/reg/", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/r.php", BASE).external).toBe(false);
   });
 
   test("sends non-Facebook sites to the real browser", () => {

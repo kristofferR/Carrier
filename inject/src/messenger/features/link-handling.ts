@@ -11,6 +11,10 @@ function handleLink(e: MouseEvent) {
   if (!a) return;
   const href = a.href;
   if (!href || href.startsWith("javascript:")) return;
+  // Download anchors (FB's media-viewer Download button) belong to the native
+  // download pipeline — never navigate the app to their blob: URL, even if the
+  // download-anchors sweep hasn't stripped `target` yet.
+  if (a.hasAttribute("download")) return;
   const modified = e.shiftKey || e.metaKey || e.ctrlKey || e.button === 1;
   const blank = a.target === "_blank";
   if (classifyHref(href, location.href).external) {
