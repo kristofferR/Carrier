@@ -15,17 +15,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/kristofferR/Carrier?style=flat-square" alt="MIT license"></a>
 </p>
 
-<!-- Before publishing:
-1. Add a sanitized 1440px-wide screenshot at docs/carrier-screenshot.png.
-2. Add a short before/after recording at docs/carrier-demo.gif or link a compressed video.
-3. Uncomment the block below.
-
 <p align="center">
-  <a href="https://github.com/kristofferR/Carrier/releases/latest">
+  <a href="https://kristofferr.github.io/Carrier/">
     <img src="docs/carrier-screenshot.png" alt="Carrier showing Messenger in a focused desktop window" width="860">
   </a>
 </p>
--->
 
 <h2 align="center">Download</h2>
 
