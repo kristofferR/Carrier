@@ -43,6 +43,21 @@ interface PageNotificationSignal extends NotificationText {
 const normalizeNotificationText = (value: string) =>
   value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 
+const matchesExactOrTruncated = (left: string, right: string): boolean => {
+  if (left === right) return true;
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  // The row scraper caps titles at 80 characters and previews at 240. Only
+  // accept a prefix as truncation when it is long enough to be distinctive;
+  // short previews such as "OK" must still compare exactly.
+  return shorter.length >= 40 && longer.startsWith(shorter);
+};
+
+const withoutGroupSender = (value: string): string => {
+  const separator = value.indexOf(": ");
+  if (separator <= 0 || separator > 80) return value;
+  return value.slice(separator + 2);
+};
+
 /**
  * A content-safe, deterministic identity shared by the page and row-driven
  * notification paths. Hash the original text before privacy redaction so
@@ -228,11 +243,18 @@ export function notificationTextMatches(
   rowTitle: string,
   rowBody: string,
 ): boolean {
-  const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+  const normalizedPageTitle = normalizeNotificationText(pageTitle);
+  const normalizedRowTitle = normalizeNotificationText(rowTitle);
+  const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
   const normalizedPageBody = normalizeNotificationText(pageBody);
   const normalizedRowBody = normalizeNotificationText(rowBody);
+  const pageWithoutSender = withoutGroupSender(normalizedPageBody);
+  const rowWithoutSender = withoutGroupSender(normalizedRowBody);
   return (
     titlesMatch &&
-    (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody)
+    (!normalizedPageBody ||
+      !normalizedRowBody ||
+      matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) ||
+      matchesExactOrTruncated(pageWithoutSender, rowWithoutSender))
   );
 }

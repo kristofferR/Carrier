@@ -59,7 +59,7 @@ interface Window {
   __carrierShortcuts?: Record<string, () => unknown>;
   __carrierToggleInfo?: () => boolean;
   __carrierOpenThread?: (href: string) => boolean;
-  __carrierNotifyClick?: (id: number) => void;
+  __carrierNotifyClick?: (id: number) => boolean;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */

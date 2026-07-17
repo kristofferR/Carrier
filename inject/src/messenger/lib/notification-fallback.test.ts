@@ -206,8 +206,37 @@ describe("notificationTextMatches", () => {
     expect(notificationTextMatches("Jane", "", "Jane", "New message")).toBe(true);
   });
 
+  test("matches row text truncated at the scraper caps", () => {
+    const title = "A very long group conversation name that keeps going well beyond the row cap";
+    const body =
+      "A long preview that Messenger renders in full when constructing the page notification but truncates in the conversation row snapshot";
+    expect(notificationTextMatches(`${title} with more text`, body, title, body.slice(0, 80))).toBe(
+      true,
+    );
+  });
+
+  test("matches group-chat previews with or without a sender prefix", () => {
+    expect(
+      notificationTextMatches(
+        "Project group",
+        "Deployment finished",
+        "Project group",
+        "Jane: Deployment finished",
+      ),
+    ).toBe(true);
+    expect(
+      notificationTextMatches(
+        "Project group",
+        "Jane: Deployment finished",
+        "Project group",
+        "Deployment finished",
+      ),
+    ).toBe(true);
+  });
+
   test("keeps unrelated conversations and messages separate", () => {
     expect(notificationTextMatches("Jane", "Hello", "John", "Hello")).toBe(false);
     expect(notificationTextMatches("Jane", "First", "Jane", "Second")).toBe(false);
+    expect(notificationTextMatches("Jane", "OK", "Jane", "OK then")).toBe(false);
   });
 });

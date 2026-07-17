@@ -42,6 +42,10 @@ pub(crate) struct NotifyMsg {
     /// collapse into one. Older page bundles omit it and fall back to text.
     #[serde(default)]
     dedupe_key: String,
+    /// Serializable conversation route supplied by the row-driven fallback.
+    /// Kept native-side so notification clicks still work after a page reload.
+    #[serde(default)]
+    thread_path: String,
 }
 
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
@@ -99,6 +103,37 @@ impl NotificationDeduper {
 }
 
 static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
+static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+
+fn validated_thread_path(value: &str) -> Option<String> {
+    let id = value.strip_prefix("/t/")?.strip_suffix('/')?;
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("/t/{id}/"))
+}
+
+fn remember_notification_route(id: u64, value: &str) {
+    let Some(path) = validated_thread_path(value) else {
+        return;
+    };
+    let mut routes = NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    if routes.len() >= MAX_RECENT_NOTIFICATIONS {
+        routes.clear();
+    }
+    routes.insert(id, path);
+}
+
+fn take_notification_route(id: u64) -> Option<String> {
+    NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .remove(&id)
+}
 
 impl NotifyMsg {
     /// The page's handle for this notification (safe to log — it's a counter,
@@ -282,6 +317,7 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     };
     let body = msg.body;
     let id = msg.id;
+    remember_notification_route(id, &msg.thread_path);
     let image = avatar_to_temp_png(&msg.icon);
 
     #[cfg(target_os = "macos")]
@@ -305,6 +341,8 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         }
         if clicked {
             on_notification_click(app, id);
+        } else {
+            let _ = take_notification_route(id);
         }
     });
 }
@@ -358,12 +396,20 @@ fn show_native_notification(
 /// the conversation (it invokes Facebook's own `onclick` for that notification,
 /// keyed by `id`). Hops to the main thread for the window + webview calls.
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
+    let thread_path = take_notification_route(id);
     let _ = app.clone().run_on_main_thread(move || {
         show_main(&app);
         if let Some(w) = app.get_webview_window("main") {
-            let _ = w.eval(format!(
-                "window.__carrierNotifyClick && window.__carrierNotifyClick({id});"
-            ));
+            let script = if let Some(thread_path) = thread_path {
+                let path = serde_json::to_string(&thread_path).unwrap();
+                format!(
+                    "if (window.__carrierNotifyClick?.({id}) !== true) \
+                     window.__carrierOpenThread?.({path});"
+                )
+            } else {
+                format!("window.__carrierNotifyClick?.({id});")
+            };
+            let _ = w.eval(script);
         }
     });
 }
@@ -389,13 +435,14 @@ mod tests {
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
-            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef"}"#,
+            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef","thread_path":"/t/123/"}"#,
         )
         .expect("payload parses");
         assert_eq!(msg.id, 7);
         assert_eq!(msg.title, "Jane");
         assert_eq!(msg.body, "hi there");
         assert_eq!(msg.dedupe_key, "0123456789abcdef");
+        assert_eq!(msg.thread_path, "/t/123/");
         // Missing fields fall back to defaults rather than failing the parse.
         let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
         assert_eq!(bare.id, 0);
@@ -436,7 +483,17 @@ mod tests {
             body: body.into(),
             icon: String::new(),
             dedupe_key: dedupe_key.into(),
+            thread_path: String::new(),
         }
+    }
+
+    #[test]
+    fn notification_routes_accept_only_bare_numeric_thread_paths() {
+        assert_eq!(validated_thread_path("/t/12345/"), Some("/t/12345/".into()));
+        assert_eq!(validated_thread_path("/t/12345"), None);
+        assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
+        assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
+        assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
     }
 
     #[test]

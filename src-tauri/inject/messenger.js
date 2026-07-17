@@ -1414,6 +1414,16 @@
     }
   };
   var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  var matchesExactOrTruncated = (left, right) => {
+    if (left === right) return true;
+    const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+    return shorter.length >= 40 && longer.startsWith(shorter);
+  };
+  var withoutGroupSender = (value) => {
+    const separator = value.indexOf(": ");
+    if (separator <= 0 || separator > 80) return value;
+    return value.slice(separator + 2);
+  };
   function notificationDedupeKey(title, body) {
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
     let hash = 0xcbf29ce484222325n;
@@ -1550,10 +1560,14 @@
     );
   }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
-    const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+    const normalizedPageTitle = normalizeNotificationText(pageTitle);
+    const normalizedRowTitle = normalizeNotificationText(rowTitle);
+    const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
     const normalizedPageBody = normalizeNotificationText(pageBody);
     const normalizedRowBody = normalizeNotificationText(rowBody);
-    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody);
+    const pageWithoutSender = withoutGroupSender(normalizedPageBody);
+    const rowWithoutSender = withoutGroupSender(normalizedRowBody);
+    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || matchesExactOrTruncated(pageWithoutSender, rowWithoutSender));
   }
 
   // inject/src/messenger/lib/threads.ts
@@ -1683,9 +1697,10 @@
   }
 
   // inject/src/messenger/features/notifications.ts
-  var FALLBACK_DELAY_MS = 1500;
-  var PAGE_NOTIFICATION_MATCH_MS = 2e3;
-  var FALLBACK_POLL_MS = 1e3;
+  var FALLBACK_DELAY_MS = 2500;
+  var PAGE_NOTIFICATION_MATCH_MS = 3e3;
+  var FALLBACK_POLL_VISIBLE_MS = 1e4;
+  var FALLBACK_POLL_HIDDEN_MS = 6e4;
   var ROW_MUTATION_MATCH_MS = 2e3;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -1717,7 +1732,7 @@
       img.onerror = () => done("");
       img.src = url;
     });
-    let notifySeq = 0;
+    let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     window.__carrierNotifyClick = (id) => {
       const handler = notifyHandlers.get(id);
@@ -1730,16 +1745,26 @@
         handler?.();
       } catch (_) {
       }
+      return handler !== void 0;
     };
-    const emitNotification = (title, body, icon, dedupeKey, onClick) => {
+    const emitNotification = (title, body, icon, dedupeKey, onClick, threadPath) => {
       const id = ++notifySeq;
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       invoke("plugin:event|emit", {
         event: "carrier:notify",
-        payload: { id, title, body, icon, dedupe_key: dedupeKey }
+        payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
       })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
     };
+    const notifiedStore = new NotifiedSignatureStore(
+      (() => {
+        try {
+          return window.localStorage;
+        } catch (_) {
+          return null;
+        }
+      })()
+    );
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
@@ -1747,9 +1772,11 @@
         if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
-        return;
+        notifiedStore.markNotified(key, pending.fingerprint);
+        return pending.threadPath;
       }
       unmatchedPageNotifications.add({ at: Date.now(), title, body });
+      return void 0;
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -1758,7 +1785,10 @@
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
-      markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const matchedThreadPath = markPageNotification(
+        String(title || "Messenger"),
+        String(opts.body || "")
+      );
       if (!s.mute_notifications) {
         const hidePreview = s.hide_notification_preview;
         const originalTitle = String(title || "Messenger");
@@ -1771,7 +1801,8 @@
             notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
-            }
+            },
+            matchedThreadPath
           );
         });
       }
@@ -1798,15 +1829,6 @@
     } catch (_) {
     }
     const conversationTracker = new ConversationNotificationTracker();
-    const notifiedStore = new NotifiedSignatureStore(
-      (() => {
-        try {
-          return window.localStorage;
-        } catch (_) {
-          return null;
-        }
-      })()
-    );
     const conversationFromLink = (link) => {
       const id = threadIdFromHref(link?.getAttribute("href"));
       if (!id) return null;
@@ -1849,20 +1871,20 @@
       };
     };
     const scheduleFallback = (conversation, detectedAt) => {
-      notifiedStore.markNotified(
-        conversation.key,
-        notificationDedupeKey(conversation.title, conversation.body)
-      );
+      const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const previous = pendingFallbacks.get(conversation.key);
+      if (previous) clearTimeout(previous.timer);
       if (unmatchedPageNotifications.consumeMatching(
         conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS
       )) {
+        notifiedStore.markNotified(conversation.key, fingerprint);
+        pendingFallbacks.delete(conversation.key);
         return;
       }
-      const previous = pendingFallbacks.get(conversation.key);
-      if (previous) clearTimeout(previous.timer);
-      const timer = setTimeout(() => {
+      const avatar = avatarToDataUrl(conversation.icon);
+      const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
           if (pendingFallbacks.get(conversation.key)?.timer === timer) {
@@ -1871,28 +1893,31 @@
           return;
         }
         const hidePreview = settings.hide_notification_preview === true;
-        avatarToDataUrl(hidePreview ? "" : conversation.icon).then((icon) => {
-          if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
-          pendingFallbacks.delete(conversation.key);
-          diag(
-            "notify.fallback",
-            `unread row changed without a page Notification (visibility: ${document.visibilityState})`
-          );
-          emitNotification(
-            hidePreview ? "Messenger" : conversation.title,
-            hidePreview ? "New message" : conversation.body,
-            icon,
-            notificationDedupeKey(conversation.title, conversation.body),
-            () => {
-              window.__carrierOpenThread?.(conversation.threadPath);
-            }
-          );
-        });
+        const icon = hidePreview ? "" : await avatar;
+        if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
+        pendingFallbacks.delete(conversation.key);
+        notifiedStore.markNotified(conversation.key, fingerprint);
+        diag(
+          "notify.fallback",
+          `unread row changed without a page Notification (visibility: ${document.visibilityState})`
+        );
+        emitNotification(
+          hidePreview ? "Messenger" : conversation.title,
+          hidePreview ? "New message" : conversation.body,
+          icon,
+          fingerprint,
+          () => {
+            window.__carrierOpenThread?.(conversation.threadPath);
+          },
+          conversation.threadPath
+        );
       }, FALLBACK_DELAY_MS);
       pendingFallbacks.set(conversation.key, {
         timer,
         title: conversation.title,
-        body: conversation.body
+        body: conversation.body,
+        threadPath: conversation.threadPath,
+        fingerprint
       });
     };
     let scanRunning = false;
@@ -1964,11 +1989,12 @@
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
       const inspect = (node) => {
-        if (!(node instanceof Element)) return;
+        const element = node instanceof Element ? node : node.parentElement;
+        if (!element) return;
         const links = /* @__PURE__ */ new Set();
-        const closest = node.closest('a[href*="/t/"]');
+        const closest = element.closest('a[href*="/t/"]');
         if (closest) links.add(closest);
-        for (const link of node.querySelectorAll('a[href*="/t/"]')) {
+        for (const link of element.querySelectorAll('a[href*="/t/"]')) {
           links.add(link);
         }
         for (const link of links) {
@@ -1988,9 +2014,15 @@
         scanUnreadConversations();
       }, 120);
     };
-    const startScanner = (grid2) => {
-      const observer = new MutationObserver(scheduleScan);
-      observer.observe(grid2, {
+    let observedGrid = null;
+    const gridObserver = new MutationObserver(scheduleScan);
+    const attachScanner = () => {
+      const grid = document.querySelector('[role="navigation"] [role="grid"]');
+      if (grid === observedGrid && grid?.isConnected) return true;
+      gridObserver.disconnect();
+      observedGrid = grid;
+      if (!grid) return false;
+      gridObserver.observe(grid, {
         childList: true,
         subtree: true,
         characterData: true,
@@ -1998,19 +2030,31 @@
         attributeFilter: ["class", "src", "alt", "style"]
       });
       scanUnreadConversations();
-      setInterval(scanUnreadConversations, FALLBACK_POLL_MS);
+      return true;
     };
-    const grid = document.querySelector('[role="navigation"] [role="grid"]');
-    if (grid) startScanner(grid);
-    else {
+    if (!attachScanner()) {
       const waitForGrid = new MutationObserver(() => {
-        const found = document.querySelector('[role="navigation"] [role="grid"]');
-        if (!found) return;
-        waitForGrid.disconnect();
-        startScanner(found);
+        if (attachScanner()) waitForGrid.disconnect();
       });
       waitForGrid.observe(document.documentElement, { childList: true, subtree: true });
     }
+    let pollTimer;
+    const poll = () => {
+      attachScanner();
+      scanUnreadConversations();
+    };
+    const startPoll = () => {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(
+        poll,
+        document.hidden ? FALLBACK_POLL_HIDDEN_MS : FALLBACK_POLL_VISIBLE_MS
+      );
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) poll();
+    });
+    startPoll();
   }
 
   // inject/src/messenger/features/recent-threads.ts
@@ -2088,6 +2132,9 @@
 
   // inject/src/messenger/features/selector-health.ts
   var WATCHED_SELECTORS = [
+    // The notification MutationObserver is intentionally scoped to this exact
+    // grid. A looser chat-link selector can stay green while the scanner is dead.
+    { key: "notification-grid", sel: '[role="navigation"] [role="grid"]' },
     // Conversation list links: Cmd/Ctrl+1–9, unread-conversations badge,
     // recent threads, hide-names blur.
     { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },

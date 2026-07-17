@@ -5,6 +5,9 @@
 import { diag, toast } from "../bridge";
 
 const WATCHED_SELECTORS = [
+  // The notification MutationObserver is intentionally scoped to this exact
+  // grid. A looser chat-link selector can stay green while the scanner is dead.
+  { key: "notification-grid", sel: '[role="navigation"] [role="grid"]' },
   // Conversation list links: Cmd/Ctrl+1–9, unread-conversations badge,
   // recent threads, hide-names blur.
   { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },

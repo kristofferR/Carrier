@@ -21,9 +21,10 @@ interface CarrierNotificationInstance {
   close: () => void;
 }
 
-const FALLBACK_DELAY_MS = 1500;
-const PAGE_NOTIFICATION_MATCH_MS = 2000;
-const FALLBACK_POLL_MS = 1000;
+const FALLBACK_DELAY_MS = 2500;
+const PAGE_NOTIFICATION_MATCH_MS = 3000;
+const FALLBACK_POLL_VISIBLE_MS = 10_000;
+const FALLBACK_POLL_HIDDEN_MS = 60_000;
 const ROW_MUTATION_MATCH_MS = 2000;
 
 export function initNotificationBridge() {
@@ -72,7 +73,9 @@ export function initNotificationBridge() {
   // conversation up by invoking the original `onclick` Facebook assigned to its
   // Notification (that's what opens the right thread). A small bounded map keeps
   // those handlers alive between "notification shown" and "notification clicked".
-  let notifySeq = 0;
+  // Keep ids unique across auto-refresh reloads so the native click route for
+  // an older OS notification cannot collide with a fresh in-page handler.
+  let notifySeq = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const notifyHandlers = new Map<number, () => void>();
   window.__carrierNotifyClick = (id: number) => {
     const handler = notifyHandlers.get(id);
@@ -83,6 +86,7 @@ export function initNotificationBridge() {
     try {
       handler?.();
     } catch (_) {}
+    return handler !== undefined;
   };
 
   const emitNotification = (
@@ -91,20 +95,36 @@ export function initNotificationBridge() {
     icon: string,
     dedupeKey: string,
     onClick: () => void,
+    threadPath?: string,
   ) => {
     const id = ++notifySeq;
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
     invoke("plugin:event|emit", {
       event: "carrier:notify",
-      payload: { id, title, body, icon, dedupe_key: dedupeKey },
+      payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" },
     })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
   };
+
+  // The trackers die with every page reload, and the auto-refresh reloads an
+  // unfocused window periodically. Persist delivered fingerprints so hydration
+  // after a reload cannot replay old unread rows.
+  const notifiedStore = new NotifiedSignatureStore(
+    (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })(),
+  );
 
   interface PendingFallback {
     timer: number;
     title: string;
     body: string;
+    threadPath: string;
+    fingerprint: string;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
   const unmatchedPageNotifications = new PageNotificationQueue();
@@ -112,14 +132,16 @@ export function initNotificationBridge() {
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
   // net below never duplicates Facebook's normal native notification.
-  const markPageNotification = (title: string, body: string) => {
+  const markPageNotification = (title: string, body: string): string | undefined => {
     for (const [key, pending] of pendingFallbacks) {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
-      return;
+      notifiedStore.markNotified(key, pending.fingerprint);
+      return pending.threadPath;
     }
     unmatchedPageNotifications.add({ at: Date.now(), title, body });
+    return undefined;
   };
 
   function CarrierNotification(
@@ -136,7 +158,10 @@ export function initNotificationBridge() {
       "notify.fired",
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
-    markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+    const matchedThreadPath = markPageNotification(
+      String(title || "Messenger"),
+      String(opts.body || ""),
+    );
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
@@ -162,6 +187,7 @@ export function initNotificationBridge() {
             // instance so `this` stays bound to the Notification.
             this.onclick?.(new Event("click"));
           },
+          matchedThreadPath,
         );
       });
     }
@@ -193,21 +219,6 @@ export function initNotificationBridge() {
   // This is the modern Caprine/Wheemer strategy, adapted to Carrier's stable
   // role/link selectors and kept as a delayed fallback to the page bridge.
   const conversationTracker = new ConversationNotificationTracker();
-
-  // The trackers above die with every page reload, and the auto-refresh
-  // reloads an unfocused window every ~15 minutes. Re-priming them races
-  // Facebook's hydration (placeholder previews, a late "(N)" title), which
-  // used to re-notify conversations that had been sitting unread for an hour.
-  // This store persists "already delivered" fingerprints across reloads.
-  const notifiedStore = new NotifiedSignatureStore(
-    (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })(),
-  );
 
   const conversationFromLink = (link: HTMLAnchorElement) => {
     const id = threadIdFromHref(link?.getAttribute("href"));
@@ -258,13 +269,12 @@ export function initNotificationBridge() {
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
 
   const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
-    // Record up front: whether this change is matched to Facebook's own page
-    // Notification, delivered by the timer below, or dropped because muted,
-    // it has been handled and must not fire again after a reload re-prime.
-    notifiedStore.markNotified(
-      conversation.key,
-      notificationDedupeKey(conversation.title, conversation.body),
-    );
+    const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    // Clear an older pending preview for this thread before checking the page
+    // queue. Otherwise a page Notification can consume the new row while the
+    // stale timer remains armed and later produces a duplicate.
+    const previous = pendingFallbacks.get(conversation.key);
+    if (previous) clearTimeout(previous.timer);
     if (
       unmatchedPageNotifications.consumeMatching(
         conversation,
@@ -272,11 +282,15 @@ export function initNotificationBridge() {
         PAGE_NOTIFICATION_MATCH_MS,
       )
     ) {
+      // The page path already delivered this logical notification.
+      notifiedStore.markNotified(conversation.key, fingerprint);
+      pendingFallbacks.delete(conversation.key);
       return;
     }
-    const previous = pendingFallbacks.get(conversation.key);
-    if (previous) clearTimeout(previous.timer);
-    const timer = setTimeout(() => {
+    // Start the bounded avatar conversion during the pairing grace period.
+    // Delivery therefore stays ahead of the four-second auto-refresh nudge.
+    const avatar = avatarToDataUrl(conversation.icon);
+    const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (settings.mute_notifications) {
         if (pendingFallbacks.get(conversation.key)?.timer === timer) {
@@ -285,31 +299,36 @@ export function initNotificationBridge() {
         return;
       }
       const hidePreview = settings.hide_notification_preview === true;
-      avatarToDataUrl(hidePreview ? "" : conversation.icon).then((icon) => {
-        // Keep the entry cancellable until the avatar conversion finishes. A
-        // late page Notification must still win instead of producing a second
-        // native notification while this fallback is in flight.
-        if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
-        pendingFallbacks.delete(conversation.key);
-        diag(
-          "notify.fallback",
-          `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
-        );
-        emitNotification(
-          hidePreview ? "Messenger" : conversation.title,
-          hidePreview ? "New message" : conversation.body,
-          icon,
-          notificationDedupeKey(conversation.title, conversation.body),
-          () => {
-            window.__carrierOpenThread?.(conversation.threadPath);
-          },
-        );
-      });
+      const icon = hidePreview ? "" : await avatar;
+      // Keep the entry cancellable until the avatar conversion finishes. A
+      // late page Notification must still win instead of producing a second
+      // native notification while this fallback is in flight.
+      if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
+      pendingFallbacks.delete(conversation.key);
+      // Mark only at the actual delivery boundary. A reload before this point
+      // must not persist a false "already delivered" state.
+      notifiedStore.markNotified(conversation.key, fingerprint);
+      diag(
+        "notify.fallback",
+        `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
+      );
+      emitNotification(
+        hidePreview ? "Messenger" : conversation.title,
+        hidePreview ? "New message" : conversation.body,
+        icon,
+        fingerprint,
+        () => {
+          window.__carrierOpenThread?.(conversation.threadPath);
+        },
+        conversation.threadPath,
+      );
     }, FALLBACK_DELAY_MS);
     pendingFallbacks.set(conversation.key, {
       timer,
       title: conversation.title,
       body: conversation.body,
+      threadPath: conversation.threadPath,
+      fingerprint,
     });
   };
 
@@ -396,11 +415,12 @@ export function initNotificationBridge() {
   const scheduleScan = (records: MutationRecord[] = []) => {
     const changedKeys = new Set<string>();
     const inspect = (node: Node) => {
-      if (!(node instanceof Element)) return;
+      const element = node instanceof Element ? node : node.parentElement;
+      if (!element) return;
       const links = new Set<HTMLAnchorElement>();
-      const closest = node.closest<HTMLAnchorElement>('a[href*="/t/"]');
+      const closest = element.closest<HTMLAnchorElement>('a[href*="/t/"]');
       if (closest) links.add(closest);
-      for (const link of node.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')) {
+      for (const link of element.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')) {
         links.add(link);
       }
       for (const link of links) {
@@ -421,9 +441,15 @@ export function initNotificationBridge() {
     }, 120);
   };
 
-  const startScanner = (grid: Element) => {
-    const observer = new MutationObserver(scheduleScan);
-    observer.observe(grid, {
+  let observedGrid: Element | null = null;
+  const gridObserver = new MutationObserver(scheduleScan);
+  const attachScanner = () => {
+    const grid = document.querySelector('[role="navigation"] [role="grid"]');
+    if (grid === observedGrid && grid?.isConnected) return true;
+    gridObserver.disconnect();
+    observedGrid = grid;
+    if (!grid) return false;
+    gridObserver.observe(grid, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -431,18 +457,33 @@ export function initNotificationBridge() {
       attributeFilter: ["class", "src", "alt", "style"],
     });
     scanUnreadConversations();
-    setInterval(scanUnreadConversations, FALLBACK_POLL_MS);
+    return true;
   };
 
-  const grid = document.querySelector('[role="navigation"] [role="grid"]');
-  if (grid) startScanner(grid);
-  else {
+  if (!attachScanner()) {
     const waitForGrid = new MutationObserver(() => {
-      const found = document.querySelector('[role="navigation"] [role="grid"]');
-      if (!found) return;
-      waitForGrid.disconnect();
-      startScanner(found);
+      if (attachScanner()) waitForGrid.disconnect();
     });
     waitForGrid.observe(document.documentElement, { childList: true, subtree: true });
   }
+
+  // Mutations drive the fast path. This slow safety poll also re-attaches when
+  // React replaces the grid element, and backs off while Carrier is hidden.
+  let pollTimer: number | undefined;
+  const poll = () => {
+    attachScanner();
+    scanUnreadConversations();
+  };
+  const startPoll = () => {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(
+      poll,
+      document.hidden ? FALLBACK_POLL_HIDDEN_MS : FALLBACK_POLL_VISIBLE_MS,
+    );
+  };
+  document.addEventListener("visibilitychange", () => {
+    startPoll();
+    if (!document.hidden) poll();
+  });
+  startPoll();
 }
