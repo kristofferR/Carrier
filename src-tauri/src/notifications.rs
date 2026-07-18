@@ -354,6 +354,27 @@ pub(crate) fn clear_avatar_cache() {
 /// until the user clicks or dismisses it (it only parks, doesn't spin), and on
 /// click it routes back to the page.
 pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
+    // Re-enforce the privacy settings here on the trusted side. The page-side
+    // checks in messenger.js run in the remote facebook.com origin, so a page
+    // bug (or a hostile script emitting carrier:notify directly) must not be
+    // able to bypass mute or leak sender/message content past hide-preview.
+    let (sound, muted, hide_preview) = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap();
+        (
+            s.notification_sound,
+            s.mute_notifications,
+            s.hide_notification_preview,
+        )
+    };
+    if muted {
+        log::info!(
+            "carrier:notify suppressed by mute_notifications (id {})",
+            msg.id
+        );
+        return;
+    }
+
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
@@ -369,21 +390,24 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         return;
     }
 
-    let sound = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap();
-        s.notification_sound
-    };
-
-    let title = if msg.title.trim().is_empty() {
+    // Same redaction the page applies: generic title/body, no avatar.
+    let title = if hide_preview || msg.title.trim().is_empty() {
         "Messenger".to_string()
     } else {
         msg.title
     };
-    let body = msg.body;
+    let body = if hide_preview {
+        "New message".to_string()
+    } else {
+        msg.body
+    };
     let id = msg.id;
     remember_notification_route(id, &msg.thread_path);
-    let image = avatar_to_temp_png(&msg.icon);
+    let image = if hide_preview {
+        None
+    } else {
+        avatar_to_temp_png(&msg.icon)
+    };
 
     #[cfg(target_os = "macos")]
     {

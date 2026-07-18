@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`. Keep this list minimal: every listed origin's own page scripts (not just ours) can call the allowed commands. meta.com/oculus.com are deliberately absent — they only appear during Meta-account login redirects, where the injected features can fail soft (an external link clicked there won't open until back on Messenger).",
+  "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`. Keep this list minimal: every listed origin's own page scripts (not just ours) can call the allowed commands. meta.com/oculus.com are deliberately absent — they only appear during Meta-account login redirects, where the injected features can fail soft (an external link clicked there won't open until back on Messenger). Notification is narrowed to the two permission-query commands: banners are delivered by the Rust side via carrier:notify, so the page never needs plugin `notify`/`show` (which would let a hostile FB script pop native notifications past the mute/hide-preview settings). The opener scope lists exactly the schemes the injected code opens: web links, mailto:/tel:, and the macOS privacy-pane deep link.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -19,8 +19,18 @@
     "core:default",
     "core:window:allow-set-theme",
     "core:window:allow-set-badge-count",
-    "notification:default",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
     "window-state:default",
-    "opener:allow-open-url"
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "mailto:*" },
+        { "url": "tel:*" },
+        { "url": "x-apple.systempreferences:com.apple.preference.security*" }
+      ]
+    }
   ]
 }

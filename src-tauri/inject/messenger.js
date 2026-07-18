@@ -952,6 +952,7 @@
     const host = u.hostname.toLowerCase();
     return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
   }
+  var FACEBOOK_APP_PATH_RE = /^\/(messages|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
   function classifyHref(href, base) {
     try {
       const u = new URL(href, base);
@@ -961,7 +962,9 @@
       const host = u.hostname.replace(/^www\./, "");
       const tracking = host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com" && u.pathname === "/l.php";
       const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
-      return { external: tracking || !internal };
+      const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
+      const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
+      return { external: tracking || !inApp };
     } catch {
       return { external: false };
     }
@@ -973,6 +976,7 @@
     if (!a) return;
     const href = a.href;
     if (!href || href.startsWith("javascript:")) return;
+    if (a.hasAttribute("download")) return;
     const modified = e.shiftKey || e.metaKey || e.ctrlKey || e.button === 1;
     const blank = a.target === "_blank";
     if (classifyHref(href, location.href).external) {
@@ -2434,7 +2438,7 @@
 
   // inject/src/messenger/features/shortcuts.ts
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-  var accel = (e) => isMac2 ? e.metaKey : e.ctrlKey;
+  var accel = (e) => !e.altKey && (isMac2 ? e.metaKey : e.ctrlKey);
   var shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),

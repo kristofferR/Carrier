@@ -14,7 +14,10 @@ import {
 import { zoomIn, zoomOut, zoomReset } from "./zoom";
 
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-const accel = (e: KeyboardEvent) => (isMac ? e.metaKey : e.ctrlKey);
+// Alt-modified keys are never accelerators: AltGr reports as Ctrl+Alt on
+// Windows, so typing [ ] { } on European layouts would otherwise trigger the
+// bracket shortcuts instead of inserting the character.
+const accel = (e: KeyboardEvent) => !e.altKey && (isMac ? e.metaKey : e.ctrlKey);
 
 const shortcuts: Record<string, () => unknown> = {
   "[": () => stepConversation(-1),
