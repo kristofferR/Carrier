@@ -122,12 +122,17 @@ export function initContextMenu() {
       const focusableSelector =
         'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
       const previouslyFocused = document.activeElement;
+      // If a menu is already open and focus is inside it, closeMenu() is about
+      // to detach that item — reuse the open menu's own restore target instead
+      // of saving a node that .focus() can no longer reach.
+      const priorReturnFocus = ctxMenu?.contains(previouslyFocused)
+        ? ctxMenuReturnFocus
+        : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
+          ? previouslyFocused
+          : null;
       closeMenu();
       ctxMenuReturnFocus =
-        (t.closest?.(focusableSelector) as HTMLElement | null) ??
-        (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
-          ? previouslyFocused
-          : null);
+        (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
       ctxMenu = document.createElement("div");
       ctxMenu.setAttribute("role", "menu");
       ctxMenu.setAttribute("aria-label", "Media actions");
@@ -186,6 +191,9 @@ export function initContextMenu() {
           return;
         }
         if (event.key === "Tab") {
+          // closeMenu(true) restores focus synchronously; block the browser's
+          // own Tab move so focus stays on the restoration target.
+          event.preventDefault();
           closeMenu(true);
           return;
         }

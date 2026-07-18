@@ -203,12 +203,22 @@ fn dirs_config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-pub(crate) fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
+/// Result of a settings save: whether this snapshot actually reached disk or was
+/// dropped because a newer concurrent save had already been published. Callers
+/// must not apply a `Superseded` snapshot to runtime — doing so would leave the
+/// running settings diverged from what is persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveOutcome {
+    Written,
+    Superseded,
+}
+
+pub(crate) fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<SaveOutcome, String> {
     let path = settings_file(app).ok_or("no config directory available")?;
     write_settings_to_path(&path, s)
 }
 
-fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
+fn write_settings_to_path(path: &Path, s: &Settings) -> Result<SaveOutcome, String> {
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
     let parent = path
         .parent()
@@ -233,7 +243,7 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
         nonce
     ));
 
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<SaveOutcome, String> {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -252,7 +262,7 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
             .unwrap();
         if published.get(path).is_some_and(|latest| sequence < *latest) {
             let _ = std::fs::remove_file(&temp);
-            return Ok(());
+            return Ok(SaveOutcome::Superseded);
         }
         replace_file(&temp, path).map_err(|e| e.to_string())?;
         published.insert(path.to_path_buf(), sequence);
@@ -264,7 +274,7 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
             let directory = std::fs::File::open(parent).map_err(|e| e.to_string())?;
             directory.sync_all().map_err(|e| e.to_string())?;
         }
-        Ok(())
+        Ok(SaveOutcome::Written)
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
@@ -665,7 +675,11 @@ mod tests {
             zoom: 60,
             ..Default::default()
         };
-        write_settings_to_path(&path, &older).unwrap();
+        assert_eq!(
+            write_settings_to_path(&path, &older).unwrap(),
+            SaveOutcome::Superseded,
+            "an older write must report itself superseded, not written"
+        );
 
         assert_eq!(
             load_settings_from_path(&path).zoom,

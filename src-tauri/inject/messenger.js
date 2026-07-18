@@ -257,8 +257,9 @@
         e.preventDefault();
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;
+        const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
-        ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? (previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null);
+        ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = document.createElement("div");
         ctxMenu.setAttribute("role", "menu");
         ctxMenu.setAttribute("aria-label", "Media actions");
@@ -316,6 +317,7 @@
             return;
           }
           if (event.key === "Tab") {
+            event.preventDefault();
             closeMenu(true);
             return;
           }

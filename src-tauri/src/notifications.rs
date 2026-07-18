@@ -137,7 +137,14 @@ impl NotificationDeduper {
 }
 
 static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
-static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
+
+/// A reload-safe conversation route kept for an emitted notification, with the
+/// time it was stored so the cap can evict the oldest rather than every route.
+struct RouteEntry {
+    path: String,
+    at: Instant,
+}
+static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
 
 fn validated_thread_path(value: &str) -> Option<String> {
     let id = value.strip_prefix("/t/")?.strip_suffix('/')?;
@@ -163,10 +170,25 @@ fn remember_notification_route(id: u64, value: &str) {
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap();
-    if routes.len() >= MAX_RECENT_NOTIFICATIONS {
-        routes.clear();
+    // At the cap, evict only the oldest entry. A dismissed notification can
+    // leave its route behind, but recent notifications still awaiting a click
+    // must keep theirs — clearing the whole map would break their routing.
+    if routes.len() >= MAX_RECENT_NOTIFICATIONS && !routes.contains_key(&id) {
+        if let Some(oldest) = routes
+            .iter()
+            .min_by_key(|(_, entry)| entry.at)
+            .map(|(id, _)| *id)
+        {
+            routes.remove(&oldest);
+        }
     }
-    routes.insert(id, path);
+    routes.insert(
+        id,
+        RouteEntry {
+            path,
+            at: Instant::now(),
+        },
+    );
 }
 
 fn take_notification_route(id: u64) -> Option<String> {
@@ -175,6 +197,7 @@ fn take_notification_route(id: u64) -> Option<String> {
         .lock()
         .unwrap()
         .remove(&id)
+        .map(|entry| entry.path)
 }
 
 impl NotifyMsg {
