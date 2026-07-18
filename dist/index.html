@@ -73,6 +73,11 @@
         cursor: default;
         opacity: .58;
       }
+      #open-anyway {
+        background: transparent;
+        color: #0866ff;
+        box-shadow: inset 0 0 0 1px #0866ff;
+      }
       #detail {
         display: none;
         max-width: 100%;
@@ -98,6 +103,7 @@
         body { background: #18191a; color: #e4e6eb; }
         p, #detail { color: #b0b3b8; }
         #detail { background: rgba(255, 255, 255, .08); }
+        #open-anyway { color: #4599ff; box-shadow: inset 0 0 0 1px #4599ff; }
       }
     </style>
   </head>
@@ -114,6 +120,7 @@
       </div>
       <div class="actions">
         <button id="retry" type="button" disabled>Retry</button>
+        <button id="open-anyway" type="button" hidden>Open anyway</button>
       </div>
       <pre id="detail" aria-live="polite"></pre>
     </main>
@@ -124,6 +131,7 @@
       const message = document.getElementById("message");
       const detail = document.getElementById("detail");
       const retry = document.getElementById("retry");
+      const openAnyway = document.getElementById("open-anyway");
 
       function render(status) {
         document.body.dataset.state = status.state || "error";
@@ -137,6 +145,8 @@
           detail.style.display = "none";
         }
         retry.disabled = status.state === "checking";
+        openAnyway.hidden = !["blocked", "unreachable", "error"].includes(status.state);
+        openAnyway.disabled = false;
       }
 
       async function connect() {
@@ -158,6 +168,25 @@
       }
 
       retry.addEventListener("click", connect);
+      openAnyway.addEventListener("click", async () => {
+        retry.disabled = true;
+        openAnyway.disabled = true;
+        render({
+          state: "loading",
+          title: "Opening Messenger",
+          message: "Carrier is asking the webview to connect without the system DNS check.",
+        });
+        try {
+          render(await invoke("open_messenger_anyway"));
+        } catch (error) {
+          render({
+            state: "error",
+            title: "Cannot open Messenger",
+            message: "Carrier could not ask the webview to open Messenger.",
+            detail: String(error && error.message ? error.message : error),
+          });
+        }
+      });
       connect();
     </script>
   </body>

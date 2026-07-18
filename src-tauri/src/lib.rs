@@ -206,6 +206,7 @@ pub fn run() {
             commands::check_for_updates,
             commands::install_update,
             commands::connect_messenger,
+            commands::open_messenger_anyway,
             commands::open_log_folder
         ])
         .setup(move |app| {

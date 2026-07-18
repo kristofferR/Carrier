@@ -21,4 +21,12 @@ describe("hand-maintained injected assets", () => {
     expect(release.permissions).not.toContain("core:event:allow-listen");
     expect(development.permissions).toContain("core:event:allow-listen");
   });
+
+  test("the connectivity screen keeps an explicit webview fallback", async () => {
+    const splash = await repoAsset("dist/index.html");
+
+    expect(splash).toContain('id="open-anyway"');
+    expect(splash).toContain('invoke("open_messenger_anyway")');
+    expect(splash).toContain('["blocked", "unreachable", "error"]');
+  });
 });

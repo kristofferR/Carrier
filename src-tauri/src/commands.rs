@@ -389,18 +389,26 @@ pub(crate) async fn connect_messenger(window: WebviewWindow) -> MessengerLoadSta
         Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
         Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
         Ok(Ok(Err(error))) => {
-            log::warn!("Messenger DNS preflight failed ({error:?}); navigating anyway");
-            navigate_to_messenger(&window)
+            log::warn!("Messenger DNS preflight failed ({error:?})");
+            error.into()
         }
-        Ok(Err(e)) => {
-            log::warn!("Messenger DNS preflight task failed: {e}; navigating anyway");
-            navigate_to_messenger(&window)
-        }
-        Err(_) => {
-            log::warn!("Messenger DNS preflight timed out; navigating anyway");
-            navigate_to_messenger(&window)
-        }
+        Ok(Err(e)) => MessengerLoadStatus::unexpected(
+            "Messenger check failed",
+            format!("DNS preflight task failed: {e}"),
+        ),
+        Err(_) => MessengerLoadStatus::unexpected(
+            "Messenger check timed out",
+            "The Messenger DNS preflight did not finish in time.".into(),
+        ),
     }
+}
+
+/// Bypass the OS DNS preflight when the user explicitly asks to try the
+/// webview's resolver (for example when a proxy or secure-DNS setup differs
+/// from the system resolver).
+#[tauri::command]
+pub(crate) fn open_messenger_anyway(window: WebviewWindow) -> MessengerLoadStatus {
+    navigate_to_messenger(&window)
 }
 
 /// Open the folder holding Carrier's log file, for attaching to bug reports.
