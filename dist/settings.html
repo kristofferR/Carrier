@@ -80,6 +80,7 @@
       <button class="action" id="check">Check for updates</button>
     </footer>
 
+    <script src="settings-update.js"></script>
     <script>
       const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
 
@@ -152,7 +153,6 @@
       } catch (_) {}
 
       let settings = {};
-      let discoveredUpdate = "";
       const setStatus = (m) => (document.getElementById("status").textContent = m || "");
 
       function svgIcon(inner) {
@@ -431,42 +431,21 @@
       // Pick up changes made elsewhere (e.g. the View menu) when refocused.
       window.addEventListener("focus", refresh);
 
-      document.getElementById("check").onclick = async () => {
-        const button = document.getElementById("check");
-        button.disabled = true;
-        setStatus("Checking for updates…");
-        let installing = false;
+      const updateButton = document.getElementById("check");
+      const updateController = new CarrierSettingsUpdate.UpdateConsentController(
+        (command) => invoke(command),
+        (state) => {
+          updateButton.textContent = state.buttonLabel;
+          updateButton.disabled = state.busy;
+          setStatus(state.status);
+        },
+      );
+      updateButton.onclick = async () => {
         try {
-          let version = discoveredUpdate;
-          if (!version) {
-            const res = await invoke("check_for_updates");
-            if (res === "up-to-date") {
-              button.textContent = "Check for updates";
-              setStatus("Carrier is up to date.");
-              return;
-            }
-            version = res.startsWith("available:") ? res.slice(10) : "";
-            discoveredUpdate = version;
-          }
-          if (version) button.textContent = `Install Carrier ${version}`;
-          const label = version ? `Carrier ${version}` : "A Carrier update";
-          if (!confirm(`${label} is available. Install it now and restart Carrier?`)) {
-            setStatus("Update install cancelled.");
-            return;
-          }
-          setStatus("Downloading and installing update…");
-          installing = true;
-          const installResult = await invoke("install_update");
-          if (installResult === "up-to-date") {
-            discoveredUpdate = "";
-            button.textContent = "Check for updates";
-            setStatus("Carrier is already up to date.");
-          }
+          await updateController.activate((message) => confirm(message));
         } catch (e) {
-          setStatus(installing ? "Update install failed." : "Update check failed.");
+          updateController.fail();
           console.error(e);
-        } finally {
-          button.disabled = false;
         }
       };
 
@@ -478,13 +457,9 @@
         }
         render();
         try {
-          const discovered = await invoke("discovered_update");
-          if (discovered) {
-            discoveredUpdate = discovered;
-            document.getElementById("check").textContent = `Install Carrier ${discovered}`;
-            setStatus(`Carrier ${discovered} is available.`);
-          }
+          await updateController.initialize();
         } catch (e) {
+          updateController.fail();
           console.error(e);
         }
         try {

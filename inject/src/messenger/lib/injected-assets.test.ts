@@ -69,14 +69,15 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
-  test("a discovered update remains the action until install is attempted", async () => {
-    const settings = await repoAsset("dist/settings.html");
+  test("Settings loads the generated update consent controller", async () => {
+    const [settings, controller] = await Promise.all([
+      repoAsset("dist/settings.html"),
+      repoAsset("dist/settings-update.js"),
+    ]);
 
-    expect(settings).toContain("let discoveredUpdate =");
-    expect(settings).toContain("let version = discoveredUpdate");
-    expect(settings).toContain("if (!version)");
-    expect(settings).toContain("discoveredUpdate = discovered");
-    expect(settings).toContain('await invoke("install_update")');
+    expect(settings).toContain('<script src="settings-update.js"></script>');
+    expect(controller).toContain("GENERATED FILE — DO NOT EDIT");
+    expect(controller).toContain("UpdateConsentController");
   });
 
   test("every landing locale describes update consent and current notification controls", async () => {

@@ -45,7 +45,7 @@ use notifications::{
 use settings::AppState;
 use settings::{
     apply_settings, clamp_zoom, clear_pending_webview_data, load_settings, load_settings_early,
-    save_settings,
+    save_settings, SaveOutcome,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -302,18 +302,28 @@ pub fn run() {
                 };
                 let zoom = clamp_zoom(zoom);
                 let state = h.state::<AppState>();
+                let _settings_operation = state.settings_operation.lock().unwrap();
                 let s = {
-                    let mut settings = state.settings.lock().unwrap();
+                    let settings = state.settings.lock().unwrap();
                     if settings.zoom == zoom {
                         return;
                     }
-                    settings.zoom = zoom;
-                    settings.clone()
+                    let mut next = settings.clone();
+                    next.zoom = zoom;
+                    next
                 };
-                if let Err(e) = save_settings(&h, &s) {
-                    log::error!("failed to save settings: {e}");
+                match save_settings(&h, &s) {
+                    Ok(SaveOutcome::Written) => {
+                        *state.settings.lock().unwrap() = s.clone();
+                        apply_settings(&h, &s);
+                    }
+                    Ok(SaveOutcome::Superseded) => {
+                        log::warn!("zoom settings update was superseded");
+                    }
+                    Err(e) => {
+                        log::error!("failed to save settings: {e}");
+                    }
                 }
-                apply_settings(&h, &s);
             });
 
             // Recent conversations scraped from the page's chat list → the
