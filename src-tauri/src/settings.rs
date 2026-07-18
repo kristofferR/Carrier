@@ -60,6 +60,9 @@ pub(crate) struct Settings {
     pub(crate) hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     pub(crate) system_emoji: bool,
+    /// Pause videos and animated media that start without a recent user
+    /// interaction. Manual playback remains available. Off by default.
+    pub(crate) stop_media_autoplay: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -112,6 +115,7 @@ impl Default for Settings {
             hide_notification_preview: false,
             hide_names_avatars: false,
             system_emoji: false,
+            stop_media_autoplay: false,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -569,6 +573,10 @@ mod tests {
             "the first hide-to-tray should explain where Carrier went"
         );
         assert!(!s.system_emoji, "system_emoji should default to false");
+        assert!(
+            !s.stop_media_autoplay,
+            "stop_media_autoplay should default to false"
+        );
         assert!(
             !s.send_with_accelerator,
             "send_with_accelerator should default to false"

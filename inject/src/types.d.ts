@@ -33,6 +33,8 @@ interface CarrierSettings {
   hide_notification_preview?: boolean;
   hide_names_avatars?: boolean;
   system_emoji?: boolean;
+  /** Pause video/GIF playback unless it follows a recent user interaction. */
+  stop_media_autoplay?: boolean;
   /** Page zoom in percent (30–200; 100 = no zoom). */
   zoom?: number;
   global_hotkey?: boolean;

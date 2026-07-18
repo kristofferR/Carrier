@@ -1254,6 +1254,84 @@
     }
   }
 
+  // inject/src/messenger/lib/media-autoplay.ts
+  var MEDIA_ACTIVATION_GRACE_MS = 1500;
+  function shouldSuppressMediaPlay(enabled, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
+    if (!enabled) return false;
+    if (!Number.isFinite(lastActivationAt) || !Number.isFinite(now) || !Number.isFinite(graceMs) || graceMs < 0 || lastActivationAt > now) {
+      return true;
+    }
+    return now - lastActivationAt > graceMs;
+  }
+
+  // inject/src/messenger/features/media-autoplay.ts
+  var VIDEO_SELECTOR = "video";
+  function initMediaAutoplay() {
+    const on = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
+    let lastActivationAt = Number.NEGATIVE_INFINITY;
+    let observer = null;
+    const noteActivation = (event) => {
+      if (event.isTrusted) lastActivationAt = performance.now();
+    };
+    window.addEventListener("pointerdown", noteActivation, true);
+    window.addEventListener("keydown", noteActivation, true);
+    const shouldSuppress = () => shouldSuppressMediaPlay(on(), lastActivationAt, performance.now());
+    const suppress = (video, force = false) => {
+      if (!on() || !force && !shouldSuppress()) return;
+      video.autoplay = false;
+      video.removeAttribute("autoplay");
+      if (!video.paused) video.pause();
+    };
+    const scan = (root, force = false) => {
+      if (!on()) return;
+      if (root.nodeType === Node.ELEMENT_NODE) {
+        const element = root;
+        if (element.matches(VIDEO_SELECTOR)) suppress(element, force);
+        element.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
+      } else if (root === document) {
+        document.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
+      }
+    };
+    try {
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        if (this instanceof HTMLVideoElement && shouldSuppress()) {
+          this.autoplay = false;
+          this.removeAttribute("autoplay");
+          this.pause();
+          diag("media.autoplay", "automatic video or GIF playback suppressed");
+          return Promise.resolve();
+        }
+        return originalPlay.call(this);
+      };
+    } catch (_) {
+      diag("media.autoplay.patch", "could not install media playback guard");
+    }
+    const start = () => {
+      if (observer) return;
+      observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) scan(node);
+        }
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    };
+    const stop = () => {
+      observer?.disconnect();
+      observer = null;
+    };
+    const apply = () => {
+      if (on()) {
+        start();
+        scan(document, true);
+      } else {
+        stop();
+      }
+    };
+    apply();
+    window.addEventListener("carrier:settings", apply);
+  }
+
   // inject/src/messenger/lib/media-tracks.ts
   var LiveMediaTrackCounter = class {
     constructor(onChange) {
@@ -2942,6 +3020,7 @@
     initDownloadAnchors();
     initSpellcheck();
     initTelemetryBlocking();
+    initMediaAutoplay();
     initNotificationBridge();
     initAutoRefresh();
     initForceTheme();

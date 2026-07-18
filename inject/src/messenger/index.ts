@@ -20,6 +20,7 @@ import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
 import { initLinkHandling } from "./features/link-handling";
 import { initLoginTidy } from "./features/login-tidy";
+import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
@@ -47,6 +48,7 @@ function main() {
   initDownloadAnchors();
   initSpellcheck();
   initTelemetryBlocking();
+  initMediaAutoplay();
   initNotificationBridge();
   initAutoRefresh();
   initForceTheme();
