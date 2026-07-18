@@ -8,6 +8,34 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/messenger/bridge.ts
+  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
+  var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
+  var diag = /* @__PURE__ */ (() => {
+    const RATE_MS = 6e4;
+    const lastSent = /* @__PURE__ */ new Map();
+    return (key, msg) => {
+      try {
+        const now = Date.now();
+        if (now - (lastSent.get(key) || 0) < RATE_MS) return;
+        lastSent.set(key, now);
+        try {
+          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
+        } catch (_) {
+        }
+        invoke("plugin:event|emit", {
+          event: "carrier:diag",
+          payload: { key: String(key), msg: String(msg) }
+        })?.catch?.(() => {
+        });
+      } catch (_) {
+      }
+    };
+  })();
+  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
+    () => diag("ipc.open-url", "opener invoke failed")
+  );
+
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
     const PERIODIC_MS = 15 * 60 * 1e3;
@@ -121,34 +149,6 @@
       true
     );
   }
-
-  // inject/src/messenger/bridge.ts
-  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
-  var diag = /* @__PURE__ */ (() => {
-    const RATE_MS = 6e4;
-    const lastSent = /* @__PURE__ */ new Map();
-    return (key, msg) => {
-      try {
-        const now = Date.now();
-        if (now - (lastSent.get(key) || 0) < RATE_MS) return;
-        lastSent.set(key, now);
-        try {
-          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
-        } catch (_) {
-        }
-        invoke("plugin:event|emit", {
-          event: "carrier:diag",
-          payload: { key: String(key), msg: String(msg) }
-        })?.catch?.(() => {
-        });
-      } catch (_) {
-      }
-    };
-  })();
-  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
-    () => diag("ipc.open-url", "opener invoke failed")
-  );
 
   // inject/src/messenger/lib/downloads.ts
   var filenameFromUrl = (u, base) => {
@@ -3016,33 +3016,41 @@
   }
 
   // inject/src/messenger/index.ts
+  function initFeature(name, init) {
+    try {
+      init();
+    } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      diag(`init.${name}`, detail.slice(0, 500));
+    }
+  }
   function main() {
-    initComposerKeys();
-    initShortcuts();
-    initZoom();
-    initSelectorHealth();
-    initSettingsButton();
-    initFunctionKeys();
-    initShortcutRegistry();
-    initLinkHandling();
-    initContextMenu();
-    initDownloadAnchors();
-    initSpellcheck();
-    initTelemetryBlocking();
-    initMediaAutoplay();
-    initNotificationBridge();
-    initAutoRefresh();
-    initForceTheme();
-    initUnreadBadge();
-    initRecentThreads();
-    initThreadNav();
-    initHideNames();
-    initSystemEmoji();
-    initMediaPermissionWarning();
-    initCookieAutoDecline();
-    initLoginTidy();
-    initMediaViewer();
-    initFullscreenPolyfill();
+    initFeature("composer-keys", initComposerKeys);
+    initFeature("shortcuts", initShortcuts);
+    initFeature("zoom", initZoom);
+    initFeature("selector-health", initSelectorHealth);
+    initFeature("settings-button", initSettingsButton);
+    initFeature("function-keys", initFunctionKeys);
+    initFeature("shortcut-registry", initShortcutRegistry);
+    initFeature("link-handling", initLinkHandling);
+    initFeature("context-menu", initContextMenu);
+    initFeature("download-anchors", initDownloadAnchors);
+    initFeature("spellcheck", initSpellcheck);
+    initFeature("telemetry", initTelemetryBlocking);
+    initFeature("media-autoplay", initMediaAutoplay);
+    initFeature("notifications", initNotificationBridge);
+    initFeature("auto-refresh", initAutoRefresh);
+    initFeature("force-theme", initForceTheme);
+    initFeature("unread-badge", initUnreadBadge);
+    initFeature("recent-threads", initRecentThreads);
+    initFeature("thread-nav", initThreadNav);
+    initFeature("hide-names", initHideNames);
+    initFeature("system-emoji", initSystemEmoji);
+    initFeature("media-permissions", initMediaPermissionWarning);
+    initFeature("cookie-consent", initCookieAutoDecline);
+    initFeature("login-tidy", initLoginTidy);
+    initFeature("media-viewer", initMediaViewer);
+    initFeature("fullscreen", initFullscreenPolyfill);
   }
   if (window.top === window.self) main();
 })();

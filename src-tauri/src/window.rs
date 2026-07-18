@@ -334,7 +334,15 @@ fn init_script(settings: &Settings) -> String {
     carrierHost.endsWith('.facebook.com') ||
     carrierHost === 'messenger.com' ||
     carrierHost.endsWith('.messenger.com');
-  if (!carrierInjectable) return;
+  if (!carrierInjectable) {{
+    // Keep normal feature injection off Carrier's trusted local pages. Debug
+    // builds still need their MCP responder there so the connectivity screen
+    // can be exercised when Messenger itself is unreachable.
+    if (carrierHost === 'tauri.localhost') {{
+{INJECT_MCP_BRIDGE}
+    }}
+    return;
+  }}
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -476,5 +484,27 @@ mod tests {
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
+    }
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
+        let script = init_script(&Settings::default());
+        let local_branch = script
+            .find("if (carrierHost === 'tauri.localhost')")
+            .unwrap();
+        let first_bridge = script.find("tauri-mcp guest bridge").unwrap();
+        let injectable_return = script
+            .find("    return;\n  }\n\n  // Prefer settings")
+            .unwrap();
+
+        assert!(local_branch < first_bridge);
+        assert!(first_bridge < injectable_return);
+        assert_eq!(
+            script
+                .matches("if (window.__CARRIER_MCP_BRIDGE__) return;")
+                .count(),
+            2
+        );
     }
 }

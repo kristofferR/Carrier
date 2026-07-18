@@ -8,6 +8,9 @@ describe("hand-maintained injected assets", () => {
     const source = await repoAsset("src-tauri/inject/mcp-bridge.js");
 
     expect(source).not.toContain("\0");
+    expect(source).toContain('listen("execute-js"');
+    expect(source).toContain('listen("get-page-state"');
+    expect(source).toContain('listen("get-page-map"');
   });
 
   test("release capabilities cannot listen for app events", async () => {
