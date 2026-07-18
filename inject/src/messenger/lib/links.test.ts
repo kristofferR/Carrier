@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyHref } from "./links";
+import { classifyHref, stripFacebookTracking } from "./links";
 
 const BASE = "https://www.facebook.com/messages/t/123/";
 
@@ -34,6 +34,13 @@ describe("classifyHref", () => {
   test("keeps Messenger and auth paths on facebook.com in-app", () => {
     expect(classifyHref("https://www.facebook.com/messages", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/messages/e2ee/t/5/", BASE).external).toBe(false);
+    expect(
+      classifyHref("https://www.facebook.com/messenger_media/attachment/?id=1", BASE).external,
+    ).toBe(false);
+    expect(
+      classifyHref("https://web.facebook.com/messenger_media/attachment/123", BASE).external,
+    ).toBe(false);
+    expect(classifyHref("/messenger_media/attachment/?id=1", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/t/12345", BASE).external).toBe(false);
     expect(classifyHref("https://web.facebook.com/messages/t/5/", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/login.php?next=x", BASE).external).toBe(false);
@@ -42,6 +49,12 @@ describe("classifyHref", () => {
     expect(classifyHref("https://www.facebook.com/recover/initiate", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/reg/", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/r.php", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/messenger_media_evil/1", BASE).external).toBe(
+      true,
+    );
+    expect(classifyHref("https://www.facebook.com/messenger_media-old/1", BASE).external).toBe(
+      true,
+    );
   });
 
   test("sends non-Facebook sites to the real browser", () => {
@@ -68,5 +81,87 @@ describe("classifyHref", () => {
 
   test("fails closed (internal) on unparseable hrefs", () => {
     expect(classifyHref("https://exa mple.com/^", "not a base").external).toBe(false);
+  });
+});
+
+describe("stripFacebookTracking", () => {
+  test("removes the reported fbclid spam without leaving an empty query", () => {
+    expect(
+      stripFacebookTracking(
+        "https://kristofferr.github.io/Carrier/?fbclid=IwZXh0bgNhZW0CMTAA",
+        BASE,
+      ),
+    ).toBe("https://kristofferr.github.io/Carrier/");
+  });
+
+  test("removes Facebook attribution case-insensitively and preserves real parameters", () => {
+    expect(
+      stripFacebookTracking(
+        "https://example.com/search?q=carrier&FBCLID=one&lang=no&mibextid=two#results",
+        BASE,
+      ),
+    ).toBe("https://example.com/search?q=carrier&lang=no#results");
+    expect(
+      stripFacebookTracking(
+        "https://example.com/?fb_action_ids=1&fb_action_types=share&fb_ref=x&fb_source=y&keep=1",
+        BASE,
+      ),
+    ).toBe("https://example.com/?keep=1");
+  });
+
+  test("leaves unrelated tracking, lookalike, path, and fragment text untouched", () => {
+    const href =
+      "https://example.com/fbclid?notfbclid=1&fbclid_extra=2&utm_source=facebook#fbclid=fragment";
+    expect(stripFacebookTracking(href, BASE)).toBe(href);
+  });
+
+  test("leaves untouched signed media URLs byte-for-byte identical", () => {
+    const href = "https://cdn.example.com/file?sig=a%2Bb%2Fc%3D&expires=999&token=hello%20world";
+    expect(stripFacebookTracking(href, BASE)).toBe(href);
+  });
+
+  test("preserves the raw bytes of signed parameters while removing Facebook tracking", () => {
+    expect(
+      stripFacebookTracking(
+        "https://cdn.example.com/file?token=hello%20world&fbclid=spam&tilde=~&sig=a%2Bb%2Fc%3D",
+        BASE,
+      ),
+    ).toBe("https://cdn.example.com/file?token=hello%20world&tilde=~&sig=a%2Bb%2Fc%3D");
+  });
+
+  test("recognizes encoded Facebook parameter names without rewriting neighboring pairs", () => {
+    expect(stripFacebookTracking("https://example.com/?keep=a+b&fb%63lid=spam&empty=", BASE)).toBe(
+      "https://example.com/?keep=a+b&empty=",
+    );
+  });
+
+  test("unwraps Facebook link shims and cleans their real destination", () => {
+    const destination = "https://example.com/article?id=7&fbclid=spam#comments";
+    const wrapped = `https://l.facebook.com/l.php?u=${encodeURIComponent(destination)}&h=checksum`;
+    expect(stripFacebookTracking(wrapped, BASE)).toBe("https://example.com/article?id=7#comments");
+
+    const nested = `https://lm.facebook.com/l.php?u=${encodeURIComponent(wrapped)}`;
+    expect(stripFacebookTracking(nested, BASE)).toBe("https://example.com/article?id=7#comments");
+  });
+
+  test("never unwraps a Facebook redirect to a dangerous scheme", () => {
+    const href = "https://l.facebook.com/l.php?u=javascript%3Aalert(1)&h=checksum";
+    expect(stripFacebookTracking(href, BASE)).toBe(href);
+  });
+
+  test("leaves non-web and malformed URLs unchanged", () => {
+    expect(stripFacebookTracking("mailto:kim@example.com", BASE)).toBe("mailto:kim@example.com");
+    expect(stripFacebookTracking("blob:https://www.facebook.com/id", BASE)).toBe(
+      "blob:https://www.facebook.com/id",
+    );
+    expect(stripFacebookTracking("https://exa mple.com/^", "not a base")).toBe(
+      "https://exa mple.com/^",
+    );
+  });
+
+  test("removes every duplicate occurrence of a Facebook parameter", () => {
+    expect(stripFacebookTracking("https://example.com/?fbclid=one&keep=yes&fbclid=two", BASE)).toBe(
+      "https://example.com/?keep=yes",
+    );
   });
 });

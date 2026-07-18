@@ -42,6 +42,8 @@ interface CarrierSettings {
   zoom?: number;
   global_hotkey?: boolean;
   block_telemetry?: boolean;
+  /** Strip Facebook attribution parameters from copied and externally opened links. */
+  strip_link_tracking?: boolean;
   /** Require Cmd+Enter (macOS) or Ctrl+Enter (elsewhere) to send. */
   send_with_accelerator?: boolean;
 }

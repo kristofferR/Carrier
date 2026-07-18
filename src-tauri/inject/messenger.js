@@ -8,6 +8,104 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/messenger/lib/links.ts
+  var INTERNAL_HOSTS = [
+    "facebook.com",
+    "messenger.com",
+    "fbcdn.net",
+    "fbsbx.com",
+    "meta.com",
+    "oculus.com"
+  ];
+  var AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"];
+  var FACEBOOK_TRACKING_PARAMS = /* @__PURE__ */ new Set([
+    "fbclid",
+    "mibextid",
+    "fb_action_ids",
+    "fb_action_types",
+    "fb_ref",
+    "fb_source"
+  ]);
+  function isAuth(u) {
+    const host = u.hostname.toLowerCase();
+    return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  }
+  function facebookRedirectTarget(url) {
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const isRedirect = (host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com") && url.pathname === "/l.php";
+    if (!isRedirect) return null;
+    const target = url.searchParams.get("u");
+    if (!target) return null;
+    try {
+      return /^https?:$/.test(new URL(target).protocol) ? target : null;
+    } catch {
+      return null;
+    }
+  }
+  function trackingKey(rawPair) {
+    const rawKey = rawPair.split("=", 1)[0] ?? "";
+    try {
+      return decodeURIComponent(rawKey.replace(/\+/g, " ")).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  function stripRawFacebookParams(href) {
+    const hashAt = href.indexOf("#");
+    const beforeHash = hashAt < 0 ? href : href.slice(0, hashAt);
+    const hash = hashAt < 0 ? "" : href.slice(hashAt);
+    const queryAt = beforeHash.indexOf("?");
+    if (queryAt < 0) return { href, removed: false };
+    const prefix = beforeHash.slice(0, queryAt);
+    const pairs = beforeHash.slice(queryAt + 1).split("&");
+    const kept = pairs.filter((pair) => {
+      const key = trackingKey(pair);
+      return !key || !FACEBOOK_TRACKING_PARAMS.has(key);
+    });
+    if (kept.length === pairs.length) return { href, removed: false };
+    return {
+      href: `${prefix}${kept.length ? `?${kept.join("&")}` : ""}${hash}`,
+      removed: true
+    };
+  }
+  function stripFacebookTracking(href, base) {
+    let url;
+    try {
+      url = new URL(href, base);
+    } catch {
+      return href;
+    }
+    if (!/^https?:$/.test(url.protocol)) return href;
+    const seen = /* @__PURE__ */ new Set();
+    let unwrapped = false;
+    for (let depth = 0; depth < 4; depth++) {
+      const target = facebookRedirectTarget(url);
+      if (!target || seen.has(target)) break;
+      seen.add(target);
+      url = new URL(target);
+      unwrapped = true;
+    }
+    const cleaned = stripRawFacebookParams(url.href);
+    return unwrapped || cleaned.removed ? cleaned.href : href;
+  }
+  var FACEBOOK_APP_PATH_RE = /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
+  function classifyHref(href, base) {
+    try {
+      const u = new URL(href, base);
+      if (u.protocol === "mailto:" || u.protocol === "tel:") return { external: true };
+      if (!/^https?:$/.test(u.protocol)) return { external: false };
+      if (isAuth(u)) return { external: false };
+      const host = u.hostname.replace(/^www\./, "");
+      const tracking = host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com" && u.pathname === "/l.php";
+      const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
+      const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
+      const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
+      return { external: tracking || !inApp };
+    } catch {
+      return { external: false };
+    }
+  }
+
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
   var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
@@ -32,7 +130,8 @@
       }
     };
   })();
-  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
+  var cleanSharedUrl = (url) => window.__CARRIER_SETTINGS__?.strip_link_tracking === false ? url : stripFacebookTracking(url, location.href);
+  var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
 
@@ -150,6 +249,37 @@
     );
   }
 
+  // inject/src/messenger/lib/download-completion.ts
+  var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+  function detailFor(event) {
+    const detail = event.detail;
+    if (!detail || typeof detail !== "object") return null;
+    const candidate = detail;
+    if (typeof candidate.url !== "string" || typeof candidate.success !== "boolean") return null;
+    return { url: candidate.url, success: candidate.success };
+  }
+  function waitForNativeDownload(target, expectedUrl, timeoutMs = 12e4) {
+    return new Promise((resolve, reject) => {
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        target.removeEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+      };
+      const onFinished = (event) => {
+        const detail = detailFor(event);
+        if (!detail || detail.url !== expectedUrl) return;
+        cleanup();
+        if (detail.success) resolve();
+        else reject(new Error("native download failed"));
+      };
+      target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("native download timed out"));
+      }, timeoutMs);
+    });
+  }
+
   // inject/src/messenger/lib/downloads.ts
   var filenameFromUrl = (u, base) => {
     try {
@@ -179,7 +309,7 @@
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
-  var copyAddress = (text) => navigator.clipboard?.writeText(text).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
+  var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
   async function downloadSrc(src, fallbackName) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
@@ -195,11 +325,17 @@
     const a = document.createElement("a");
     a.href = href;
     a.download = name;
+    a.setAttribute("data-carrier-native-download", "");
     a.style.display = "none";
     document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 1e4);
+    try {
+      const completion = waitForNativeDownload(window, href);
+      a.click();
+      await completion;
+    } finally {
+      a.remove();
+      URL.revokeObjectURL(href);
+    }
   }
   async function copyImageSrc(src) {
     const res = await fetch(src);
@@ -596,6 +732,7 @@
         const a = e.target?.closest?.("a[download]");
         const href = a?.href;
         if (!a || !href || !/^(blob:|data:|https?:)/i.test(href)) return;
+        if (a.hasAttribute("data-carrier-native-download")) return;
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -924,38 +1061,6 @@
     };
     apply();
     window.addEventListener("carrier:settings", apply);
-  }
-
-  // inject/src/messenger/lib/links.ts
-  var INTERNAL_HOSTS = [
-    "facebook.com",
-    "messenger.com",
-    "fbcdn.net",
-    "fbsbx.com",
-    "meta.com",
-    "oculus.com"
-  ];
-  var AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"];
-  function isAuth(u) {
-    const host = u.hostname.toLowerCase();
-    return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-  }
-  var FACEBOOK_APP_PATH_RE = /^\/(messages|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
-  function classifyHref(href, base) {
-    try {
-      const u = new URL(href, base);
-      if (u.protocol === "mailto:" || u.protocol === "tel:") return { external: true };
-      if (!/^https?:$/.test(u.protocol)) return { external: false };
-      if (isAuth(u)) return { external: false };
-      const host = u.hostname.replace(/^www\./, "");
-      const tracking = host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com" && u.pathname === "/l.php";
-      const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
-      const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
-      const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
-      return { external: tracking || !inApp };
-    } catch {
-      return { external: false };
-    }
   }
 
   // inject/src/messenger/features/link-handling.ts
@@ -3015,6 +3120,95 @@
     setTimeout(() => apply(true), 4e3);
   }
 
+  // inject/src/messenger/lib/viewer-controls.ts
+  var SAFE_TOP = 8;
+  var MAX_OFFSET = 64;
+  function viewerControlOffset(controlTops, appliedOffset = 0) {
+    const naturalTops = controlTops.filter(Number.isFinite).map((top) => top - (Number.isFinite(appliedOffset) ? appliedOffset : 0));
+    if (!naturalTops.length) return 0;
+    return Math.min(MAX_OFFSET, Math.max(0, Math.ceil(SAFE_TOP - Math.min(...naturalTops))));
+  }
+
+  // inject/src/messenger/features/viewer-controls.ts
+  var DIALOG = 'div[role="dialog"][aria-label]:not([hidden] *)';
+  var BANNER = 'div[role="banner"]';
+  var CONTROL = 'a[href], button, [role="button"]';
+  var BANNER_ATTR = "data-carrier-media-controls";
+  var ACTIONS_ATTR = "data-carrier-media-actions";
+  var OFFSET = "--carrier-media-controls-offset";
+  var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control) => control.getBoundingClientRect()).filter(
+    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && rect.top < 96 && rect.right > 0 && rect.left < window.innerWidth
+  );
+  var applyOffset = (element, controlTops, attr) => {
+    const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
+    const offset = viewerControlOffset(controlTops, currentOffset);
+    if (!offset) return false;
+    if (!element.hasAttribute(attr)) element.setAttribute(attr, "");
+    const value = `${offset}px`;
+    if (element.style.getPropertyValue(OFFSET) !== value) {
+      element.style.setProperty(OFFSET, value);
+    }
+    return true;
+  };
+  var actionGroupFor = (download, dialog) => {
+    let candidate = download;
+    for (let parent = download.parentElement; parent && parent !== dialog; parent = parent.parentElement) {
+      const rect = parent.getBoundingClientRect();
+      const controls = visibleControls(parent);
+      if (controls.length >= 2 && rect.width <= 240 && rect.height <= 96) return parent;
+      if (rect.width <= 240 && rect.height <= 96) candidate = parent;
+    }
+    return candidate;
+  };
+  function initViewerControls() {
+    let frame = 0;
+    const refresh = () => {
+      frame = 0;
+      const previouslyMarked = new Set(
+        document.querySelectorAll(`[${BANNER_ATTR}], [${ACTIONS_ATTR}]`)
+      );
+      const dialog = document.querySelector(DIALOG);
+      if (dialog) {
+        for (const banner of document.querySelectorAll(BANNER)) {
+          if (applyOffset(
+            banner,
+            visibleControls(banner).map((rect) => rect.top),
+            BANNER_ATTR
+          )) {
+            previouslyMarked.delete(banner);
+          }
+        }
+        for (const download of dialog.querySelectorAll("a[download]")) {
+          const group = actionGroupFor(download, dialog);
+          if (applyOffset(
+            group,
+            visibleControls(group).map((rect) => rect.top),
+            ACTIONS_ATTR
+          )) {
+            previouslyMarked.delete(group);
+          }
+        }
+      }
+      for (const element of previouslyMarked) {
+        element.removeAttribute(BANNER_ATTR);
+        element.removeAttribute(ACTIONS_ATTR);
+        element.style.removeProperty(OFFSET);
+      }
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(refresh);
+    };
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+    window.addEventListener("resize", schedule, { passive: true });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) schedule();
+    });
+    schedule();
+  }
+
   // inject/src/messenger/index.ts
   function initFeature(name, init) {
     try {
@@ -3050,6 +3244,7 @@
     initFeature("cookie-consent", initCookieAutoDecline);
     initFeature("login-tidy", initLoginTidy);
     initFeature("media-viewer", initMediaViewer);
+    initFeature("viewer-controls", initViewerControls);
     initFeature("fullscreen", initFullscreenPolyfill);
   }
   if (window.top === window.self) main();

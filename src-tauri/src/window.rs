@@ -22,6 +22,17 @@ use crate::settings::{
 use crate::url_rules::{is_internal, unwrap_tracking};
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
+fn notify_download_finished(webview: &tauri::Webview, url: &Url, success: bool) {
+    let detail = serde_json::json!({
+        "url": url.as_str(),
+        "success": success,
+    });
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:download-finished', {{ detail: {detail} }}));"
+    );
+    let _ = webview.eval(script);
+}
+
 /// The window/chrome theme to apply for a given preference: an explicit
 /// light/dark, or `None` to follow the system.
 pub(crate) fn theme_for(s: &Settings) -> Option<tauri::Theme> {
@@ -88,8 +99,8 @@ pub(crate) fn build_app_window(
             }
             false
         })
-        .on_download(|_webview, event| {
-            if let DownloadEvent::Requested { url, destination } = event {
+        .on_download(|webview, event| match event {
+            DownloadEvent::Requested { url, destination } => {
                 // Only accept downloads of Messenger's own media or page-generated
                 // blob:/data: content; refuse anything else a remote page might try
                 // to write to the user's Downloads folder.
@@ -104,24 +115,33 @@ pub(crate) fn build_app_window(
                     .unwrap_or_else(|| filename_from_url(&url));
                 let name = sanitize_filename(&suggested);
                 if !is_allowed_download(&url, &name) {
+                    notify_download_finished(&webview, &url, false);
                     return false;
                 }
                 // Don't silently save an executable a page might push to Downloads.
                 if is_unsafe_download(&name) {
+                    notify_download_finished(&webview, &url, false);
                     return false;
                 }
                 // Fail closed: if we can't resolve/create the Downloads folder we
                 // can't enforce where the file lands, so refuse rather than let the
                 // WebView write to its own chosen destination.
                 let Some(dir) = downloads_dir() else {
+                    notify_download_finished(&webview, &url, false);
                     return false;
                 };
                 if std::fs::create_dir_all(&dir).is_err() {
+                    notify_download_finished(&webview, &url, false);
                     return false;
                 }
                 *destination = unique_path(dir.join(name));
+                true
             }
-            true
+            DownloadEvent::Finished { url, success, .. } => {
+                notify_download_finished(&webview, &url, success);
+                true
+            }
+            _ => true,
         })
         .build()
         .inspect(|window| {

@@ -69,6 +69,30 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
+  test("Facebook link cleanup is a default-on setting beside telemetry blocking", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain(
+      '["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs',
+    );
+    expect(settings).toContain('"block_telemetry", "strip_link_tracking"');
+  });
+
+  test("media viewer controls use a measured safe top inset", async () => {
+    const css = await repoAsset("src-tauri/inject/messenger.css");
+
+    expect(css).toContain("data-carrier-media-controls");
+    expect(css).toContain("data-carrier-media-actions");
+    expect(css).toContain("translate: 0 var(--carrier-media-controls-offset");
+  });
+
+  test("macOS downloads declare a Files & Folders permission purpose", async () => {
+    const info = await repoAsset("src-tauri/Info.plist");
+
+    expect(info).toContain("<key>NSDownloadsFolderUsageDescription</key>");
+    expect(info).toContain("Carrier saves photos, videos, and files");
+  });
+
   test("Settings loads the generated update consent controller", async () => {
     const [settings, controller] = await Promise.all([
       repoAsset("dist/settings.html"),

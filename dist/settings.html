@@ -107,6 +107,7 @@
         ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Installation always asks first."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
+        ["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs from links you copy or open in your browser."],
         ["send_with_accelerator", "Require Cmd/Ctrl+Enter to Send", "Plain Enter inserts a line break; use Cmd+Enter on macOS or Ctrl+Enter on Windows/Linux to send."],
         ["multi_instance", "Multi Instance", "Allow more than one window (experimental, needs restart)."],
       ];
@@ -143,7 +144,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "multi_instance", "custom_css", "open_logs"] },
+          fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";

@@ -34,6 +34,7 @@ import { initSystemEmoji } from "./features/system-emoji";
 import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
 import { initUnreadBadge } from "./features/unread-badge";
+import { initViewerControls } from "./features/viewer-controls";
 import { initZoom } from "./features/zoom";
 
 function initFeature(name: string, init: () => void) {
@@ -71,6 +72,7 @@ function main() {
   initFeature("cookie-consent", initCookieAutoDecline);
   initFeature("login-tidy", initLoginTidy);
   initFeature("media-viewer", initMediaViewer);
+  initFeature("viewer-controls", initViewerControls);
   initFeature("fullscreen", initFullscreenPolyfill);
 }
 

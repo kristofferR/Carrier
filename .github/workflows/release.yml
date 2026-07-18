@@ -246,6 +246,31 @@ jobs:
           # instead, then deletes the archive so the public release stays clean.
           args: --target ${{ matrix.target }} --config src-tauri/tauri.conf.release.json
 
+      - name: Verify macOS Downloads permission metadata
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=""
+          for candidate in "src-tauri/target/${{ matrix.target }}/release/bundle/macos"/*.app; do
+            if [ -d "$candidate" ]; then
+              APP="$candidate"
+              break
+            fi
+          done
+          if [ -z "$APP" ]; then
+            echo "No macOS app bundle found for privacy metadata verification." >&2
+            exit 1
+          fi
+          PLIST="$APP/Contents/Info.plist"
+          description=$(/usr/libexec/PlistBuddy \
+            -c 'Print :NSDownloadsFolderUsageDescription' "$PLIST")
+          if [ -z "${description//[[:space:]]/}" ]; then
+            echo "The built app has no Downloads folder usage description." >&2
+            exit 1
+          fi
+          echo "Verified Downloads folder permission metadata in $PLIST"
+
       # tauri-action notarizes the .app but not the .dmg, so a downloaded .dmg
       # would still prompt. Notarize + staple it and re-upload under the same
       # stable name.

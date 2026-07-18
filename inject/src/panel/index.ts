@@ -19,6 +19,7 @@ function main() {
   /* ------------------------------- Toast -------------------------------- */
   let toastEl: HTMLDivElement | null = null;
   let toastTimer: number | undefined;
+  let toastRemoveTimer: number | undefined;
   window.__carrierToast = (msg: string) => {
     if (!toastEl) {
       toastEl = document.createElement("div");
@@ -51,9 +52,16 @@ function main() {
       el.style.transform = "translateX(-50%) translateY(0)";
     });
     clearTimeout(toastTimer);
+    clearTimeout(toastRemoveTimer);
     toastTimer = setTimeout(() => {
       el.style.opacity = "0";
       el.style.transform = "translateX(-50%) translateY(8px)";
+      toastRemoveTimer = setTimeout(() => {
+        if (toastEl === el) {
+          el.remove();
+          toastEl = null;
+        }
+      }, 250);
     }, 2600);
   };
 
