@@ -7,6 +7,7 @@ use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
 };
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
@@ -129,7 +130,19 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .close_window()
         .build()?;
 
-    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])
+    let shortcuts = mi(
+        "keyboard_shortcuts",
+        "Keyboard Shortcuts",
+        Some("CmdOrCtrl+/"),
+    )?;
+    let report_issue = mi("report_issue", "Report an Issue…", None)?;
+    let help = SubmenuBuilder::new(app, "Help")
+        .item(&shortcuts)
+        .separator()
+        .item(&report_issue)
+        .build()?;
+
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
 }
 
 /// The focused Messenger window (a `main`/`win-*` window), falling back to
@@ -191,6 +204,17 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
         }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
+        "keyboard_shortcuts" => {
+            eval("window.__carrierToggleShortcuts && window.__carrierToggleShortcuts()")
+        }
+        "report_issue" => {
+            if let Err(error) = app.opener().open_url(
+                "https://github.com/kristofferR/Carrier/issues",
+                None::<String>,
+            ) {
+                log::warn!("failed to open issue tracker: {error}");
+            }
+        }
         // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
         // here (the app-wide menu handler) only — the tray's own handler must
         // not repeat this, since every menu event is broadcast to all handlers.

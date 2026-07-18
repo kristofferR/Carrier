@@ -2563,7 +2563,8 @@
     l: () => focusComposer(),
     e: () => openEmojiPicker(),
     g: () => openGifPicker(),
-    t: () => attachFiles()
+    t: () => attachFiles(),
+    "/": () => window.__carrierToggleShortcuts?.()
   };
   function initShortcuts() {
     document.addEventListener(
@@ -2588,7 +2589,10 @@
     document.addEventListener(
       "keydown",
       (e) => {
-        if (e.key === "F5") {
+        if (e.key === "F1") {
+          e.preventDefault();
+          window.__carrierToggleShortcuts?.();
+        } else if (e.key === "F5") {
           e.preventDefault();
           location.reload();
         } else if (e.key === "F3") {

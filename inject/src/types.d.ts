@@ -54,6 +54,7 @@ interface Window {
   __carrierToast?: (msg: string) => void;
   __carrierCheckUpdates?: () => void;
   __carrierToggleSettings?: () => void;
+  __carrierToggleShortcuts?: () => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.
