@@ -194,6 +194,7 @@ pub fn run() {
             next_window: AtomicUsize::new(2),
             update_installing: std::sync::atomic::AtomicBool::new(false),
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
+            revealing_main: std::sync::atomic::AtomicBool::new(false),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
         })

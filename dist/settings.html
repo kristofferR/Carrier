@@ -100,6 +100,9 @@
         ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
         ["menu_bar_only", "Menu Bar Only", "macOS: hide the Dock icon and live in the menu bar (needs the tray)."],
         ["hide_menu_bar", "Hide Top Menu", "Windows/Linux: hide the Carrier / File / Edit / View / Window row. Settings remains available from the gear button or F3."],
+        ["hide_on_minimize", "Hide When Minimized", "Windows: move Carrier into the tray instead of leaving it minimized."],
+        ["hide_on_focus_loss", "Hide When Focus Is Lost", "Windows: move Carrier into the tray whenever another app gets focus."],
+        ["hide_taskbar_icon", "Hide Taskbar Icon", "Windows: keep Carrier out of the taskbar and reopen it from the tray."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["send_with_accelerator", "Require Cmd/Ctrl+Enter to Send", "Plain Enter inserts a line break; use Cmd+Enter on macOS or Ctrl+Enter on Windows/Linux to send."],
@@ -121,6 +124,7 @@
       };
 
       const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+      const IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
@@ -128,7 +132,11 @@
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
           fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
-          fields: ["show_tray", "start_to_tray", "autostart", ...(IS_MAC ? ["menu_bar_only"] : [])] },
+          fields: [
+            "show_tray", "start_to_tray", "autostart",
+            ...(IS_MAC ? ["menu_bar_only"] : []),
+            ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
+          ] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
@@ -252,9 +260,19 @@
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = !!settings[key];
+        const trayRequired =
+          IS_WINDOWS &&
+          (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
+        if (key === "show_tray" && trayRequired) {
+          cb.disabled = true;
+        }
         cb.onchange = () => persist(key, cb.checked);
         const text = document.createElement("div");
-        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${meta.hint}</div>`;
+        const hint =
+          key === "show_tray" && trayRequired
+            ? `${meta.hint} Required by an enabled Windows tray behavior.`
+            : meta.hint;
+        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${hint}</div>`;
         row.append(cb, text);
         return row;
       }

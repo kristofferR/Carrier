@@ -50,6 +50,13 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
+    /// Windows: hide the main window into the tray when it is minimized.
+    pub(crate) hide_on_minimize: bool,
+    /// Windows: hide the main window into the tray when it loses focus.
+    pub(crate) hide_on_focus_loss: bool,
+    /// Windows: omit the main window from the taskbar. This is only applied
+    /// while a tray icon exists so the app always remains reachable.
+    pub(crate) hide_taskbar_icon: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
     /// Play the OS notification sound for new-message notifications.
@@ -90,6 +97,13 @@ impl Settings {
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(mut self) -> Self {
         self.zoom = clamp_zoom(self.zoom);
+        // Every Windows tray-oriented behavior can make the main window
+        // disappear without closing it. Keep the escape hatch explicit and
+        // persisted rather than relying only on a runtime fallback.
+        #[cfg(target_os = "windows")]
+        if self.hide_on_minimize || self.hide_on_focus_loss || self.hide_taskbar_icon {
+            self.show_tray = true;
+        }
         self
     }
 }
@@ -110,6 +124,9 @@ impl Default for Settings {
             theme: "system".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
+            hide_on_minimize: false,
+            hide_on_focus_loss: false,
+            hide_taskbar_icon: false,
             mute_notifications: false,
             notification_sound: true,
             hide_notification_preview: false,
@@ -134,6 +151,9 @@ pub(crate) struct AppState {
     /// Prevents a successfully delivered first tray notice from repeating in
     /// the current process even while its settings write is being merged.
     pub(crate) tray_notice_delivered: AtomicBool,
+    /// Suppresses Windows auto-hide events emitted as part of deliberately
+    /// restoring the main window from the tray/minimized state.
+    pub(crate) revealing_main: AtomicBool,
     /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
     /// is between destroying and rebuilding, so the run loop doesn't exit when
     /// the window count hits zero.
@@ -527,7 +547,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
     // no tray to fall back on.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let tray_available = tray.is_some();
     drop(tray);
 
@@ -542,6 +562,21 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             tauri::ActivationPolicy::Regular
         });
         if s.menu_bar_only && !tray_available {
+            show_main(app);
+        }
+    }
+
+    // Only remove the main window from the Windows taskbar after the tray has
+    // actually been created. If AppIndicator/tray creation fails for any
+    // reason, restore the taskbar entry and surface the window instead of
+    // leaving Carrier with no reliable way back.
+    #[cfg(target_os = "windows")]
+    {
+        let hide_from_taskbar = s.hide_taskbar_icon && tray_available;
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_skip_taskbar(hide_from_taskbar);
+        }
+        if s.hide_taskbar_icon && !tray_available {
             show_main(app);
         }
     }
@@ -567,6 +602,18 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
+        assert!(
+            !s.hide_on_minimize,
+            "hide_on_minimize should default to false"
+        );
+        assert!(
+            !s.hide_on_focus_loss,
+            "hide_on_focus_loss should default to false"
+        );
+        assert!(
+            !s.hide_taskbar_icon,
+            "hide_taskbar_icon should default to false"
+        );
         assert!(!s.spellcheck, "spellcheck should default to false");
         assert!(
             !s.tray_notice_shown,
@@ -612,6 +659,30 @@ mod tests {
         assert_eq!(s.sanitized().zoom, 30);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tray_oriented_windows_settings_force_the_tray_on() {
+        for settings in [
+            Settings {
+                show_tray: false,
+                hide_on_minimize: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_on_focus_loss: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_taskbar_icon: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(settings.sanitized().show_tray);
+        }
+    }
+
     #[test]
     fn settings_json_missing_zoom_defaults_to_100() {
         // Pre-existing installs have no `zoom` key in settings.json.
@@ -624,6 +695,14 @@ mod tests {
         // Pre-existing installs have no `hide_menu_bar` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.hide_menu_bar);
+    }
+
+    #[test]
+    fn settings_json_missing_windows_tray_options_defaults_to_false() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.hide_on_minimize);
+        assert!(!s.hide_on_focus_loss);
+        assert!(!s.hide_taskbar_icon);
     }
 
     #[test]

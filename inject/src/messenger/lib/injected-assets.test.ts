@@ -32,4 +32,14 @@ describe("hand-maintained injected assets", () => {
     expect(splash).toContain('invoke("open_messenger_anyway")');
     expect(splash).toContain('["blocked", "unreachable", "error"]');
   });
+
+  test("Windows tray options remain platform-gated and keep a tray escape hatch", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain("const IS_WINDOWS = /Win/");
+    expect(settings).toContain('"hide_on_minimize"');
+    expect(settings).toContain('"hide_on_focus_loss"');
+    expect(settings).toContain('"hide_taskbar_icon"');
+    expect(settings).toContain('key === "show_tray" && trayRequired');
+  });
 });

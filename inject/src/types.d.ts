@@ -28,6 +28,9 @@ interface CarrierSettings {
   theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
   hide_menu_bar?: boolean;
+  hide_on_minimize?: boolean;
+  hide_on_focus_loss?: boolean;
+  hide_taskbar_icon?: boolean;
   mute_notifications?: boolean;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;

@@ -15,9 +15,33 @@ use crate::window::{build_app_window, install_main_close_handler};
 use crate::APP_TITLE;
 
 fn reveal_window(window: &WebviewWindow) {
+    let is_main = window.label() == "main";
+    if is_main {
+        window
+            .app_handle()
+            .state::<AppState>()
+            .revealing_main
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    // Windows ignores a restore request for some hidden minimized HWNDs, so
+    // show once, restore, then show again. The guard above prevents the
+    // intermediate minimized resize from feeding back into hide-on-minimize.
     let _ = window.show();
     let _ = window.unminimize();
+    let _ = window.show();
     let _ = window.set_focus();
+    if is_main {
+        let app = window.app_handle().clone();
+        tauri::async_runtime::spawn(async move {
+            // Native resize/focus events arrive after the calls above. Keep the
+            // reveal guard through that short burst so auto-hide cannot undo a
+            // tray click or second-instance activation.
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            app.state::<AppState>()
+                .revealing_main
+                .store(false, std::sync::atomic::Ordering::Release);
+        });
+    }
 }
 
 pub(crate) fn show_main(app: &tauri::AppHandle) {
@@ -92,10 +116,14 @@ pub(crate) fn reopen_main_if_needed(app: &tauri::AppHandle, has_visible_windows:
     }
 }
 
-/// Whether a tray icon should exist: when the user asked for one, or when
-/// menu-bar-only mode is on (the only way back to a Dock-less app).
+/// Whether a tray icon should exist: when the user asked for one, when
+/// menu-bar-only mode is on (the only way back to a Dock-less app), or when a
+/// Windows behavior can automatically remove the main window from normal UI.
 pub(crate) fn wants_tray(s: &Settings) -> bool {
-    s.show_tray || s.menu_bar_only
+    s.show_tray
+        || s.menu_bar_only
+        || (cfg!(target_os = "windows")
+            && (s.hide_on_minimize || s.hide_on_focus_loss || s.hide_taskbar_icon))
 }
 
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -216,6 +244,30 @@ mod tests {
             ..Default::default()
         };
         assert!(!wants_tray(&s), "no tray when both are off");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_auto_hide_behaviors_force_a_tray_escape_hatch() {
+        for s in [
+            Settings {
+                show_tray: false,
+                hide_on_minimize: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_on_focus_loss: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_taskbar_icon: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(wants_tray(&s));
+        }
     }
 
     #[test]

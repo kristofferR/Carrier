@@ -56,7 +56,7 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
         .min_inner_size(420.0, 520.0)
@@ -128,7 +128,75 @@ pub(crate) fn build_app_window(
             // macOS: let the themed window background show through the title bar.
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
-        })
+        })?;
+    install_app_window_runtime_handler(app, &window);
+    Ok(window)
+}
+
+#[cfg(target_os = "windows")]
+fn should_auto_hide_windows_main(
+    settings: &Settings,
+    has_tray: bool,
+    revealing: bool,
+    focus_lost: bool,
+    minimized: bool,
+) -> bool {
+    has_tray
+        && !revealing
+        && ((focus_lost && settings.hide_on_focus_loss) || (minimized && settings.hide_on_minimize))
+}
+
+/// Reassert runtime-only window preferences after native state transitions.
+///
+/// Windows can restore an app-wide native menu while activating/resizing a
+/// window, so hiding the top menu only when settings are first applied is not
+/// durable enough. This handler also implements the Windows tray-oriented
+/// minimize/focus-loss options, but only for `main` and only while a tray icon
+/// actually exists; secondary windows would otherwise be impossible to reopen.
+#[cfg(target_os = "macos")]
+fn install_app_window_runtime_handler(_app: &tauri::AppHandle, _window: &WebviewWindow) {}
+
+#[cfg(not(target_os = "macos"))]
+fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
+    let handle = app.clone();
+    let event_window = window.clone();
+    #[cfg(target_os = "windows")]
+    let is_main = window.label() == "main";
+    window.on_window_event(move |event| {
+        let repair_hidden_menu =
+            matches!(event, WindowEvent::Focused(true) | WindowEvent::Resized(_));
+
+        #[cfg(target_os = "windows")]
+        let evaluate_auto_hide =
+            is_main && matches!(event, WindowEvent::Focused(false) | WindowEvent::Resized(_));
+        #[cfg(not(target_os = "windows"))]
+        let evaluate_auto_hide = false;
+
+        if !repair_hidden_menu && !evaluate_auto_hide {
+            return;
+        }
+
+        let settings = handle.state::<AppState>().settings.lock().unwrap().clone();
+        if repair_hidden_menu && settings.hide_menu_bar {
+            let _ = event_window.hide_menu();
+        }
+
+        #[cfg(target_os = "windows")]
+        if evaluate_auto_hide {
+            let state = handle.state::<AppState>();
+            let has_tray = state.tray.lock().unwrap().is_some();
+            let revealing = state
+                .revealing_main
+                .load(std::sync::atomic::Ordering::Acquire);
+            let focus_lost = matches!(event, WindowEvent::Focused(false));
+            let minimized = matches!(event, WindowEvent::Resized(_))
+                && event_window.is_minimized().unwrap_or(false);
+            if should_auto_hide_windows_main(&settings, has_tray, revealing, focus_lost, minimized)
+            {
+                let _ = event_window.hide();
+            }
+        }
+    });
 }
 
 /// On macOS the window/title-bar theme is fixed at creation, so a live theme
@@ -469,6 +537,67 @@ mod tests {
             splash_background(&with_theme("light")),
             Color(255, 255, 255, 255)
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_auto_hide_requires_both_the_matching_option_and_a_tray() {
+        let focus = Settings {
+            hide_on_focus_loss: true,
+            ..Default::default()
+        };
+        assert!(should_auto_hide_windows_main(
+            &focus, true, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, true, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, false, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, true, true, true, false
+        ));
+
+        let minimize = Settings {
+            hide_on_minimize: true,
+            ..Default::default()
+        };
+        assert!(should_auto_hide_windows_main(
+            &minimize, true, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, true, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, false, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, true, true, false, true
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_auto_hide_ignores_unrelated_events_and_disabled_options() {
+        assert!(!should_auto_hide_windows_main(
+            &Settings::default(),
+            true,
+            false,
+            true,
+            true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &Settings {
+                hide_on_focus_loss: true,
+                hide_on_minimize: true,
+                ..Default::default()
+            },
+            true,
+            false,
+            false,
+            false
+        ));
     }
 
     #[test]
