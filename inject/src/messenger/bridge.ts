@@ -1,4 +1,6 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
+import { stripFacebookTracking } from "./lib/links";
+
 // Use the always-present internal bridge directly instead of the global
 // `window.__TAURI__` (which `withGlobalTauri` would also expose to Facebook's
 // own scripts).
@@ -39,7 +41,12 @@ export const diag = (() => {
 // Facebook is a *remote* origin: Tauri v2 lets it call plugin commands (gated
 // by the capability ACL) but NOT the app's own custom commands. So page
 // features route through plugins, matching how the upstream app works.
+export const cleanSharedUrl = (url: string) =>
+  window.__CARRIER_SETTINGS__?.strip_link_tracking === false
+    ? url
+    : stripFacebookTracking(url, location.href);
+
 export const openUrl = (url: string) =>
-  invoke("plugin:opener|open_url", { url, with: null })?.catch?.(() =>
+  invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(() =>
     diag("ipc.open-url", "opener invoke failed"),
   );

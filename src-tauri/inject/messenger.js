@@ -8,6 +8,82 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/messenger/lib/links.ts
+  var INTERNAL_HOSTS = [
+    "facebook.com",
+    "messenger.com",
+    "fbcdn.net",
+    "fbsbx.com",
+    "meta.com",
+    "oculus.com"
+  ];
+  var AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"];
+  var FACEBOOK_TRACKING_PARAMS = /* @__PURE__ */ new Set([
+    "fbclid",
+    "mibextid",
+    "fb_action_ids",
+    "fb_action_types",
+    "fb_ref",
+    "fb_source"
+  ]);
+  function isAuth(u) {
+    const host = u.hostname.toLowerCase();
+    return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  }
+  function facebookRedirectTarget(url) {
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const isRedirect = (host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com") && url.pathname === "/l.php";
+    if (!isRedirect) return null;
+    const target = url.searchParams.get("u");
+    if (!target) return null;
+    try {
+      return /^https?:$/.test(new URL(target).protocol) ? target : null;
+    } catch {
+      return null;
+    }
+  }
+  function stripFacebookTracking(href, base) {
+    let url;
+    try {
+      url = new URL(href, base);
+    } catch {
+      return href;
+    }
+    if (!/^https?:$/.test(url.protocol)) return href;
+    const seen = /* @__PURE__ */ new Set();
+    let unwrapped = false;
+    for (let depth = 0; depth < 4; depth++) {
+      const target = facebookRedirectTarget(url);
+      if (!target || seen.has(target)) break;
+      seen.add(target);
+      url = new URL(target);
+      unwrapped = true;
+    }
+    const removable = /* @__PURE__ */ new Set();
+    for (const key of url.searchParams.keys()) {
+      if (FACEBOOK_TRACKING_PARAMS.has(key.toLowerCase())) removable.add(key);
+    }
+    for (const key of removable) url.searchParams.delete(key);
+    return unwrapped || removable.size ? url.href : href;
+  }
+  var FACEBOOK_APP_PATH_RE = /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
+  function classifyHref(href, base) {
+    try {
+      const u = new URL(href, base);
+      if (u.protocol === "mailto:" || u.protocol === "tel:") return { external: true };
+      if (!/^https?:$/.test(u.protocol)) return { external: false };
+      if (isAuth(u)) return { external: false };
+      const host = u.hostname.replace(/^www\./, "");
+      const tracking = host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com" && u.pathname === "/l.php";
+      const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
+      const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
+      const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
+      return { external: tracking || !inApp };
+    } catch {
+      return { external: false };
+    }
+  }
+
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
   var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
@@ -32,7 +108,8 @@
       }
     };
   })();
-  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
+  var cleanSharedUrl = (url) => window.__CARRIER_SETTINGS__?.strip_link_tracking === false ? url : stripFacebookTracking(url, location.href);
+  var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
 
@@ -210,7 +287,7 @@
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
-  var copyAddress = (text) => navigator.clipboard?.writeText(text).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
+  var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
   async function downloadSrc(src, fallbackName) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
@@ -962,38 +1039,6 @@
     };
     apply();
     window.addEventListener("carrier:settings", apply);
-  }
-
-  // inject/src/messenger/lib/links.ts
-  var INTERNAL_HOSTS = [
-    "facebook.com",
-    "messenger.com",
-    "fbcdn.net",
-    "fbsbx.com",
-    "meta.com",
-    "oculus.com"
-  ];
-  var AUTH_HOSTS = ["accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"];
-  function isAuth(u) {
-    const host = u.hostname.toLowerCase();
-    return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-  }
-  var FACEBOOK_APP_PATH_RE = /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
-  function classifyHref(href, base) {
-    try {
-      const u = new URL(href, base);
-      if (u.protocol === "mailto:" || u.protocol === "tel:") return { external: true };
-      if (!/^https?:$/.test(u.protocol)) return { external: false };
-      if (isAuth(u)) return { external: false };
-      const host = u.hostname.replace(/^www\./, "");
-      const tracking = host === "l.facebook.com" || host === "lm.facebook.com" || host === "facebook.com" && u.pathname === "/l.php";
-      const internal = INTERNAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
-      const isFacebook = host === "facebook.com" || host.endsWith(".facebook.com");
-      const inApp = isFacebook ? FACEBOOK_APP_PATH_RE.test(u.pathname) : internal;
-      return { external: tracking || !inApp };
-    } catch {
-      return { external: false };
-    }
   }
 
   // inject/src/messenger/features/link-handling.ts

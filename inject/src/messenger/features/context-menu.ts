@@ -1,7 +1,7 @@
 /* --------------------- Adaptive context menu -------------------------- */
 // Right-click an image, video or link to get the relevant actions
 // (download / copy / copy address / open in browser), matching the original.
-import { openUrl, toast } from "../bridge";
+import { cleanSharedUrl, openUrl, toast } from "../bridge";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
@@ -15,7 +15,7 @@ const oversizeByHeader = (res: Response) => Number(res.headers.get("content-leng
 // download actions use (writeText can reject on a denied clipboard grant).
 const copyAddress = (text: string) =>
   navigator.clipboard
-    ?.writeText(text)
+    ?.writeText(cleanSharedUrl(text))
     .then(() => toast("Address copied"))
     .catch(() => toast("Copy failed"));
 

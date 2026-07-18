@@ -69,6 +69,15 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
+  test("Facebook link cleanup is a default-on setting beside telemetry blocking", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain(
+      '["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs',
+    );
+    expect(settings).toContain('"block_telemetry", "strip_link_tracking"');
+  });
+
   test("media viewer controls use a measured safe top inset", async () => {
     const css = await repoAsset("src-tauri/inject/messenger.css");
 

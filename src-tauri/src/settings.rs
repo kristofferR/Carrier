@@ -81,6 +81,9 @@ pub(crate) struct Settings {
     /// Block Facebook's analytics/logging requests (banzai, quick metrics,
     /// error reporting) in the page. Never touches messaging endpoints.
     pub(crate) block_telemetry: bool,
+    /// Remove Facebook attribution parameters from links copied from Messenger
+    /// or opened in the system browser.
+    pub(crate) strip_link_tracking: bool,
     /// Require Cmd+Enter on macOS or Ctrl+Enter elsewhere to send a message.
     /// Plain Enter inserts a line break. Off by default.
     pub(crate) send_with_accelerator: bool,
@@ -140,6 +143,7 @@ impl Default for Settings {
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
+            strip_link_tracking: true,
             send_with_accelerator: false,
         }
     }
@@ -656,6 +660,10 @@ mod tests {
             !s.send_with_accelerator,
             "send_with_accelerator should default to false"
         );
+        assert!(
+            s.strip_link_tracking,
+            "Facebook link tracking removal should default to true"
+        );
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
     }
 
@@ -753,6 +761,14 @@ mod tests {
         // Existing installs keep Enter-to-send unless they explicitly opt in.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.send_with_accelerator);
+    }
+
+    #[test]
+    fn settings_json_missing_strip_link_tracking_defaults_to_true() {
+        // Existing installs should gain link cleanup without having to reset
+        // their settings file.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.strip_link_tracking);
     }
 
     #[test]
