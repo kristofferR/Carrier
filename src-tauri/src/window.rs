@@ -390,21 +390,34 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         let s = state.settings.lock().unwrap();
         (s.always_on_top, theme_for(&s))
     };
-    let _settings_window =
-        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title(format!("{APP_TITLE} Settings"))
-            .inner_size(680.0, 720.0)
-            .min_inner_size(560.0, 620.0)
-            .resizable(true)
-            .maximizable(false)
-            .minimizable(false)
-            .always_on_top(aot)
-            .theme(theme)
-            .build();
+    match WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+        .title(format!("{APP_TITLE} Settings"))
+        .inner_size(680.0, 720.0)
+        .min_inner_size(560.0, 620.0)
+        .resizable(true)
+        .maximizable(false)
+        .minimizable(false)
+        .always_on_top(aot)
+        .theme(theme)
+        .build()
+    {
+        Ok(window) => {
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.remove_menu();
 
-    #[cfg(not(target_os = "macos"))]
-    if let Ok(window) = _settings_window {
-        let _ = window.remove_menu();
+            // Keep the local Settings webview alive when its close button is
+            // pressed. Rebuilding WebView2 repeatedly retains two unnamed
+            // shared-memory section handles per teardown, and reusing the same
+            // native window also prevents its removed menu from resurfacing.
+            let close_window = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = close_window.hide();
+                }
+            });
+        }
+        Err(error) => log::error!("failed to create Settings window: {error}"),
     }
 }
 
