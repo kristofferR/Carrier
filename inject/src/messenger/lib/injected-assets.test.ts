@@ -11,10 +11,14 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("release capabilities cannot listen for app events", async () => {
-    const release = await repoAsset("src-tauri/capabilities/default.json");
-    const development = await repoAsset("src-tauri/dev-capabilities/mcp.json");
+    const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
+      permissions: unknown[];
+    };
+    const development = JSON.parse(await repoAsset("src-tauri/dev-capabilities/mcp.json")) as {
+      permissions: unknown[];
+    };
 
-    expect(release).not.toContain("core:event:allow-listen");
-    expect(development).toContain("core:event:allow-listen");
+    expect(release.permissions).not.toContain("core:event:allow-listen");
+    expect(development.permissions).toContain("core:event:allow-listen");
   });
 });

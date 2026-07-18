@@ -641,6 +641,13 @@ mod tests {
     }
 
     #[test]
+    fn settings_json_missing_stop_media_autoplay_defaults_to_false() {
+        // Existing installs should not opt into autoplay suppression implicitly.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.stop_media_autoplay);
+    }
+
+    #[test]
     fn settings_write_replaces_the_file_atomically() {
         let directory = std::env::temp_dir().join(format!(
             "carrier-settings-test-{}-{}",

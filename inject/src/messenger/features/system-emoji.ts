@@ -136,7 +136,7 @@ export function initSystemEmoji() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["alt", "aria-label", "src", "style"],
+      attributeFilter: ["alt", "aria-label", "src", "style", "role"],
     });
   }
 

@@ -2665,11 +2665,8 @@
   }
   function isReactionMenuShape(children) {
     if (children.length < 6 || children.length > 9) return false;
-    const glyphSlots = children.filter((child) => child.glyphs === 1).length;
-    const addButtons = children.filter(
-      (child) => child.glyphs === 0 && child.role === "button"
-    ).length;
-    return glyphSlots >= 5 && glyphSlots <= 8 && addButtons === 1 && glyphSlots + addButtons === children.length;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
   }
 
   // inject/src/messenger/features/system-emoji.ts
@@ -2786,7 +2783,7 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["alt", "aria-label", "src", "style"]
+        attributeFilter: ["alt", "aria-label", "src", "style", "role"]
       });
     }
     function stop() {

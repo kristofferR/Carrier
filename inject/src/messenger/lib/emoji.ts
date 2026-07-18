@@ -29,14 +29,10 @@ export interface ReactionMenuChild {
  */
 export function isReactionMenuShape(children: ReactionMenuChild[]) {
   if (children.length < 6 || children.length > 9) return false;
-  const glyphSlots = children.filter((child) => child.glyphs === 1).length;
-  const addButtons = children.filter(
-    (child) => child.glyphs === 0 && child.role === "button",
-  ).length;
+  const addButton = children.at(-1);
   return (
-    glyphSlots >= 5 &&
-    glyphSlots <= 8 &&
-    addButtons === 1 &&
-    glyphSlots + addButtons === children.length
+    addButton?.glyphs === 0 &&
+    addButton.role === "button" &&
+    children.slice(0, -1).every((child) => child.glyphs === 1)
   );
 }

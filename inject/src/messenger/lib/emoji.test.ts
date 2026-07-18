@@ -41,4 +41,13 @@ describe("isReactionMenuShape", () => {
       ]),
     ).toBe(false);
   });
+
+  test("rejects an add-reaction button before the glyph slots", () => {
+    expect(
+      isReactionMenuShape([
+        { glyphs: 0, role: "button" },
+        ...Array.from({ length: 6 }, () => ({ glyphs: 1, role: null })),
+      ]),
+    ).toBe(false);
+  });
 });
