@@ -223,7 +223,6 @@ pub(crate) fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _ne
 fn persist_tray_notice_shown(app: &tauri::AppHandle) {
     const MAX_ATTEMPTS: usize = 3;
     let state = app.state::<AppState>();
-    let _settings_operation = state.settings_operation.lock().unwrap();
 
     for attempt in 1..=MAX_ATTEMPTS {
         // Merge the internal flag into the newest snapshot on disk rather than
@@ -290,7 +289,20 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                             state
                                 .tray_notice_delivered
                                 .store(true, std::sync::atomic::Ordering::Release);
-                            persist_tray_notice_shown(&handle);
+                            let handle = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let worker_handle = handle.clone();
+                                let state = handle.state::<AppState>();
+                                let _settings_worker = state.settings_worker.lock().await;
+                                if let Err(error) =
+                                    tauri::async_runtime::spawn_blocking(move || {
+                                        persist_tray_notice_shown(&worker_handle);
+                                    })
+                                    .await
+                                {
+                                    log::error!("tray notice settings worker failed: {error}");
+                                }
+                            });
                         }
                         Err(error) => {
                             log::warn!("failed to show first tray notice: {error}");

@@ -50,7 +50,6 @@ fn store_settings(
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    let settings_operation = state.settings_operation.lock().unwrap();
     let (prev_theme, prev_autostart, prev_global_hotkey, prev_automatic_update_checks) = {
         let prev = state.settings.lock().unwrap();
         (
@@ -107,7 +106,6 @@ fn store_settings(
     // macOS needs a window rebuild to re-theme the title bar; other platforms
     // already re-themed the chrome live in apply_settings.
     recreate_on_theme_change(app, &prev_theme, &effective.theme);
-    drop(settings_operation);
     if sync_errors.is_empty() {
         Ok(effective)
     } else {
@@ -115,22 +113,27 @@ fn store_settings(
     }
 }
 
+async fn store_settings_off_main(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
+    let worker_app = app.clone();
+    let state = app.state::<AppState>();
+    let _settings_worker = state.settings_worker.lock().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        store_settings(&worker_app, &state, new)
+    })
+    .await
+    .map_err(|e| format!("settings worker failed: {e}"))?
+}
+
 #[tauri::command]
-pub(crate) fn set_settings(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    new: Settings,
-) -> Result<Settings, String> {
-    store_settings(&app, &state, new)
+pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
+    store_settings_off_main(app, new).await
 }
 
 /// Reset all settings to their defaults.
 #[tauri::command]
-pub(crate) fn reset_settings(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-) -> Result<Settings, String> {
-    store_settings(&app, &state, Settings::default())
+pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, String> {
+    store_settings_off_main(app, Settings::default()).await
 }
 
 async fn available_update_unlocked(

@@ -147,11 +147,10 @@ impl Default for Settings {
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
-    /// Serializes every settings read-modify-write operation. Atomic file
-    /// replacement prevents torn JSON, but callers that merge one internal
-    /// field into the persisted snapshot must also be ordered with full saves
-    /// from the Settings window so neither can overwrite the other's changes.
-    pub(crate) settings_operation: Mutex<()>,
+    /// Serializes every settings read-modify-write operation before it enters
+    /// blocking/native work. Awaiting this queue avoids both stale snapshots and
+    /// one waiting OS thread per mutation during a burst.
+    pub(crate) settings_worker: tokio::sync::Mutex<()>,
     pub(crate) tray: Mutex<Option<TrayIcon>>,
     pub(crate) next_window: AtomicUsize,
     /// Serializes update installation even if the trusted Settings page is
@@ -175,6 +174,10 @@ pub(crate) struct AppState {
     pub(crate) revealing_main: AtomicUsize,
     /// Monotonic source for `revealing_main` tokens.
     pub(crate) next_reveal_generation: AtomicUsize,
+    /// Monotonic token used to coalesce queued page zoom persistence work.
+    /// The event listener queues work away from the UI thread, so older tasks
+    /// must be able to yield to the newest zoom event.
+    pub(crate) zoom_generation: AtomicUsize,
     /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
     /// is between destroying and rebuilding, so the run loop doesn't exit when
     /// the window count hits zero.

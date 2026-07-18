@@ -158,33 +158,48 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 
 /// Apply a settings change made from the native menu: mutate, persist, re-apply.
 /// (Used for view-style toggles — not autostart, which syncs separately.)
-fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
-    let state = app.state::<AppState>();
-    let _settings_operation = state.settings_operation.lock().unwrap();
-    // Build the next snapshot without publishing it in memory. A failed or
-    // superseded disk write must not leave runtime state ahead of persistence.
-    let (prev_theme, s) = {
-        let settings = state.settings.lock().unwrap();
-        let prev_theme = settings.theme.clone();
-        let mut next = settings.clone();
-        f(&mut next);
-        (prev_theme, next)
-    };
-    match save_settings(app, &s) {
-        Ok(SaveOutcome::Written) => {
-            *state.settings.lock().unwrap() = s.clone();
-            apply_settings(app, &s);
-            // macOS needs a window rebuild to re-theme the title bar; other
-            // platforms already re-themed the chrome live in apply_settings.
-            recreate_on_theme_change(app, &prev_theme, &s.theme);
+fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send + 'static) {
+    // Native menu callbacks run on the UI thread. Never wait for a settings
+    // transaction there: its owner may need that thread while applying window
+    // changes. Queue the whole ordered mutation away from the UI thread.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let worker_app = app.clone();
+        let state = app.state::<AppState>();
+        let _settings_worker = state.settings_worker.lock().await;
+        if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
+            let state = worker_app.state::<AppState>();
+            // Build the next snapshot without publishing it in memory. A failed
+            // or superseded disk write must not leave runtime state ahead of
+            // persistence.
+            let (prev_theme, s) = {
+                let settings = state.settings.lock().unwrap();
+                let prev_theme = settings.theme.clone();
+                let mut next = settings.clone();
+                f(&mut next);
+                (prev_theme, next)
+            };
+            match save_settings(&worker_app, &s) {
+                Ok(SaveOutcome::Written) => {
+                    *state.settings.lock().unwrap() = s.clone();
+                    apply_settings(&worker_app, &s);
+                    // macOS needs a window rebuild to re-theme the title bar;
+                    // other platforms already re-themed the chrome live.
+                    recreate_on_theme_change(&worker_app, &prev_theme, &s.theme);
+                }
+                Ok(SaveOutcome::Superseded) => {
+                    log::warn!("native menu settings update was superseded");
+                }
+                Err(e) => {
+                    log::error!("failed to save settings: {e}");
+                }
+            }
+        })
+        .await
+        {
+            log::error!("native menu settings worker failed: {e}");
         }
-        Ok(SaveOutcome::Superseded) => {
-            log::warn!("native menu settings update was superseded");
-        }
-        Err(e) => {
-            log::error!("failed to save settings: {e}");
-        }
-    }
+    });
 }
 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {

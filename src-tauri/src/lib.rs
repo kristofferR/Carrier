@@ -197,7 +197,7 @@ pub fn run() {
         )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
-            settings_operation: Mutex::new(()),
+            settings_worker: tokio::sync::Mutex::new(()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
             update_installing: std::sync::atomic::AtomicBool::new(false),
@@ -207,6 +207,7 @@ pub fn run() {
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
+            zoom_generation: AtomicUsize::new(0),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
         })
@@ -301,29 +302,51 @@ pub fn run() {
                     return;
                 };
                 let zoom = clamp_zoom(zoom);
-                let state = h.state::<AppState>();
-                let _settings_operation = state.settings_operation.lock().unwrap();
-                let s = {
-                    let settings = state.settings.lock().unwrap();
-                    if settings.zoom == zoom {
+                let generation = h
+                    .state::<AppState>()
+                    .zoom_generation
+                    .fetch_add(1, Ordering::AcqRel)
+                    .wrapping_add(1);
+                let h = h.clone();
+                // Event listeners run on the UI thread. Waiting there on the
+                // settings transaction can deadlock with a concurrent save
+                // that is applying native window changes on that same thread.
+                tauri::async_runtime::spawn(async move {
+                    let worker_h = h.clone();
+                    let state = h.state::<AppState>();
+                    let _settings_worker = state.settings_worker.lock().await;
+                    if state.zoom_generation.load(Ordering::Acquire) != generation {
                         return;
                     }
-                    let mut next = settings.clone();
-                    next.zoom = zoom;
-                    next
-                };
-                match save_settings(&h, &s) {
-                    Ok(SaveOutcome::Written) => {
-                        *state.settings.lock().unwrap() = s.clone();
-                        apply_settings(&h, &s);
+                    if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
+                        let state = worker_h.state::<AppState>();
+                        let s = {
+                            let settings = state.settings.lock().unwrap();
+                            if settings.zoom == zoom {
+                                return;
+                            }
+                            let mut next = settings.clone();
+                            next.zoom = zoom;
+                            next
+                        };
+                        match save_settings(&worker_h, &s) {
+                            Ok(SaveOutcome::Written) => {
+                                *state.settings.lock().unwrap() = s.clone();
+                                apply_settings(&worker_h, &s);
+                            }
+                            Ok(SaveOutcome::Superseded) => {
+                                log::warn!("zoom settings update was superseded");
+                            }
+                            Err(e) => {
+                                log::error!("failed to save settings: {e}");
+                            }
+                        }
+                    })
+                    .await
+                    {
+                        log::error!("zoom settings worker failed: {e}");
                     }
-                    Ok(SaveOutcome::Superseded) => {
-                        log::warn!("zoom settings update was superseded");
-                    }
-                    Err(e) => {
-                        log::error!("failed to save settings: {e}");
-                    }
-                }
+                });
             });
 
             // Recent conversations scraped from the page's chat list → the
