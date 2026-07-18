@@ -79,6 +79,7 @@ jobs:
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
       release_body: ${{ steps.draft.outputs.release_body }}
+      keep_draft: ${{ steps.draft.outputs.keep_draft }}
     steps:
       - name: Validate release ref
         run: |
@@ -134,6 +135,12 @@ jobs:
             printf '%s\n' "$body"
             echo "$delimiter"
           } >> "$GITHUB_OUTPUT"
+          keep_draft=false
+          if grep -q '<!-- carrier:keep-draft -->' <<< "$body"; then
+            keep_draft=true
+            echo "Release will remain a draft after all artifacts are built."
+          fi
+          echo "keep_draft=$keep_draft" >> "$GITHUB_OUTPUT"
           echo "Using curated draft release: $name"
 
   build:
@@ -379,6 +386,10 @@ jobs:
   # Flip the draft to public only after every build has uploaded its assets.
   publish:
     needs: [build, prepare_release]
+    # A curated draft can opt into a manual-test hold with the hidden
+    # `carrier:keep-draft` marker. All six signed bundles still build and upload,
+    # but public links, the Homebrew tap, and the release itself stay untouched.
+    if: needs.prepare_release.outputs.keep_draft != 'true'
     runs-on: ubuntu-latest
     steps:
       # The Tauri updater reads each bundle's signature from latest.json (it is
