@@ -405,17 +405,20 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();
 
-            // Keep the local Settings webview alive when its close button is
-            // pressed. Rebuilding WebView2 repeatedly retains two unnamed
-            // shared-memory section handles per teardown, and reusing the same
-            // native window also prevents its removed menu from resurfacing.
-            let close_window = window.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = close_window.hide();
-                }
-            });
+            #[cfg(target_os = "windows")]
+            {
+                // Keep the local Settings webview alive when its close button is
+                // pressed. Rebuilding WebView2 repeatedly retains two unnamed
+                // shared-memory section handles per teardown, and reusing the same
+                // native window also prevents its removed menu from resurfacing.
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    }
+                });
+            }
         }
         Err(error) => log::error!("failed to create Settings window: {error}"),
     }
