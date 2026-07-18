@@ -542,7 +542,7 @@
       if (mode === "restore") {
         var stash = localStorage.getItem(STASH);
         if (stash === null) return { error: "nothing stashed to restore" };
-        if (stash === " missing") {
+        if (stash === "\u0000missing") {
           localStorage.removeItem(CACHE);
         } else {
           localStorage.setItem(CACHE, stash);
@@ -550,7 +550,7 @@
         localStorage.removeItem(STASH);
       } else {
         if (localStorage.getItem(STASH) === null) {
-          localStorage.setItem(STASH, raw === null ? " missing" : raw);
+          localStorage.setItem(STASH, raw === null ? "\u0000missing" : raw);
         }
         var settings;
         try {

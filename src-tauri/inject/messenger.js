@@ -1254,22 +1254,52 @@
     }
   }
 
+  // inject/src/messenger/lib/media-tracks.ts
+  var LiveMediaTrackCounter = class {
+    constructor(onChange) {
+      __publicField(this, "onChange", onChange);
+      __publicField(this, "tracked", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "live", 0);
+    }
+    add(track) {
+      if (this.tracked.has(track) || track.readyState === "ended") return;
+      this.tracked.add(track);
+      let active = true;
+      const finish = () => {
+        if (!active) return;
+        active = false;
+        this.live = Math.max(0, this.live - 1);
+        this.onChange(this.live > 0);
+      };
+      this.live += 1;
+      this.onChange(true);
+      track.addEventListener("ended", finish, { once: true });
+      const originalStop = track.stop.bind(track);
+      track.stop = () => {
+        try {
+          originalStop();
+        } finally {
+          finish();
+        }
+      };
+    }
+    count() {
+      return this.live;
+    }
+  };
+
   // inject/src/messenger/features/media-permissions.ts
   function initMediaPermissionWarning() {
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
+    const liveTracks = new LiveMediaTrackCounter((inCall) => {
+      window.__carrierInCall = inCall;
+    });
     md.getUserMedia = async (constraints) => {
       try {
         const stream = await original(constraints);
-        window.__carrierInCall = true;
-        const tracks = stream.getTracks();
-        let live = tracks.length;
-        tracks.forEach((t) => {
-          t.addEventListener("ended", () => {
-            if (--live <= 0) window.__carrierInCall = false;
-          });
-        });
+        stream.getTracks().forEach((track) => liveTracks.add(track));
         return stream;
       } catch (err) {
         const name = err?.name;
@@ -2384,6 +2414,7 @@
       document.body.style.transform = `scale(${scale})`;
       document.body.style.width = `${100 / scale}%`;
       document.body.style.height = `${100 / scale}%`;
+      window.dispatchEvent(new Event("resize"));
     } else {
       document.documentElement.style.zoom = `${clamped}%`;
       window.dispatchEvent(new Event("resize"));
