@@ -147,6 +147,11 @@ impl Default for Settings {
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
+    /// Serializes every settings read-modify-write operation. Atomic file
+    /// replacement prevents torn JSON, but callers that merge one internal
+    /// field into the persisted snapshot must also be ordered with full saves
+    /// from the Settings window so neither can overwrite the other's changes.
+    pub(crate) settings_operation: Mutex<()>,
     pub(crate) tray: Mutex<Option<TrayIcon>>,
     pub(crate) next_window: AtomicUsize,
     /// Serializes update installation even if the trusted Settings page is
@@ -155,9 +160,10 @@ pub(crate) struct AppState {
     /// Serializes every updater operation so automatic/manual discovery cannot
     /// race the installer's re-check, download, or replacement.
     pub(crate) update_checking: tokio::sync::Mutex<()>,
-    /// Version discovered during this process, if any. Settings uses this to
-    /// surface an automatic discovery without making another network request.
-    pub(crate) update_available: Mutex<Option<String>>,
+    /// Update discovered during this process, if any. Retaining the verified
+    /// metadata makes the Settings action genuinely install the update it
+    /// advertises, even if a later release check is temporarily unavailable.
+    pub(crate) update_available: Mutex<Option<tauri_plugin_updater::Update>>,
     /// Wakes the automatic checker immediately when its opt-in is enabled.
     pub(crate) update_check_wake: tokio::sync::Notify,
     /// Prevents a successfully delivered first tray notice from repeating in

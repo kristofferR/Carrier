@@ -69,6 +69,16 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
+  test("a discovered update remains the action until install is attempted", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain("let discoveredUpdate =");
+    expect(settings).toContain("let version = discoveredUpdate");
+    expect(settings).toContain("if (!version)");
+    expect(settings).toContain("discoveredUpdate = discovered");
+    expect(settings).toContain('await invoke("install_update")');
+  });
+
   test("every landing locale describes update consent and current notification controls", async () => {
     const landing = await repoAsset("docs/index.html");
     const payload = landing.match(/var I18N = \/\*__I18N_LOCALES__\*\/ (\{.*\});\r?\n/)?.[1];
@@ -112,6 +122,13 @@ describe("hand-maintained injected assets", () => {
       th: ["เปิดการตรวจหาอัปเดตอัตโนมัติ", "เลือกเปิด"],
       vi: ["bật kiểm tra cập nhật tự động", "Tùy chọn"],
     };
+    const signedCheckPayload = landing.match(
+      /var I18N_SIGNED_UPDATE_CHECKS = (\{[\s\S]*?\});/,
+    )?.[1];
+    expect(signedCheckPayload).toBeTruthy();
+    const signedCheckPhrases = JSON.parse(signedCheckPayload || "{}") as Record<string, string>;
+    expect(Object.keys(signedCheckPhrases)).toEqual(Object.keys(locales));
+    expect(landing).toContain("I18N[locale].t['dl.trust'] =");
     for (const [locale, { t }] of Object.entries(locales)) {
       const updateAnswer = t["faq.a10"] || "";
       const trustAnswer = t["faq.a4"] || "";
@@ -125,6 +142,7 @@ describe("hand-maintained injected assets", () => {
       expect(updateAnswer).toContain(conditionalPhrase);
       expect(repairAnswer).toContain(conditionalPhrase);
       expect(updatePill).toContain(optionalPhrase);
+      expect(signedCheckPhrases[locale]).toBeTruthy();
       expect(trustAnswer).toContain("SmartScreen");
       expect(repairAnswer).toContain("https://github.com/kristofferR/Carrier/issues");
       expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);

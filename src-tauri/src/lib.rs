@@ -197,6 +197,7 @@ pub fn run() {
         )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
+            settings_operation: Mutex::new(()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
             update_installing: std::sync::atomic::AtomicBool::new(false),

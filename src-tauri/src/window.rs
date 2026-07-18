@@ -222,6 +222,8 @@ pub(crate) fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _ne
 
 fn persist_tray_notice_shown(app: &tauri::AppHandle) {
     const MAX_ATTEMPTS: usize = 3;
+    let state = app.state::<AppState>();
+    let _settings_operation = state.settings_operation.lock().unwrap();
 
     for attempt in 1..=MAX_ATTEMPTS {
         // Merge the internal flag into the newest snapshot on disk rather than
@@ -230,11 +232,7 @@ fn persist_tray_notice_shown(app: &tauri::AppHandle) {
         latest.tray_notice_shown = true;
         match save_settings(app, &latest) {
             Ok(SaveOutcome::Written) => {
-                app.state::<AppState>()
-                    .settings
-                    .lock()
-                    .unwrap()
-                    .tray_notice_shown = true;
+                state.settings.lock().unwrap().tray_notice_shown = true;
                 return;
             }
             Ok(SaveOutcome::Superseded) if attempt < MAX_ATTEMPTS => continue,

@@ -50,6 +50,7 @@ fn store_settings(
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
+    let settings_operation = state.settings_operation.lock().unwrap();
     let (prev_theme, prev_autostart, prev_global_hotkey, prev_automatic_update_checks) = {
         let prev = state.settings.lock().unwrap();
         (
@@ -106,6 +107,7 @@ fn store_settings(
     // macOS needs a window rebuild to re-theme the title bar; other platforms
     // already re-themed the chrome live in apply_settings.
     recreate_on_theme_change(app, &prev_theme, &effective.theme);
+    drop(settings_operation);
     if sync_errors.is_empty() {
         Ok(effective)
     } else {
@@ -147,16 +149,22 @@ async fn available_update(
     available_update_unlocked(app).await
 }
 
-fn replace_remembered_update(remembered: &mut Option<String>, version: Option<&str>) -> bool {
-    let is_new = version.is_some() && remembered.as_deref() != version;
-    *remembered = version.map(str::to_owned);
-    is_new
+fn should_surface_update(remembered: Option<&str>, discovered: Option<&str>) -> bool {
+    discovered.is_some() && remembered != discovered
 }
 
-fn remember_available_update(app: &tauri::AppHandle, version: Option<&str>) -> bool {
+fn remember_available_update(
+    app: &tauri::AppHandle,
+    update: Option<tauri_plugin_updater::Update>,
+) -> bool {
     let state = app.state::<AppState>();
     let mut remembered = state.update_available.lock().unwrap();
-    replace_remembered_update(&mut remembered, version)
+    let is_new = should_surface_update(
+        remembered.as_ref().map(|update| update.version.as_str()),
+        update.as_ref().map(|update| update.version.as_str()),
+    );
+    *remembered = update;
+    is_new
 }
 
 /// Check GitHub releases without downloading or installing anything. Keeping
@@ -173,8 +181,9 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
     }
     match available_update(&app).await? {
         Some(update) => {
-            remember_available_update(&app, Some(&update.version));
-            Ok(format!("available:{}", update.version))
+            let version = update.version.clone();
+            remember_available_update(&app, Some(update));
+            Ok(format!("available:{version}"))
         }
         None => {
             remember_available_update(&app, None);
@@ -188,7 +197,12 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
 /// button as soon as it opens.
 #[tauri::command]
 pub(crate) fn discovered_update(state: State<AppState>) -> Option<String> {
-    state.update_available.lock().unwrap().clone()
+    state
+        .update_available
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|update| update.version.clone())
 }
 
 async fn run_automatic_update_check(app: &tauri::AppHandle) {
@@ -213,10 +227,11 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             {
                 return;
             }
-            if remember_available_update(app, Some(&update.version)) {
+            let version = update.version.clone();
+            if remember_available_update(app, Some(update)) {
                 let body = format!(
                     "Carrier {} is available. Open Settings to review and install it.",
-                    update.version
+                    version
                 );
                 if let Err(error) = app
                     .notification()
@@ -266,8 +281,24 @@ pub(crate) fn spawn_automatic_update_checks(app: tauri::AppHandle) {
     });
 }
 
-/// Re-check, download, and install an update after the trusted Settings page
-/// has obtained explicit confirmation from the user.
+async fn remembered_or_latest_update_unlocked(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let remembered = app
+        .state::<AppState>()
+        .update_available
+        .lock()
+        .unwrap()
+        .clone();
+    match remembered {
+        Some(update) => Ok(Some(update)),
+        None => available_update_unlocked(app).await,
+    }
+}
+
+/// Download and install the retained discovery after the trusted Settings page
+/// has obtained explicit confirmation from the user. If no discovery exists,
+/// fall back to a fresh check for the manual "Check for updates" path.
 #[cfg(not(target_os = "macos"))]
 async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
     let state = app.state::<AppState>();
@@ -275,7 +306,7 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
     // operation has finished. The atomic guard still rejects a second install
     // immediately instead of leaving it waiting here.
     let _operation_guard = state.update_checking.lock().await;
-    match available_update_unlocked(app).await {
+    match remembered_or_latest_update_unlocked(app).await {
         Ok(Some(update)) => {
             update
                 .download_and_install(|_, _| {}, || {})
@@ -299,7 +330,7 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
     // The macOS DMG download/replacement must be one operation with discovery;
     // otherwise a periodic or manual check could contend with the updater.
     let _operation_guard = state.update_checking.lock().await;
-    match available_update_unlocked(app).await {
+    match remembered_or_latest_update_unlocked(app).await {
         Ok(Some(update)) => {
             let bytes = update
                 .download(|_, _| {}, || {})
@@ -567,7 +598,7 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_remembered_update, UpdateInstallGuard};
+    use super::{should_surface_update, UpdateInstallGuard};
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -588,12 +619,9 @@ mod tests {
 
     #[test]
     fn update_discovery_only_surfaces_new_versions() {
-        let mut remembered = None;
-        assert!(replace_remembered_update(&mut remembered, Some("1.4.0")));
-        assert_eq!(remembered.as_deref(), Some("1.4.0"));
-        assert!(!replace_remembered_update(&mut remembered, Some("1.4.0")));
-        assert!(replace_remembered_update(&mut remembered, Some("1.5.0")));
-        assert!(!replace_remembered_update(&mut remembered, None));
-        assert_eq!(remembered, None);
+        assert!(should_surface_update(None, Some("1.4.0")));
+        assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
+        assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
+        assert!(!should_surface_update(Some("1.4.0"), None));
     }
 }
