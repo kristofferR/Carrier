@@ -11,8 +11,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{Listener, Manager};
-use tauri_plugin_notification::NotificationExt;
-
 mod commands;
 mod diag;
 mod download;
@@ -204,6 +202,7 @@ pub fn run() {
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
+            commands::install_update,
             commands::connect_messenger,
             commands::open_log_folder
         ])
@@ -238,27 +237,11 @@ pub fn run() {
             }
 
             // The Facebook page is a remote origin and can't call Carrier's own
-            // commands, so the F3/F2 shortcuts emit events that we handle here.
+            // commands, so the F3 shortcut emits an event that we handle here.
             let h = app.handle().clone();
             app.listen_any("carrier:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
-            });
-            let h = app.handle().clone();
-            app.listen_any("carrier:check-updates", move |_| {
-                let h = h.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Ok(msg) = commands::run_update_check(&h).await {
-                        if msg == "up-to-date" {
-                            let _ = h
-                                .notification()
-                                .builder()
-                                .title("Carrier")
-                                .body("Carrier is up to date.")
-                                .show();
-                        }
-                    }
-                });
             });
 
             // Unread count from the page → tray tooltip (the Dock badge is set

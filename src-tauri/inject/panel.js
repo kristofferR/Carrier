@@ -49,8 +49,8 @@
       }, 2600);
     };
     window.__carrierCheckUpdates = () => {
-      window.__carrierToast?.("Checking for updates…");
-      emit("carrier:check-updates");
+      window.__carrierToast?.("Opening Settings to check for updates…");
+      emit("carrier:open-settings");
     };
     window.__carrierToggleSettings = () => {
       emit("carrier:open-settings");

@@ -32,6 +32,9 @@ pub(crate) struct Settings {
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
     pub(crate) hide_on_close: bool,
+    /// Whether the one-time "still running in the tray" close notice has been
+    /// shown. Persisted internally; it is not an end-user preference.
+    pub(crate) tray_notice_shown: bool,
     /// Experimental: when true, single-instance enforcement is skipped at the
     /// next launch (takes effect after restart).
     pub(crate) multi_instance: bool,
@@ -96,6 +99,7 @@ impl Default for Settings {
             start_to_tray: false,
             autostart: false,
             hide_on_close: true,
+            tray_notice_shown: false,
             multi_instance: false,
             spellcheck: false,
             unread_badge: true,
@@ -554,6 +558,10 @@ mod tests {
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
         assert!(!s.spellcheck, "spellcheck should default to false");
+        assert!(
+            !s.tray_notice_shown,
+            "the first hide-to-tray should explain where Carrier went"
+        );
         assert!(!s.system_emoji, "system_emoji should default to false");
         assert!(
             !s.send_with_accelerator,

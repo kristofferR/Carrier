@@ -17,6 +17,8 @@ interface CarrierSettings {
   start_to_tray?: boolean;
   autostart?: boolean;
   hide_on_close?: boolean;
+  /** Internal one-time onboarding state; not exposed in Settings. */
+  tray_notice_shown?: boolean;
   multi_instance?: boolean;
   spellcheck?: boolean;
   unread_badge?: boolean;

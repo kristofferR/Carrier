@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for Carrier windows. The injected scripts call Carrier's own commands (settings, open-external, copy/download image, notifications, theme, update check); Tauri v2 blocks IPC from remote origins unless they are listed under `remote`. Keep this list minimal: every listed origin's own page scripts (not just ours) can call the allowed commands. meta.com/oculus.com are deliberately absent — they only appear during Meta-account login redirects, where the injected features can fail soft (an external link clicked there won't open until back on Messenger). Notification is narrowed to the two permission-query commands: banners are delivered by the Rust side via carrier:notify, so the page never needs plugin `notify`/`show` (which would let a hostile FB script pop native notifications past the mute/hide-preview settings). The opener scope lists exactly the schemes the injected code opens: web links, mailto:/tel:, and the macOS privacy-pane deep link.",
+  "description": "Minimal capabilities for Carrier's Messenger windows. Every listed remote origin's own scripts—not just Carrier's injection—can call these commands, so grant only the event bridge, unread badge, notification permission query, and scoped external opener that the page actually uses. Event listen is retained for the dev-only MCP responder; release page features only emit. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -16,12 +16,11 @@
     ]
   },
   "permissions": [
-    "core:default",
-    "core:window:allow-set-theme",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
     "core:window:allow-set-badge-count",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
-    "window-state:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

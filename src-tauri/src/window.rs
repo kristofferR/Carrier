@@ -6,6 +6,7 @@ use tauri::{
     webview::{Color, DownloadEvent},
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
 use crate::download::{
@@ -14,7 +15,7 @@ use crate::download::{
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
-use crate::settings::{AppState, Settings, ZOOM_MAX, ZOOM_MIN};
+use crate::settings::{save_settings, AppState, Settings, ZOOM_MAX, ZOOM_MIN};
 use crate::url_rules::{is_internal, unwrap_tracking};
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
@@ -150,12 +151,24 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
     let handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
-            let (hide, has_tray) = {
-                let state = handle.state::<AppState>();
-                let hide = state.settings.lock().unwrap().hide_on_close;
-                let has_tray = state.tray.lock().unwrap().is_some();
-                (hide, has_tray)
+            let state = handle.state::<AppState>();
+            let has_tray = state.tray.lock().unwrap().is_some();
+            let (hide, first_tray_notice) = {
+                let mut settings = state.settings.lock().unwrap();
+                let hide = settings.hide_on_close;
+                let notice = if hide && has_tray && !settings.tray_notice_shown {
+                    settings.tray_notice_shown = true;
+                    Some(settings.clone())
+                } else {
+                    None
+                };
+                (hide, notice)
             };
+            if let Some(settings) = first_tray_notice.as_ref() {
+                if let Err(error) = save_settings(&handle, settings) {
+                    log::warn!("failed to persist first tray notice state: {error}");
+                }
+            }
             // Only hide to the tray if one was actually created (tray creation can
             // fail, e.g. on a Linux session without an AppIndicator); otherwise
             // closing the main window quits the app (don't let an open Settings
@@ -164,6 +177,14 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                 api.prevent_close();
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w.hide();
+                }
+                if first_tray_notice.is_some() {
+                    let _ = handle
+                        .notification()
+                        .builder()
+                        .title("Carrier is still running")
+                        .body("Use the tray icon to reopen or quit Carrier.")
+                        .show();
                 }
             } else {
                 handle.exit(0);

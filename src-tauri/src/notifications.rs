@@ -3,7 +3,7 @@
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux/Windows
 //! use notify-rust).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -50,6 +50,8 @@ pub(crate) struct NotifyMsg {
 
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
+const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
+const MAX_NOTIFICATIONS_PER_WINDOW: usize = 20;
 
 /// What to do with an incoming notification after deduplication.
 enum Delivery {
@@ -137,6 +139,30 @@ impl NotificationDeduper {
 }
 
 static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
+
+#[derive(Default)]
+struct NotificationRateLimiter {
+    delivered: VecDeque<Instant>,
+}
+
+impl NotificationRateLimiter {
+    fn allow(&mut self, now: Instant) -> bool {
+        while self
+            .delivered
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) > NOTIFICATION_RATE_WINDOW)
+        {
+            self.delivered.pop_front();
+        }
+        if self.delivered.len() >= MAX_NOTIFICATIONS_PER_WINDOW {
+            return false;
+        }
+        self.delivered.push_back(now);
+        true
+    }
+}
+
+static NOTIFICATION_RATE_LIMITER: OnceLock<Mutex<NotificationRateLimiter>> = OnceLock::new();
 
 /// A reload-safe conversation route kept for an emitted notification, with the
 /// time it was stored so the cap can evict the oldest rather than every route.
@@ -410,6 +436,16 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         // Attach it to the notification the user actually has on screen.
         remember_notification_route(delivered_id, &msg.thread_path);
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
+        return;
+    }
+
+    if !NOTIFICATION_RATE_LIMITER
+        .get_or_init(|| Mutex::new(NotificationRateLimiter::default()))
+        .lock()
+        .unwrap()
+        .allow(Instant::now())
+    {
+        log::warn!("carrier:notify suppressed by native rate limit");
         return;
     }
 
@@ -702,5 +738,17 @@ mod tests {
         assert!(deduper.should_deliver_at(&jane, now));
         assert!(deduper.should_deliver_at(&john, now));
         assert!(!deduper.should_deliver_at(&jane_replay, now));
+    }
+
+    #[test]
+    fn notification_rate_limiter_caps_bursts_and_recovers() {
+        let start = Instant::now();
+        let mut limiter = NotificationRateLimiter::default();
+
+        for offset in 0..MAX_NOTIFICATIONS_PER_WINDOW {
+            assert!(limiter.allow(start + Duration::from_millis(offset as u64)));
+        }
+        assert!(!limiter.allow(start + Duration::from_secs(30)));
+        assert!(limiter.allow(start + NOTIFICATION_RATE_WINDOW + Duration::from_millis(1)));
     }
 }

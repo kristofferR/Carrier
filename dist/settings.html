@@ -387,11 +387,27 @@
 
       document.getElementById("check").onclick = async () => {
         setStatus("Checking for updates…");
+        let installing = false;
         try {
           const res = await invoke("check_for_updates");
-          setStatus(res === "up-to-date" ? "Carrier is up to date." : "Updating…");
+          if (res === "up-to-date") {
+            setStatus("Carrier is up to date.");
+            return;
+          }
+          const version = res.startsWith("available:") ? res.slice(10) : "";
+          const label = version ? `Carrier ${version}` : "A Carrier update";
+          if (!confirm(`${label} is available. Install it now and restart Carrier?`)) {
+            setStatus("Update install cancelled.");
+            return;
+          }
+          setStatus("Downloading and installing update…");
+          installing = true;
+          const installResult = await invoke("install_update");
+          if (installResult === "up-to-date") {
+            setStatus("Carrier is already up to date.");
+          }
         } catch (e) {
-          setStatus("Update check failed.");
+          setStatus(installing ? "Update install failed." : "Update check failed.");
           console.error(e);
         }
       };

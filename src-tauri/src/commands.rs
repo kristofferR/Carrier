@@ -1,5 +1,5 @@
-//! The `#[tauri::command]` handlers the local pages (Settings dialog, splash)
-//! invoke, plus the update check they share with the F2 shortcut.
+//! The `#[tauri::command]` handlers invoked by Carrier's trusted local pages
+//! (Settings dialog and splash).
 
 use tauri::{Manager, State, WebviewWindow};
 use url::Url;
@@ -98,12 +98,30 @@ pub(crate) fn reset_settings(
     store_settings(&app, &state, Settings::default())
 }
 
-/// Check GitHub releases for an update; download & install if found.
-#[cfg(not(target_os = "macos"))]
-pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
+async fn available_update(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+    updater.check().await.map_err(|e| e.to_string())
+}
+
+/// Check GitHub releases without downloading or installing anything. Keeping
+/// this read-only lets Settings ask for explicit consent before an update
+/// replaces the running application and restarts it.
+#[tauri::command]
+pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    match available_update(&app).await? {
+        Some(update) => Ok(format!("available:{}", update.version)),
+        None => Ok("up-to-date".into()),
+    }
+}
+
+/// Re-check, download, and install an update after the trusted Settings page
+/// has obtained explicit confirmation from the user.
+#[cfg(not(target_os = "macos"))]
+async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
+    match available_update(app).await {
         Ok(Some(update)) => {
             update
                 .download_and_install(|_, _| {}, || {})
@@ -112,7 +130,7 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
             app.restart();
         }
         Ok(None) => Ok("up-to-date".into()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e),
     }
 }
 
@@ -122,11 +140,8 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
 /// publishes only the user-facing DMG, so we keep Tauri's update check and
 /// minisign verification, then mount/copy the verified DMG ourselves.
 #[cfg(target_os = "macos")]
-pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
+    match available_update(app).await {
         Ok(Some(update)) => {
             let bytes = update
                 .download(|_, _| {}, || {})
@@ -136,13 +151,13 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
             app.restart();
         }
         Ok(None) => Ok("up-to-date".into()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e),
     }
 }
 
 #[tauri::command]
-pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
-    run_update_check(&app).await
+pub(crate) async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    run_update_install(&app).await
 }
 
 #[cfg(target_os = "macos")]

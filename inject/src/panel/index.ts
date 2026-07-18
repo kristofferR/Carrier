@@ -1,6 +1,6 @@
 /*
- * Carrier — toast notifications, the check-for-updates flow, and the bridge
- * that opens the dedicated settings window (F3). The settings UI itself lives
+ * Carrier — toast notifications and the bridge that opens the dedicated
+ * settings window (F2/F3). The settings UI itself lives
  * in its own native window (dist/settings.html), not as an overlay.
  *
  * Source of the generated src-tauri/inject/panel.js (see inject/build.ts).
@@ -57,10 +57,11 @@ function main() {
   };
 
   /* --------------------------- Update check ----------------------------- */
-  // Rust runs the check (and reports the result with a native notification).
+  // Updates can replace and restart the app, so the remote Facebook origin
+  // only opens trusted Settings, where the user explicitly confirms install.
   window.__carrierCheckUpdates = () => {
-    window.__carrierToast?.("Checking for updates…");
-    emit("carrier:check-updates");
+    window.__carrierToast?.("Opening Settings to check for updates…");
+    emit("carrier:open-settings");
   };
 
   /* --------------------------- Settings window -------------------------- */
