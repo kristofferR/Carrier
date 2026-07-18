@@ -132,8 +132,18 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
+    // Single-instance enforcement (unless the experimental multi-instance flag
+    // is set). Must be registered first so it runs before any window is created.
+    if !initial.multi_instance {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app);
+        }));
+    }
+
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
-    // DOM/JS inspection. Not in the dependency graph for normal/release builds.
+    // DOM/JS inspection. Keep it after single-instance enforcement: otherwise a
+    // second debug launch can lose the MCP socket race and exit before notifying
+    // the existing instance to reveal its window.
     #[cfg(feature = "mcp")]
     {
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
@@ -141,14 +151,6 @@ pub fn run() {
                 .start_socket_server(true)
                 .socket_path("/tmp/tauri-mcp.sock".into()),
         ));
-    }
-
-    // Single-instance enforcement (unless the experimental multi-instance flag
-    // is set). Must be registered first so it runs before any window is created.
-    if !initial.multi_instance {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app);
-        }));
     }
 
     builder
