@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  isFooterNoiseLink,
+  isCookiePolicyHref,
   isLanguageFooterLink,
   lowestScoreIndex,
   qualifiesCookieActionRow,
@@ -8,16 +8,15 @@ import {
 } from "./login-page";
 
 describe("login footer links", () => {
-  test("finds a structural language strip while excluding footer noise", () => {
+  test("finds a structural language strip independently of locale", () => {
     const links = [
-      { href: "#", text: "English (US)" },
-      { href: "#", text: "Norsk (bokmål)" },
-      { href: "#", text: "Privacy" },
+      { href: "#", text: "Deutsch" },
+      { href: "#", text: "Français (France)" },
+      { href: "#", text: "日本語" },
       { href: "/help", text: "Help" },
     ];
-    expect(topLanguageLinkIndexes(links)).toEqual([0, 1]);
+    expect(topLanguageLinkIndexes(links)).toEqual([0, 1, 2]);
     expect(isLanguageFooterLink(links[0]!)).toBe(true);
-    expect(isFooterNoiseLink(links[2]!)).toBe(true);
   });
 
   test("requires at least two language candidates", () => {
@@ -35,6 +34,21 @@ describe("login footer links", () => {
         { href: "/help#", text: "Deutsch" },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("cookie policy links", () => {
+  test("accepts localized Meta-owned policy destinations", () => {
+    expect(isCookiePolicyHref("/privacy/policies/cookies/")).toBe(true);
+    expect(isCookiePolicyHref("https://www.facebook.com/privacy/policy/")).toBe(true);
+    expect(isCookiePolicyHref("https://privacycenter.instagram.com/policies/cookies/")).toBe(true);
+  });
+
+  test("rejects unrelated and lookalike destinations", () => {
+    expect(isCookiePolicyHref("/help/")).toBe(false);
+    expect(isCookiePolicyHref("https://example.com/privacy/policies/cookies/")).toBe(false);
+    expect(isCookiePolicyHref("https://facebook.com.example.com/privacy/")).toBe(false);
+    expect(isCookiePolicyHref("not a url")).toBe(false);
   });
 });
 

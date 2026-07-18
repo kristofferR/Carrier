@@ -9,16 +9,14 @@ const BUTTON_ATTR = "data-carrier-settings-button";
 
 function findOverflowButton(): HTMLElement | null {
   const buttons = document.querySelectorAll<HTMLElement>(
-    `[role="button"][aria-label]:not([${BUTTON_ATTR}]), button[aria-label]:not([${BUTTON_ATTR}])`,
+    `[role="button"]:not([${BUTTON_ATTR}]), button:not([${BUTTON_ATTR}])`,
   );
   let iconFallback: HTMLElement | null = null;
   for (const button of buttons) {
-    const label = button.getAttribute("aria-label") || "";
     const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
-    if (!isMessengerHeaderOverflowControl(label, iconPath)) continue;
+    if (!isMessengerHeaderOverflowControl(iconPath)) continue;
     const rect = button.getBoundingClientRect();
     if (rect.width < 28 || rect.height < 28) continue;
-    if (label.trim() === "Settings, help and more") return button;
     if (!iconFallback || rect.top < iconFallback.getBoundingClientRect().top) {
       iconFallback = button;
     }

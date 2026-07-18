@@ -9,8 +9,7 @@ import {
 } from "../lib/login-page";
 import {
   findOptionalCookieDeclineButton,
-  hasCookieConsentLabel,
-  hasCookieConsentText,
+  hasCookieConsentContext,
   onFacebookHost,
 } from "./cookie-consent";
 
@@ -49,7 +48,7 @@ export function initLoginTidy() {
     if (role === "dialog" || role === "alertdialog") return true;
     if (el.querySelector?.('[role="dialog"], [role="alertdialog"]')) return true;
     if (findOptionalCookieDeclineButton(el)) return true;
-    return hasCookieConsentLabel(el) || hasCookieConsentText(el);
+    return hasCookieConsentContext(el);
   };
 
   const restoreRequiredLoginUi = () => {

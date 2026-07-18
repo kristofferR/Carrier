@@ -68,7 +68,7 @@ export function initUnreadBadge() {
     // to mean 0 unread. (A non-zero count only happens once ready anyway.)
     const ready = conv
       ? document.querySelector('a[href*="/t/"]') !== null
-      : /Messenger|Facebook/i.test(document.title || "");
+      : document.readyState === "complete" && (document.title || "").trim().length > 0;
     if (n === 0 && !ready) return;
     setBadge(n, force);
   };

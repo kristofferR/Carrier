@@ -354,18 +354,23 @@
   };
 
   // inject/src/messenger/lib/login-page.ts
-  var FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
   function isLanguageFooterLink(link) {
     return link.href.trim() === "#";
   }
-  function isFooterNoiseLink(link) {
-    return FOOTER_NOISE_RE.test(link.text.replace(/\s+/g, " ").trim());
-  }
   function topLanguageLinkIndexes(links) {
-    const indexes = links.flatMap(
-      (link, index) => isLanguageFooterLink(link) && !isFooterNoiseLink(link) ? [index] : []
-    );
+    const indexes = links.flatMap((link, index) => isLanguageFooterLink(link) ? [index] : []);
     return indexes.length >= 2 ? indexes : [];
+  }
+  function isCookiePolicyHref(href) {
+    try {
+      const url = new URL(href, "https://www.facebook.com/");
+      const host = url.hostname.toLowerCase();
+      const metaOwned = host === "facebook.com" || host.endsWith(".facebook.com") || host === "meta.com" || host.endsWith(".meta.com") || host === "instagram.com" || host.endsWith(".instagram.com");
+      if (!metaOwned) return false;
+      return /(?:^|\/)(?:privacy|policies|cookie|cookies)(?:\/|$)/i.test(url.pathname);
+    } catch {
+      return false;
+    }
   }
   function qualifiesCookieActionRow(scores) {
     return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
@@ -380,31 +385,12 @@
   }
 
   // inject/src/messenger/features/cookie-consent.ts
-  var COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-  var COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-  var hasCookieConsentText = (el) => {
-    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
-    if (!COOKIE_TEXT_RE.test(text)) return false;
-    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+  var hasCookieConsentContext = (el) => {
+    const links = [];
+    if (el.matches?.("a[href]")) links.push(el);
+    links.push(...el.querySelectorAll?.("a[href]") || []);
+    return links.some((link) => isCookiePolicyHref(link.getAttribute("href") || ""));
   };
-  var accessibleLabelText = (el) => {
-    let text = el.getAttribute("aria-label") || "";
-    const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
-    const doc = el.ownerDocument;
-    for (const id of ids) {
-      text += ` ${doc?.getElementById(id)?.textContent || ""}`;
-    }
-    return text.slice(0, 4e3);
-  };
-  var hasCookieConsentLabel = (el) => {
-    const matches = (text) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
-    if (matches(accessibleLabelText(el))) return true;
-    for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
-      if (matches(accessibleLabelText(node))) return true;
-    }
-    return false;
-  };
-  var hasCookieConsentContext = (el) => hasCookieConsentText(el) || hasCookieConsentLabel(el);
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
   var visibleBox = (el) => {
@@ -1025,7 +1011,7 @@
       if (role === "dialog" || role === "alertdialog") return true;
       if (el.querySelector?.('[role="dialog"], [role="alertdialog"]')) return true;
       if (findOptionalCookieDeclineButton(el)) return true;
-      return hasCookieConsentLabel(el) || hasCookieConsentText(el);
+      return hasCookieConsentContext(el);
     };
     const restoreRequiredLoginUi = () => {
       for (const el of document.querySelectorAll(`[${HIDE}], [${REQUIRED}]`)) {
@@ -2365,10 +2351,9 @@
   }
 
   // inject/src/messenger/lib/settings-button.ts
-  var MESSENGER_OVERFLOW_LABEL = "Settings, help and more";
   var MESSENGER_OVERFLOW_PATH_PREFIX = "M2.25 10a1.75 1.75";
-  function isMessengerHeaderOverflowControl(label, iconPath) {
-    return label.trim() === MESSENGER_OVERFLOW_LABEL || iconPath.trim().startsWith(MESSENGER_OVERFLOW_PATH_PREFIX);
+  function isMessengerHeaderOverflowControl(iconPath) {
+    return iconPath.trim().startsWith(MESSENGER_OVERFLOW_PATH_PREFIX);
   }
 
   // inject/src/messenger/features/settings-button.ts
@@ -2376,16 +2361,14 @@
   var BUTTON_ATTR = "data-carrier-settings-button";
   function findOverflowButton() {
     const buttons = document.querySelectorAll(
-      `[role="button"][aria-label]:not([${BUTTON_ATTR}]), button[aria-label]:not([${BUTTON_ATTR}])`
+      `[role="button"]:not([${BUTTON_ATTR}]), button:not([${BUTTON_ATTR}])`
     );
     let iconFallback = null;
     for (const button of buttons) {
-      const label = button.getAttribute("aria-label") || "";
       const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
-      if (!isMessengerHeaderOverflowControl(label, iconPath)) continue;
+      if (!isMessengerHeaderOverflowControl(iconPath)) continue;
       const rect = button.getBoundingClientRect();
       if (rect.width < 28 || rect.height < 28) continue;
-      if (label.trim() === "Settings, help and more") return button;
       if (!iconFallback || rect.top < iconFallback.getBoundingClientRect().top) {
         iconFallback = button;
       }
@@ -2990,7 +2973,7 @@
       }
       const conv = s.badge_mode === "conversations";
       const n = conv ? countUnreadConversations() : countUnreadMessages();
-      const ready = conv ? document.querySelector('a[href*="/t/"]') !== null : /Messenger|Facebook/i.test(document.title || "");
+      const ready = conv ? document.querySelector('a[href*="/t/"]') !== null : document.readyState === "complete" && (document.title || "").trim().length > 0;
       if (n === 0 && !ready) return;
       setBadge(n, force);
     };

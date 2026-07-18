@@ -1,45 +1,13 @@
 /* ------------------ Facebook optional-cookie refusal ------------------ */
 import { rgb } from "../lib/color";
-import { lowestScoreIndex, qualifiesCookieActionRow } from "../lib/login-page";
+import { isCookiePolicyHref, lowestScoreIndex, qualifiesCookieActionRow } from "../lib/login-page";
 
-export const COOKIE_TEXT_RE =
-  /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-export const COOKIE_ACTION_RE =
-  /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-
-export const hasCookieConsentText = (el: Element) => {
-  const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4000);
-  if (!COOKIE_TEXT_RE.test(text)) return false;
-  return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+export const hasCookieConsentContext = (el: Element) => {
+  const links: Element[] = [];
+  if (el.matches?.("a[href]")) links.push(el);
+  links.push(...(el.querySelectorAll?.("a[href]") || []));
+  return links.some((link) => isCookiePolicyHref(link.getAttribute("href") || ""));
 };
-
-// `aria-labelledby` holds space-separated element IDs, not label text, so its
-// accessible name is the text of the referenced elements. Resolve them (capped
-// so a stray huge target can't drive the regex) and fold that in with the direct
-// `aria-label` text — matching the raw ID tokens would miss externally labelled
-// consent dialogs and let required login UI slip through.
-const accessibleLabelText = (el: Element) => {
-  let text = el.getAttribute("aria-label") || "";
-  const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
-  const doc = el.ownerDocument;
-  for (const id of ids) {
-    text += ` ${doc?.getElementById(id)?.textContent || ""}`;
-  }
-  return text.slice(0, 4000);
-};
-
-export const hasCookieConsentLabel = (el: Element) => {
-  const matches = (text: string) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
-  if (matches(accessibleLabelText(el))) return true;
-
-  for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
-    if (matches(accessibleLabelText(node))) return true;
-  }
-  return false;
-};
-
-export const hasCookieConsentContext = (el: Element) =>
-  hasCookieConsentText(el) || hasCookieConsentLabel(el);
 
 export const onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
 
