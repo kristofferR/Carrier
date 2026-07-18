@@ -61,4 +61,49 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("Save custom.css, then reload Carrier to apply it.");
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
+
+  test("every landing locale describes update consent and current notification controls", async () => {
+    const landing = await repoAsset("docs/index.html");
+    const payload = landing.match(/var I18N = \/\*__I18N_LOCALES__\*\/ (\{.*\});\r?\n/)?.[1];
+    expect(payload).toBeTruthy();
+
+    const locales = JSON.parse(payload || "{}") as Record<string, { t: Record<string, string> }>;
+    expect(Object.keys(locales)).toEqual([
+      "en",
+      "ar",
+      "es",
+      "fil",
+      "fr",
+      "nb",
+      "pl",
+      "pt-BR",
+      "th",
+      "vi",
+    ]);
+
+    const staleQuietHours = [
+      "Set quiet hours",
+      "ساعات هدوء",
+      "horas de silencio",
+      "quiet hours",
+      "heures de silence",
+      "stille timer",
+      "ciszę na wieczór",
+      "horário de silêncio",
+      "ช่วงเวลาห้ามรบกวน",
+      "giờ yên tĩnh",
+    ];
+    for (const { t } of Object.values(locales)) {
+      const updateAnswer = t["faq.a10"] || "";
+      const trustAnswer = t["faq.a4"] || "";
+      const repairAnswer = t["faq.a7"] || "";
+      const notificationCopy = t["feat.2.body"] || "";
+      expect(updateAnswer).toContain("GitHub");
+      expect(updateAnswer).toContain("Windows");
+      expect(updateAnswer).toContain("SmartScreen");
+      expect(trustAnswer).toContain("SmartScreen");
+      expect(repairAnswer).toContain("https://github.com/kristofferR/Carrier/issues");
+      expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);
+    }
+  });
 });
