@@ -51,9 +51,28 @@ pub(crate) struct NotifyMsg {
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
 
+/// What to do with an incoming notification after deduplication.
+enum Delivery {
+    /// Show it; it becomes the canonical notification for its fingerprint.
+    Show,
+    /// Suppress it as a duplicate. `delivered_id` is the notification already
+    /// shown for this fingerprint, so a route this duplicate carries can be
+    /// attached to it — the page-first notification it duplicates may have been
+    /// emitted before its conversation row (and thus its route) was known.
+    Suppress { delivered_id: u64 },
+}
+
+/// A delivered notification kept for the dedupe window: when it was last seen
+/// and the native id it was shown under (so a later duplicate's route can reach
+/// the notification the user actually has on screen).
+struct SeenNotification {
+    at: Instant,
+    delivered_id: u64,
+}
+
 #[derive(Default)]
 struct NotificationDeduper {
-    seen: HashMap<u64, Instant>,
+    seen: HashMap<u64, SeenNotification>,
 }
 
 impl NotificationDeduper {
@@ -75,30 +94,45 @@ impl NotificationDeduper {
 
     /// Atomically reserve a logical notification for delivery. Repeated
     /// sightings refresh the window, so a noisy source cannot leak another
-    /// copy every 30 seconds while it keeps replaying the same event.
-    fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
-        self.seen.retain(|_, seen_at| {
-            now.saturating_duration_since(*seen_at) <= NOTIFICATION_DEDUPE_WINDOW
-        });
+    /// copy every 30 seconds while it keeps replaying the same event. A
+    /// suppressed duplicate reports the id of the notification already shown for
+    /// its fingerprint so its route can still be attached there.
+    fn classify(&mut self, msg: &NotifyMsg, now: Instant) -> Delivery {
+        self.seen
+            .retain(|_, seen| now.saturating_duration_since(seen.at) <= NOTIFICATION_DEDUPE_WINDOW);
 
         let fingerprint = Self::fingerprint(msg);
-        if let Some(seen_at) = self.seen.get_mut(&fingerprint) {
-            *seen_at = now;
-            return false;
+        if let Some(seen) = self.seen.get_mut(&fingerprint) {
+            seen.at = now;
+            return Delivery::Suppress {
+                delivered_id: seen.delivered_id,
+            };
         }
 
         if self.seen.len() >= MAX_RECENT_NOTIFICATIONS {
             if let Some(oldest) = self
                 .seen
                 .iter()
-                .min_by_key(|(_, seen_at)| **seen_at)
+                .min_by_key(|(_, seen)| seen.at)
                 .map(|(fingerprint, _)| *fingerprint)
             {
                 self.seen.remove(&oldest);
             }
         }
-        self.seen.insert(fingerprint, now);
-        true
+        self.seen.insert(
+            fingerprint,
+            SeenNotification {
+                at: now,
+                delivered_id: msg.id,
+            },
+        );
+        Delivery::Show
+    }
+
+    /// Test helper: the delivery decision reduced to a bool.
+    #[cfg(test)]
+    fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
+        matches!(self.classify(msg, now), Delivery::Show)
     }
 }
 
@@ -320,12 +354,17 @@ pub(crate) fn clear_avatar_cache() {
 /// until the user clicks or dismisses it (it only parks, doesn't spin), and on
 /// click it routes back to the page.
 pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
-    let should_deliver = NOTIFICATION_DEDUPER
+    let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
-        .should_deliver_at(&msg, Instant::now());
-    if !should_deliver {
+        .classify(&msg, Instant::now());
+    if let Delivery::Suppress { delivered_id } = decision {
+        // The duplicate is dropped, but it may carry the reload-safe route the
+        // shown notification lacked (a page-first notification whose row paired
+        // only after the page pairing window, inside the native dedupe window).
+        // Attach it to the notification the user actually has on screen.
+        remember_notification_route(delivered_id, &msg.thread_path);
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
         return;
     }
@@ -550,6 +589,22 @@ mod tests {
             thread_path: "/t/555/".into(),
         });
         assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
+    }
+
+    #[test]
+    fn suppressed_duplicate_reports_the_shown_notification_id() {
+        // A page-first notification (id 42) is shown; a later fallback for the
+        // same message (id 99) that carries the route is suppressed, but must
+        // report id 42 so the route reaches the notification on screen.
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let shown = notify_msg(42, "Jane", "Hello", "0123456789abcdef");
+        let duplicate = notify_msg(99, "Jane", "Hello", "0123456789abcdef");
+        assert!(matches!(deduper.classify(&shown, now), Delivery::Show));
+        match deduper.classify(&duplicate, now) {
+            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 42),
+            Delivery::Show => panic!("an identical second notification must be suppressed"),
+        }
     }
 
     #[test]

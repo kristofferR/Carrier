@@ -428,10 +428,13 @@ jobs:
             gh api "repos/${REPO}/contents/${path}" --jq '.content' | base64 -d > "$temp"
             cp "$temp" "${temp}.orig"
             # Update tag paths, artifact filenames, and visible vX.Y.Z labels.
+            # The label pattern is a full three-part semver so it can't match
+            # one-component SVG path commands (e.g. the Windows logo's `v9.451`),
+            # which the broader `v[0-9]+(\.[0-9]+)+` corrupted on every release.
             sed -i -E \
               -e "s#/releases/download/v[0-9]+(\\.[0-9]+)+/#/releases/download/${TAG}/#g" \
               -e "s/Carrier_[0-9]+(\\.[0-9]+)+_/Carrier_${VERSION}_/g" \
-              -e "s/v[0-9]+(\\.[0-9]+)+/v${VERSION}/g" \
+              -e "s/v[0-9]+\\.[0-9]+\\.[0-9]+/v${VERSION}/g" \
               "$temp"
             if cmp -s "$temp" "${temp}.orig"; then
               echo "${path} already current for ${TAG}."

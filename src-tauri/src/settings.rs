@@ -3,6 +3,7 @@
 //! ("Clear Cache") machinery.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -218,10 +219,18 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<(), String> {
         .and_then(|name| name.to_str())
         .ok_or("settings path has no valid file name")?;
     let sequence = SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    // A random component keeps the temp name unique even if a previous run
+    // crashed after creating one and the OS later reuses this pid — that would
+    // restart the sequence at 0 and collide with the leftover under
+    // `create_new`, failing the first save and losing the change.
+    let nonce = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
     let temp = parent.join(format!(
-        ".{file_name}.{}.{}.tmp",
+        ".{file_name}.{}.{}.{:016x}.tmp",
         std::process::id(),
-        sequence
+        sequence,
+        nonce
     ));
 
     let result = (|| -> Result<(), String> {
