@@ -2663,10 +2663,19 @@
     if (LABEL_TEXT_RE.test(text)) return "";
     return text;
   }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const glyphSlots = children.filter((child) => child.glyphs === 1).length;
+    const addButtons = children.filter(
+      (child) => child.glyphs === 0 && child.role === "button"
+    ).length;
+    return glyphSlots >= 5 && glyphSlots <= 8 && addButtons === 1 && glyphSlots + addButtons === children.length;
+  }
 
   // inject/src/messenger/features/system-emoji.ts
   var SOURCE_ATTR = "data-carrier-emoji-sprite";
   var GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var REACTION_ATTR = "data-carrier-reaction-emoji";
   var CANDIDATE_SEL = "img[alt], [aria-label]";
   var INTERACTIVE_SEL = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
   function initSystemEmoji() {
@@ -2728,6 +2737,21 @@
         }
       }
     }
+    function markReactionGlyphs() {
+      const reactions = /* @__PURE__ */ new Set();
+      for (const menu of document.querySelectorAll('[role="menu"]')) {
+        const children = [...menu.children].map((child) => ({
+          glyphs: child.querySelectorAll(`[${GLYPH_ATTR}]`).length,
+          role: child.getAttribute("role")
+        }));
+        if (!isReactionMenuShape(children)) continue;
+        menu.querySelectorAll(`[${GLYPH_ATTR}]`).forEach((glyph) => reactions.add(glyph));
+      }
+      document.querySelectorAll(`[${REACTION_ATTR}]`).forEach((glyph) => {
+        if (!reactions.has(glyph)) glyph.removeAttribute(REACTION_ATTR);
+      });
+      reactions.forEach((glyph) => glyph.setAttribute(REACTION_ATTR, ""));
+    }
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
@@ -2743,6 +2767,7 @@
         queuedRoots.clear();
         roots.forEach(scan);
         sweepOrphanGlyphs();
+        markReactionGlyphs();
       });
     }
     function start() {

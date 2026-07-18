@@ -2,10 +2,11 @@
 // Facebook usually renders emoji as CDN sprites with the Unicode glyph in
 // alt/aria-label. When enabled, hide those sprites and insert a native text
 // glyph next to each one so the OS emoji font is used instead.
-import { EMOJI_SOURCE_RE, emojiGlyph } from "../lib/emoji";
+import { EMOJI_SOURCE_RE, emojiGlyph, isReactionMenuShape } from "../lib/emoji";
 
 const SOURCE_ATTR = "data-carrier-emoji-sprite";
 const GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+const REACTION_ATTR = "data-carrier-reaction-emoji";
 const CANDIDATE_SEL = "img[alt], [aria-label]";
 const INTERACTIVE_SEL =
   'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
@@ -80,6 +81,22 @@ export function initSystemEmoji() {
     }
   }
 
+  function markReactionGlyphs() {
+    const reactions = new Set<Element>();
+    for (const menu of document.querySelectorAll('[role="menu"]')) {
+      const children = [...menu.children].map((child) => ({
+        glyphs: child.querySelectorAll(`[${GLYPH_ATTR}]`).length,
+        role: child.getAttribute("role"),
+      }));
+      if (!isReactionMenuShape(children)) continue;
+      menu.querySelectorAll(`[${GLYPH_ATTR}]`).forEach((glyph) => reactions.add(glyph));
+    }
+    document.querySelectorAll(`[${REACTION_ATTR}]`).forEach((glyph) => {
+      if (!reactions.has(glyph)) glyph.removeAttribute(REACTION_ATTR);
+    });
+    reactions.forEach((glyph) => glyph.setAttribute(REACTION_ATTR, ""));
+  }
+
   function schedule(root: Element = document.documentElement) {
     if (!on()) return;
     queuedRoots.add(root);
@@ -99,6 +116,7 @@ export function initSystemEmoji() {
       queuedRoots.clear();
       roots.forEach(scan);
       sweepOrphanGlyphs();
+      markReactionGlyphs();
     });
   }
 
