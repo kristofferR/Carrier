@@ -77,6 +77,13 @@ describe("hand-maintained injected assets", () => {
     expect(css).toContain("translate: 0 var(--carrier-media-controls-offset");
   });
 
+  test("macOS downloads declare a Files & Folders permission purpose", async () => {
+    const info = await repoAsset("src-tauri/Info.plist");
+
+    expect(info).toContain("<key>NSDownloadsFolderUsageDescription</key>");
+    expect(info).toContain("Carrier saves photos, videos, and files");
+  });
+
   test("Settings loads the generated update consent controller", async () => {
     const [settings, controller] = await Promise.all([
       repoAsset("dist/settings.html"),
