@@ -14,15 +14,34 @@ use crate::settings::{AppState, Settings};
 use crate::window::{build_app_window, install_main_close_handler};
 use crate::APP_TITLE;
 
+fn clear_reveal_guard_if_current(
+    active_generation: &std::sync::atomic::AtomicUsize,
+    generation: usize,
+) -> bool {
+    active_generation
+        .compare_exchange(
+            generation,
+            0,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_ok()
+}
+
 fn reveal_window(window: &WebviewWindow) {
     let is_main = window.label() == "main";
-    if is_main {
-        window
-            .app_handle()
-            .state::<AppState>()
+    let reveal_generation = is_main.then(|| {
+        let state = window.app_handle().state::<AppState>();
+        let generation = state
+            .next_reveal_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .wrapping_add(1)
+            .max(1);
+        state
             .revealing_main
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
+            .store(generation, std::sync::atomic::Ordering::Release);
+        generation
+    });
     // Windows ignores a restore request for some hidden minimized HWNDs, so
     // show once, restore, then show again. The guard above prevents the
     // intermediate minimized resize from feeding back into hide-on-minimize.
@@ -30,16 +49,17 @@ fn reveal_window(window: &WebviewWindow) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
-    if is_main {
+    if let Some(generation) = reveal_generation {
         let app = window.app_handle().clone();
         tauri::async_runtime::spawn(async move {
             // Native resize/focus events arrive after the calls above. Keep the
             // reveal guard through that short burst so auto-hide cannot undo a
             // tray click or second-instance activation.
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            app.state::<AppState>()
-                .revealing_main
-                .store(false, std::sync::atomic::Ordering::Release);
+            // Only the newest reveal may lower the guard. An older timer that
+            // wakes during an overlapping reveal must leave its newer token in
+            // place until that reveal's own event burst has finished.
+            clear_reveal_guard_if_current(&app.state::<AppState>().revealing_main, generation);
         });
     }
 }
@@ -274,6 +294,19 @@ mod tests {
     fn hidden_or_minimized_main_window_is_revealed() {
         assert!(!should_hide_main(false, false, false));
         assert!(!should_hide_main(true, true, true));
+    }
+
+    #[test]
+    fn only_the_latest_reveal_can_clear_the_auto_hide_guard() {
+        let active = std::sync::atomic::AtomicUsize::new(2);
+        assert!(!clear_reveal_guard_if_current(&active, 1));
+        assert_eq!(
+            active.load(std::sync::atomic::Ordering::Acquire),
+            2,
+            "an older timer must preserve the newer reveal"
+        );
+        assert!(clear_reveal_guard_if_current(&active, 2));
+        assert_eq!(active.load(std::sync::atomic::Ordering::Acquire), 0);
     }
 
     #[cfg(not(target_os = "macos"))]

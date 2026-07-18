@@ -976,13 +976,14 @@
     // equivalent here: semantic and interactive nodes, bounded text, no form
     // values, and digit-masked hrefs.
     listen("get-page-map", function (ev) {
-      var p = (ev && ev.payload) || {};
-      var cid = correlationId(p);
+        var p = (ev && ev.payload) || {};
+        var cid = correlationId(p);
       try {
         var includeContent = p.includeContent !== false;
         var interactiveOnly = p.interactiveOnly === true;
-        var maxDepth =
-          typeof p.maxDepth === "number" ? Math.max(0, Math.min(30, p.maxDepth)) : 12;
+        var requestedMaxDepth =
+          typeof p.maxDepth === "number" && Number.isFinite(p.maxDepth) ? p.maxDepth : 12;
+        var maxDepth = Math.floor(Math.max(0, Math.min(30, requestedMaxDepth)));
         var scopes = Array.isArray(p.scopeSelector)
           ? p.scopeSelector
           : p.scopeSelector
@@ -1005,8 +1006,17 @@
           /^(H[1-6]|IMG|NAV|MAIN|HEADER|FOOTER|ASIDE|SECTION|ARTICLE|FORM|LABEL|P|LI|UL|OL|DL|DT|DD)$/;
         var interactiveRoles =
           /^(button|link|textbox|checkbox|radio|switch|slider|spinbutton|combobox|listbox|option|menuitem|tab|searchbox)$/;
+        // This bridge inspects third-party markup. Treat its size and shape as
+        // untrusted so a pathological Messenger page cannot monopolize the
+        // webview or generate a huge IPC response.
+        var MAX_VISITED_NODES = 10000;
+        var MAX_ELEMENTS = 2000;
+        var MAX_OUTPUT_CHARS = 200000;
         var elements = [];
         var nextRef = 1;
+        var visitedNodes = 0;
+        var outputChars = 0;
+        var exhausted = false;
 
         function mapVisible(node) {
           if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
@@ -1014,14 +1024,28 @@
           return style.display !== "none" && style.visibility !== "hidden";
         }
 
-        function mapText(node) {
+        function mapInteractiveText(node) {
           if (!includeContent) return "";
           return maskText((node.innerText || node.textContent || "").replace(/\s+/g, " ").trim(), 300);
         }
 
         function walk(node, depth, parentRef, ancestorsVisible) {
-          if (!node || depth > maxDepth || /^(SCRIPT|STYLE|NOSCRIPT|HEAD|META|LINK|TEMPLATE)$/.test(node.tagName))
+          if (
+            exhausted ||
+            !node ||
+            depth > maxDepth ||
+            /^(SCRIPT|STYLE|NOSCRIPT|HEAD|META|LINK|TEMPLATE)$/.test(node.tagName)
+          )
             return;
+          visitedNodes += 1;
+          if (visitedNodes > MAX_VISITED_NODES) {
+            exhausted = true;
+            return;
+          }
+          var visibleNow = ancestorsVisible && mapVisible(node);
+          // A hidden ancestor makes its complete subtree irrelevant to the
+          // semantic map. Prune it before reading text or walking children.
+          if (!visibleNow) return;
           var role = (node.getAttribute("role") || "").toLowerCase();
           var interactive =
             interactiveTags.test(node.tagName) ||
@@ -1029,9 +1053,10 @@
             node.hasAttribute("contenteditable") ||
             node.tabIndex >= 0;
           var semantic = semanticTags.test(node.tagName) || !!role;
-          var text = mapText(node);
           var directText = "";
-          if (includeContent) {
+          // Preserve useful direct text on leaf semantic/plain nodes without
+          // serializing the complete subtree text for every ancestor.
+          if (includeContent && node.children.length === 0) {
             for (var i = 0; i < node.childNodes.length; i++) {
               if (node.childNodes[i].nodeType === 3) directText += node.childNodes[i].textContent || "";
             }
@@ -1039,16 +1064,17 @@
           }
           var shouldInclude =
             interactive || semantic || (!!directText && node.children.length === 0);
-          var visibleNow = ancestorsVisible && mapVisible(node);
           var ownRef = parentRef;
           if (shouldInclude && (!interactiveOnly || interactive)) {
             ownRef = nextRef++;
+            var interactiveText =
+              interactive && !directText ? mapInteractiveText(node) : "";
             var item = {
               ref: ownRef,
               tag: node.tagName.toLowerCase(),
               interactive: interactive || undefined,
               role: role || undefined,
-              text: (directText || (interactive ? text : "")) || undefined,
+              text: (directText || interactiveText) || undefined,
               ariaLabel: maskText(node.getAttribute("aria-label") || "", 200) || undefined,
               href: maskedHref(node) || undefined,
               id: maskText(node.id || "", 120) || undefined,
@@ -1064,6 +1090,15 @@
             Object.keys(item).forEach(function (key) {
               if (item[key] === undefined) delete item[key];
             });
+            var itemChars = safeStringify(item).length;
+            if (
+              elements.length >= MAX_ELEMENTS ||
+              outputChars + itemChars > MAX_OUTPUT_CHARS
+            ) {
+              exhausted = true;
+              return;
+            }
+            outputChars += itemChars;
             elements.push(item);
           }
           for (var c = 0; c < node.children.length; c++) {
@@ -1077,7 +1112,7 @@
         var content = includeContent
           ? maskText(
               ((document.body && document.body.innerText) || "").replace(/\s+/g, " ").trim(),
-              20000,
+              Math.min(20000, Math.max(0, MAX_OUTPUT_CHARS - outputChars)),
             )
           : "";
         respond(
@@ -1091,6 +1126,7 @@
             content: content,
             scope: p.scopeSelector || undefined,
             maxDepth: maxDepth,
+            truncated: exhausted || undefined,
           }),
         );
       } catch (e) {

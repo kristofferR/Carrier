@@ -103,6 +103,7 @@
         ["hide_on_minimize", "Hide When Minimized", "Windows: move Carrier into the tray instead of leaving it minimized."],
         ["hide_on_focus_loss", "Hide When Focus Is Lost", "Windows: move Carrier into the tray whenever another app gets focus."],
         ["hide_taskbar_icon", "Hide Taskbar Icon", "Windows: keep Carrier out of the taskbar and reopen it from the tray."],
+        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Installation always asks first."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["send_with_accelerator", "Require Cmd/Ctrl+Enter to Send", "Plain Enter inserts a line break; use Cmd+Enter on macOS or Ctrl+Enter on Windows/Linux to send."],
@@ -141,7 +142,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["send_with_accelerator", "block_telemetry", "multi_instance", "custom_css", "open_logs"] },
+          fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -437,10 +438,12 @@
         try {
           const res = await invoke("check_for_updates");
           if (res === "up-to-date") {
+            button.textContent = "Check for updates";
             setStatus("Carrier is up to date.");
             return;
           }
           const version = res.startsWith("available:") ? res.slice(10) : "";
+          if (version) button.textContent = `Install Carrier ${version}`;
           const label = version ? `Carrier ${version}` : "A Carrier update";
           if (!confirm(`${label} is available. Install it now and restart Carrier?`)) {
             setStatus("Update install cancelled.");
@@ -467,6 +470,15 @@
           console.error(e);
         }
         render();
+        try {
+          const discovered = await invoke("discovered_update");
+          if (discovered) {
+            document.getElementById("check").textContent = `Install Carrier ${discovered}`;
+            setStatus(`Carrier ${discovered} is available.`);
+          }
+        } catch (e) {
+          console.error(e);
+        }
         try {
           const v = await invoke("plugin:app|version");
           document.getElementById("version").textContent = "Carrier " + v;

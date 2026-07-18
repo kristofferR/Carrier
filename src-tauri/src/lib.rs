@@ -194,8 +194,12 @@ pub fn run() {
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
             update_installing: std::sync::atomic::AtomicBool::new(false),
+            update_checking: tokio::sync::Mutex::new(()),
+            update_available: Mutex::new(None),
+            update_check_wake: tokio::sync::Notify::new(),
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
-            revealing_main: std::sync::atomic::AtomicBool::new(false),
+            revealing_main: AtomicUsize::new(0),
+            next_reveal_generation: AtomicUsize::new(0),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
         })
@@ -206,6 +210,7 @@ pub fn run() {
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
+            commands::discovered_update,
             commands::install_update,
             commands::connect_messenger,
             commands::open_messenger_anyway,
@@ -384,17 +389,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Carrier")
         .run(|app, event| {
-            // macOS needs notification authorization (for banners + the Dock
-            // badge) and the centre delegate installed once the app is ready
-            // (UNUserNotificationCenter needs the app fully launched — doing it
-            // during setup is a silent no-op). See `setup_macos_notifications`
-            // and issue #5.
-            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Ready = event {
-                setup_macos_notifications(app);
-                // The Dock-menu delegate hook also needs the app fully
-                // launched (tao installs its NSApplication delegate by now).
-                install_dock_menu_provider();
+                commands::spawn_automatic_update_checks(app.clone());
+                // macOS needs notification authorization (for banners + the
+                // Dock badge) and the centre delegate installed once the app is
+                // ready (UNUserNotificationCenter needs the app fully launched
+                // — doing it during setup is a silent no-op). See
+                // `setup_macos_notifications` and issue #5.
+                #[cfg(target_os = "macos")]
+                {
+                    setup_macos_notifications(app);
+                    // The Dock-menu delegate hook also needs the app fully
+                    // launched (tao installs its NSApplication delegate by now).
+                    install_dock_menu_provider();
+                }
             }
 
             #[cfg(target_os = "macos")]

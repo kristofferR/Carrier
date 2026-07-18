@@ -59,6 +59,9 @@ pub(crate) struct Settings {
     pub(crate) hide_taskbar_icon: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
+    /// Discover signed Carrier updates on startup and every four hours. This
+    /// never downloads or installs without explicit confirmation in Settings.
+    pub(crate) automatic_update_checks: bool,
     /// Play the OS notification sound for new-message notifications.
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
@@ -128,6 +131,7 @@ impl Default for Settings {
             hide_on_focus_loss: false,
             hide_taskbar_icon: false,
             mute_notifications: false,
+            automatic_update_checks: true,
             notification_sound: true,
             hide_notification_preview: false,
             hide_names_avatars: false,
@@ -148,12 +152,23 @@ pub(crate) struct AppState {
     /// Serializes update installation even if the trusted Settings page is
     /// invoked concurrently from multiple windows or automation.
     pub(crate) update_installing: AtomicBool,
+    /// Serializes every updater operation so automatic/manual discovery cannot
+    /// race the installer's re-check, download, or replacement.
+    pub(crate) update_checking: tokio::sync::Mutex<()>,
+    /// Version discovered during this process, if any. Settings uses this to
+    /// surface an automatic discovery without making another network request.
+    pub(crate) update_available: Mutex<Option<String>>,
+    /// Wakes the automatic checker immediately when its opt-in is enabled.
+    pub(crate) update_check_wake: tokio::sync::Notify,
     /// Prevents a successfully delivered first tray notice from repeating in
     /// the current process even while its settings write is being merged.
     pub(crate) tray_notice_delivered: AtomicBool,
-    /// Suppresses Windows auto-hide events emitted as part of deliberately
-    /// restoring the main window from the tray/minimized state.
-    pub(crate) revealing_main: AtomicBool,
+    /// Non-zero generation token while the main window is deliberately being
+    /// restored. A token (rather than a bool) lets overlapping reveals renew
+    /// the guard without an older reset timer clearing the newer reveal.
+    pub(crate) revealing_main: AtomicUsize,
+    /// Monotonic source for `revealing_main` tokens.
+    pub(crate) next_reveal_generation: AtomicUsize,
     /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
     /// is between destroying and rebuilding, so the run loop doesn't exit when
     /// the window count hits zero.
@@ -616,6 +631,10 @@ mod tests {
         );
         assert!(!s.spellcheck, "spellcheck should default to false");
         assert!(
+            s.automatic_update_checks,
+            "automatic signed-update discovery should default to true"
+        );
+        assert!(
             !s.tray_notice_shown,
             "the first hide-to-tray should explain where Carrier went"
         );
@@ -710,6 +729,14 @@ mod tests {
         // Pre-existing installs without this key should not opt in implicitly.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.spellcheck);
+    }
+
+    #[test]
+    fn settings_json_missing_automatic_update_checks_defaults_to_true() {
+        // Existing installs should gain safe discovery, while install remains
+        // behind the separate explicit confirmation path.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.automatic_update_checks);
     }
 
     #[test]

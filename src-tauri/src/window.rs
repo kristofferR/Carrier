@@ -193,7 +193,8 @@ fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWi
             let has_tray = state.tray.lock().unwrap().is_some();
             let revealing = state
                 .revealing_main
-                .load(std::sync::atomic::Ordering::Acquire);
+                .load(std::sync::atomic::Ordering::Acquire)
+                != 0;
             let focus_lost = matches!(event, WindowEvent::Focused(false));
             let minimized = matches!(event, WindowEvent::Resized(_))
                 && event_window.is_minimized().unwrap_or(false);

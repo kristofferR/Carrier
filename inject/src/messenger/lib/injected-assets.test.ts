@@ -13,6 +13,17 @@ describe("hand-maintained injected assets", () => {
     expect(source).toContain('listen("get-page-map"');
   });
 
+  test("the MCP page map bounds untrusted DOM traversal and output", async () => {
+    const source = await repoAsset("src-tauri/inject/mcp-bridge.js");
+
+    expect(source).toContain("Number.isFinite(p.maxDepth)");
+    expect(source).toContain("MAX_VISITED_NODES");
+    expect(source).toContain("MAX_ELEMENTS");
+    expect(source).toContain("MAX_OUTPUT_CHARS");
+    expect(source).toContain("if (!visibleNow) return");
+    expect(source).toContain("truncated: exhausted");
+  });
+
   test("release capabilities cannot listen for app events", async () => {
     const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
       permissions: unknown[];
