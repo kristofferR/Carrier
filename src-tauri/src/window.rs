@@ -402,6 +402,9 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         .build()
     {
         Ok(window) => {
+            #[cfg(target_os = "macos")]
+            drop(window);
+
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();
 
