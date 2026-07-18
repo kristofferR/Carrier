@@ -20,3 +20,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Half of a matched pair: the npm MCP server must move in lockstep with
+      # the Rust guest plugin pinned by git rev in src-tauri/Cargo.toml.
+      # Bump both sides together manually instead.
+      - dependency-name: tauri-plugin-mcp-server
