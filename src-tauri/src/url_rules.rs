@@ -4,6 +4,18 @@
 
 use url::Url;
 
+/// Whether a page is a Facebook/Messenger web surface where user customization
+/// belongs. Media CDNs and third-party login providers stay excluded.
+pub(crate) fn is_messenger_web_url(url: &Url) -> bool {
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    ["facebook.com", "messenger.com"]
+        .iter()
+        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+}
+
 /// Facebook wraps external links in tracking redirects
 /// (`l.facebook.com/l.php?u=…`, `lm.facebook.com/l.php?u=…`, `facebook.com/l.php`).
 /// Return the real destination if `url` is such a redirect.
@@ -180,6 +192,26 @@ mod tests {
         assert!(!is_internal(&u("ftp://tauri.localhost/")));
         assert!(!is_internal(&u("data:text/html,<script>1</script>")));
         assert!(!is_internal(&u("javascript:alert(1)")));
+    }
+
+    #[test]
+    fn custom_css_scope_is_only_facebook_and_messenger_web_pages() {
+        for url in [
+            "https://facebook.com/messages",
+            "https://www.facebook.com/login",
+            "https://sub.messenger.com/t/123",
+        ] {
+            assert!(is_messenger_web_url(&Url::parse(url).unwrap()));
+        }
+        for url in [
+            "https://facebook.com.evil.example/messages",
+            "https://fbcdn.net/image.png",
+            "https://accounts.google.com/",
+            "file:///tmp/facebook.com",
+            "http://tauri.localhost/",
+        ] {
+            assert!(!is_messenger_web_url(&Url::parse(url).unwrap()));
+        }
     }
 
     #[test]

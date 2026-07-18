@@ -141,7 +141,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["send_with_accelerator", "block_telemetry", "multi_instance", "open_logs"] },
+          fields: ["send_with_accelerator", "block_telemetry", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -363,12 +363,37 @@
         return row;
       }
 
+      function customCssRow() {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cursor = "default";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "action";
+        btn.textContent = "Open custom.css";
+        btn.onclick = async () => {
+          try {
+            await invoke("open_custom_css");
+            setStatus("Save custom.css, then reload Carrier to apply it.");
+          } catch (e) {
+            setStatus("Could not open custom.css.");
+            console.error(e);
+          }
+        };
+        const text = document.createElement("div");
+        text.innerHTML =
+          '<div class="label">Custom CSS</div><div class="hint">Advanced, best-effort Messenger styling. Facebook markup changes may break it; missing or invalid CSS is safely ignored.</div>';
+        row.append(btn, text);
+        return row;
+      }
+
       // Pseudo-fields ("theme", "zoom", "badge_mode") are <select> rows;
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
         theme: themeRow,
         zoom: zoomRow,
         badge_mode: badgeModeRow,
+        custom_css: customCssRow,
         open_logs: openLogsRow,
       };
 

@@ -42,4 +42,12 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain('"hide_taskbar_icon"');
     expect(settings).toContain('key === "show_tray" && trayRequired');
   });
+
+  test("custom CSS is presented as best-effort and reloadable", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain('invoke("open_custom_css")');
+    expect(settings).toContain("Save custom.css, then reload Carrier to apply it.");
+    expect(settings).toContain("missing or invalid CSS is safely ignored");
+  });
 });

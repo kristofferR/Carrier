@@ -124,6 +124,7 @@ cryptographically verified updates.
 - Signed update checks and consent-based installs from Settings or <kbd>F2</kbd>
 - A diagnostics log for Messenger markup changes and integration failures
 - A dedicated Settings window, available with <kbd>F3</kbd>
+- Optional, best-effort `custom.css` styling from **Settings → Advanced**
 
 <details>
 <summary><strong>Keyboard shortcuts</strong></summary>

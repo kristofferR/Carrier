@@ -4,6 +4,7 @@
 use tauri::{Manager, State, WebviewWindow};
 use url::Url;
 
+use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
 use crate::settings::{
@@ -418,6 +419,14 @@ pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(&dir).map_err(|e| e.to_string())
+}
+
+/// Create (without overwriting) and open the user-owned custom stylesheet.
+/// Called only from the trusted local Settings window.
+#[tauri::command]
+pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
+    let path = ensure_custom_css(&app)?;
+    open::that_detached(path).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use tauri::{Listener, Manager};
 mod commands;
+mod custom_css;
 mod diag;
 mod download;
 mod hotkey;
@@ -208,7 +209,8 @@ pub fn run() {
             commands::install_update,
             commands::connect_messenger,
             commands::open_messenger_anyway,
-            commands::open_log_folder
+            commands::open_log_folder,
+            commands::open_custom_css
         ])
         .setup(move |app| {
             // Event listening is needed only by the development MCP responder.

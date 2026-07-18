@@ -9,6 +9,7 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
+use crate::custom_css::apply_custom_css;
 use crate::download::{
     downloads_dir, filename_from_url, is_allowed_download, is_unsafe_download, sanitize_filename,
     unique_path,
@@ -64,6 +65,11 @@ pub(crate) fn build_app_window(
         .background_color(splash_background(settings))
         .user_agent(user_agent())
         .initialization_script(init_script(settings))
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                apply_custom_css(&window, payload.url());
+            }
+        })
         .on_navigation(|url| {
             // External tracking redirect -> open the real (web-only) destination.
             if let Some(real) = unwrap_tracking(url) {
