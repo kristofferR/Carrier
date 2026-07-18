@@ -22,6 +22,8 @@ describe("hand-maintained injected assets", () => {
     expect(source).toContain("MAX_OUTPUT_CHARS");
     expect(source).toContain("if (!visibleNow) return");
     expect(source).toContain("truncated: exhausted");
+    expect(source).toContain("var contentSource = roots");
+    expect(source).not.toContain('((document.body && document.body.innerText) || "")');
   });
 
   test("release capabilities cannot listen for app events", async () => {
@@ -93,14 +95,31 @@ describe("hand-maintained injected assets", () => {
       "ช่วงเวลาห้ามรบกวน",
       "giờ yên tĩnh",
     ];
-    for (const { t } of Object.values(locales)) {
+    const conditionalUpdatePhrases: Record<string, [string, string]> = {
+      en: ["Automatic Update Checks is enabled", "Optional"],
+      ar: ["تفعيل البحث التلقائي عن التحديثات", "اختياري"],
+      es: ["búsqueda automática de actualizaciones", "opcional"],
+      fil: ["naka-enable ang awtomatikong pag-check ng update", "Opsyonal"],
+      fr: ["recherche automatique de mises à jour est activée", "facultative"],
+      nb: ["automatiske oppdateringssjekker er slått på", "Valgfri"],
+      pl: ["automatyczne sprawdzanie aktualizacji jest włączone", "Opcjonalnie"],
+      "pt-BR": ["verificação automática de atualizações está ativada", "opcional"],
+      th: ["เปิดการตรวจหาอัปเดตอัตโนมัติ", "เลือกเปิด"],
+      vi: ["bật kiểm tra cập nhật tự động", "Tùy chọn"],
+    };
+    for (const [locale, { t }] of Object.entries(locales)) {
       const updateAnswer = t["faq.a10"] || "";
       const trustAnswer = t["faq.a4"] || "";
       const repairAnswer = t["faq.a7"] || "";
       const notificationCopy = t["feat.2.body"] || "";
+      const updatePill = t["feat.pill2"] || "";
+      const [conditionalPhrase, optionalPhrase] = conditionalUpdatePhrases[locale]!;
       expect(updateAnswer).toContain("GitHub");
       expect(updateAnswer).toContain("Windows");
       expect(updateAnswer).toContain("SmartScreen");
+      expect(updateAnswer).toContain(conditionalPhrase);
+      expect(repairAnswer).toContain(conditionalPhrase);
+      expect(updatePill).toContain(optionalPhrase);
       expect(trustAnswer).toContain("SmartScreen");
       expect(repairAnswer).toContain("https://github.com/kristofferR/Carrier/issues");
       expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);

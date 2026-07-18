@@ -17,9 +17,8 @@ fn theme_for_color_scheme(scheme: ColorScheme) -> Option<tauri::Theme> {
 fn background_for_color_scheme(scheme: ColorScheme) -> Option<tauri::webview::Color> {
     match scheme {
         ColorScheme::PreferDark => Some(tauri::webview::Color(24, 25, 26, 255)),
-        ColorScheme::PreferLight | ColorScheme::NoPreference => {
-            Some(tauri::webview::Color(255, 255, 255, 255))
-        }
+        ColorScheme::PreferLight => Some(tauri::webview::Color(255, 255, 255, 255)),
+        ColorScheme::NoPreference => None,
     }
 }
 
@@ -39,9 +38,10 @@ fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
         // Re-applying an explicit resolved theme makes WebKitGTK update both
         // native chrome and `prefers-color-scheme` in the page immediately.
         let _ = window.set_theme(theme);
-        if let Some(background) = background {
-            let _ = window.set_background_color(Some(background));
-        }
+        // `NoPreference` means the desktop has not forced light or dark. Clear
+        // any previously forced backdrop and let Tauri/WebKitGTK follow the
+        // system along with `set_theme(None)`.
+        let _ = window.set_background_color(background);
     }
 }
 
@@ -111,10 +111,7 @@ mod tests {
             background_for_color_scheme(ColorScheme::PreferLight),
             Some(tauri::webview::Color(255, 255, 255, 255))
         );
-        assert_eq!(
-            background_for_color_scheme(ColorScheme::NoPreference),
-            Some(tauri::webview::Color(255, 255, 255, 255))
-        );
+        assert_eq!(background_for_color_scheme(ColorScheme::NoPreference), None);
     }
 
     #[test]

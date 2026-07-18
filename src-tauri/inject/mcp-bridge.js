@@ -1109,9 +1109,14 @@
         roots.forEach(function (root) {
           walk(root, 0, null, true);
         });
+        var contentSource = roots
+          .map(function (root) {
+            return root.innerText || root.textContent || "";
+          })
+          .join(" ");
         var content = includeContent
           ? maskText(
-              ((document.body && document.body.innerText) || "").replace(/\s+/g, " ").trim(),
+              contentSource.replace(/\s+/g, " ").trim(),
               Math.min(20000, Math.max(0, MAX_OUTPUT_CHARS - outputChars)),
             )
           : "";
