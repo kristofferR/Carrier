@@ -2,7 +2,17 @@
 // On the logged-out page, hide Facebook's marketing collage and centre the
 // login box, so the window shows just the login form.
 import { isLightFill } from "../lib/color";
-import { findOptionalCookieDeclineButton, onFacebookHost } from "./cookie-consent";
+import {
+  isLanguageFooterLink,
+  type LoginLinkDescriptor,
+  topLanguageLinkIndexes,
+} from "../lib/login-page";
+import {
+  findOptionalCookieDeclineButton,
+  hasCookieConsentLabel,
+  hasCookieConsentText,
+  onFacebookHost,
+} from "./cookie-consent";
 
 const HIDE = "data-carrier-hide";
 const COL = "data-carrier-login-col";
@@ -32,29 +42,6 @@ export function initLoginTidy() {
 
   // Only Facebook's own login page — not the in-app OAuth provider pages
   // (Google/Apple/Microsoft), which also have password fields.
-  const COOKIE_TEXT_RE =
-    /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-  const COOKIE_ACTION_RE =
-    /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-
-  const hasCookieConsentText = (el: Element) => {
-    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4000);
-    if (!COOKIE_TEXT_RE.test(text)) return false;
-    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
-  };
-
-  const hasCookieConsentLabel = (el: Element) => {
-    const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-    if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
-
-    const nodes = el.querySelectorAll?.("[aria-label], [aria-labelledby]") || [];
-    for (const node of nodes) {
-      const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-      if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
-    }
-    return false;
-  };
-
   const isRequiredLoginUi = (el: Element | null): boolean => {
     if (el?.nodeType !== 1) return false;
     if (el === document.documentElement || el === document.body) return false;
@@ -88,17 +75,12 @@ export function initLoginTidy() {
       .forEach((el) => el.removeAttribute(LANGUAGE_LINK));
   };
 
-  const FOOTER_NOISE_RE =
-    /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
-
-  const isLanguageFooterLink = (link: Element) => {
-    if (link.hasAttribute(LANGUAGE_LINK)) return true;
-    const href = (link.getAttribute("href") || "").trim();
-    return href === "#" || href.endsWith("#");
-  };
-
-  const isFooterNoiseLink = (link: Element) =>
-    FOOTER_NOISE_RE.test((link.textContent || "").replace(/\s+/g, " ").trim());
+  const linkDescriptor = (link: Element): LoginLinkDescriptor => ({
+    href: link.getAttribute("href") || "",
+    text: link.textContent || "",
+  });
+  const isLanguageLink = (link: Element) =>
+    link.hasAttribute(LANGUAGE_LINK) || isLanguageFooterLink(linkDescriptor(link));
 
   // Facebook's footer language switcher is a row of locale links whose href is
   // just "#" (they swap the page locale via JS). Identify them by that — NOT by
@@ -107,8 +89,7 @@ export function initLoginTidy() {
   // detection was the bug: it failed on the FDSIntlLocaleSelectorList variant
   // that has no #pageFooter, then the strip got swept into the hidden chrome).
   const topLanguageLinks = (links: Element[]) => {
-    const langs = links.filter((link) => isLanguageFooterLink(link) && !isFooterNoiseLink(link));
-    return langs.length >= 2 ? langs : [];
+    return topLanguageLinkIndexes(links.map(linkDescriptor)).map((index) => links[index]!);
   };
 
   const linksOutside = (root: Element, inner: Element) =>
@@ -120,7 +101,7 @@ export function initLoginTidy() {
     const links = linksOutside(el, inner);
     return (
       links.length >= 6 &&
-      (topLanguageLinks(links).length >= 2 || links.filter(isLanguageFooterLink).length >= 2)
+      (topLanguageLinks(links).length >= 2 || links.filter(isLanguageLink).length >= 2)
     );
   };
 

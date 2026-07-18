@@ -19,8 +19,8 @@ env:
 
 jobs:
   # A tag can land on a commit CI never checked (e.g. tagged before push, or CI
-  # skipped), so gate the expensive 6-target build matrix on the same
-  # fmt/clippy/test/syntax checks CI runs. Runs in parallel with
+  # skipped), so gate the expensive 6-target build matrix on the same full
+  # Rust and injected-script checks CI runs. Runs in parallel with
   # prepare_release; `build` needs both, so this adds no wall-clock time.
   check:
     runs-on: ubuntu-22.04
@@ -50,6 +50,11 @@ jobs:
           lookup-only: true
           save-if: false
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install inject dependencies
+        run: bun install --frozen-lockfile
+
       - name: Format
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
@@ -59,10 +64,11 @@ jobs:
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-      - name: Injected-script syntax
-        run: |
-          node --check src-tauri/inject/messenger.js
-          node --check src-tauri/inject/panel.js
+      - name: Check inject scripts
+        run: bun run check
+
+      - name: Generated inject bundles are fresh
+        run: git diff --exit-code src-tauri/inject
 
   # Release notes are authored with human/agent judgment before the tag is
   # pushed, like ha-adjustable-bed. Require that curated draft and pass its body
@@ -77,8 +83,15 @@ jobs:
       - name: Validate release ref
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
-            echo "Release workflow must run on a v* tag; got ${GITHUB_REF}" >&2
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "Release workflow must run on a tag; got ${GITHUB_REF}" >&2
+            exit 1
+          fi
+          # Require a plain vX.Y.Z tag: the download-link/version rewrites below
+          # only understand three-part semver, so a prerelease tag such as
+          # v1.4.0-rc.1 would leave stale paths and Carrier_* filenames behind.
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must be vX.Y.Z with no prerelease suffix; got ${GITHUB_REF_NAME}" >&2
             exit 1
           fi
 
@@ -148,8 +161,8 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     # Predictable, versioned asset names (e.g. Carrier_1.0.0_mac_arm.dmg and
-    # Carrier_1.0.0_mac_intel.dmg). The publish job rewrites the README download
-    # links to each release's version.
+    # Carrier_1.0.0_mac_intel.dmg). The publish job rewrites the README and
+    # landing-page download links to each release's version.
     env:
       ASSET_PLATFORM: ${{ contains(matrix.target, 'apple-darwin') && 'mac' || contains(matrix.target, 'windows') && 'win' || 'lin' }}
       ASSET_ARCH: ${{ contains(matrix.target, 'apple-darwin') && startsWith(matrix.target, 'x86_64') && 'intel' || startsWith(matrix.target, 'aarch64') && 'arm' || 'x64' }}
@@ -186,7 +199,7 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Install frontend dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build and release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
@@ -399,6 +412,50 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
           done
 
+      # Point the README and landing page at this release BEFORE publishing, so a
+      # failed Contents API push leaves the release a draft and the whole job stays
+      # retryable. (Publishing first and failing here would strand stale download
+      # links: the rerun aborts on the "no longer a draft" guard below.) Commit the
+      # updated files straight back to the default branch through the Contents API
+      # (same approach the IPTVChecker release flow uses).
+      - name: Point public download links at this release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          update_release_file() {
+            local path="$1"
+            local temp="/tmp/$(basename "$path")"
+            local sha
+            sha=$(gh api "repos/${REPO}/contents/${path}" --jq '.sha')
+            gh api "repos/${REPO}/contents/${path}" --jq '.content' | base64 -d > "$temp"
+            cp "$temp" "${temp}.orig"
+            # Update tag paths, artifact filenames, and visible vX.Y.Z labels.
+            # The label pattern is a full three-part semver so it can't match
+            # one-component SVG path commands (e.g. the Windows logo's `v9.451`),
+            # which the broader `v[0-9]+(\.[0-9]+)+` corrupted on every release.
+            sed -i -E \
+              -e "s#/releases/download/v[0-9]+(\\.[0-9]+)+/#/releases/download/${TAG}/#g" \
+              -e "s/Carrier_[0-9]+(\\.[0-9]+)+_/Carrier_${VERSION}_/g" \
+              -e "s/v[0-9]+\\.[0-9]+\\.[0-9]+/v${VERSION}/g" \
+              "$temp"
+            if cmp -s "$temp" "${temp}.orig"; then
+              echo "${path} already current for ${TAG}."
+              return
+            fi
+            gh api --method PUT "repos/${REPO}/contents/${path}" \
+              -f message="docs: point ${path} at ${TAG} [skip ci]" \
+              -f content="$(base64 -w 0 "$temp")" \
+              -f sha="${sha}" \
+              -f branch="main"
+          }
+          update_release_file README.md
+          update_release_file docs/index.html
+
       - name: Publish curated release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -430,34 +487,6 @@ jobs:
           fi
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
             -F draft=false >/dev/null
-
-      # Keep the README's versioned download links pointed at this release, so
-      # they never go stale. Commit straight back to the default branch via the
-      # Contents API (same approach the IPTVChecker release flow uses).
-      - name: Point README download links at this release
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#v}"
-          SHA=$(gh api "repos/${REPO}/contents/README.md" --jq '.sha')
-          gh api "repos/${REPO}/contents/README.md" --jq '.content' | base64 -d > /tmp/README.md
-          cp /tmp/README.md /tmp/README.orig
-          # Rewrite both the release-tag path segment and the versioned filename
-          # in every download link, e.g. download/v1.0.0/Carrier_1.0.0_… -> this tag.
-          sed -i -E "s#/releases/download/v[0-9.]+/Carrier_[0-9.]+_#/releases/download/${TAG}/Carrier_${VERSION}_#g" /tmp/README.md
-          if cmp -s /tmp/README.md /tmp/README.orig; then
-            echo "README download links already current for ${TAG}."
-            exit 0
-          fi
-          gh api --method PUT "repos/${REPO}/contents/README.md" \
-            -f message="docs: point download links at ${TAG} [skip ci]" \
-            -f content="$(base64 -w 0 /tmp/README.md)" \
-            -f sha="${SHA}" \
-            -f branch="main"
 
       # Update the Homebrew cask in kristofferR/homebrew-tap so users get
       # `brew install --cask carrier` and `brew upgrade`. Skips automatically if

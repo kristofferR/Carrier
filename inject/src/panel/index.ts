@@ -21,6 +21,9 @@ function main() {
   window.__carrierToast = (msg: string) => {
     if (!toastEl) {
       toastEl = document.createElement("div");
+      toastEl.setAttribute("role", "status");
+      toastEl.setAttribute("aria-live", "polite");
+      toastEl.setAttribute("aria-atomic", "true");
       Object.assign(toastEl.style, {
         position: "fixed",
         bottom: "24px",

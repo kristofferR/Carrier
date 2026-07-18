@@ -6,7 +6,9 @@ use url::Url;
 
 use crate::hotkey::sync_global_hotkey;
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
-use crate::settings::{apply_settings, save_settings, sync_autostart, AppState, Settings};
+use crate::settings::{
+    apply_settings, save_settings, sync_autostart, AppState, SaveOutcome, Settings,
+};
 use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
@@ -54,7 +56,18 @@ fn store_settings(
         }
     }
 
-    save_settings(app, &effective)?;
+    if save_settings(app, &effective)? == SaveOutcome::Superseded {
+        // A newer settings snapshot already reached disk from a concurrent
+        // save; applying this stale one would leave runtime settings diverged
+        // from what is persisted. Skip the in-memory update and apply, and
+        // report the settings actually in effect.
+        let current = state.settings.lock().unwrap().clone();
+        return if sync_errors.is_empty() {
+            Ok(current)
+        } else {
+            Err(sync_errors.join("\n"))
+        };
+    }
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
     // macOS needs a window rebuild to re-theme the title bar; other platforms

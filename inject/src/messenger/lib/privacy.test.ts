@@ -7,6 +7,10 @@ describe("previewIdentity", () => {
       prefix: "Kari Nordmann",
       colon: true,
     });
+    expect(previewIdentity("Anna 2: hello")).toEqual({
+      prefix: "Anna 2",
+      colon: true,
+    });
   });
 
   test("finds the actor in event previews", () => {
@@ -21,6 +25,7 @@ describe("previewIdentity", () => {
     expect(previewIdentity("You: sounds good")).toBeNull();
     expect(previewIdentity("Du: den er grei")).toBeNull();
     expect(previewIdentity("12:30: reminder")).toBeNull();
+    expect(previewIdentity("123 456: reminder")).toBeNull();
     expect(previewIdentity("no identity here")).toBeNull();
     expect(previewIdentity("")).toBeNull();
   });

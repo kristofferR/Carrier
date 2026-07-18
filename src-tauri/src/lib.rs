@@ -35,7 +35,10 @@ use macos::{
     theme::observe_system_theme_changes,
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
-use notifications::{clear_avatar_cache, show_message_notification, NotifyMsg};
+use notifications::{
+    clear_avatar_cache, show_message_notification, update_notification_route, NotifyMsg,
+    NotifyRouteMsg,
+};
 use settings::AppState;
 use settings::{
     apply_settings, clamp_zoom, clear_pending_webview_data, load_settings, load_settings_early,
@@ -348,6 +351,17 @@ pub fn run() {
                     Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
                 }
             });
+
+            // Late route update for a page-first notification (see
+            // `update_notification_route`): the row-driven pairing found the
+            // conversation after the native notification had already fired.
+            app.listen_any(
+                "carrier:notify-route",
+                move |event| match serde_json::from_str::<NotifyRouteMsg>(event.payload()) {
+                    Ok(msg) => update_notification_route(&msg),
+                    Err(e) => log::warn!("carrier:notify-route payload did not parse: {e}"),
+                },
+            );
 
             // Page diagnostics (`diag()` in messenger.js): selector-health and
             // IPC failures from the injected script, routed into the log file

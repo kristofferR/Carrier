@@ -29,10 +29,13 @@ export function initAutoRefresh() {
     } catch (_) {}
     return false;
   };
+  // A visible window can be intentionally left unfocused on another monitor.
+  // Treat visibility as active reading just like keyboard focus.
+  const pageIsActive = () => !document.hidden || document.hasFocus();
   const maybeReload = () => {
     timer = undefined;
     if (!pending) return;
-    if (document.hasFocus()) {
+    if (pageIsActive()) {
       clearPending();
       return;
     }
@@ -46,7 +49,7 @@ export function initAutoRefresh() {
     location.reload();
   };
   const schedule = (delay: number) => {
-    if (document.hasFocus()) {
+    if (pageIsActive()) {
       lastFresh = Date.now();
       return;
     }
@@ -56,7 +59,7 @@ export function initAutoRefresh() {
   };
   window.addEventListener("focus", clearPending);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && document.hasFocus()) clearPending();
+    if (!document.hidden) clearPending();
   });
   // Reload shortly after a new-message notification, but only while the window
   // is unfocused — that's when Facebook's live sync throttles and the view
@@ -64,13 +67,13 @@ export function initAutoRefresh() {
   // page alone. (Debounced to batch a burst of notifications into one reload;
   // the gap floor keeps a chatty thread from reloading every few minutes.)
   window.__carrierOnNotification = () => {
-    if (!document.hasFocus() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4000);
+    if (!pageIsActive() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4000);
   };
   // Regular refresh so an unfocused, stale window keeps catching up. The
   // tradeoff: a badge cleared by reading on another device can take up to
   // PERIODIC_MS to clear while hidden; it corrects instantly on focus.
   setInterval(() => {
-    if (document.hasFocus()) {
+    if (pageIsActive()) {
       lastFresh = Date.now();
       return;
     }

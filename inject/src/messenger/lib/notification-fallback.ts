@@ -36,12 +36,35 @@ interface NotificationText {
   body: string;
 }
 
-interface PageNotificationSignal extends NotificationText {
+export interface PageNotificationSignal extends NotificationText {
   at: number;
+  /**
+   * The native notification id emitted for a page-first Notification (one that
+   * fires before its conversation row is known). Kept so the row-driven pairing
+   * can attach a reload-safe route to that already-emitted notification.
+   */
+  nativeId?: number;
 }
 
 const normalizeNotificationText = (value: string) =>
   value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+
+const matchesExactOrTruncated = (left: string, right: string): boolean => {
+  if (left === right) return true;
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  // The row scraper caps titles at 80 characters and previews at 240. Only
+  // accept a prefix as truncation when it is long enough to be distinctive;
+  // short previews such as "OK" must still compare exactly.
+  return shorter.length >= 40 && longer.startsWith(shorter);
+};
+
+// Split a "Sender: message" group preview into its sender and message. The
+// sender is null when the value carries no group-sender prefix.
+const splitGroupSender = (value: string): { sender: string | null; message: string } => {
+  const separator = value.indexOf(": ");
+  if (separator <= 0 || separator > 80) return { sender: null, message: value };
+  return { sender: value.slice(0, separator), message: value.slice(separator + 2) };
+};
 
 /**
  * A content-safe, deterministic identity shared by the page and row-driven
@@ -165,12 +188,22 @@ export class NotifiedSignatureStore {
 export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
 
-  add(signal: PageNotificationSignal): void {
+  add(signal: PageNotificationSignal): PageNotificationSignal {
     this.signals.push(signal);
     if (this.signals.length > 20) this.signals.shift();
+    return signal;
   }
 
-  consumeMatching(row: NotificationText, rowChangeAt: number, matchWindowMs: number): boolean {
+  /**
+   * Return (and remove) the queued page signal that matches this row, or null.
+   * Returning the signal — rather than a boolean — lets the caller reach its
+   * `nativeId` and route the already-emitted page-first notification.
+   */
+  consumeMatching(
+    row: NotificationText,
+    rowChangeAt: number,
+    matchWindowMs: number,
+  ): PageNotificationSignal | null {
     for (let index = this.signals.length - 1; index >= 0; index--) {
       const signal = this.signals[index]!;
       const age = rowChangeAt - signal.at;
@@ -180,10 +213,10 @@ export class PageNotificationQueue {
       }
       if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
         this.signals.splice(index, 1);
-        return true;
+        return signal;
       }
     }
-    return false;
+    return null;
   }
 }
 
@@ -228,11 +261,25 @@ export function notificationTextMatches(
   rowTitle: string,
   rowBody: string,
 ): boolean {
-  const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+  const normalizedPageTitle = normalizeNotificationText(pageTitle);
+  const normalizedRowTitle = normalizeNotificationText(rowTitle);
+  const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
   const normalizedPageBody = normalizeNotificationText(pageBody);
   const normalizedRowBody = normalizeNotificationText(rowBody);
+  const page = splitGroupSender(normalizedPageBody);
+  const row = splitGroupSender(normalizedRowBody);
+  // Compare with the group-sender prefix stripped only when that cannot conflate
+  // two different senders: at least one side must lack a prefix (so "Jane: OK"
+  // pairs with a bare "OK"), or both prefixes must name the same sender.
+  // Otherwise "Jane: OK" and "John: OK" — different members sending the same
+  // short text — would wrongly pair and suppress one native notification.
+  const sendersCompatible =
+    page.sender === null || row.sender === null || page.sender === row.sender;
   return (
     titlesMatch &&
-    (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody)
+    (!normalizedPageBody ||
+      !normalizedRowBody ||
+      matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) ||
+      (sendersCompatible && matchesExactOrTruncated(page.message, row.message)))
   );
 }

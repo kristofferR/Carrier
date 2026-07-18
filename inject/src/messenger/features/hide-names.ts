@@ -6,7 +6,6 @@
 import { isMetaText, previewIdentity } from "../lib/privacy";
 
 const IDENTITY_ATTR = "data-carrier-private-identity";
-const WRAPPER_ATTR = "data-carrier-private-wrapper";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -23,8 +22,15 @@ export function initHideNames() {
     return (el?.textContent || "").replace(/\s+/g, " ").trim();
   }
 
+  function normalizedRect(el: Element) {
+    const rect = el.getBoundingClientRect();
+    const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
+    const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
+    return new DOMRect(rect.x / scale, rect.y / scale, rect.width / scale, rect.height / scale);
+  }
+
   function visible(el: Element | null | undefined) {
-    const r = el?.getBoundingClientRect?.();
+    const r = el ? normalizedRect(el) : null;
     if (!r || r.width <= 0 || r.height <= 0) return false;
     const cs = getComputedStyle(el!);
     return cs.display !== "none" && cs.visibility !== "hidden";
@@ -34,15 +40,7 @@ export function initHideNames() {
     if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
   }
 
-  function unwrap(el: Element) {
-    const parent = el?.parentNode;
-    if (!parent) return;
-    parent.replaceChild(document.createTextNode(el.textContent || ""), el);
-    parent.normalize?.();
-  }
-
   function clearMarkers() {
-    document.querySelectorAll(`[${WRAPPER_ATTR}]`).forEach(unwrap);
     document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
       el.removeAttribute(IDENTITY_ATTR);
     });
@@ -59,8 +57,8 @@ export function initHideNames() {
       out.push(el);
     });
     return out.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
+      const ar = normalizedRect(a);
+      const br = normalizedRect(b);
       return ar.y - br.y || ar.x - br.x;
     });
   }
@@ -73,14 +71,14 @@ export function initHideNames() {
       out.push(el);
     });
     return out.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
+      const ar = normalizedRect(a);
+      const br = normalizedRect(b);
       return ar.y - br.y || ar.x - br.x || ar.height - br.height;
     });
   }
 
   function area(el: Element) {
-    const r = el.getBoundingClientRect();
+    const r = normalizedRect(el);
     return r.width * r.height;
   }
 
@@ -92,8 +90,8 @@ export function initHideNames() {
     let count = 0;
     deepest(elements)
       .sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.x - br.x || area(a) - area(b);
       })
       .forEach((el) => {
@@ -125,70 +123,10 @@ export function initHideNames() {
       return true;
     }
 
-    if (wrapPreviewPrefix(el, identity)) return true;
-
-    // Some Messenger system previews render as one native text element, for
-    // example "Name left the group". Blur that element as identity-adjacent
-    // metadata while leaving normal "Name: message" previews readable unless
-    // Messenger gives us a separate native element for just the name.
-    if (!identity.colon && value.length <= 90) {
-      mark(el);
-      return true;
-    }
-
-    return false;
-  }
-
-  function wrapPreviewPrefix(el: Element, identity: { prefix: string; colon: boolean }) {
-    const needle = identity.prefix + (identity.colon ? ":" : "");
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
-        const parent = node.parentElement;
-        if (!parent || parent.closest(`[${WRAPPER_ATTR}]`) || parent.closest("abbr")) {
-          return NodeFilter.FILTER_REJECT;
-        }
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
-
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      const text = node.nodeValue || "";
-      const start = text.search(/\S/);
-      if (start < 0) continue;
-      if (text.slice(start, start + needle.length) === needle) {
-        return wrapTextRange(node, start, needle.length);
-      }
-      if (
-        !identity.colon &&
-        text.slice(start, start + identity.prefix.length) === identity.prefix
-      ) {
-        return wrapTextRange(node, start, identity.prefix.length);
-      }
-    }
-    return false;
-  }
-
-  function wrapTextRange(node: Node, start: number, length: number) {
-    const parent = node.parentNode;
-    const text = node.nodeValue || "";
-    if (!parent || length <= 0 || start < 0 || start + length > text.length) return false;
-
-    const fragment = document.createDocumentFragment();
-    const before = text.slice(0, start);
-    const selected = text.slice(start, start + length);
-    const after = text.slice(start + length);
-    if (before) fragment.appendChild(document.createTextNode(before));
-
-    const span = document.createElement("span");
-    span.setAttribute(IDENTITY_ATTR, "");
-    span.setAttribute(WRAPPER_ATTR, "");
-    span.textContent = selected;
-    fragment.appendChild(span);
-
-    if (after) fragment.appendChild(document.createTextNode(after));
-    parent.replaceChild(fragment, node);
+    // Never split or replace React-owned text nodes. When Messenger does not
+    // expose the sender as its own element, accept a wider blur on the nearest
+    // native surface so subsequent preview updates keep reconciling normally.
+    mark(el);
     return true;
   }
 
@@ -199,10 +137,10 @@ export function initHideNames() {
       if (!href || seen.has(href) || !visible(row)) continue;
       seen.add(href);
 
-      const rr = row.getBoundingClientRect();
+      const rr = normalizedRect(row);
       row.querySelectorAll(VISUAL_SEL).forEach((el) => {
         if (!visible(el)) return;
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
         const rightReceipt =
           r.right > rr.right - 56 &&
@@ -216,15 +154,15 @@ export function initHideNames() {
       const surfaces = textSurfaces(row).filter((el) => {
         if (el.getAttribute("aria-hidden") === "true") return false;
         if (el.closest("abbr")) return false;
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         return r.left > rr.left + 56;
       });
       if (!surfaces.length) continue;
 
-      const firstLineY = Math.min(...surfaces.map((el) => el.getBoundingClientRect().top));
+      const firstLineY = Math.min(...surfaces.map((el) => normalizedRect(el).top));
       const firstLine: Element[] = [];
       surfaces.forEach((el) => {
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
         else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
       });
@@ -237,18 +175,18 @@ export function initHideNames() {
   }
 
   function markThreadHeader(main: Element) {
-    const mr = main.getBoundingClientRect();
+    const mr = normalizedRect(main);
     const headerBottom = mr.top + 96;
     const actionStart = mr.right - 150;
 
     textLeaves(main).forEach((el) => {
-      const r = el.getBoundingClientRect();
+      const r = normalizedRect(el);
       if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
     });
 
     main.querySelectorAll(VISUAL_SEL).forEach((el) => {
       if (!visible(el)) return;
-      const r = el.getBoundingClientRect();
+      const r = normalizedRect(el);
       if (
         r.top >= mr.top &&
         r.bottom <= headerBottom &&
@@ -281,7 +219,7 @@ export function initHideNames() {
     });
 
     textSurfaces(main).forEach((el) => {
-      const r = el.getBoundingClientRect();
+      const r = normalizedRect(el);
       if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
         mark(el);
       }

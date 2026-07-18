@@ -5,11 +5,18 @@
 import { diag, toast } from "../bridge";
 
 const WATCHED_SELECTORS = [
+  // The notification MutationObserver is intentionally scoped to this exact
+  // grid. A looser chat-link selector can stay green while the scanner is dead.
+  { key: "notification-grid", sel: '[role="navigation"] [role="grid"]' },
   // Conversation list links: Cmd/Ctrl+1–9, unread-conversations badge,
   // recent threads, hide-names blur.
   { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },
   // The conversation pane: media viewer, hide-names header blur.
   { key: "main-region", sel: '[role="main"]' },
+  // The injected Settings gear depends on Messenger's localized overflow
+  // control/icon. Watch the actual output rather than testing a copied icon
+  // path constant against itself.
+  { key: "settings-button", sel: "[data-carrier-settings-button]" },
 ];
 
 export function initSelectorHealth() {

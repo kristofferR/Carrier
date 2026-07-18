@@ -30,10 +30,11 @@
       }
       return false;
     };
+    const pageIsActive = () => !document.hidden || document.hasFocus();
     const maybeReload = () => {
       timer = void 0;
       if (!pending) return;
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         clearPending();
         return;
       }
@@ -46,7 +47,7 @@
       location.reload();
     };
     const schedule = (delay) => {
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         lastFresh = Date.now();
         return;
       }
@@ -56,13 +57,13 @@
     };
     window.addEventListener("focus", clearPending);
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && document.hasFocus()) clearPending();
+      if (!document.hidden) clearPending();
     });
     window.__carrierOnNotification = () => {
-      if (!document.hasFocus() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4e3);
+      if (!pageIsActive() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4e3);
     };
     setInterval(() => {
-      if (document.hasFocus()) {
+      if (pageIsActive()) {
         lastFresh = Date.now();
         return;
       }
@@ -209,11 +210,15 @@
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
   }
   var ctxMenu = null;
-  var closeMenu = () => {
+  var ctxMenuReturnFocus = null;
+  var closeMenuFromPointer = () => closeMenu();
+  var closeMenu = (restoreFocus = false) => {
     ctxMenu?.remove();
     ctxMenu = null;
-    document.removeEventListener("click", closeMenu, true);
-    document.removeEventListener("scroll", closeMenu, true);
+    document.removeEventListener("click", closeMenuFromPointer, true);
+    document.removeEventListener("scroll", closeMenuFromPointer, true);
+    if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+    ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
     document.addEventListener(
@@ -250,16 +255,22 @@
         }
         if (!items.length) return;
         e.preventDefault();
+        const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+        const previouslyFocused = document.activeElement;
+        const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
+        ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = document.createElement("div");
+        ctxMenu.setAttribute("role", "menu");
+        ctxMenu.setAttribute("aria-label", "Media actions");
         Object.assign(ctxMenu.style, {
           position: "fixed",
           left: `${e.clientX}px`,
           top: `${e.clientY}px`,
           zIndex: 2147483647,
-          background: "#242526",
-          color: "#e4e6eb",
-          border: "1px solid #3a3b3c",
+          background: "var(--card-background, Canvas)",
+          color: "var(--primary-text, CanvasText)",
+          border: "1px solid var(--divider, rgba(127,127,127,.3))",
           borderRadius: "8px",
           padding: "4px",
           boxShadow: "0 6px 24px rgba(0,0,0,.4)",
@@ -269,9 +280,18 @@
         for (const [label, fn] of items) {
           const el = document.createElement("div");
           el.textContent = label;
-          Object.assign(el.style, { padding: "8px 12px", cursor: "pointer", borderRadius: "6px" });
-          el.onmouseenter = () => el.style.background = "#3a3b3c";
+          el.setAttribute("role", "menuitem");
+          el.tabIndex = -1;
+          Object.assign(el.style, {
+            padding: "8px 12px",
+            cursor: "pointer",
+            borderRadius: "6px",
+            outline: "none"
+          });
+          el.onmouseenter = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
           el.onmouseleave = () => el.style.background = "";
+          el.onfocus = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
+          el.onblur = () => el.style.background = "";
           el.onclick = (ev) => {
             ev.stopPropagation();
             closeMenu();
@@ -283,9 +303,38 @@
         const r = ctxMenu.getBoundingClientRect();
         if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
         if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+        const menuItems = [...ctxMenu.querySelectorAll('[role="menuitem"]')];
+        ctxMenu.addEventListener("keydown", (event) => {
+          const current = Math.max(0, menuItems.indexOf(document.activeElement));
+          let next = null;
+          if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
+          if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (event.key === "Home") next = 0;
+          if (event.key === "End") next = menuItems.length - 1;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeMenu(true);
+            return;
+          }
+          if (event.key === "Tab") {
+            event.preventDefault();
+            closeMenu(true);
+            return;
+          }
+          if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
+            event.preventDefault();
+            document.activeElement.click();
+            return;
+          }
+          if (next !== null) {
+            event.preventDefault();
+            menuItems[next]?.focus();
+          }
+        });
+        menuItems[0]?.focus({ preventScroll: true });
         setTimeout(() => {
-          document.addEventListener("click", closeMenu, true);
-          document.addEventListener("scroll", closeMenu, true);
+          document.addEventListener("click", closeMenuFromPointer, true);
+          document.addEventListener("scroll", closeMenuFromPointer, true);
         }, 0);
       },
       true
@@ -304,7 +353,58 @@
     return !!c && c.a > 0.9 && (c.r + c.g + c.b) / 3 > 200;
   };
 
+  // inject/src/messenger/lib/login-page.ts
+  var FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
+  function isLanguageFooterLink(link) {
+    return link.href.trim() === "#";
+  }
+  function isFooterNoiseLink(link) {
+    return FOOTER_NOISE_RE.test(link.text.replace(/\s+/g, " ").trim());
+  }
+  function topLanguageLinkIndexes(links) {
+    const indexes = links.flatMap(
+      (link, index) => isLanguageFooterLink(link) && !isFooterNoiseLink(link) ? [index] : []
+    );
+    return indexes.length >= 2 ? indexes : [];
+  }
+  function qualifiesCookieActionRow(scores) {
+    return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
+  }
+  function lowestScoreIndex(scores) {
+    if (!scores.length) return null;
+    let lowest = 0;
+    for (let index = 1; index < scores.length; index++) {
+      if (scores[index] < scores[lowest]) lowest = index;
+    }
+    return lowest;
+  }
+
   // inject/src/messenger/features/cookie-consent.ts
+  var COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
+  var COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
+  var hasCookieConsentText = (el) => {
+    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
+    if (!COOKIE_TEXT_RE.test(text)) return false;
+    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+  };
+  var accessibleLabelText = (el) => {
+    let text = el.getAttribute("aria-label") || "";
+    const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    const doc = el.ownerDocument;
+    for (const id of ids) {
+      text += ` ${doc?.getElementById(id)?.textContent || ""}`;
+    }
+    return text.slice(0, 4e3);
+  };
+  var hasCookieConsentLabel = (el) => {
+    const matches = (text) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
+    if (matches(accessibleLabelText(el))) return true;
+    for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
+      if (matches(accessibleLabelText(node))) return true;
+    }
+    return false;
+  };
+  var hasCookieConsentContext = (el) => hasCookieConsentText(el) || hasCookieConsentLabel(el);
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
   var visibleBox = (el) => {
@@ -360,7 +460,9 @@
       ...row,
       bottom: Math.max(...row.items.map((i) => i.rect.bottom)),
       primaryScore: Math.max(...row.items.map((i) => primaryBlueScore(i.button)))
-    })).filter((row) => row.primaryScore > 40 || row.items.length === 2).sort((a, b) => b.bottom - a.bottom)[0]?.items;
+    })).filter(
+      (row) => qualifiesCookieActionRow(row.items.map((item) => primaryBlueScore(item.button)))
+    ).sort((a, b) => b.bottom - a.bottom)[0]?.items;
   };
   function findOptionalCookieDeclineButton(root = document) {
     if (!onFacebookLoginSurface()) return null;
@@ -369,7 +471,7 @@
       let node = button.parentElement;
       for (let depth = 0; node && node !== document.body && depth < 12; depth++, node = node.parentElement) {
         const row = bottomActionRow(node);
-        if (row?.length === 2 && !node.querySelector?.('input[name="email"], input[name="pass"], input[type="password"]')) {
+        if (row?.length === 2 && hasCookieConsentContext(node) && !node.querySelector?.('input[name="email"], input[name="pass"], input[type="password"]')) {
           roots.add(node);
         }
       }
@@ -382,10 +484,8 @@
     for (const candidate of candidates) {
       const row = bottomActionRow(candidate);
       if (!row) continue;
-      const target = row.reduce(
-        (best, item) => primaryBlueScore(item.button) < primaryBlueScore(best.button) ? item : best
-      );
-      return target.button;
+      const target = lowestScoreIndex(row.map((item) => primaryBlueScore(item.button)));
+      if (target !== null) return row[target].button;
     }
     return null;
   }
@@ -602,13 +702,12 @@
     if (!match) return null;
     const prefix = match[1].trim();
     if (!prefix || prefix.length < 2 || /^(you|du|me|meg)$/i.test(prefix)) return null;
-    if (/[\d:;!?]/.test(prefix)) return null;
+    if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
     return { prefix, colon: !!colon };
   }
 
   // inject/src/messenger/features/hide-names.ts
   var IDENTITY_ATTR = "data-carrier-private-identity";
-  var WRAPPER_ATTR = "data-carrier-private-wrapper";
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -621,8 +720,14 @@
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
+    function normalizedRect(el) {
+      const rect = el.getBoundingClientRect();
+      const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
+      const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
+      return new DOMRect(rect.x / scale, rect.y / scale, rect.width / scale, rect.height / scale);
+    }
     function visible(el) {
-      const r = el?.getBoundingClientRect?.();
+      const r = el ? normalizedRect(el) : null;
       if (!r || r.width <= 0 || r.height <= 0) return false;
       const cs = getComputedStyle(el);
       return cs.display !== "none" && cs.visibility !== "hidden";
@@ -630,14 +735,7 @@
     function mark(el) {
       if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
     }
-    function unwrap(el) {
-      const parent = el?.parentNode;
-      if (!parent) return;
-      parent.replaceChild(document.createTextNode(el.textContent || ""), el);
-      parent.normalize?.();
-    }
     function clearMarkers() {
-      document.querySelectorAll(`[${WRAPPER_ATTR}]`).forEach(unwrap);
       document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
         el.removeAttribute(IDENTITY_ATTR);
       });
@@ -653,8 +751,8 @@
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.y - br.y || ar.x - br.x;
       });
     }
@@ -666,13 +764,13 @@
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.y - br.y || ar.x - br.x || ar.height - br.height;
       });
     }
     function area(el) {
-      const r = el.getBoundingClientRect();
+      const r = normalizedRect(el);
       return r.width * r.height;
     }
     function deepest(elements) {
@@ -681,8 +779,8 @@
     function markDeepest(elements) {
       let count = 0;
       deepest(elements).sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
+        const ar = normalizedRect(a);
+        const br = normalizedRect(b);
         return ar.x - br.x || area(a) - area(b);
       }).forEach((el) => {
         if (isMetaText(textValue(el))) return;
@@ -706,55 +804,7 @@
         mark(candidates[0]);
         return true;
       }
-      if (wrapPreviewPrefix(el, identity)) return true;
-      if (!identity.colon && value.length <= 90) {
-        mark(el);
-        return true;
-      }
-      return false;
-    }
-    function wrapPreviewPrefix(el, identity) {
-      const needle = identity.prefix + (identity.colon ? ":" : "");
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-        acceptNode(node2) {
-          if (!node2.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
-          const parent = node2.parentElement;
-          if (!parent || parent.closest(`[${WRAPPER_ATTR}]`) || parent.closest("abbr")) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          return NodeFilter.FILTER_ACCEPT;
-        }
-      });
-      let node;
-      while (node = walker.nextNode()) {
-        const text = node.nodeValue || "";
-        const start2 = text.search(/\S/);
-        if (start2 < 0) continue;
-        if (text.slice(start2, start2 + needle.length) === needle) {
-          return wrapTextRange(node, start2, needle.length);
-        }
-        if (!identity.colon && text.slice(start2, start2 + identity.prefix.length) === identity.prefix) {
-          return wrapTextRange(node, start2, identity.prefix.length);
-        }
-      }
-      return false;
-    }
-    function wrapTextRange(node, start2, length) {
-      const parent = node.parentNode;
-      const text = node.nodeValue || "";
-      if (!parent || length <= 0 || start2 < 0 || start2 + length > text.length) return false;
-      const fragment = document.createDocumentFragment();
-      const before = text.slice(0, start2);
-      const selected = text.slice(start2, start2 + length);
-      const after = text.slice(start2 + length);
-      if (before) fragment.appendChild(document.createTextNode(before));
-      const span = document.createElement("span");
-      span.setAttribute(IDENTITY_ATTR, "");
-      span.setAttribute(WRAPPER_ATTR, "");
-      span.textContent = selected;
-      fragment.appendChild(span);
-      if (after) fragment.appendChild(document.createTextNode(after));
-      parent.replaceChild(fragment, node);
+      mark(el);
       return true;
     }
     function markConversationRows() {
@@ -763,10 +813,10 @@
         const href = row.getAttribute("href") || "";
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
-        const rr = row.getBoundingClientRect();
+        const rr = normalizedRect(row);
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
           const rightReceipt = r.right > rr.right - 56 && r.width >= 12 && r.width <= 34 && r.height >= 12 && r.height <= 34;
           if (leftAvatar || rightReceipt) mark(el);
@@ -774,14 +824,14 @@
         const surfaces = textSurfaces(row).filter((el) => {
           if (el.getAttribute("aria-hidden") === "true") return false;
           if (el.closest("abbr")) return false;
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           return r.left > rr.left + 56;
         });
         if (!surfaces.length) continue;
-        const firstLineY = Math.min(...surfaces.map((el) => el.getBoundingClientRect().top));
+        const firstLineY = Math.min(...surfaces.map((el) => normalizedRect(el).top));
         const firstLine = [];
         surfaces.forEach((el) => {
-          const r = el.getBoundingClientRect();
+          const r = normalizedRect(el);
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
           else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
         });
@@ -792,16 +842,16 @@
       return document.querySelector('[role="main"]') || document.querySelector("main");
     }
     function markThreadHeader(main2) {
-      const mr = main2.getBoundingClientRect();
+      const mr = normalizedRect(main2);
       const headerBottom = mr.top + 96;
       const actionStart = mr.right - 150;
       textLeaves(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
       });
       main2.querySelectorAll(VISUAL_SEL).forEach((el) => {
         if (!visible(el)) return;
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
           mark(el);
         }
@@ -822,7 +872,7 @@
         });
       });
       textSurfaces(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
+        const r = normalizedRect(el);
         if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
           mark(el);
         }
@@ -968,23 +1018,6 @@
       if (t === "light") return false;
       return prefersDark();
     };
-    const COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-    const COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-    const hasCookieConsentText = (el) => {
-      const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
-      if (!COOKIE_TEXT_RE.test(text)) return false;
-      return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
-    };
-    const hasCookieConsentLabel = (el) => {
-      const ownAria = `${el.getAttribute("aria-label") || ""} ${el.getAttribute("aria-labelledby") || ""}`;
-      if (COOKIE_TEXT_RE.test(ownAria) || COOKIE_ACTION_RE.test(ownAria)) return true;
-      const nodes = el.querySelectorAll?.("[aria-label], [aria-labelledby]") || [];
-      for (const node of nodes) {
-        const aria = `${node.getAttribute("aria-label") || ""} ${node.getAttribute("aria-labelledby") || ""}`;
-        if (COOKIE_TEXT_RE.test(aria) || COOKIE_ACTION_RE.test(aria)) return true;
-      }
-      return false;
-    };
     const isRequiredLoginUi = (el) => {
       if (el?.nodeType !== 1) return false;
       if (el === document.documentElement || el === document.body) return false;
@@ -1011,23 +1044,20 @@
       document.querySelectorAll(`[${LANGUAGES}]`).forEach((el) => el.removeAttribute(LANGUAGES));
       document.querySelectorAll(`[${LANGUAGE_LINK}]`).forEach((el) => el.removeAttribute(LANGUAGE_LINK));
     };
-    const FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
-    const isLanguageFooterLink = (link) => {
-      if (link.hasAttribute(LANGUAGE_LINK)) return true;
-      const href = (link.getAttribute("href") || "").trim();
-      return href === "#" || href.endsWith("#");
-    };
-    const isFooterNoiseLink = (link) => FOOTER_NOISE_RE.test((link.textContent || "").replace(/\s+/g, " ").trim());
+    const linkDescriptor = (link) => ({
+      href: link.getAttribute("href") || "",
+      text: link.textContent || ""
+    });
+    const isLanguageLink = (link) => link.hasAttribute(LANGUAGE_LINK) || isLanguageFooterLink(linkDescriptor(link));
     const topLanguageLinks = (links) => {
-      const langs = links.filter((link) => isLanguageFooterLink(link) && !isFooterNoiseLink(link));
-      return langs.length >= 2 ? langs : [];
+      return topLanguageLinkIndexes(links.map(linkDescriptor)).map((index) => links[index]);
     };
     const linksOutside = (root, inner) => [...root.querySelectorAll?.("a[href]") || []].filter((link) => !inner.contains(link));
     const isFooterContainer = (el, inner) => {
       if (!el?.querySelector) return false;
       if (el.querySelector("#pageFooter, .localeSelectorList")) return true;
       const links = linksOutside(el, inner);
-      return links.length >= 6 && (topLanguageLinks(links).length >= 2 || links.filter(isLanguageFooterLink).length >= 2);
+      return links.length >= 6 && (topLanguageLinks(links).length >= 2 || links.filter(isLanguageLink).length >= 2);
     };
     const commonAncestor = (nodes) => {
       let root = nodes[0];
@@ -1261,6 +1291,9 @@
     const STEP = 1.15;
     const PAN = 40;
     let target = null;
+    let targetCssText = "";
+    let targetTabIndex = null;
+    let previousFocus = null;
     let scale = 1;
     let tx = 0;
     let ty = 0;
@@ -1297,14 +1330,21 @@
       handlers.forEach(([t, f, o]) => {
         document.removeEventListener(t, f, o);
       });
-      if (target) {
-        target.style.cssText = target.style.cssText.replace(/transform[^;]*;?/g, "").replace(/transition[^;]*;?/g, "").replace(/max-(width|height)[^;]*;?/g, "").replace(/z-index[^;]*;?/g, "").replace(/cursor[^;]*;?/g, "");
+      const closedTarget = target;
+      if (closedTarget) {
+        closedTarget.style.cssText = targetCssText;
+        if (targetTabIndex === null) closedTarget.removeAttribute("tabindex");
+        else closedTarget.setAttribute("tabindex", targetTabIndex);
       }
       target = null;
+      targetCssText = "";
+      targetTabIndex = null;
       scale = 1;
       tx = 0;
       ty = 0;
       dragging = false;
+      previousFocus?.focus({ preventScroll: true });
+      previousFocus = null;
     }
     const onWheel = (e) => {
       if (!target) return;
@@ -1345,6 +1385,12 @@
     };
     const onKey = (e) => {
       if (e.key === "Escape") return exit();
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        target?.focus({ preventScroll: true });
+        return;
+      }
       const d = {
         ArrowLeft: [PAN, 0],
         ArrowRight: [-PAN, 0],
@@ -1380,17 +1426,41 @@
         if (active) return exit();
         active = true;
         target = t;
+        targetCssText = t.style.cssText;
+        targetTabIndex = t.getAttribute("tabindex");
+        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        t.setAttribute("tabindex", "-1");
         const r = t.getBoundingClientRect();
         scale = 2;
         tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
         ty = (e.clientY - (r.top + r.height / 2)) * (1 - scale);
         render(false);
+        t.focus({ preventScroll: true });
         handlers.forEach(([type, f, o]) => {
           document.addEventListener(type, f, o);
         });
       },
       { capture: true }
     );
+  }
+
+  // inject/src/messenger/lib/conversation-row.ts
+  function conversationTextParts(candidates) {
+    const values = [];
+    for (const candidate of candidates.filter(
+      ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
+    ).sort((left, right) => left.y - right.y || left.x - right.x)) {
+      const text = candidate.text.replace(/\s+/g, " ").trim();
+      if (text && values[values.length - 1] !== text) values.push(text);
+    }
+    return {
+      title: (values[0] || "Messenger").slice(0, 80),
+      body: (values[1] || "New message").slice(0, 240)
+    };
+  }
+  function isUnreadConversationText(fontWeight, text) {
+    const weight = typeof fontWeight === "number" ? fontWeight : Number.parseInt(fontWeight, 10) || 0;
+    return weight >= 600 && text.trim().length > 1;
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
@@ -1418,6 +1488,16 @@
     }
   };
   var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  var matchesExactOrTruncated = (left, right) => {
+    if (left === right) return true;
+    const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+    return shorter.length >= 40 && longer.startsWith(shorter);
+  };
+  var splitGroupSender = (value) => {
+    const separator = value.indexOf(": ");
+    if (separator <= 0 || separator > 80) return { sender: null, message: value };
+    return { sender: value.slice(0, separator), message: value.slice(separator + 2) };
+  };
   function notificationDedupeKey(title, body) {
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
     let hash = 0xcbf29ce484222325n;
@@ -1511,7 +1591,13 @@
     add(signal) {
       this.signals.push(signal);
       if (this.signals.length > 20) this.signals.shift();
+      return signal;
     }
+    /**
+     * Return (and remove) the queued page signal that matches this row, or null.
+     * Returning the signal — rather than a boolean — lets the caller reach its
+     * `nativeId` and route the already-emitted page-first notification.
+     */
     consumeMatching(row, rowChangeAt, matchWindowMs) {
       for (let index = this.signals.length - 1; index >= 0; index--) {
         const signal = this.signals[index];
@@ -1522,10 +1608,10 @@
         }
         if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
           this.signals.splice(index, 1);
-          return true;
+          return signal;
         }
       }
-      return false;
+      return null;
     }
   };
   var UnreadArrivalTracker = class {
@@ -1554,10 +1640,15 @@
     );
   }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
-    const titlesMatch = normalizeNotificationText(pageTitle) === normalizeNotificationText(rowTitle);
+    const normalizedPageTitle = normalizeNotificationText(pageTitle);
+    const normalizedRowTitle = normalizeNotificationText(rowTitle);
+    const titlesMatch = matchesExactOrTruncated(normalizedPageTitle, normalizedRowTitle);
     const normalizedPageBody = normalizeNotificationText(pageBody);
     const normalizedRowBody = normalizeNotificationText(rowBody);
-    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || normalizedPageBody === normalizedRowBody);
+    const page = splitGroupSender(normalizedPageBody);
+    const row = splitGroupSender(normalizedRowBody);
+    const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
+    return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
 
   // inject/src/messenger/lib/threads.ts
@@ -1687,9 +1778,10 @@
   }
 
   // inject/src/messenger/features/notifications.ts
-  var FALLBACK_DELAY_MS = 1500;
-  var PAGE_NOTIFICATION_MATCH_MS = 2e3;
-  var FALLBACK_POLL_MS = 1e3;
+  var FALLBACK_DELAY_MS = 2500;
+  var PAGE_NOTIFICATION_MATCH_MS = 3e3;
+  var FALLBACK_POLL_VISIBLE_MS = 1e4;
+  var FALLBACK_POLL_HIDDEN_MS = 6e4;
   var ROW_MUTATION_MATCH_MS = 2e3;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -1721,7 +1813,7 @@
       img.onerror = () => done("");
       img.src = url;
     });
-    let notifySeq = 0;
+    let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     window.__carrierNotifyClick = (id) => {
       const handler = notifyHandlers.get(id);
@@ -1734,16 +1826,31 @@
         handler?.();
       } catch (_) {
       }
+      return handler !== void 0;
     };
-    const emitNotification = (title, body, icon, dedupeKey, onClick) => {
-      const id = ++notifySeq;
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       invoke("plugin:event|emit", {
         event: "carrier:notify",
-        payload: { id, title, body, icon, dedupe_key: dedupeKey }
+        payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
       })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
     };
+    const updateNotificationRoute = (id, threadPath) => {
+      invoke("plugin:event|emit", {
+        event: "carrier:notify-route",
+        payload: { id, thread_path: threadPath }
+      })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
+    };
+    const notifiedStore = new NotifiedSignatureStore(
+      (() => {
+        try {
+          return window.localStorage;
+        } catch (_) {
+          return null;
+        }
+      })()
+    );
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
@@ -1751,9 +1858,10 @@
         if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
-        return;
+        notifiedStore.markNotified(key, pending.fingerprint);
+        return { threadPath: pending.threadPath };
       }
-      unmatchedPageNotifications.add({ at: Date.now(), title, body });
+      return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -1762,20 +1870,24 @@
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
-      markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       if (!s.mute_notifications) {
         const hidePreview = s.hide_notification_preview;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
+        const id = ++notifySeq;
+        if (pageMatch.signal) pageMatch.signal.nativeId = id;
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
           emitNotification(
+            id,
             hidePreview ? "Messenger" : originalTitle,
             hidePreview ? "New message" : originalBody,
             icon,
             notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
-            }
+            },
+            pageMatch.threadPath
           );
         });
       }
@@ -1802,43 +1914,29 @@
     } catch (_) {
     }
     const conversationTracker = new ConversationNotificationTracker();
-    const notifiedStore = new NotifiedSignatureStore(
-      (() => {
-        try {
-          return window.localStorage;
-        } catch (_) {
-          return null;
-        }
-      })()
-    );
     const conversationFromLink = (link) => {
       const id = threadIdFromHref(link?.getAttribute("href"));
       if (!id) return null;
       const row = link.closest('[role="row"]') || link;
-      const leaves = [...row.querySelectorAll("span")].filter((el) => {
-        if (el.getAttribute("aria-hidden") === "true" || el.closest("abbr")) return false;
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (!text) return false;
-        for (const child of el.children) {
-          if ((child.textContent || "").trim()) return false;
-        }
-        const rect = el.getBoundingClientRect();
-        return rect.width > 1 && rect.height > 1;
-      }).sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return ar.y - br.y || ar.x - br.x;
-      });
-      const values = [];
-      for (const el of leaves) {
-        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (text && values[values.length - 1] !== text) values.push(text);
-      }
+      const text = conversationTextParts(
+        [...row.querySelectorAll("span")].map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            text: el.textContent || "",
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            ariaHidden: el.getAttribute("aria-hidden") === "true",
+            inAbbreviation: !!el.closest("abbr"),
+            hasTextChild: [...el.children].some((child) => !!(child.textContent || "").trim())
+          };
+        })
+      );
       const image = row.querySelector("img[src]");
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
-        const weight = Number.parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-        if (weight >= 600 && (span.textContent || "").trim().length > 1) {
+        if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
           unread = true;
           break;
         }
@@ -1846,27 +1944,31 @@
       return {
         key: id,
         threadPath: `/t/${id}/`,
-        title: (values[0] || "Messenger").slice(0, 80),
-        body: (values[1] || "New message").slice(0, 240),
+        title: text.title,
+        body: text.body,
         icon: image?.currentSrc || image?.src || "",
         unread
       };
     };
     const scheduleFallback = (conversation, detectedAt) => {
-      notifiedStore.markNotified(
-        conversation.key,
-        notificationDedupeKey(conversation.title, conversation.body)
-      );
-      if (unmatchedPageNotifications.consumeMatching(
+      const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const previous = pendingFallbacks.get(conversation.key);
+      if (previous) clearTimeout(previous.timer);
+      const pageSignal = unmatchedPageNotifications.consumeMatching(
         conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS
-      )) {
+      );
+      if (pageSignal) {
+        if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
+          updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+        }
+        notifiedStore.markNotified(conversation.key, fingerprint);
+        pendingFallbacks.delete(conversation.key);
         return;
       }
-      const previous = pendingFallbacks.get(conversation.key);
-      if (previous) clearTimeout(previous.timer);
-      const timer = setTimeout(() => {
+      const avatar = avatarToDataUrl(conversation.icon);
+      const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
           if (pendingFallbacks.get(conversation.key)?.timer === timer) {
@@ -1875,28 +1977,32 @@
           return;
         }
         const hidePreview = settings.hide_notification_preview === true;
-        avatarToDataUrl(hidePreview ? "" : conversation.icon).then((icon) => {
-          if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
-          pendingFallbacks.delete(conversation.key);
-          diag(
-            "notify.fallback",
-            `unread row changed without a page Notification (visibility: ${document.visibilityState})`
-          );
-          emitNotification(
-            hidePreview ? "Messenger" : conversation.title,
-            hidePreview ? "New message" : conversation.body,
-            icon,
-            notificationDedupeKey(conversation.title, conversation.body),
-            () => {
-              window.__carrierOpenThread?.(conversation.threadPath);
-            }
-          );
-        });
+        const icon = hidePreview ? "" : await avatar;
+        if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
+        pendingFallbacks.delete(conversation.key);
+        notifiedStore.markNotified(conversation.key, fingerprint);
+        diag(
+          "notify.fallback",
+          `unread row changed without a page Notification (visibility: ${document.visibilityState})`
+        );
+        emitNotification(
+          ++notifySeq,
+          hidePreview ? "Messenger" : conversation.title,
+          hidePreview ? "New message" : conversation.body,
+          icon,
+          fingerprint,
+          () => {
+            window.__carrierOpenThread?.(conversation.threadPath);
+          },
+          conversation.threadPath
+        );
       }, FALLBACK_DELAY_MS);
       pendingFallbacks.set(conversation.key, {
         timer,
         title: conversation.title,
-        body: conversation.body
+        body: conversation.body,
+        threadPath: conversation.threadPath,
+        fingerprint
       });
     };
     let scanRunning = false;
@@ -1968,11 +2074,12 @@
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
       const inspect = (node) => {
-        if (!(node instanceof Element)) return;
+        const element = node instanceof Element ? node : node.parentElement;
+        if (!element) return;
         const links = /* @__PURE__ */ new Set();
-        const closest = node.closest('a[href*="/t/"]');
+        const closest = element.closest('a[href*="/t/"]');
         if (closest) links.add(closest);
-        for (const link of node.querySelectorAll('a[href*="/t/"]')) {
+        for (const link of element.querySelectorAll('a[href*="/t/"]')) {
           links.add(link);
         }
         for (const link of links) {
@@ -1992,9 +2099,15 @@
         scanUnreadConversations();
       }, 120);
     };
-    const startScanner = (grid2) => {
-      const observer = new MutationObserver(scheduleScan);
-      observer.observe(grid2, {
+    let observedGrid = null;
+    const gridObserver = new MutationObserver(scheduleScan);
+    const attachScanner = () => {
+      const grid = document.querySelector('[role="navigation"] [role="grid"]');
+      if (grid === observedGrid && grid?.isConnected) return true;
+      gridObserver.disconnect();
+      observedGrid = grid;
+      if (!grid) return false;
+      gridObserver.observe(grid, {
         childList: true,
         subtree: true,
         characterData: true,
@@ -2002,19 +2115,31 @@
         attributeFilter: ["class", "src", "alt", "style"]
       });
       scanUnreadConversations();
-      setInterval(scanUnreadConversations, FALLBACK_POLL_MS);
+      return true;
     };
-    const grid = document.querySelector('[role="navigation"] [role="grid"]');
-    if (grid) startScanner(grid);
-    else {
+    if (!attachScanner()) {
       const waitForGrid = new MutationObserver(() => {
-        const found = document.querySelector('[role="navigation"] [role="grid"]');
-        if (!found) return;
-        waitForGrid.disconnect();
-        startScanner(found);
+        if (attachScanner()) waitForGrid.disconnect();
       });
       waitForGrid.observe(document.documentElement, { childList: true, subtree: true });
     }
+    let pollTimer;
+    const poll = () => {
+      attachScanner();
+      scanUnreadConversations();
+    };
+    const startPoll = () => {
+      clearInterval(pollTimer);
+      pollTimer = setInterval(
+        poll,
+        document.hidden ? FALLBACK_POLL_HIDDEN_MS : FALLBACK_POLL_VISIBLE_MS
+      );
+    };
+    document.addEventListener("visibilitychange", () => {
+      startPoll();
+      if (!document.hidden) poll();
+    });
+    startPoll();
   }
 
   // inject/src/messenger/features/recent-threads.ts
@@ -2092,11 +2217,18 @@
 
   // inject/src/messenger/features/selector-health.ts
   var WATCHED_SELECTORS = [
+    // The notification MutationObserver is intentionally scoped to this exact
+    // grid. A looser chat-link selector can stay green while the scanner is dead.
+    { key: "notification-grid", sel: '[role="navigation"] [role="grid"]' },
     // Conversation list links: Cmd/Ctrl+1–9, unread-conversations badge,
     // recent threads, hide-names blur.
     { key: "chat-list", sel: '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' },
     // The conversation pane: media viewer, hide-names header blur.
-    { key: "main-region", sel: '[role="main"]' }
+    { key: "main-region", sel: '[role="main"]' },
+    // The injected Settings gear depends on Messenger's localized overflow
+    // control/icon. Watch the actual output rather than testing a copied icon
+    // path constant against itself.
+    { key: "settings-button", sel: "[data-carrier-settings-button]" }
   ];
   function initSelectorHealth() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -2475,6 +2607,14 @@
       ensureGlyph(root);
       root.querySelectorAll?.(CANDIDATE_SEL).forEach(ensureGlyph);
     }
+    function sweepOrphanGlyphs() {
+      for (const glyph of document.querySelectorAll(`[${GLYPH_ATTR}]`)) {
+        const source = glyph.previousElementSibling;
+        if (!source?.hasAttribute(SOURCE_ATTR) || source.__carrierSystemEmojiGlyph !== glyph || !source.isConnected) {
+          glyph.remove();
+        }
+      }
+    }
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
@@ -2489,6 +2629,7 @@
         const roots = [...queuedRoots];
         queuedRoots.clear();
         roots.forEach(scan);
+        sweepOrphanGlyphs();
       });
     }
     function start() {
@@ -2498,6 +2639,7 @@
           if (m.type === "attributes") {
             schedule(m.target);
           } else {
+            schedule(m.target);
             for (const n of m.addedNodes) schedule(n);
           }
         }
@@ -2686,8 +2828,7 @@
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
         for (const span of row.querySelectorAll("span")) {
-          const w = parseInt(getComputedStyle(span).fontWeight, 10) || 0;
-          if (w >= 600 && (span.textContent || "").trim().length > 1) {
+          if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
             n++;
             break;
           }

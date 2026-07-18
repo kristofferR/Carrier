@@ -42,14 +42,37 @@ pub(crate) struct NotifyMsg {
     /// collapse into one. Older page bundles omit it and fall back to text.
     #[serde(default)]
     dedupe_key: String,
+    /// Serializable conversation route supplied by the row-driven fallback.
+    /// Kept native-side so notification clicks still work after a page reload.
+    #[serde(default)]
+    thread_path: String,
 }
 
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
 
+/// What to do with an incoming notification after deduplication.
+enum Delivery {
+    /// Show it; it becomes the canonical notification for its fingerprint.
+    Show,
+    /// Suppress it as a duplicate. `delivered_id` is the notification already
+    /// shown for this fingerprint, so a route this duplicate carries can be
+    /// attached to it — the page-first notification it duplicates may have been
+    /// emitted before its conversation row (and thus its route) was known.
+    Suppress { delivered_id: u64 },
+}
+
+/// A delivered notification kept for the dedupe window: when it was last seen
+/// and the native id it was shown under (so a later duplicate's route can reach
+/// the notification the user actually has on screen).
+struct SeenNotification {
+    at: Instant,
+    delivered_id: u64,
+}
+
 #[derive(Default)]
 struct NotificationDeduper {
-    seen: HashMap<u64, Instant>,
+    seen: HashMap<u64, SeenNotification>,
 }
 
 impl NotificationDeduper {
@@ -71,34 +94,111 @@ impl NotificationDeduper {
 
     /// Atomically reserve a logical notification for delivery. Repeated
     /// sightings refresh the window, so a noisy source cannot leak another
-    /// copy every 30 seconds while it keeps replaying the same event.
-    fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
-        self.seen.retain(|_, seen_at| {
-            now.saturating_duration_since(*seen_at) <= NOTIFICATION_DEDUPE_WINDOW
-        });
+    /// copy every 30 seconds while it keeps replaying the same event. A
+    /// suppressed duplicate reports the id of the notification already shown for
+    /// its fingerprint so its route can still be attached there.
+    fn classify(&mut self, msg: &NotifyMsg, now: Instant) -> Delivery {
+        self.seen
+            .retain(|_, seen| now.saturating_duration_since(seen.at) <= NOTIFICATION_DEDUPE_WINDOW);
 
         let fingerprint = Self::fingerprint(msg);
-        if let Some(seen_at) = self.seen.get_mut(&fingerprint) {
-            *seen_at = now;
-            return false;
+        if let Some(seen) = self.seen.get_mut(&fingerprint) {
+            seen.at = now;
+            return Delivery::Suppress {
+                delivered_id: seen.delivered_id,
+            };
         }
 
         if self.seen.len() >= MAX_RECENT_NOTIFICATIONS {
             if let Some(oldest) = self
                 .seen
                 .iter()
-                .min_by_key(|(_, seen_at)| **seen_at)
+                .min_by_key(|(_, seen)| seen.at)
                 .map(|(fingerprint, _)| *fingerprint)
             {
                 self.seen.remove(&oldest);
             }
         }
-        self.seen.insert(fingerprint, now);
-        true
+        self.seen.insert(
+            fingerprint,
+            SeenNotification {
+                at: now,
+                delivered_id: msg.id,
+            },
+        );
+        Delivery::Show
+    }
+
+    /// Test helper: the delivery decision reduced to a bool.
+    #[cfg(test)]
+    fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
+        matches!(self.classify(msg, now), Delivery::Show)
     }
 }
 
 static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
+
+/// A reload-safe conversation route kept for an emitted notification, with the
+/// time it was stored so the cap can evict the oldest rather than every route.
+struct RouteEntry {
+    path: String,
+    at: Instant,
+}
+static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
+
+fn validated_thread_path(value: &str) -> Option<String> {
+    let id = value.strip_prefix("/t/")?.strip_suffix('/')?;
+    if id.is_empty() || id.len() > 32 || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("/t/{id}/"))
+}
+
+fn remember_notification_route(id: u64, value: &str) {
+    // `id` is the page's unique per-notification handle. A missing or zero id
+    // (older or malformed payloads deserialize `id` to 0) is not unique: every
+    // such notification would overwrite the same slot, so a click on an older
+    // notification could open the newest thread. Skip native routing for a
+    // non-unique id — the in-page handler still routes it while the page lives.
+    if id == 0 {
+        return;
+    }
+    let Some(path) = validated_thread_path(value) else {
+        return;
+    };
+    let mut routes = NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    // At the cap, evict only the oldest entry. A dismissed notification can
+    // leave its route behind, but recent notifications still awaiting a click
+    // must keep theirs — clearing the whole map would break their routing.
+    if routes.len() >= MAX_RECENT_NOTIFICATIONS && !routes.contains_key(&id) {
+        if let Some(oldest) = routes
+            .iter()
+            .min_by_key(|(_, entry)| entry.at)
+            .map(|(id, _)| *id)
+        {
+            routes.remove(&oldest);
+        }
+    }
+    routes.insert(
+        id,
+        RouteEntry {
+            path,
+            at: Instant::now(),
+        },
+    );
+}
+
+fn take_notification_route(id: u64) -> Option<String> {
+    NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .map(|entry| entry.path)
+}
 
 impl NotifyMsg {
     /// The page's handle for this notification (safe to log — it's a counter,
@@ -106,6 +206,24 @@ impl NotifyMsg {
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
+}
+
+/// A late route update for an already-emitted notification (the
+/// `carrier:notify-route` event). Sent when a page `Notification` fired before
+/// its conversation row was known: the row-driven pairing later supplies the
+/// route so a click still opens the conversation after a page reload.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct NotifyRouteMsg {
+    #[serde(default)]
+    id: u64,
+    #[serde(default)]
+    thread_path: String,
+}
+
+/// Attach (or refresh) the reload-safe route for a notification the page has
+/// already emitted. A no-op for a non-unique id or an invalid path.
+pub(crate) fn update_notification_route(msg: &NotifyRouteMsg) {
+    remember_notification_route(msg.id, &msg.thread_path);
 }
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
@@ -280,12 +398,17 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         return;
     }
 
-    let should_deliver = NOTIFICATION_DEDUPER
+    let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
-        .should_deliver_at(&msg, Instant::now());
-    if !should_deliver {
+        .classify(&msg, Instant::now());
+    if let Delivery::Suppress { delivered_id } = decision {
+        // The duplicate is dropped, but it may carry the reload-safe route the
+        // shown notification lacked (a page-first notification whose row paired
+        // only after the page pairing window, inside the native dedupe window).
+        // Attach it to the notification the user actually has on screen.
+        remember_notification_route(delivered_id, &msg.thread_path);
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
         return;
     }
@@ -302,6 +425,7 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         msg.body
     };
     let id = msg.id;
+    remember_notification_route(id, &msg.thread_path);
     let image = if hide_preview {
         None
     } else {
@@ -329,6 +453,8 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         }
         if clicked {
             on_notification_click(app, id);
+        } else {
+            let _ = take_notification_route(id);
         }
     });
 }
@@ -382,12 +508,20 @@ fn show_native_notification(
 /// the conversation (it invokes Facebook's own `onclick` for that notification,
 /// keyed by `id`). Hops to the main thread for the window + webview calls.
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
+    let thread_path = take_notification_route(id);
     let _ = app.clone().run_on_main_thread(move || {
         show_main(&app);
         if let Some(w) = app.get_webview_window("main") {
-            let _ = w.eval(format!(
-                "window.__carrierNotifyClick && window.__carrierNotifyClick({id});"
-            ));
+            let script = if let Some(thread_path) = thread_path {
+                let path = serde_json::to_string(&thread_path).unwrap();
+                format!(
+                    "if (window.__carrierNotifyClick?.({id}) !== true) \
+                     window.__carrierOpenThread?.({path});"
+                )
+            } else {
+                format!("window.__carrierNotifyClick?.({id});")
+            };
+            let _ = w.eval(script);
         }
     });
 }
@@ -413,13 +547,14 @@ mod tests {
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
-            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef"}"#,
+            r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef","thread_path":"/t/123/"}"#,
         )
         .expect("payload parses");
         assert_eq!(msg.id, 7);
         assert_eq!(msg.title, "Jane");
         assert_eq!(msg.body, "hi there");
         assert_eq!(msg.dedupe_key, "0123456789abcdef");
+        assert_eq!(msg.thread_path, "/t/123/");
         // Missing fields fall back to defaults rather than failing the parse.
         let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
         assert_eq!(bare.id, 0);
@@ -460,6 +595,62 @@ mod tests {
             body: body.into(),
             icon: String::new(),
             dedupe_key: dedupe_key.into(),
+            thread_path: String::new(),
+        }
+    }
+
+    #[test]
+    fn notification_routes_accept_only_bare_numeric_thread_paths() {
+        assert_eq!(validated_thread_path("/t/12345/"), Some("/t/12345/".into()));
+        assert_eq!(validated_thread_path("/t/12345"), None);
+        assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
+        assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
+        assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
+    }
+
+    #[test]
+    fn distinct_notification_ids_keep_independent_routes() {
+        // Two notifications with unique ids must not clobber each other's route,
+        // so clicking an older one still opens its own thread.
+        remember_notification_route(9_001, "/t/111/");
+        remember_notification_route(9_002, "/t/222/");
+        assert_eq!(take_notification_route(9_001).as_deref(), Some("/t/111/"));
+        assert_eq!(take_notification_route(9_002).as_deref(), Some("/t/222/"));
+    }
+
+    #[test]
+    fn non_unique_zero_id_is_never_routed() {
+        // A missing/zero id is not unique: storing it would let a later message
+        // hijack an earlier notification's click, so no route is kept at all.
+        remember_notification_route(0, "/t/111/");
+        remember_notification_route(0, "/t/222/");
+        assert_eq!(take_notification_route(0), None);
+    }
+
+    #[test]
+    fn update_notification_route_refreshes_an_emitted_route() {
+        // The page-first path emits with no route, then supplies it once the row
+        // is known; the later value must win for that id.
+        update_notification_route(&NotifyRouteMsg {
+            id: 9_010,
+            thread_path: "/t/555/".into(),
+        });
+        assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
+    }
+
+    #[test]
+    fn suppressed_duplicate_reports_the_shown_notification_id() {
+        // A page-first notification (id 42) is shown; a later fallback for the
+        // same message (id 99) that carries the route is suppressed, but must
+        // report id 42 so the route reaches the notification on screen.
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let shown = notify_msg(42, "Jane", "Hello", "0123456789abcdef");
+        let duplicate = notify_msg(99, "Jane", "Hello", "0123456789abcdef");
+        assert!(matches!(deduper.classify(&shown, now), Delivery::Show));
+        match deduper.classify(&duplicate, now) {
+            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 42),
+            Delivery::Show => panic!("an identical second notification must be suppressed"),
         }
     }
 

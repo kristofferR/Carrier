@@ -2,9 +2,12 @@
 //! [`AppState`], applying settings at runtime, and the webview-data
 //! ("Clear Cache") machinery.
 
+use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicUsize;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::{tray::TrayIcon, Manager};
@@ -127,6 +130,14 @@ pub(crate) struct AppState {
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";
+// Orders concurrent settings writes: each call takes a monotonically increasing
+// ticket, and the publish step below refuses to overwrite a destination that a
+// higher-ticket (newer) snapshot has already reached.
+static SETTINGS_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
+// Serializes the publish (rename) step and records, per destination, the newest
+// ticket already on disk. Keyed by path so writes to unrelated files never block
+// or skip one another (in production there is only ever one settings file).
+static SETTINGS_PUBLISHED: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
 
 fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
@@ -136,10 +147,8 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     settings_file(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        .map(|path| load_settings_from_path(&path))
         .unwrap_or_default()
-        .sanitized()
 }
 
 /// Read persisted settings directly from disk before the Tauri app is built
@@ -147,10 +156,31 @@ pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
 pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
         .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+        .map(|path| load_settings_from_path(&path))
         .unwrap_or_default()
-        .sanitized()
+}
+
+fn load_settings_from_path(path: &Path) -> Settings {
+    match std::fs::read_to_string(path) {
+        Ok(json) => match serde_json::from_str::<Settings>(&json) {
+            Ok(settings) => settings.sanitized(),
+            Err(error) => {
+                log::warn!(
+                    "settings file {} is corrupt; using defaults: {error}",
+                    path.display()
+                );
+                Settings::default()
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(error) => {
+            log::warn!(
+                "could not read settings file {}; using defaults: {error}",
+                path.display()
+            );
+            Settings::default()
+        }
+    }
 }
 
 fn dirs_config_dir() -> Option<std::path::PathBuf> {
@@ -173,10 +203,117 @@ fn dirs_config_dir() -> Option<std::path::PathBuf> {
     }
 }
 
-pub(crate) fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<(), String> {
+/// Result of a settings save: whether this snapshot actually reached disk or was
+/// dropped because a newer concurrent save had already been published. Callers
+/// must not apply a `Superseded` snapshot to runtime — doing so would leave the
+/// running settings diverged from what is persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveOutcome {
+    Written,
+    Superseded,
+}
+
+pub(crate) fn save_settings(app: &tauri::AppHandle, s: &Settings) -> Result<SaveOutcome, String> {
     let path = settings_file(app).ok_or("no config directory available")?;
+    write_settings_to_path(&path, s)
+}
+
+fn write_settings_to_path(path: &Path, s: &Settings) -> Result<SaveOutcome, String> {
     let json = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    let parent = path
+        .parent()
+        .ok_or("settings path has no parent directory")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("settings path has no valid file name")?;
+    let sequence = SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    // A random component keeps the temp name unique even if a previous run
+    // crashed after creating one and the OS later reuses this pid — that would
+    // restart the sequence at 0 and collide with the leftover under
+    // `create_new`, failing the first save and losing the change.
+    let nonce = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+    let temp = parent.join(format!(
+        ".{file_name}.{}.{}.{:016x}.tmp",
+        std::process::id(),
+        sequence,
+        nonce
+    ));
+
+    let result = (|| -> Result<SaveOutcome, String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| e.to_string())?;
+        file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+
+        // Publish under a lock so concurrent saves rename in a defined order,
+        // and drop this write if a newer snapshot already reached the file —
+        // otherwise a slow older writer could clobber newer settings.
+        let mut published = SETTINGS_PUBLISHED
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+        if published.get(path).is_some_and(|latest| sequence < *latest) {
+            let _ = std::fs::remove_file(&temp);
+            return Ok(SaveOutcome::Superseded);
+        }
+        replace_file(&temp, path).map_err(|e| e.to_string())?;
+        published.insert(path.to_path_buf(), sequence);
+        // Fsync the parent directory so the rename itself survives a crash. A
+        // failure means that durability can't be promised, so surface it rather
+        // than reporting a clean save (the new bytes are already on disk).
+        #[cfg(unix)]
+        {
+            let directory = std::fs::File::open(parent).map_err(|e| e.to_string())?;
+            directory.sync_all().map_err(|e| e.to_string())?;
+        }
+        Ok(SaveOutcome::Written)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(target_os = "windows")]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    // SAFETY: both paths are NUL-terminated UTF-16 buffers that remain alive
+    // for the duration of the call.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 const CLEAR_WEBVIEW_DATA_MARKER: &str = ".clear-webview-data-on-next-launch";
@@ -479,5 +616,94 @@ mod tests {
         // Existing installs keep Enter-to-send unless they explicitly opt in.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.send_with_accelerator);
+    }
+
+    #[test]
+    fn settings_write_replaces_the_file_atomically() {
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-settings-test-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+        std::fs::write(&path, "{ partial").unwrap();
+
+        let settings = Settings {
+            zoom: 140,
+            hide_names_avatars: true,
+            ..Default::default()
+        };
+        write_settings_to_path(&path, &settings).unwrap();
+
+        let loaded = load_settings_from_path(&path);
+        assert_eq!(loaded.zoom, 140);
+        assert!(loaded.hide_names_avatars);
+        assert_eq!(
+            std::fs::read_dir(&directory).unwrap().count(),
+            1,
+            "temporary settings file should be renamed away"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_settings_write_does_not_replace_a_newer_snapshot() {
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-settings-stale-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+
+        // Pretend a newer snapshot (the maximum ticket) already reached this
+        // path, and seed the file with its content so we can prove it survives.
+        SETTINGS_PUBLISHED
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert(path.clone(), usize::MAX);
+        let newer = Settings {
+            zoom: 175,
+            ..Default::default()
+        };
+        std::fs::write(&path, serde_json::to_string_pretty(&newer).unwrap()).unwrap();
+
+        // A slower older write (a lower ticket) must be dropped, not published.
+        let older = Settings {
+            zoom: 60,
+            ..Default::default()
+        };
+        assert_eq!(
+            write_settings_to_path(&path, &older).unwrap(),
+            SaveOutcome::Superseded,
+            "an older write must report itself superseded, not written"
+        );
+
+        assert_eq!(
+            load_settings_from_path(&path).zoom,
+            175,
+            "an older snapshot must not overwrite a newer one"
+        );
+        assert_eq!(
+            std::fs::read_dir(&directory).unwrap().count(),
+            1,
+            "the dropped write must leave no temporary file behind"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn corrupt_settings_fall_back_to_defaults() {
+        let path = std::env::temp_dir().join(format!(
+            "carrier-corrupt-settings-{}-{}.json",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, "{ partial").unwrap();
+        let loaded = load_settings_from_path(&path);
+        assert_eq!(loaded.zoom, Settings::default().zoom);
+        let _ = std::fs::remove_file(path);
     }
 }

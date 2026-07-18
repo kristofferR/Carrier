@@ -67,6 +67,19 @@ export function initSystemEmoji() {
     root.querySelectorAll?.(CANDIDATE_SEL).forEach(ensureGlyph);
   }
 
+  function sweepOrphanGlyphs() {
+    for (const glyph of document.querySelectorAll(`[${GLYPH_ATTR}]`)) {
+      const source = glyph.previousElementSibling;
+      if (
+        !source?.hasAttribute(SOURCE_ATTR) ||
+        source.__carrierSystemEmojiGlyph !== glyph ||
+        !source.isConnected
+      ) {
+        glyph.remove();
+      }
+    }
+  }
+
   function schedule(root: Element = document.documentElement) {
     if (!on()) return;
     queuedRoots.add(root);
@@ -85,6 +98,7 @@ export function initSystemEmoji() {
       const roots = [...queuedRoots];
       queuedRoots.clear();
       roots.forEach(scan);
+      sweepOrphanGlyphs();
     });
   }
 
@@ -95,6 +109,7 @@ export function initSystemEmoji() {
         if (m.type === "attributes") {
           schedule(m.target as Element);
         } else {
+          schedule(m.target as Element);
           for (const n of m.addedNodes) schedule(n as Element);
         }
       }
