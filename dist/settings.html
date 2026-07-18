@@ -77,9 +77,10 @@
         <div id="status"></div>
         <a href="#" id="reset" style="font-size:12px;opacity:.7">Reset to defaults</a>
       </div>
-      <button class="action" id="check">Check for updates</button>
+      <button class="action" id="check" type="button" disabled>Check for updates</button>
     </footer>
 
+    <script src="settings-update.js"></script>
     <script>
       const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args);
 
@@ -97,8 +98,13 @@
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
         ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+H)."],
         ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
+        ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
         ["menu_bar_only", "Menu Bar Only", "macOS: hide the Dock icon and live in the menu bar (needs the tray)."],
         ["hide_menu_bar", "Hide Top Menu", "Windows/Linux: hide the Carrier / File / Edit / View / Window row. Settings remains available from the gear button or F3."],
+        ["hide_on_minimize", "Hide When Minimized", "Windows: move Carrier into the tray instead of leaving it minimized."],
+        ["hide_on_focus_loss", "Hide When Focus Is Lost", "Windows: move Carrier into the tray whenever another app gets focus."],
+        ["hide_taskbar_icon", "Hide Taskbar Icon", "Windows: keep Carrier out of the taskbar and reopen it from the tray."],
+        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Installation always asks first."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["send_with_accelerator", "Require Cmd/Ctrl+Enter to Send", "Plain Enter inserts a line break; use Cmd+Enter on macOS or Ctrl+Enter on Windows/Linux to send."],
@@ -120,19 +126,24 @@
       };
 
       const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
+      const IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji"] },
+          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
-          fields: ["show_tray", "start_to_tray", "autostart", ...(IS_MAC ? ["menu_bar_only"] : [])] },
+          fields: [
+            "show_tray", "start_to_tray", "autostart",
+            ...(IS_MAC ? ["menu_bar_only"] : []),
+            ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
+          ] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["send_with_accelerator", "block_telemetry", "multi_instance", "open_logs"] },
+          fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -251,9 +262,19 @@
         const cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = !!settings[key];
+        const trayRequired =
+          IS_WINDOWS &&
+          (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
+        if (key === "show_tray" && trayRequired) {
+          cb.disabled = true;
+        }
         cb.onchange = () => persist(key, cb.checked);
         const text = document.createElement("div");
-        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${meta.hint}</div>`;
+        const hint =
+          key === "show_tray" && trayRequired
+            ? `${meta.hint} Required by an enabled Windows tray behavior.`
+            : meta.hint;
+        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${hint}</div>`;
         row.append(cb, text);
         return row;
       }
@@ -344,12 +365,37 @@
         return row;
       }
 
+      function customCssRow() {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cursor = "default";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "action";
+        btn.textContent = "Open custom.css";
+        btn.onclick = async () => {
+          try {
+            await invoke("open_custom_css");
+            setStatus("Save custom.css, then reload Carrier to apply it.");
+          } catch (e) {
+            setStatus("Could not open custom.css.");
+            console.error(e);
+          }
+        };
+        const text = document.createElement("div");
+        text.innerHTML =
+          '<div class="label">Custom CSS</div><div class="hint">Advanced, best-effort Messenger styling. Facebook markup changes may break it; missing or invalid CSS is safely ignored.</div>';
+        row.append(btn, text);
+        return row;
+      }
+
       // Pseudo-fields ("theme", "zoom", "badge_mode") are <select> rows;
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
         theme: themeRow,
         zoom: zoomRow,
         badge_mode: badgeModeRow,
+        custom_css: customCssRow,
         open_logs: openLogsRow,
       };
 
@@ -385,13 +431,20 @@
       // Pick up changes made elsewhere (e.g. the View menu) when refocused.
       window.addEventListener("focus", refresh);
 
-      document.getElementById("check").onclick = async () => {
-        setStatus("Checking for updates…");
+      const updateButton = document.getElementById("check");
+      const updateController = new CarrierSettingsUpdate.UpdateConsentController(
+        (command) => invoke(command),
+        (state) => {
+          updateButton.textContent = state.buttonLabel;
+          updateButton.disabled = state.busy;
+          setStatus(state.status);
+        },
+      );
+      updateButton.onclick = async () => {
         try {
-          const res = await invoke("check_for_updates");
-          setStatus(res === "up-to-date" ? "Carrier is up to date." : "Updating…");
+          await updateController.activate((message) => confirm(message));
         } catch (e) {
-          setStatus("Update check failed.");
+          updateController.fail();
           console.error(e);
         }
       };
@@ -403,6 +456,12 @@
           console.error(e);
         }
         render();
+        try {
+          await updateController.initialize();
+        } catch (e) {
+          updateController.fail();
+          console.error(e);
+        }
         try {
           const v = await invoke("plugin:app|version");
           document.getElementById("version").textContent = "Carrier " + v;

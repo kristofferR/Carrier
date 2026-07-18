@@ -332,3 +332,17 @@ html[data-carrier-system-emoji] [data-carrier-system-emoji-glyph] {
   vertical-align: -0.1em !important;
   white-space: nowrap !important;
 }
+
+/* Reaction slots are 32px square, but native glyphs otherwise inherit the
+   picker's 12px text size. The structural marker excludes inline/message emoji
+   and the separate add-reaction (+) button. */
+html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 32px !important;
+  height: 32px !important;
+  font-size: 28px !important;
+  line-height: 32px !important;
+  vertical-align: middle !important;
+}

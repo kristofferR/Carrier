@@ -33,6 +33,7 @@ const shortcuts: Record<string, () => unknown> = {
   e: () => openEmojiPicker(),
   g: () => openGifPicker(),
   t: () => attachFiles(),
+  "/": () => window.__carrierToggleShortcuts?.(),
 };
 
 export function initShortcuts() {
@@ -62,7 +63,10 @@ export function initFunctionKeys() {
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key === "F5") {
+      if (e.key === "F1") {
+        e.preventDefault();
+        window.__carrierToggleShortcuts?.();
+      } else if (e.key === "F5") {
         e.preventDefault();
         location.reload();
       } else if (e.key === "F3") {

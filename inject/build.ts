@@ -36,3 +36,17 @@ for (const [entry, out, source] of [
     banner: { js: banner(source) },
   });
 }
+
+await build({
+  bundle: true,
+  format: "iife",
+  globalName: "CarrierSettingsUpdate",
+  target: "es2020",
+  charset: "utf8",
+  legalComments: "none",
+  entryPoints: ["inject/src/settings/update-consent.ts"],
+  outfile: "dist/settings-update.js",
+  banner: {
+    js: banner("inject/src/settings/update-consent.ts"),
+  },
+});

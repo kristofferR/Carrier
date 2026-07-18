@@ -121,9 +121,11 @@ cryptographically verified updates.
 
 ### Maintenance
 
-- Signed update checks and installs from Settings or <kbd>F2</kbd>
+- Automatic signed-update discovery at startup and every four hours (optional),
+  with consent-based installs from Settings or <kbd>F2</kbd>
 - A diagnostics log for Messenger markup changes and integration failures
 - A dedicated Settings window, available with <kbd>F3</kbd>
+- Optional, best-effort `custom.css` styling from **Settings → Advanced**
 
 <details>
 <summary><strong>Keyboard shortcuts</strong></summary>
@@ -147,7 +149,8 @@ cryptographically verified updates.
 | <kbd>Cmd/Ctrl</kbd>+<kbd>R</kbd> | Reload |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> | Clear cache and restart |
 | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> | Paste and match style |
-| <kbd>F2</kbd> / <kbd>F3</kbd> / <kbd>F5</kbd> | Check for updates / Settings / reload |
+| <kbd>F2</kbd> / <kbd>F3</kbd> / <kbd>F5</kbd> | Open update settings / Settings / reload |
+| <kbd>Cmd/Ctrl</kbd>+<kbd>/</kbd> / <kbd>F1</kbd> | Show keyboard shortcuts |
 
 </details>
 

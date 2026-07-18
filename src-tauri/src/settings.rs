@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,9 @@ pub(crate) struct Settings {
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
     pub(crate) hide_on_close: bool,
+    /// Whether the one-time "still running in the tray" close notice has been
+    /// shown. Persisted internally; it is not an end-user preference.
+    pub(crate) tray_notice_shown: bool,
     /// Experimental: when true, single-instance enforcement is skipped at the
     /// next launch (takes effect after restart).
     pub(crate) multi_instance: bool,
@@ -47,8 +50,18 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
+    /// Windows: hide the main window into the tray when it is minimized.
+    pub(crate) hide_on_minimize: bool,
+    /// Windows: hide the main window into the tray when it loses focus.
+    pub(crate) hide_on_focus_loss: bool,
+    /// Windows: omit the main window from the taskbar. This is only applied
+    /// while a tray icon exists so the app always remains reachable.
+    pub(crate) hide_taskbar_icon: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
+    /// Discover signed Carrier updates on startup and every four hours. This
+    /// never downloads or installs without explicit confirmation in Settings.
+    pub(crate) automatic_update_checks: bool,
     /// Play the OS notification sound for new-message notifications.
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
@@ -57,6 +70,9 @@ pub(crate) struct Settings {
     pub(crate) hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     pub(crate) system_emoji: bool,
+    /// Pause videos and animated media that start without a recent user
+    /// interaction. Manual playback remains available. Off by default.
+    pub(crate) stop_media_autoplay: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -84,6 +100,13 @@ impl Settings {
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(mut self) -> Self {
         self.zoom = clamp_zoom(self.zoom);
+        // Every Windows tray-oriented behavior can make the main window
+        // disappear without closing it. Keep the escape hatch explicit and
+        // persisted rather than relying only on a runtime fallback.
+        #[cfg(target_os = "windows")]
+        if self.hide_on_minimize || self.hide_on_focus_loss || self.hide_taskbar_icon {
+            self.show_tray = true;
+        }
         self
     }
 }
@@ -96,6 +119,7 @@ impl Default for Settings {
             start_to_tray: false,
             autostart: false,
             hide_on_close: true,
+            tray_notice_shown: false,
             multi_instance: false,
             spellcheck: false,
             unread_badge: true,
@@ -103,11 +127,16 @@ impl Default for Settings {
             theme: "system".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
+            hide_on_minimize: false,
+            hide_on_focus_loss: false,
+            hide_taskbar_icon: false,
             mute_notifications: false,
+            automatic_update_checks: true,
             notification_sound: true,
             hide_notification_preview: false,
             hide_names_avatars: false,
             system_emoji: false,
+            stop_media_autoplay: false,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -118,12 +147,41 @@ impl Default for Settings {
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
+    /// Serializes every settings read-modify-write operation before it enters
+    /// blocking/native work. Awaiting this queue avoids both stale snapshots and
+    /// one waiting OS thread per mutation during a burst.
+    pub(crate) settings_worker: tokio::sync::Mutex<()>,
     pub(crate) tray: Mutex<Option<TrayIcon>>,
     pub(crate) next_window: AtomicUsize,
+    /// Serializes update installation even if the trusted Settings page is
+    /// invoked concurrently from multiple windows or automation.
+    pub(crate) update_installing: AtomicBool,
+    /// Serializes every updater operation so automatic/manual discovery cannot
+    /// race the installer's re-check, download, or replacement.
+    pub(crate) update_checking: tokio::sync::Mutex<()>,
+    /// Update discovered during this process, if any. Retaining the verified
+    /// metadata makes the Settings action genuinely install the update it
+    /// advertises, even if a later release check is temporarily unavailable.
+    pub(crate) update_available: Mutex<Option<tauri_plugin_updater::Update>>,
+    /// Wakes the automatic checker immediately when its opt-in is enabled.
+    pub(crate) update_check_wake: tokio::sync::Notify,
+    /// Prevents a successfully delivered first tray notice from repeating in
+    /// the current process even while its settings write is being merged.
+    pub(crate) tray_notice_delivered: AtomicBool,
+    /// Non-zero generation token while the main window is deliberately being
+    /// restored. A token (rather than a bool) lets overlapping reveals renew
+    /// the guard without an older reset timer clearing the newer reveal.
+    pub(crate) revealing_main: AtomicUsize,
+    /// Monotonic source for `revealing_main` tokens.
+    pub(crate) next_reveal_generation: AtomicUsize,
+    /// Monotonic token used to coalesce queued page zoom persistence work.
+    /// The event listener queues work away from the UI thread, so older tasks
+    /// must be able to yield to the newest zoom event.
+    pub(crate) zoom_generation: AtomicUsize,
     /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
     /// is between destroying and rebuilding, so the run loop doesn't exit when
     /// the window count hits zero.
-    pub(crate) recreating: std::sync::atomic::AtomicBool,
+    pub(crate) recreating: AtomicBool,
     /// The page-scraped recent-conversations list backing the Dock/tray menus.
     /// In memory only — never persisted (see `carrier:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,
@@ -513,7 +571,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
     // no tray to fall back on.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let tray_available = tray.is_some();
     drop(tray);
 
@@ -528,6 +586,21 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             tauri::ActivationPolicy::Regular
         });
         if s.menu_bar_only && !tray_available {
+            show_main(app);
+        }
+    }
+
+    // Only remove the main window from the Windows taskbar after the tray has
+    // actually been created. If AppIndicator/tray creation fails for any
+    // reason, restore the taskbar entry and surface the window instead of
+    // leaving Carrier with no reliable way back.
+    #[cfg(target_os = "windows")]
+    {
+        let hide_from_taskbar = s.hide_taskbar_icon && tray_available;
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_skip_taskbar(hide_from_taskbar);
+        }
+        if s.hide_taskbar_icon && !tray_available {
             show_main(app);
         }
     }
@@ -553,8 +626,32 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
+        assert!(
+            !s.hide_on_minimize,
+            "hide_on_minimize should default to false"
+        );
+        assert!(
+            !s.hide_on_focus_loss,
+            "hide_on_focus_loss should default to false"
+        );
+        assert!(
+            !s.hide_taskbar_icon,
+            "hide_taskbar_icon should default to false"
+        );
         assert!(!s.spellcheck, "spellcheck should default to false");
+        assert!(
+            s.automatic_update_checks,
+            "automatic signed-update discovery should default to true"
+        );
+        assert!(
+            !s.tray_notice_shown,
+            "the first hide-to-tray should explain where Carrier went"
+        );
         assert!(!s.system_emoji, "system_emoji should default to false");
+        assert!(
+            !s.stop_media_autoplay,
+            "stop_media_autoplay should default to false"
+        );
         assert!(
             !s.send_with_accelerator,
             "send_with_accelerator should default to false"
@@ -590,6 +687,30 @@ mod tests {
         assert_eq!(s.sanitized().zoom, 30);
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn tray_oriented_windows_settings_force_the_tray_on() {
+        for settings in [
+            Settings {
+                show_tray: false,
+                hide_on_minimize: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_on_focus_loss: true,
+                ..Default::default()
+            },
+            Settings {
+                show_tray: false,
+                hide_taskbar_icon: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(settings.sanitized().show_tray);
+        }
+    }
+
     #[test]
     fn settings_json_missing_zoom_defaults_to_100() {
         // Pre-existing installs have no `zoom` key in settings.json.
@@ -605,6 +726,14 @@ mod tests {
     }
 
     #[test]
+    fn settings_json_missing_windows_tray_options_defaults_to_false() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.hide_on_minimize);
+        assert!(!s.hide_on_focus_loss);
+        assert!(!s.hide_taskbar_icon);
+    }
+
+    #[test]
     fn settings_json_missing_spellcheck_defaults_to_false() {
         // Pre-existing installs without this key should not opt in implicitly.
         let s: Settings = serde_json::from_str("{}").unwrap();
@@ -612,10 +741,25 @@ mod tests {
     }
 
     #[test]
+    fn settings_json_missing_automatic_update_checks_defaults_to_true() {
+        // Existing installs should gain safe discovery, while install remains
+        // behind the separate explicit confirmation path.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.automatic_update_checks);
+    }
+
+    #[test]
     fn settings_json_missing_send_with_accelerator_defaults_to_false() {
         // Existing installs keep Enter-to-send unless they explicitly opt in.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.send_with_accelerator);
+    }
+
+    #[test]
+    fn settings_json_missing_stop_media_autoplay_defaults_to_false() {
+        // Existing installs should not opt into autoplay suppression implicitly.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.stop_media_autoplay);
     }
 
     #[test]

@@ -8,6 +8,34 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/messenger/bridge.ts
+  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
+  var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
+  var diag = /* @__PURE__ */ (() => {
+    const RATE_MS = 6e4;
+    const lastSent = /* @__PURE__ */ new Map();
+    return (key, msg) => {
+      try {
+        const now = Date.now();
+        if (now - (lastSent.get(key) || 0) < RATE_MS) return;
+        lastSent.set(key, now);
+        try {
+          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
+        } catch (_) {
+        }
+        invoke("plugin:event|emit", {
+          event: "carrier:diag",
+          payload: { key: String(key), msg: String(msg) }
+        })?.catch?.(() => {
+        });
+      } catch (_) {
+      }
+    };
+  })();
+  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
+    () => diag("ipc.open-url", "opener invoke failed")
+  );
+
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
     const PERIODIC_MS = 15 * 60 * 1e3;
@@ -121,34 +149,6 @@
       true
     );
   }
-
-  // inject/src/messenger/bridge.ts
-  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
-  var diag = /* @__PURE__ */ (() => {
-    const RATE_MS = 6e4;
-    const lastSent = /* @__PURE__ */ new Map();
-    return (key, msg) => {
-      try {
-        const now = Date.now();
-        if (now - (lastSent.get(key) || 0) < RATE_MS) return;
-        lastSent.set(key, now);
-        try {
-          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
-        } catch (_) {
-        }
-        invoke("plugin:event|emit", {
-          event: "carrier:diag",
-          payload: { key: String(key), msg: String(msg) }
-        })?.catch?.(() => {
-        });
-      } catch (_) {
-      }
-    };
-  })();
-  var openUrl = (url) => invoke("plugin:opener|open_url", { url, with: null })?.catch?.(
-    () => diag("ipc.open-url", "opener invoke failed")
-  );
 
   // inject/src/messenger/lib/downloads.ts
   var filenameFromUrl = (u, base) => {
@@ -354,18 +354,23 @@
   };
 
   // inject/src/messenger/lib/login-page.ts
-  var FOOTER_NOISE_RE = /registrer|logg inn|messenger|facebook|lite|video|meta(?:\s|$)|instagram|threads|quest|ray-ban|personvern|privacy|cookie|informasjonskaps|annonse|annonsevalg|utviklere|developer|jobber|hjelp|help|betingelser|terms|opplasting/i;
   function isLanguageFooterLink(link) {
     return link.href.trim() === "#";
   }
-  function isFooterNoiseLink(link) {
-    return FOOTER_NOISE_RE.test(link.text.replace(/\s+/g, " ").trim());
-  }
   function topLanguageLinkIndexes(links) {
-    const indexes = links.flatMap(
-      (link, index) => isLanguageFooterLink(link) && !isFooterNoiseLink(link) ? [index] : []
-    );
+    const indexes = links.flatMap((link, index) => isLanguageFooterLink(link) ? [index] : []);
     return indexes.length >= 2 ? indexes : [];
+  }
+  function isCookiePolicyHref(href) {
+    try {
+      const url = new URL(href, "https://www.facebook.com/");
+      const host = url.hostname.toLowerCase();
+      const metaOwned = host === "facebook.com" || host.endsWith(".facebook.com") || host === "meta.com" || host.endsWith(".meta.com") || host === "instagram.com" || host.endsWith(".instagram.com");
+      if (!metaOwned) return false;
+      return /(?:^|\/)(?:privacy|policies|cookie|cookies)(?:\/|$)/i.test(url.pathname);
+    } catch {
+      return false;
+    }
   }
   function qualifiesCookieActionRow(scores) {
     return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
@@ -380,31 +385,12 @@
   }
 
   // inject/src/messenger/features/cookie-consent.ts
-  var COOKIE_TEXT_RE = /\b(cookie|cookies)\b|informasjonskapsl|tillat alle informasjonskapsler|avvis valgfrie informasjonskapsler/i;
-  var COOKIE_ACTION_RE = /allow all|reject optional|accept all|decline optional|tillat alle|avvis valgfrie|godta alle|avsl[aå] valgfrie/i;
-  var hasCookieConsentText = (el) => {
-    const text = (el.textContent || "").replace(/\s+/g, " ").slice(0, 4e3);
-    if (!COOKIE_TEXT_RE.test(text)) return false;
-    return COOKIE_ACTION_RE.test(text) || /privacy|personvern|Meta|Facebook/i.test(text);
+  var hasCookieConsentContext = (el) => {
+    const links = [];
+    if (el.matches?.("a[href]")) links.push(el);
+    links.push(...el.querySelectorAll?.("a[href]") || []);
+    return links.some((link) => isCookiePolicyHref(link.getAttribute("href") || ""));
   };
-  var accessibleLabelText = (el) => {
-    let text = el.getAttribute("aria-label") || "";
-    const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
-    const doc = el.ownerDocument;
-    for (const id of ids) {
-      text += ` ${doc?.getElementById(id)?.textContent || ""}`;
-    }
-    return text.slice(0, 4e3);
-  };
-  var hasCookieConsentLabel = (el) => {
-    const matches = (text) => COOKIE_TEXT_RE.test(text) || COOKIE_ACTION_RE.test(text);
-    if (matches(accessibleLabelText(el))) return true;
-    for (const node of el.querySelectorAll?.("[aria-label], [aria-labelledby]") || []) {
-      if (matches(accessibleLabelText(node))) return true;
-    }
-    return false;
-  };
-  var hasCookieConsentContext = (el) => hasCookieConsentText(el) || hasCookieConsentLabel(el);
   var onFacebookHost = () => /(^|\.)facebook\.com$/i.test(location.hostname);
   var onFacebookLoginSurface = () => onFacebookHost() && (/\/login(?:\.php)?$/i.test(location.pathname) || location.pathname === "/" || !!document.querySelector('input[name="email"], input[name="pass"], input[type="password"]'));
   var visibleBox = (el) => {
@@ -1025,7 +1011,7 @@
       if (role === "dialog" || role === "alertdialog") return true;
       if (el.querySelector?.('[role="dialog"], [role="alertdialog"]')) return true;
       if (findOptionalCookieDeclineButton(el)) return true;
-      return hasCookieConsentLabel(el) || hasCookieConsentText(el);
+      return hasCookieConsentContext(el);
     };
     const restoreRequiredLoginUi = () => {
       for (const el of document.querySelectorAll(`[${HIDE}], [${REQUIRED}]`)) {
@@ -1254,22 +1240,130 @@
     }
   }
 
+  // inject/src/messenger/lib/media-autoplay.ts
+  var MEDIA_ACTIVATION_GRACE_MS = 1500;
+  function shouldSuppressMediaPlay(enabled, lastActivationAt, now, graceMs = MEDIA_ACTIVATION_GRACE_MS) {
+    if (!enabled) return false;
+    if (!Number.isFinite(lastActivationAt) || !Number.isFinite(now) || !Number.isFinite(graceMs) || graceMs < 0 || lastActivationAt > now) {
+      return true;
+    }
+    return now - lastActivationAt > graceMs;
+  }
+
+  // inject/src/messenger/features/media-autoplay.ts
+  var VIDEO_SELECTOR = "video";
+  function initMediaAutoplay() {
+    const on = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
+    let lastActivationAt = Number.NEGATIVE_INFINITY;
+    let observer = null;
+    const noteActivation = (event) => {
+      if (event.isTrusted) lastActivationAt = performance.now();
+    };
+    window.addEventListener("pointerdown", noteActivation, true);
+    window.addEventListener("keydown", noteActivation, true);
+    const shouldSuppress = () => shouldSuppressMediaPlay(on(), lastActivationAt, performance.now());
+    const suppress = (video, force = false) => {
+      if (!on() || !force && !shouldSuppress()) return;
+      video.autoplay = false;
+      video.removeAttribute("autoplay");
+      if (!video.paused) video.pause();
+    };
+    const scan = (root, force = false) => {
+      if (!on()) return;
+      if (root.nodeType === Node.ELEMENT_NODE) {
+        const element = root;
+        if (element.matches(VIDEO_SELECTOR)) suppress(element, force);
+        element.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
+      } else if (root === document) {
+        document.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
+      }
+    };
+    try {
+      const originalPlay = HTMLMediaElement.prototype.play;
+      HTMLMediaElement.prototype.play = function() {
+        if (this instanceof HTMLVideoElement && shouldSuppress()) {
+          this.autoplay = false;
+          this.removeAttribute("autoplay");
+          this.pause();
+          diag("media.autoplay", "automatic video or GIF playback suppressed");
+          return Promise.resolve();
+        }
+        return originalPlay.call(this);
+      };
+    } catch (_) {
+      diag("media.autoplay.patch", "could not install media playback guard");
+    }
+    const start = () => {
+      if (observer) return;
+      observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) scan(node);
+        }
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    };
+    const stop = () => {
+      observer?.disconnect();
+      observer = null;
+    };
+    const apply = () => {
+      if (on()) {
+        start();
+        scan(document, true);
+      } else {
+        stop();
+      }
+    };
+    apply();
+    window.addEventListener("carrier:settings", apply);
+  }
+
+  // inject/src/messenger/lib/media-tracks.ts
+  var LiveMediaTrackCounter = class {
+    constructor(onChange) {
+      __publicField(this, "onChange", onChange);
+      __publicField(this, "tracked", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "live", 0);
+    }
+    add(track) {
+      if (this.tracked.has(track) || track.readyState === "ended") return;
+      this.tracked.add(track);
+      let active = true;
+      const finish = () => {
+        if (!active) return;
+        active = false;
+        this.live = Math.max(0, this.live - 1);
+        this.onChange(this.live > 0);
+      };
+      this.live += 1;
+      this.onChange(true);
+      track.addEventListener("ended", finish, { once: true });
+      const originalStop = track.stop.bind(track);
+      track.stop = () => {
+        try {
+          originalStop();
+        } finally {
+          finish();
+        }
+      };
+    }
+    count() {
+      return this.live;
+    }
+  };
+
   // inject/src/messenger/features/media-permissions.ts
   function initMediaPermissionWarning() {
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
+    const liveTracks = new LiveMediaTrackCounter((inCall) => {
+      window.__carrierInCall = inCall;
+    });
     md.getUserMedia = async (constraints) => {
       try {
         const stream = await original(constraints);
-        window.__carrierInCall = true;
-        const tracks = stream.getTracks();
-        let live = tracks.length;
-        tracks.forEach((t) => {
-          t.addEventListener("ended", () => {
-            if (--live <= 0) window.__carrierInCall = false;
-          });
-        });
+        stream.getTracks().forEach((track) => liveTracks.add(track));
         return stream;
       } catch (err) {
         const name = err?.name;
@@ -2257,10 +2351,9 @@
   }
 
   // inject/src/messenger/lib/settings-button.ts
-  var MESSENGER_OVERFLOW_LABEL = "Settings, help and more";
   var MESSENGER_OVERFLOW_PATH_PREFIX = "M2.25 10a1.75 1.75";
-  function isMessengerHeaderOverflowControl(label, iconPath) {
-    return label.trim() === MESSENGER_OVERFLOW_LABEL || iconPath.trim().startsWith(MESSENGER_OVERFLOW_PATH_PREFIX);
+  function isMessengerHeaderOverflowControl(iconPath) {
+    return iconPath.trim().startsWith(MESSENGER_OVERFLOW_PATH_PREFIX);
   }
 
   // inject/src/messenger/features/settings-button.ts
@@ -2268,16 +2361,14 @@
   var BUTTON_ATTR = "data-carrier-settings-button";
   function findOverflowButton() {
     const buttons = document.querySelectorAll(
-      `[role="button"][aria-label]:not([${BUTTON_ATTR}]), button[aria-label]:not([${BUTTON_ATTR}])`
+      `[role="button"]:not([${BUTTON_ATTR}]), button:not([${BUTTON_ATTR}])`
     );
     let iconFallback = null;
     for (const button of buttons) {
-      const label = button.getAttribute("aria-label") || "";
       const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
-      if (!isMessengerHeaderOverflowControl(label, iconPath)) continue;
+      if (!isMessengerHeaderOverflowControl(iconPath)) continue;
       const rect = button.getBoundingClientRect();
       if (rect.width < 28 || rect.height < 28) continue;
-      if (label.trim() === "Settings, help and more") return button;
       if (!iconFallback || rect.top < iconFallback.getBoundingClientRect().top) {
         iconFallback = button;
       }
@@ -2384,6 +2475,7 @@
       document.body.style.transform = `scale(${scale})`;
       document.body.style.width = `${100 / scale}%`;
       document.body.style.height = `${100 / scale}%`;
+      window.dispatchEvent(new Event("resize"));
     } else {
       document.documentElement.style.zoom = `${clamped}%`;
       window.dispatchEvent(new Event("resize"));
@@ -2454,7 +2546,8 @@
     l: () => focusComposer(),
     e: () => openEmojiPicker(),
     g: () => openGifPicker(),
-    t: () => attachFiles()
+    t: () => attachFiles(),
+    "/": () => window.__carrierToggleShortcuts?.()
   };
   function initShortcuts() {
     document.addEventListener(
@@ -2479,7 +2572,10 @@
     document.addEventListener(
       "keydown",
       (e) => {
-        if (e.key === "F5") {
+        if (e.key === "F1") {
+          e.preventDefault();
+          window.__carrierToggleShortcuts?.();
+        } else if (e.key === "F5") {
           e.preventDefault();
           location.reload();
         } else if (e.key === "F3") {
@@ -2550,10 +2646,16 @@
     if (LABEL_TEXT_RE.test(text)) return "";
     return text;
   }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
+  }
 
   // inject/src/messenger/features/system-emoji.ts
   var SOURCE_ATTR = "data-carrier-emoji-sprite";
   var GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var REACTION_ATTR = "data-carrier-reaction-emoji";
   var CANDIDATE_SEL = "img[alt], [aria-label]";
   var INTERACTIVE_SEL = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
   function initSystemEmoji() {
@@ -2615,6 +2717,21 @@
         }
       }
     }
+    function markReactionGlyphs() {
+      const reactions = /* @__PURE__ */ new Set();
+      for (const menu of document.querySelectorAll('[role="menu"]')) {
+        const children = [...menu.children].map((child) => ({
+          glyphs: child.querySelectorAll(`[${GLYPH_ATTR}]`).length,
+          role: child.getAttribute("role")
+        }));
+        if (!isReactionMenuShape(children)) continue;
+        menu.querySelectorAll(`[${GLYPH_ATTR}]`).forEach((glyph) => reactions.add(glyph));
+      }
+      document.querySelectorAll(`[${REACTION_ATTR}]`).forEach((glyph) => {
+        if (!reactions.has(glyph)) glyph.removeAttribute(REACTION_ATTR);
+      });
+      reactions.forEach((glyph) => glyph.setAttribute(REACTION_ATTR, ""));
+    }
     function schedule(root = document.documentElement) {
       if (!on()) return;
       queuedRoots.add(root);
@@ -2630,6 +2747,7 @@
         queuedRoots.clear();
         roots.forEach(scan);
         sweepOrphanGlyphs();
+        markReactionGlyphs();
       });
     }
     function start() {
@@ -2648,7 +2766,7 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["alt", "aria-label", "src", "style"]
+        attributeFilter: ["alt", "aria-label", "src", "style", "role"]
       });
     }
     function stop() {
@@ -2855,7 +2973,7 @@
       }
       const conv = s.badge_mode === "conversations";
       const n = conv ? countUnreadConversations() : countUnreadMessages();
-      const ready = conv ? document.querySelector('a[href*="/t/"]') !== null : /Messenger|Facebook/i.test(document.title || "");
+      const ready = conv ? document.querySelector('a[href*="/t/"]') !== null : document.readyState === "complete" && (document.title || "").trim().length > 0;
       if (n === 0 && !ready) return;
       setBadge(n, force);
     };
@@ -2898,32 +3016,41 @@
   }
 
   // inject/src/messenger/index.ts
+  function initFeature(name, init) {
+    try {
+      init();
+    } catch (error) {
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      diag(`init.${name}`, detail.slice(0, 500));
+    }
+  }
   function main() {
-    initComposerKeys();
-    initShortcuts();
-    initZoom();
-    initSelectorHealth();
-    initSettingsButton();
-    initFunctionKeys();
-    initShortcutRegistry();
-    initLinkHandling();
-    initContextMenu();
-    initDownloadAnchors();
-    initSpellcheck();
-    initTelemetryBlocking();
-    initNotificationBridge();
-    initAutoRefresh();
-    initForceTheme();
-    initUnreadBadge();
-    initRecentThreads();
-    initThreadNav();
-    initHideNames();
-    initSystemEmoji();
-    initMediaPermissionWarning();
-    initCookieAutoDecline();
-    initLoginTidy();
-    initMediaViewer();
-    initFullscreenPolyfill();
+    initFeature("composer-keys", initComposerKeys);
+    initFeature("shortcuts", initShortcuts);
+    initFeature("zoom", initZoom);
+    initFeature("selector-health", initSelectorHealth);
+    initFeature("settings-button", initSettingsButton);
+    initFeature("function-keys", initFunctionKeys);
+    initFeature("shortcut-registry", initShortcutRegistry);
+    initFeature("link-handling", initLinkHandling);
+    initFeature("context-menu", initContextMenu);
+    initFeature("download-anchors", initDownloadAnchors);
+    initFeature("spellcheck", initSpellcheck);
+    initFeature("telemetry", initTelemetryBlocking);
+    initFeature("media-autoplay", initMediaAutoplay);
+    initFeature("notifications", initNotificationBridge);
+    initFeature("auto-refresh", initAutoRefresh);
+    initFeature("force-theme", initForceTheme);
+    initFeature("unread-badge", initUnreadBadge);
+    initFeature("recent-threads", initRecentThreads);
+    initFeature("thread-nav", initThreadNav);
+    initFeature("hide-names", initHideNames);
+    initFeature("system-emoji", initSystemEmoji);
+    initFeature("media-permissions", initMediaPermissionWarning);
+    initFeature("cookie-consent", initCookieAutoDecline);
+    initFeature("login-tidy", initLoginTidy);
+    initFeature("media-viewer", initMediaViewer);
+    initFeature("fullscreen", initFullscreenPolyfill);
   }
   if (window.top === window.self) main();
 })();

@@ -11,12 +11,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{Listener, Manager};
-use tauri_plugin_notification::NotificationExt;
-
 mod commands;
+mod custom_css;
 mod diag;
 mod download;
 mod hotkey;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 mod menu;
@@ -29,6 +30,8 @@ mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
 use hotkey::reconcile_startup_global_hotkey;
+#[cfg(target_os = "linux")]
+use linux::observe_system_theme_changes;
 #[cfg(target_os = "macos")]
 use macos::{
     dock::install_dock_menu_provider, notifications::setup_macos_notifications,
@@ -42,7 +45,7 @@ use notifications::{
 use settings::AppState;
 use settings::{
     apply_settings, clamp_zoom, clear_pending_webview_data, load_settings, load_settings_early,
-    save_settings,
+    save_settings, SaveOutcome,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -129,8 +132,18 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
+    // Single-instance enforcement (unless the experimental multi-instance flag
+    // is set). Must be registered first so it runs before any window is created.
+    if !initial.multi_instance {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_main(app);
+        }));
+    }
+
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
-    // DOM/JS inspection. Not in the dependency graph for normal/release builds.
+    // DOM/JS inspection. Keep it after single-instance enforcement: otherwise a
+    // second debug launch can lose the MCP socket race and exit before notifying
+    // the existing instance to reveal its window.
     #[cfg(feature = "mcp")]
     {
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
@@ -138,14 +151,6 @@ pub fn run() {
                 .start_socket_server(true)
                 .socket_path("/tmp/tauri-mcp.sock".into()),
         ));
-    }
-
-    // Single-instance enforcement (unless the experimental multi-instance flag
-    // is set). Must be registered first so it runs before any window is created.
-    if !initial.multi_instance {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app);
-        }));
     }
 
     builder
@@ -192,8 +197,17 @@ pub fn run() {
         )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
+            settings_worker: tokio::sync::Mutex::new(()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
+            update_installing: std::sync::atomic::AtomicBool::new(false),
+            update_checking: tokio::sync::Mutex::new(()),
+            update_available: Mutex::new(None),
+            update_check_wake: tokio::sync::Notify::new(),
+            tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
+            revealing_main: AtomicUsize::new(0),
+            next_reveal_generation: AtomicUsize::new(0),
+            zoom_generation: AtomicUsize::new(0),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
         })
@@ -204,10 +218,20 @@ pub fn run() {
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
+            commands::discovered_update,
+            commands::install_update,
             commands::connect_messenger,
-            commands::open_log_folder
+            commands::open_messenger_anyway,
+            commands::open_log_folder,
+            commands::open_custom_css
         ])
         .setup(move |app| {
+            // Event listening is needed only by the development MCP responder.
+            // Add it dynamically so release builds never grant remote Facebook
+            // scripts access to app events.
+            #[cfg(feature = "mcp")]
+            app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
+
             clear_pending_webview_data(app.handle());
 
             let mut settings = load_settings(app.handle());
@@ -222,7 +246,7 @@ pub fn run() {
             // Follow live OS light/dark switches while Theme = System (macOS only;
             // other platforms re-theme the chrome on their own). Registered once —
             // the observer is process-wide and survives the window rebuilds.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             observe_system_theme_changes(app.handle());
 
             // Don't sync autostart at startup; the OS registration already
@@ -238,27 +262,11 @@ pub fn run() {
             }
 
             // The Facebook page is a remote origin and can't call Carrier's own
-            // commands, so the F3/F2 shortcuts emit events that we handle here.
+            // commands, so the F3 shortcut emits an event that we handle here.
             let h = app.handle().clone();
             app.listen_any("carrier:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
-            });
-            let h = app.handle().clone();
-            app.listen_any("carrier:check-updates", move |_| {
-                let h = h.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Ok(msg) = commands::run_update_check(&h).await {
-                        if msg == "up-to-date" {
-                            let _ = h
-                                .notification()
-                                .builder()
-                                .title("Carrier")
-                                .body("Carrier is up to date.")
-                                .show();
-                        }
-                    }
-                });
             });
 
             // Unread count from the page → tray tooltip (the Dock badge is set
@@ -294,19 +302,51 @@ pub fn run() {
                     return;
                 };
                 let zoom = clamp_zoom(zoom);
-                let state = h.state::<AppState>();
-                let s = {
-                    let mut settings = state.settings.lock().unwrap();
-                    if settings.zoom == zoom {
+                let generation = h
+                    .state::<AppState>()
+                    .zoom_generation
+                    .fetch_add(1, Ordering::AcqRel)
+                    .wrapping_add(1);
+                let h = h.clone();
+                // Event listeners run on the UI thread. Waiting there on the
+                // settings transaction can deadlock with a concurrent save
+                // that is applying native window changes on that same thread.
+                tauri::async_runtime::spawn(async move {
+                    let worker_h = h.clone();
+                    let state = h.state::<AppState>();
+                    let _settings_worker = state.settings_worker.lock().await;
+                    if state.zoom_generation.load(Ordering::Acquire) != generation {
                         return;
                     }
-                    settings.zoom = zoom;
-                    settings.clone()
-                };
-                if let Err(e) = save_settings(&h, &s) {
-                    log::error!("failed to save settings: {e}");
-                }
-                apply_settings(&h, &s);
+                    if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
+                        let state = worker_h.state::<AppState>();
+                        let s = {
+                            let settings = state.settings.lock().unwrap();
+                            if settings.zoom == zoom {
+                                return;
+                            }
+                            let mut next = settings.clone();
+                            next.zoom = zoom;
+                            next
+                        };
+                        match save_settings(&worker_h, &s) {
+                            Ok(SaveOutcome::Written) => {
+                                *state.settings.lock().unwrap() = s.clone();
+                                apply_settings(&worker_h, &s);
+                            }
+                            Ok(SaveOutcome::Superseded) => {
+                                log::warn!("zoom settings update was superseded");
+                            }
+                            Err(e) => {
+                                log::error!("failed to save settings: {e}");
+                            }
+                        }
+                    })
+                    .await
+                    {
+                        log::error!("zoom settings worker failed: {e}");
+                    }
+                });
             });
 
             // Recent conversations scraped from the page's chat list → the
@@ -389,17 +429,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Carrier")
         .run(|app, event| {
-            // macOS needs notification authorization (for banners + the Dock
-            // badge) and the centre delegate installed once the app is ready
-            // (UNUserNotificationCenter needs the app fully launched — doing it
-            // during setup is a silent no-op). See `setup_macos_notifications`
-            // and issue #5.
-            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Ready = event {
-                setup_macos_notifications(app);
-                // The Dock-menu delegate hook also needs the app fully
-                // launched (tao installs its NSApplication delegate by now).
-                install_dock_menu_provider();
+                commands::spawn_automatic_update_checks(app.clone());
+                // macOS needs notification authorization (for banners + the
+                // Dock badge) and the centre delegate installed once the app is
+                // ready (UNUserNotificationCenter needs the app fully launched
+                // — doing it during setup is a silent no-op). See
+                // `setup_macos_notifications` and issue #5.
+                #[cfg(target_os = "macos")]
+                {
+                    setup_macos_notifications(app);
+                    // The Dock-menu delegate hook also needs the app fully
+                    // launched (tao installs its NSApplication delegate by now).
+                    install_dock_menu_provider();
+                }
             }
 
             #[cfg(target_os = "macos")]

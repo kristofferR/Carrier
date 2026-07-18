@@ -542,7 +542,7 @@
       if (mode === "restore") {
         var stash = localStorage.getItem(STASH);
         if (stash === null) return { error: "nothing stashed to restore" };
-        if (stash === " missing") {
+        if (stash === "\u0000missing") {
           localStorage.removeItem(CACHE);
         } else {
           localStorage.setItem(CACHE, stash);
@@ -550,7 +550,7 @@
         localStorage.removeItem(STASH);
       } else {
         if (localStorage.getItem(STASH) === null) {
-          localStorage.setItem(STASH, raw === null ? " missing" : raw);
+          localStorage.setItem(STASH, raw === null ? "\u0000missing" : raw);
         }
         var settings;
         try {
@@ -942,6 +942,216 @@
         dark: withThemeClass("dark", samplePalette),
       };
     }
+
+    // --- get-page-state : lightweight document metadata -----------------------
+    listen("get-page-state", function (ev) {
+      var cid = correlationId(ev && ev.payload);
+      try {
+        respond(
+          "get-page-state-response",
+          cid,
+          safeStringify({
+            success: true,
+            data: {
+              url: location.href,
+              title: document.title,
+              readyState: document.readyState,
+              scrollPosition: { x: scrollX, y: scrollY },
+              viewport: { width: innerWidth, height: innerHeight },
+            },
+          }),
+        );
+      } catch (e) {
+        respond(
+          "get-page-state-response",
+          cid,
+          safeStringify({ success: false, error: String(e) }),
+        );
+      }
+    });
+
+    // --- get-page-map : compact semantic DOM map (no eval; CSP-safe) ----------
+    // The upstream guest bundle normally supplies this serializer. Carrier's
+    // remote page cannot import that bundle, so keep a deliberately compact
+    // equivalent here: semantic and interactive nodes, bounded text, no form
+    // values, and digit-masked hrefs.
+    listen("get-page-map", function (ev) {
+        var p = (ev && ev.payload) || {};
+        var cid = correlationId(p);
+      try {
+        var includeContent = p.includeContent !== false;
+        var interactiveOnly = p.interactiveOnly === true;
+        var requestedMaxDepth =
+          typeof p.maxDepth === "number" && Number.isFinite(p.maxDepth) ? p.maxDepth : 12;
+        var maxDepth = Math.floor(Math.max(0, Math.min(30, requestedMaxDepth)));
+        var scopes = Array.isArray(p.scopeSelector)
+          ? p.scopeSelector
+          : p.scopeSelector
+            ? [p.scopeSelector]
+            : [];
+        var roots = [];
+        if (scopes.length) {
+          scopes.forEach(function (selector) {
+            try {
+              document.querySelectorAll(selector).forEach(function (node) {
+                if (roots.indexOf(node) === -1) roots.push(node);
+              });
+            } catch (_) {}
+          });
+        }
+        if (!scopes.length && document.documentElement) roots.push(document.documentElement);
+
+        var interactiveTags = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|DETAILS|SUMMARY)$/;
+        var semanticTags =
+          /^(H[1-6]|IMG|NAV|MAIN|HEADER|FOOTER|ASIDE|SECTION|ARTICLE|FORM|LABEL|P|LI|UL|OL|DL|DT|DD)$/;
+        var interactiveRoles =
+          /^(button|link|textbox|checkbox|radio|switch|slider|spinbutton|combobox|listbox|option|menuitem|tab|searchbox)$/;
+        // This bridge inspects third-party markup. Treat its size and shape as
+        // untrusted so a pathological Messenger page cannot monopolize the
+        // webview or generate a huge IPC response.
+        var MAX_VISITED_NODES = 10000;
+        var MAX_ELEMENTS = 2000;
+        var MAX_OUTPUT_CHARS = 200000;
+        var elements = [];
+        var nextRef = 1;
+        var visitedNodes = 0;
+        var outputChars = 0;
+        var exhausted = false;
+
+        function mapVisible(node) {
+          if (node.hidden || node.getAttribute("aria-hidden") === "true") return false;
+          var style = getComputedStyle(node);
+          return style.display !== "none" && style.visibility !== "hidden";
+        }
+
+        function mapInteractiveText(node) {
+          if (!includeContent) return "";
+          return maskText((node.innerText || node.textContent || "").replace(/\s+/g, " ").trim(), 300);
+        }
+
+        function walk(node, depth, parentRef, ancestorsVisible) {
+          if (
+            exhausted ||
+            !node ||
+            depth > maxDepth ||
+            /^(SCRIPT|STYLE|NOSCRIPT|HEAD|META|LINK|TEMPLATE)$/.test(node.tagName)
+          )
+            return;
+          visitedNodes += 1;
+          if (visitedNodes > MAX_VISITED_NODES) {
+            exhausted = true;
+            return;
+          }
+          var visibleNow = ancestorsVisible && mapVisible(node);
+          // A hidden ancestor makes its complete subtree irrelevant to the
+          // semantic map. Prune it before reading text or walking children.
+          if (!visibleNow) return;
+          var role = (node.getAttribute("role") || "").toLowerCase();
+          var interactive =
+            interactiveTags.test(node.tagName) ||
+            interactiveRoles.test(role) ||
+            node.hasAttribute("contenteditable") ||
+            node.tabIndex >= 0;
+          var semantic = semanticTags.test(node.tagName) || !!role;
+          var directText = "";
+          // Preserve useful direct text on leaf semantic/plain nodes without
+          // serializing the complete subtree text for every ancestor.
+          if (includeContent && node.children.length === 0) {
+            for (var i = 0; i < node.childNodes.length; i++) {
+              if (node.childNodes[i].nodeType === 3) directText += node.childNodes[i].textContent || "";
+            }
+            directText = maskText(directText.replace(/\s+/g, " ").trim(), 300);
+          }
+          var shouldInclude =
+            interactive || semantic || (!!directText && node.children.length === 0);
+          var ownRef = parentRef;
+          if (shouldInclude && (!interactiveOnly || interactive)) {
+            ownRef = nextRef++;
+            var interactiveText =
+              interactive && !directText ? mapInteractiveText(node) : "";
+            var item = {
+              ref: ownRef,
+              tag: node.tagName.toLowerCase(),
+              interactive: interactive || undefined,
+              role: role || undefined,
+              text: (directText || interactiveText) || undefined,
+              ariaLabel: maskText(node.getAttribute("aria-label") || "", 200) || undefined,
+              href: maskedHref(node) || undefined,
+              id: maskText(node.id || "", 120) || undefined,
+              type: node.getAttribute("type") || undefined,
+              checked:
+                typeof node.checked === "boolean" ? node.checked : undefined,
+              disabled:
+                node.disabled === true || node.getAttribute("aria-disabled") === "true" || undefined,
+              parentRef: parentRef || undefined,
+              depth: depth,
+              visible: visibleNow,
+            };
+            Object.keys(item).forEach(function (key) {
+              if (item[key] === undefined) delete item[key];
+            });
+            var itemChars = safeStringify(item).length;
+            if (
+              elements.length >= MAX_ELEMENTS ||
+              outputChars + itemChars > MAX_OUTPUT_CHARS
+            ) {
+              exhausted = true;
+              return;
+            }
+            outputChars += itemChars;
+            elements.push(item);
+          }
+          for (var c = 0; c < node.children.length; c++) {
+            walk(node.children[c], depth + 1, ownRef, visibleNow);
+          }
+        }
+
+        roots.forEach(function (root) {
+          walk(root, 0, null, true);
+        });
+        var contentSource = roots
+          .filter(function (root) {
+            return mapVisible(root);
+          })
+          .map(function (root) {
+            return root.innerText || "";
+          })
+          .join(" ");
+        var content = includeContent
+          ? maskText(
+              contentSource.replace(/\s+/g, " ").trim(),
+              Math.min(20000, Math.max(0, MAX_OUTPUT_CHARS - outputChars)),
+            )
+          : "";
+        respond(
+          "get-page-map-response",
+          cid,
+          safeStringify({
+            url: location.href,
+            title: document.title,
+            viewport: { width: innerWidth, height: innerHeight },
+            elements: elements,
+            content: content,
+            scope: p.scopeSelector || undefined,
+            maxDepth: maxDepth,
+            truncated: exhausted || undefined,
+          }),
+        );
+      } catch (e) {
+        respond(
+          "get-page-map-response",
+          cid,
+          safeStringify({
+            url: location.href,
+            title: document.title,
+            viewport: { width: innerWidth, height: innerHeight },
+            elements: [],
+            content: "",
+            error: String(e),
+          }),
+        );
+      }
+    });
 
     // --- got-dom-content : full serialized DOM (no eval; CSP-safe) ------------
     listen("got-dom-content", function (ev) {

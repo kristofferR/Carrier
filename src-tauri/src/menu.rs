@@ -7,11 +7,12 @@ use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
 };
+use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 use crate::settings::{
-    apply_settings, save_settings, schedule_webview_data_clear, AppState, Settings,
+    apply_settings, save_settings, schedule_webview_data_clear, AppState, SaveOutcome, Settings,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
@@ -129,7 +130,19 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .close_window()
         .build()?;
 
-    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])
+    let shortcuts = mi(
+        "keyboard_shortcuts",
+        "Keyboard Shortcuts",
+        Some("CmdOrCtrl+/"),
+    )?;
+    let report_issue = mi("report_issue", "Report an Issue…", None)?;
+    let help = SubmenuBuilder::new(app, "Help")
+        .item(&shortcuts)
+        .separator()
+        .item(&report_issue)
+        .build()?;
+
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
 }
 
 /// The focused Messenger window (a `main`/`win-*` window), falling back to
@@ -145,24 +158,48 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 
 /// Apply a settings change made from the native menu: mutate, persist, re-apply.
 /// (Used for view-style toggles — not autostart, which syncs separately.)
-fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
-    let state = app.state::<AppState>();
-    // Mutate in place under the lock so concurrent callers can't read-modify-write
-    // a stale clone and lose each other's changes. Persist/apply after releasing
-    // it (apply_settings touches windows and must not run while holding the lock).
-    let (prev_theme, s) = {
-        let mut settings = state.settings.lock().unwrap();
-        let prev_theme = settings.theme.clone();
-        f(&mut settings);
-        (prev_theme, settings.clone())
-    };
-    if let Err(e) = save_settings(app, &s) {
-        log::error!("failed to save settings: {e}");
-    }
-    apply_settings(app, &s);
-    // macOS needs a window rebuild to re-theme the title bar; other platforms
-    // already re-themed the chrome live in apply_settings.
-    recreate_on_theme_change(app, &prev_theme, &s.theme);
+fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send + 'static) {
+    // Native menu callbacks run on the UI thread. Never wait for a settings
+    // transaction there: its owner may need that thread while applying window
+    // changes. Queue the whole ordered mutation away from the UI thread.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let worker_app = app.clone();
+        let state = app.state::<AppState>();
+        let _settings_worker = state.settings_worker.lock().await;
+        if let Err(e) = tauri::async_runtime::spawn_blocking(move || {
+            let state = worker_app.state::<AppState>();
+            // Build the next snapshot without publishing it in memory. A failed
+            // or superseded disk write must not leave runtime state ahead of
+            // persistence.
+            let (prev_theme, s) = {
+                let settings = state.settings.lock().unwrap();
+                let prev_theme = settings.theme.clone();
+                let mut next = settings.clone();
+                f(&mut next);
+                (prev_theme, next)
+            };
+            match save_settings(&worker_app, &s) {
+                Ok(SaveOutcome::Written) => {
+                    *state.settings.lock().unwrap() = s.clone();
+                    apply_settings(&worker_app, &s);
+                    // macOS needs a window rebuild to re-theme the title bar;
+                    // other platforms already re-themed the chrome live.
+                    recreate_on_theme_change(&worker_app, &prev_theme, &s.theme);
+                }
+                Ok(SaveOutcome::Superseded) => {
+                    log::warn!("native menu settings update was superseded");
+                }
+                Err(e) => {
+                    log::error!("failed to save settings: {e}");
+                }
+            }
+        })
+        .await
+        {
+            log::error!("native menu settings worker failed: {e}");
+        }
+    });
 }
 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
@@ -191,6 +228,17 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
         }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
+        "keyboard_shortcuts" => {
+            eval("window.__carrierToggleShortcuts && window.__carrierToggleShortcuts()")
+        }
+        "report_issue" => {
+            if let Err(error) = app.opener().open_url(
+                "https://github.com/kristofferR/Carrier/issues",
+                None::<String>,
+            ) {
+                log::warn!("failed to open issue tracker: {error}");
+            }
+        }
         // Dock/tray "recent conversations" items ("recent:<thread-id>"). Handled
         // here (the app-wide menu handler) only — the tray's own handler must
         // not repeat this, since every menu event is broadcast to all handlers.

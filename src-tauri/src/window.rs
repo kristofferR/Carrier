@@ -6,15 +6,19 @@ use tauri::{
     webview::{Color, DownloadEvent},
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
+use crate::custom_css::apply_custom_css;
 use crate::download::{
     downloads_dir, filename_from_url, is_allowed_download, is_unsafe_download, sanitize_filename,
     unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
-use crate::settings::{AppState, Settings, ZOOM_MAX, ZOOM_MIN};
+use crate::settings::{
+    load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
+};
 use crate::url_rules::{is_internal, unwrap_tracking};
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
@@ -53,7 +57,7 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
         .min_inner_size(420.0, 520.0)
@@ -61,6 +65,11 @@ pub(crate) fn build_app_window(
         .background_color(splash_background(settings))
         .user_agent(user_agent())
         .initialization_script(init_script(settings))
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                apply_custom_css(&window, payload.url());
+            }
+        })
         .on_navigation(|url| {
             // External tracking redirect -> open the real (web-only) destination.
             if let Some(real) = unwrap_tracking(url) {
@@ -125,7 +134,76 @@ pub(crate) fn build_app_window(
             // macOS: let the themed window background show through the title bar.
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
-        })
+        })?;
+    install_app_window_runtime_handler(app, &window);
+    Ok(window)
+}
+
+#[cfg(target_os = "windows")]
+fn should_auto_hide_windows_main(
+    settings: &Settings,
+    has_tray: bool,
+    revealing: bool,
+    focus_lost: bool,
+    minimized: bool,
+) -> bool {
+    has_tray
+        && !revealing
+        && ((focus_lost && settings.hide_on_focus_loss) || (minimized && settings.hide_on_minimize))
+}
+
+/// Reassert runtime-only window preferences after native state transitions.
+///
+/// Windows can restore an app-wide native menu while activating/resizing a
+/// window, so hiding the top menu only when settings are first applied is not
+/// durable enough. This handler also implements the Windows tray-oriented
+/// minimize/focus-loss options, but only for `main` and only while a tray icon
+/// actually exists; secondary windows would otherwise be impossible to reopen.
+#[cfg(target_os = "macos")]
+fn install_app_window_runtime_handler(_app: &tauri::AppHandle, _window: &WebviewWindow) {}
+
+#[cfg(not(target_os = "macos"))]
+fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
+    let handle = app.clone();
+    let event_window = window.clone();
+    #[cfg(target_os = "windows")]
+    let is_main = window.label() == "main";
+    window.on_window_event(move |event| {
+        let repair_hidden_menu =
+            matches!(event, WindowEvent::Focused(true) | WindowEvent::Resized(_));
+
+        #[cfg(target_os = "windows")]
+        let evaluate_auto_hide =
+            is_main && matches!(event, WindowEvent::Focused(false) | WindowEvent::Resized(_));
+        #[cfg(not(target_os = "windows"))]
+        let evaluate_auto_hide = false;
+
+        if !repair_hidden_menu && !evaluate_auto_hide {
+            return;
+        }
+
+        let settings = handle.state::<AppState>().settings.lock().unwrap().clone();
+        if repair_hidden_menu && settings.hide_menu_bar {
+            let _ = event_window.hide_menu();
+        }
+
+        #[cfg(target_os = "windows")]
+        if evaluate_auto_hide {
+            let state = handle.state::<AppState>();
+            let has_tray = state.tray.lock().unwrap().is_some();
+            let revealing = state
+                .revealing_main
+                .load(std::sync::atomic::Ordering::Acquire)
+                != 0;
+            let focus_lost = matches!(event, WindowEvent::Focused(false));
+            let minimized = matches!(event, WindowEvent::Resized(_))
+                && event_window.is_minimized().unwrap_or(false);
+            if should_auto_hide_windows_main(&settings, has_tray, revealing, focus_lost, minimized)
+            {
+                let _ = event_window.hide();
+            }
+        }
+    });
 }
 
 /// On macOS the window/title-bar theme is fixed at creation, so a live theme
@@ -142,6 +220,33 @@ pub(crate) fn recreate_on_theme_change(app: &tauri::AppHandle, prev: &str, next:
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _next: &str) {}
 
+fn persist_tray_notice_shown(app: &tauri::AppHandle) {
+    const MAX_ATTEMPTS: usize = 3;
+    let state = app.state::<AppState>();
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        // Merge the internal flag into the newest snapshot on disk rather than
+        // overwriting a concurrent Settings-window change with an older clone.
+        let mut latest = load_settings(app);
+        latest.tray_notice_shown = true;
+        match save_settings(app, &latest) {
+            Ok(SaveOutcome::Written) => {
+                state.settings.lock().unwrap().tray_notice_shown = true;
+                return;
+            }
+            Ok(SaveOutcome::Superseded) if attempt < MAX_ATTEMPTS => continue,
+            Ok(SaveOutcome::Superseded) => {
+                log::warn!("first tray notice state was repeatedly superseded");
+                return;
+            }
+            Err(error) => {
+                log::warn!("failed to persist first tray notice state: {error}");
+                return;
+            }
+        }
+    }
+}
+
 /// Install the `main` window's close behaviour: hide to the tray when
 /// `hide_on_close` is set and a tray exists, otherwise quit. Reinstalled on every
 /// `main` window the app creates (startup and after a themed rebuild) so the
@@ -150,11 +255,18 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
     let handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
-            let (hide, has_tray) = {
-                let state = handle.state::<AppState>();
-                let hide = state.settings.lock().unwrap().hide_on_close;
-                let has_tray = state.tray.lock().unwrap().is_some();
-                (hide, has_tray)
+            let state = handle.state::<AppState>();
+            let has_tray = state.tray.lock().unwrap().is_some();
+            let (hide, first_tray_notice) = {
+                let settings = state.settings.lock().unwrap();
+                let hide = settings.hide_on_close;
+                let notice = hide
+                    && has_tray
+                    && !settings.tray_notice_shown
+                    && !state
+                        .tray_notice_delivered
+                        .load(std::sync::atomic::Ordering::Acquire);
+                (hide, notice)
             };
             // Only hide to the tray if one was actually created (tray creation can
             // fail, e.g. on a Linux session without an AppIndicator); otherwise
@@ -164,6 +276,38 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                 api.prevent_close();
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w.hide();
+                }
+                if first_tray_notice {
+                    match handle
+                        .notification()
+                        .builder()
+                        .title("Carrier is still running")
+                        .body("Use the tray icon to reopen or quit Carrier.")
+                        .show()
+                    {
+                        Ok(()) => {
+                            state
+                                .tray_notice_delivered
+                                .store(true, std::sync::atomic::Ordering::Release);
+                            let handle = handle.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let worker_handle = handle.clone();
+                                let state = handle.state::<AppState>();
+                                let _settings_worker = state.settings_worker.lock().await;
+                                if let Err(error) =
+                                    tauri::async_runtime::spawn_blocking(move || {
+                                        persist_tray_notice_shown(&worker_handle);
+                                    })
+                                    .await
+                                {
+                                    log::error!("tray notice settings worker failed: {error}");
+                                }
+                            });
+                        }
+                        Err(error) => {
+                            log::warn!("failed to show first tray notice: {error}");
+                        }
+                    }
                 }
             } else {
                 handle.exit(0);
@@ -246,21 +390,40 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
         let s = state.settings.lock().unwrap();
         (s.always_on_top, theme_for(&s))
     };
-    let _settings_window =
-        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title(format!("{APP_TITLE} Settings"))
-            .inner_size(680.0, 720.0)
-            .min_inner_size(560.0, 620.0)
-            .resizable(true)
-            .maximizable(false)
-            .minimizable(false)
-            .always_on_top(aot)
-            .theme(theme)
-            .build();
+    match WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+        .title(format!("{APP_TITLE} Settings"))
+        .inner_size(680.0, 720.0)
+        .min_inner_size(560.0, 620.0)
+        .resizable(true)
+        .maximizable(false)
+        .minimizable(false)
+        .always_on_top(aot)
+        .theme(theme)
+        .build()
+    {
+        Ok(window) => {
+            #[cfg(target_os = "macos")]
+            drop(window);
 
-    #[cfg(not(target_os = "macos"))]
-    if let Ok(window) = _settings_window {
-        let _ = window.remove_menu();
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.remove_menu();
+
+            #[cfg(target_os = "windows")]
+            {
+                // Keep the local Settings webview alive when its close button is
+                // pressed. Rebuilding WebView2 repeatedly retains two unnamed
+                // shared-memory section handles per teardown, and reusing the same
+                // native window also prevents its removed menu from resurfacing.
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    }
+                });
+            }
+        }
+        Err(error) => log::error!("failed to create Settings window: {error}"),
     }
 }
 
@@ -275,7 +438,15 @@ fn init_script(settings: &Settings) -> String {
     carrierHost.endsWith('.facebook.com') ||
     carrierHost === 'messenger.com' ||
     carrierHost.endsWith('.messenger.com');
-  if (!carrierInjectable) return;
+  if (!carrierInjectable) {{
+    // Keep normal feature injection off Carrier's trusted local pages. Debug
+    // builds still need their MCP responder there so the connectivity screen
+    // can be exercised when Messenger itself is unreachable.
+    if (carrierHost === 'tauri.localhost') {{
+{INJECT_MCP_BRIDGE}
+    }}
+    return;
+  }}
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -404,6 +575,67 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_auto_hide_requires_both_the_matching_option_and_a_tray() {
+        let focus = Settings {
+            hide_on_focus_loss: true,
+            ..Default::default()
+        };
+        assert!(should_auto_hide_windows_main(
+            &focus, true, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, true, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, false, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &focus, true, true, true, false
+        ));
+
+        let minimize = Settings {
+            hide_on_minimize: true,
+            ..Default::default()
+        };
+        assert!(should_auto_hide_windows_main(
+            &minimize, true, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, true, false, true, false
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, false, false, false, true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &minimize, true, true, false, true
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_auto_hide_ignores_unrelated_events_and_disabled_options() {
+        assert!(!should_auto_hide_windows_main(
+            &Settings::default(),
+            true,
+            false,
+            true,
+            true
+        ));
+        assert!(!should_auto_hide_windows_main(
+            &Settings {
+                hide_on_focus_loss: true,
+                hide_on_minimize: true,
+                ..Default::default()
+            },
+            true,
+            false,
+            false,
+            false
+        ));
+    }
+
     #[test]
     fn init_script_waits_for_webview2_document_element() {
         let script = init_script(&Settings::default());
@@ -417,5 +649,27 @@ mod tests {
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
+    }
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
+        let script = init_script(&Settings::default());
+        let local_branch = script
+            .find("if (carrierHost === 'tauri.localhost')")
+            .unwrap();
+        let first_bridge = script.find("tauri-mcp guest bridge").unwrap();
+        let injectable_return = script
+            .find("    return;\n  }\n\n  // Prefer settings")
+            .unwrap();
+
+        assert!(local_branch < first_bridge);
+        assert!(first_bridge < injectable_return);
+        assert_eq!(
+            script
+                .matches("if (window.__CARRIER_MCP_BRIDGE__) return;")
+                .count(),
+            2
+        );
     }
 }

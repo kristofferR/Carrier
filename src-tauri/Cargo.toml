@@ -43,8 +43,6 @@ tauri-plugin-global-shortcut = "2"
 # build cost. `base64` decodes the avatar the page hands us as a PNG data URL.
 notify-rust = "4"
 base64 = "0.22"
-# Local wall-clock time for the do-not-disturb schedule (std only exposes UTC).
-# Already in the tree transitively, so it adds no extra build cost.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
@@ -56,6 +54,13 @@ tokio = { version = "1", features = ["time"] }
 # Dev-only (the `mcp` feature): webview inspection over a local socket.
 # Pinned to a rev: an unpinned git dep is a supply-chain/reproducibility snag.
 tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "d5e0b807f14c79de14bac15146fd5e730d4a1b89", optional = true }
+
+# Linux system-theme observation. `dark-light` already brings ashpd's
+# async-std backend into Linux builds; these direct declarations expose the
+# portal signal stream without adding another backend or dependency version.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.10", default-features = false, features = ["async-std"] }
+futures-util = "0.3"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window

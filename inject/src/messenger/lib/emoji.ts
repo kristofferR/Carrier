@@ -16,3 +16,23 @@ export function emojiGlyph(value: unknown): string {
   if (LABEL_TEXT_RE.test(text)) return "";
   return text;
 }
+
+export interface ReactionMenuChild {
+  glyphs: number;
+  role: string | null;
+}
+
+/**
+ * Messenger's compact reaction menu has 5–8 one-glyph slots followed by one
+ * glyph-free add-reaction button. Keeping this structural prevents reaction
+ * sizing from leaking into inline emoji or unrelated menus.
+ */
+export function isReactionMenuShape(children: ReactionMenuChild[]) {
+  if (children.length < 6 || children.length > 9) return false;
+  const addButton = children.at(-1);
+  return (
+    addButton?.glyphs === 0 &&
+    addButton.role === "button" &&
+    children.slice(0, -1).every((child) => child.glyphs === 1)
+  );
+}

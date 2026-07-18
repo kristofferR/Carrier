@@ -17,6 +17,8 @@ interface CarrierSettings {
   start_to_tray?: boolean;
   autostart?: boolean;
   hide_on_close?: boolean;
+  /** Internal one-time onboarding state; not exposed in Settings. */
+  tray_notice_shown?: boolean;
   multi_instance?: boolean;
   spellcheck?: boolean;
   unread_badge?: boolean;
@@ -26,11 +28,16 @@ interface CarrierSettings {
   theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
   hide_menu_bar?: boolean;
+  hide_on_minimize?: boolean;
+  hide_on_focus_loss?: boolean;
+  hide_taskbar_icon?: boolean;
   mute_notifications?: boolean;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;
   hide_names_avatars?: boolean;
   system_emoji?: boolean;
+  /** Pause video/GIF playback unless it follows a recent user interaction. */
+  stop_media_autoplay?: boolean;
   /** Page zoom in percent (30–200; 100 = no zoom). */
   zoom?: number;
   global_hotkey?: boolean;
@@ -50,6 +57,7 @@ interface Window {
   __carrierToast?: (msg: string) => void;
   __carrierCheckUpdates?: () => void;
   __carrierToggleSettings?: () => void;
+  __carrierToggleShortcuts?: () => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.

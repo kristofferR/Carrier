@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { emojiGlyph } from "./emoji";
+import { emojiGlyph, isReactionMenuShape } from "./emoji";
 
 describe("emojiGlyph", () => {
   test("passes through bare emoji", () => {
@@ -14,5 +14,40 @@ describe("emojiGlyph", () => {
     expect(emojiGlyph("😀".repeat(20))).toBe(""); // > 24 chars
     expect(emojiGlyph("")).toBe("");
     expect(emojiGlyph(null)).toBe("");
+  });
+});
+
+describe("isReactionMenuShape", () => {
+  test("accepts reaction slots plus one add-reaction button", () => {
+    expect(
+      isReactionMenuShape([
+        ...Array.from({ length: 6 }, () => ({ glyphs: 1, role: null })),
+        { glyphs: 0, role: "button" },
+      ]),
+    ).toBe(true);
+  });
+
+  test("rejects ordinary menus and a plus button containing an emoji", () => {
+    expect(
+      isReactionMenuShape([
+        { glyphs: 1, role: null },
+        { glyphs: 0, role: "button" },
+      ]),
+    ).toBe(false);
+    expect(
+      isReactionMenuShape([
+        ...Array.from({ length: 6 }, () => ({ glyphs: 1, role: null })),
+        { glyphs: 1, role: "button" },
+      ]),
+    ).toBe(false);
+  });
+
+  test("rejects an add-reaction button before the glyph slots", () => {
+    expect(
+      isReactionMenuShape([
+        { glyphs: 0, role: "button" },
+        ...Array.from({ length: 6 }, () => ({ glyphs: 1, role: null })),
+      ]),
+    ).toBe(false);
   });
 });

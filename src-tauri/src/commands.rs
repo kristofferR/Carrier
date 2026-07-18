@@ -1,9 +1,11 @@
-//! The `#[tauri::command]` handlers the local pages (Settings dialog, splash)
-//! invoke, plus the update check they share with the F2 shortcut.
+//! The `#[tauri::command]` handlers invoked by Carrier's trusted local pages
+//! (Settings dialog and splash).
 
 use tauri::{Manager, State, WebviewWindow};
+use tauri_plugin_notification::NotificationExt;
 use url::Url;
 
+use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
 use crate::settings::{
@@ -11,6 +13,29 @@ use crate::settings::{
 };
 use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
+
+const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+
+struct UpdateInstallGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl<'a> UpdateInstallGuard<'a> {
+    fn acquire(flag: &'a std::sync::atomic::AtomicBool) -> Result<Self, String> {
+        flag.compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .map(|_| Self(flag))
+        .map_err(|_| "an update install is already in progress".to_string())
+    }
+}
+
+impl Drop for UpdateInstallGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
 
 #[tauri::command]
 pub(crate) fn get_settings(state: State<AppState>) -> Settings {
@@ -25,9 +50,14 @@ fn store_settings(
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    let (prev_theme, prev_autostart, prev_global_hotkey) = {
+    let (prev_theme, prev_autostart, prev_global_hotkey, prev_automatic_update_checks) = {
         let prev = state.settings.lock().unwrap();
-        (prev.theme.clone(), prev.autostart, prev.global_hotkey)
+        (
+            prev.theme.clone(),
+            prev.autostart,
+            prev.global_hotkey,
+            prev.automatic_update_checks,
+        )
     };
     let mut effective = new.clone().sanitized();
     let mut sync_errors = Vec::new();
@@ -70,6 +100,9 @@ fn store_settings(
     }
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
+    if effective.automatic_update_checks && !prev_automatic_update_checks {
+        state.update_check_wake.notify_one();
+    }
     // macOS needs a window rebuild to re-theme the title bar; other platforms
     // already re-themed the chrome live in apply_settings.
     recreate_on_theme_change(app, &prev_theme, &effective.theme);
@@ -80,30 +113,203 @@ fn store_settings(
     }
 }
 
+async fn store_settings_off_main(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
+    let worker_app = app.clone();
+    let state = app.state::<AppState>();
+    let _settings_worker = state.settings_worker.lock().await;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        store_settings(&worker_app, &state, new)
+    })
+    .await
+    .map_err(|e| format!("settings worker failed: {e}"))?
+}
+
 #[tauri::command]
-pub(crate) fn set_settings(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-    new: Settings,
-) -> Result<Settings, String> {
-    store_settings(&app, &state, new)
+pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
+    store_settings_off_main(app, new).await
 }
 
 /// Reset all settings to their defaults.
 #[tauri::command]
-pub(crate) fn reset_settings(
-    app: tauri::AppHandle,
-    state: State<AppState>,
-) -> Result<Settings, String> {
-    store_settings(&app, &state, Settings::default())
+pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, String> {
+    store_settings_off_main(app, Settings::default()).await
 }
 
-/// Check GitHub releases for an update; download & install if found.
-#[cfg(not(target_os = "macos"))]
-pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
+async fn available_update_unlocked(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+    updater.check().await.map_err(|e| e.to_string())
+}
+
+async fn available_update(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let state = app.state::<AppState>();
+    let _operation_guard = state.update_checking.lock().await;
+    available_update_unlocked(app).await
+}
+
+fn should_surface_update(remembered: Option<&str>, discovered: Option<&str>) -> bool {
+    discovered.is_some() && remembered != discovered
+}
+
+fn remember_available_update(
+    app: &tauri::AppHandle,
+    update: Option<tauri_plugin_updater::Update>,
+) -> bool {
+    let state = app.state::<AppState>();
+    let mut remembered = state.update_available.lock().unwrap();
+    let is_new = should_surface_update(
+        remembered.as_ref().map(|update| update.version.as_str()),
+        update.as_ref().map(|update| update.version.as_str()),
+    );
+    *remembered = update;
+    is_new
+}
+
+/// Check GitHub releases without downloading or installing anything. Keeping
+/// this read-only lets Settings ask for explicit consent before an update
+/// replaces the running application and restarts it.
+#[tauri::command]
+pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    if app
+        .state::<AppState>()
+        .update_installing
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Err("an update install is already in progress".into());
+    }
+    match available_update(&app).await? {
+        Some(update) => {
+            let version = update.version.clone();
+            remember_available_update(&app, Some(update));
+            Ok(format!("available:{version}"))
+        }
+        None => {
+            remember_available_update(&app, None);
+            Ok("up-to-date".into())
+        }
+    }
+}
+
+/// Return the last version found by automatic/manual discovery without another
+/// network request. The trusted Settings page uses it to label its update
+/// button as soon as it opens.
+#[tauri::command]
+pub(crate) fn discovered_update(state: State<AppState>) -> Option<String> {
+    state
+        .update_available
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|update| update.version.clone())
+}
+
+async fn run_automatic_update_check(app: &tauri::AppHandle) {
+    let installing = app
+        .state::<AppState>()
+        .update_installing
+        .load(std::sync::atomic::Ordering::Acquire);
+    if installing {
+        return;
+    }
+
+    match available_update(app).await {
+        Ok(Some(update)) => {
+            // The preference may have been disabled while the network request
+            // was in flight, or an explicit install may have started after our
+            // initial guard. Honour both before showing anything.
+            let state = app.state::<AppState>();
+            if state
+                .update_installing
+                .load(std::sync::atomic::Ordering::Acquire)
+                || !state.settings.lock().unwrap().automatic_update_checks
+            {
+                return;
+            }
+            let version = update.version.clone();
+            if remember_available_update(app, Some(update)) {
+                let body = format!(
+                    "Carrier {} is available. Open Settings to review and install it.",
+                    version
+                );
+                if let Err(error) = app
+                    .notification()
+                    .builder()
+                    .title("Carrier update available")
+                    .body(body)
+                    .show()
+                {
+                    log::warn!("failed to surface available update: {error}");
+                }
+            }
+        }
+        Ok(None) => {
+            remember_available_update(app, None);
+        }
+        Err(error) => {
+            // Discovery is best-effort and must never interrupt startup or
+            // Messenger. Manual checks still return their errors to Settings.
+            log::warn!("automatic update check failed: {error}");
+        }
+    }
+}
+
+/// Check once when the app is ready, then every four hours while enabled.
+/// Enabling the preference wakes the task immediately rather than waiting for
+/// the next periodic tick.
+pub(crate) fn spawn_automatic_update_checks(app: tauri::AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let enabled = app
+                .state::<AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .automatic_update_checks;
+            if enabled {
+                run_automatic_update_check(&app).await;
+            }
+
+            let state = app.state::<AppState>();
+            let _ = tokio::time::timeout(
+                AUTOMATIC_UPDATE_INTERVAL,
+                state.update_check_wake.notified(),
+            )
+            .await;
+        }
+    });
+}
+
+async fn remembered_or_latest_update_unlocked(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    let remembered = app
+        .state::<AppState>()
+        .update_available
+        .lock()
+        .unwrap()
+        .clone();
+    match remembered {
+        Some(update) => Ok(Some(update)),
+        None => available_update_unlocked(app).await,
+    }
+}
+
+/// Download and install the retained discovery after the trusted Settings page
+/// has obtained explicit confirmation from the user. If no discovery exists,
+/// fall back to a fresh check for the manual "Check for updates" path.
+#[cfg(not(target_os = "macos"))]
+async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    // Keep every discovery request out until the complete download/install
+    // operation has finished. The atomic guard still rejects a second install
+    // immediately instead of leaving it waiting here.
+    let _operation_guard = state.update_checking.lock().await;
+    match remembered_or_latest_update_unlocked(app).await {
         Ok(Some(update)) => {
             update
                 .download_and_install(|_, _| {}, || {})
@@ -112,7 +318,7 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
             app.restart();
         }
         Ok(None) => Ok("up-to-date".into()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e),
     }
 }
 
@@ -122,11 +328,12 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
 /// publishes only the user-facing DMG, so we keep Tauri's update check and
 /// minisign verification, then mount/copy the verified DMG ourselves.
 #[cfg(target_os = "macos")]
-pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<AppState>();
+    // The macOS DMG download/replacement must be one operation with discovery;
+    // otherwise a periodic or manual check could contend with the updater.
+    let _operation_guard = state.update_checking.lock().await;
+    match remembered_or_latest_update_unlocked(app).await {
         Ok(Some(update)) => {
             let bytes = update
                 .download(|_, _| {}, || {})
@@ -136,13 +343,17 @@ pub(crate) async fn run_update_check(app: &tauri::AppHandle) -> Result<String, S
             app.restart();
         }
         Ok(None) => Ok("up-to-date".into()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e),
     }
 }
 
 #[tauri::command]
-pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
-    run_update_check(&app).await
+pub(crate) async fn install_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let _guard = UpdateInstallGuard::acquire(&state.update_installing)?;
+    run_update_install(&app).await
 }
 
 #[cfg(target_os = "macos")]
@@ -349,18 +560,26 @@ pub(crate) async fn connect_messenger(window: WebviewWindow) -> MessengerLoadSta
         Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
         Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
         Ok(Ok(Err(error))) => {
-            log::warn!("Messenger DNS preflight failed ({error:?}); navigating anyway");
-            navigate_to_messenger(&window)
+            log::warn!("Messenger DNS preflight failed ({error:?})");
+            error.into()
         }
-        Ok(Err(e)) => {
-            log::warn!("Messenger DNS preflight task failed: {e}; navigating anyway");
-            navigate_to_messenger(&window)
-        }
-        Err(_) => {
-            log::warn!("Messenger DNS preflight timed out; navigating anyway");
-            navigate_to_messenger(&window)
-        }
+        Ok(Err(e)) => MessengerLoadStatus::unexpected(
+            "Messenger check failed",
+            format!("DNS preflight task failed: {e}"),
+        ),
+        Err(_) => MessengerLoadStatus::unexpected(
+            "Messenger check timed out",
+            "The Messenger DNS preflight did not finish in time.".into(),
+        ),
     }
+}
+
+/// Bypass the OS DNS preflight when the user explicitly asks to try the
+/// webview's resolver (for example when a proxy or secure-DNS setup differs
+/// from the system resolver).
+#[tauri::command]
+pub(crate) fn open_messenger_anyway(window: WebviewWindow) -> MessengerLoadStatus {
+    navigate_to_messenger(&window)
 }
 
 /// Open the folder holding Carrier's log file, for attaching to bug reports.
@@ -370,4 +589,42 @@ pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(&dir).map_err(|e| e.to_string())
+}
+
+/// Create (without overwriting) and open the user-owned custom stylesheet.
+/// Called only from the trusted local Settings window.
+#[tauri::command]
+pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
+    let path = ensure_custom_css(&app)?;
+    open::that_detached(path).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_surface_update, UpdateInstallGuard};
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn update_install_guard_is_single_flight_and_releases_on_drop() {
+        let flag = AtomicBool::new(false);
+        let first = UpdateInstallGuard::acquire(&flag).unwrap();
+        assert!(
+            UpdateInstallGuard::acquire(&flag).is_err(),
+            "a concurrent update install must be rejected"
+        );
+
+        drop(first);
+        assert!(
+            UpdateInstallGuard::acquire(&flag).is_ok(),
+            "the guard must release after success or failure"
+        );
+    }
+
+    #[test]
+    fn update_discovery_only_surfaces_new_versions() {
+        assert!(should_surface_update(None, Some("1.4.0")));
+        assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
+        assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
+        assert!(!should_surface_update(Some("1.4.0"), None));
+    }
 }

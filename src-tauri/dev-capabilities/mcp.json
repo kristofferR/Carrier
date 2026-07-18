@@ -1,0 +1,18 @@
+{
+  "identifier": "mcp-event-listen",
+  "description": "Dev-only event listening used by the tauri-mcp responder. Added dynamically only when Carrier is compiled with the mcp Cargo feature.",
+  "windows": ["main", "win-*"],
+  "remote": {
+    "urls": [
+      "https://facebook.com",
+      "https://*.facebook.com",
+      "https://messenger.com",
+      "https://*.messenger.com",
+      "https://fbcdn.net",
+      "https://*.fbcdn.net",
+      "https://fbsbx.com",
+      "https://*.fbsbx.com"
+    ]
+  },
+  "permissions": ["core:event:allow-listen"]
+}

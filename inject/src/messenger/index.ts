@@ -10,6 +10,7 @@
  * script ran its sections in — capture-phase listeners on the same event fire
  * in registration order, so this order is part of the behaviour.
  */
+import { diag } from "./bridge";
 import { initAutoRefresh } from "./features/auto-refresh";
 import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
@@ -20,6 +21,7 @@ import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
 import { initLinkHandling } from "./features/link-handling";
 import { initLoginTidy } from "./features/login-tidy";
+import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
@@ -34,32 +36,42 @@ import { initThreadNav } from "./features/thread-nav";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initZoom } from "./features/zoom";
 
+function initFeature(name: string, init: () => void) {
+  try {
+    init();
+  } catch (error) {
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    diag(`init.${name}`, detail.slice(0, 500));
+  }
+}
+
 function main() {
-  initComposerKeys();
-  initShortcuts();
-  initZoom();
-  initSelectorHealth();
-  initSettingsButton();
-  initFunctionKeys();
-  initShortcutRegistry();
-  initLinkHandling();
-  initContextMenu();
-  initDownloadAnchors();
-  initSpellcheck();
-  initTelemetryBlocking();
-  initNotificationBridge();
-  initAutoRefresh();
-  initForceTheme();
-  initUnreadBadge();
-  initRecentThreads();
-  initThreadNav();
-  initHideNames();
-  initSystemEmoji();
-  initMediaPermissionWarning();
-  initCookieAutoDecline();
-  initLoginTidy();
-  initMediaViewer();
-  initFullscreenPolyfill();
+  initFeature("composer-keys", initComposerKeys);
+  initFeature("shortcuts", initShortcuts);
+  initFeature("zoom", initZoom);
+  initFeature("selector-health", initSelectorHealth);
+  initFeature("settings-button", initSettingsButton);
+  initFeature("function-keys", initFunctionKeys);
+  initFeature("shortcut-registry", initShortcutRegistry);
+  initFeature("link-handling", initLinkHandling);
+  initFeature("context-menu", initContextMenu);
+  initFeature("download-anchors", initDownloadAnchors);
+  initFeature("spellcheck", initSpellcheck);
+  initFeature("telemetry", initTelemetryBlocking);
+  initFeature("media-autoplay", initMediaAutoplay);
+  initFeature("notifications", initNotificationBridge);
+  initFeature("auto-refresh", initAutoRefresh);
+  initFeature("force-theme", initForceTheme);
+  initFeature("unread-badge", initUnreadBadge);
+  initFeature("recent-threads", initRecentThreads);
+  initFeature("thread-nav", initThreadNav);
+  initFeature("hide-names", initHideNames);
+  initFeature("system-emoji", initSystemEmoji);
+  initFeature("media-permissions", initMediaPermissionWarning);
+  initFeature("cookie-consent", initCookieAutoDecline);
+  initFeature("login-tidy", initLoginTidy);
+  initFeature("media-viewer", initMediaViewer);
+  initFeature("fullscreen", initFullscreenPolyfill);
 }
 
 // Tauri injects initialization scripts into subframes too (notably on

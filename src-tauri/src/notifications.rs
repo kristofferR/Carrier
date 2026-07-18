@@ -3,7 +3,7 @@
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux/Windows
 //! use notify-rust).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -50,6 +50,8 @@ pub(crate) struct NotifyMsg {
 
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
+const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
+const MAX_NOTIFICATIONS_PER_WINDOW: usize = 20;
 
 /// What to do with an incoming notification after deduplication.
 enum Delivery {
@@ -137,6 +139,43 @@ impl NotificationDeduper {
 }
 
 static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::new();
+
+#[derive(Default)]
+struct NotificationRateLimiter {
+    delivered: VecDeque<Instant>,
+    suppression_logged: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RateLimitDecision {
+    Allow,
+    SuppressAndLog,
+    Suppress,
+}
+
+impl NotificationRateLimiter {
+    fn classify(&mut self, now: Instant) -> RateLimitDecision {
+        while self
+            .delivered
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) > NOTIFICATION_RATE_WINDOW)
+        {
+            self.delivered.pop_front();
+        }
+        if self.delivered.len() >= MAX_NOTIFICATIONS_PER_WINDOW {
+            if self.suppression_logged {
+                return RateLimitDecision::Suppress;
+            }
+            self.suppression_logged = true;
+            return RateLimitDecision::SuppressAndLog;
+        }
+        self.suppression_logged = false;
+        self.delivered.push_back(now);
+        RateLimitDecision::Allow
+    }
+}
+
+static NOTIFICATION_RATE_LIMITER: OnceLock<Mutex<NotificationRateLimiter>> = OnceLock::new();
 
 /// A reload-safe conversation route kept for an emitted notification, with the
 /// time it was stored so the cap can evict the oldest rather than every route.
@@ -413,6 +452,18 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         return;
     }
 
+    let rate_decision = NOTIFICATION_RATE_LIMITER
+        .get_or_init(|| Mutex::new(NotificationRateLimiter::default()))
+        .lock()
+        .unwrap()
+        .classify(Instant::now());
+    if rate_decision == RateLimitDecision::SuppressAndLog {
+        log::warn!("carrier:notify suppressed by native rate limit");
+    }
+    if rate_decision != RateLimitDecision::Allow {
+        return;
+    }
+
     // Same redaction the page applies: generic title/body, no avatar.
     let title = if hide_preview || msg.title.trim().is_empty() {
         "Messenger".to_string()
@@ -443,32 +494,43 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     }
 
     #[cfg(not(target_os = "macos"))]
-    std::thread::spawn(move || {
-        let clicked = show_native_notification(&title, &body, image.as_deref(), sound);
-        // The notification has been shown and dismissed/clicked, so the OS is
-        // done with the avatar file — delete it now rather than leaving it for
-        // the next startup's clear_avatar_cache().
-        if let Some(path) = image.as_deref() {
-            let _ = std::fs::remove_file(path);
-        }
-        if clicked {
-            on_notification_click(app, id);
-        } else {
-            let _ = take_notification_route(id);
-        }
-    });
+    {
+        let app_id = app.config().identifier.clone();
+        std::thread::spawn(move || {
+            let clicked = show_native_notification(&title, &body, image.as_deref(), sound, &app_id);
+            // The notification has been shown and dismissed/clicked, so the OS is
+            // done with the avatar file — delete it now rather than leaving it for
+            // the next startup's clear_avatar_cache().
+            if let Some(path) = image.as_deref() {
+                let _ = std::fs::remove_file(path);
+            }
+            if clicked {
+                on_notification_click(app, id);
+            } else {
+                let _ = take_notification_route(id);
+            }
+        });
+    }
 }
 
-/// See the macOS variant. On Linux/Windows notify-rust's `wait_for_action`
-/// blocks until the notification closes; a freedesktop notification needs an
-/// explicit `default` action for a body click to be reported (it shows no
-/// button), which Windows toasts don't.
+/// A response represents a click unless the platform explicitly reports that
+/// the notification closed. In particular, Windows reports a toast body click
+/// as `Default` rather than as a named action.
+#[cfg(not(target_os = "macos"))]
+fn notification_response_was_clicked(response: &notify_rust::NotificationResponse) -> bool {
+    !matches!(response, notify_rust::NotificationResponse::Closed(_))
+}
+
+/// See the macOS variant. On Linux/Windows notify-rust blocks until the
+/// notification closes; a freedesktop notification needs an explicit `default`
+/// action for a body click to be reported (it shows no button).
 #[cfg(not(target_os = "macos"))]
 fn show_native_notification(
     title: &str,
     body: &str,
     image: Option<&std::path::Path>,
     sound: bool,
+    app_id: &str,
 ) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary(title);
@@ -476,6 +538,9 @@ fn show_native_notification(
         n.body(body);
     }
     if let Some(path) = image.and_then(|p| p.to_str()) {
+        #[cfg(windows)]
+        n.image_path(path);
+        #[cfg(unix)]
         n.icon(path);
     }
     // Windows toasts are silent unless a sound is named (notify-rust maps an
@@ -483,9 +548,14 @@ fn show_native_notification(
     // sound is on; when it's off, leaving `sound_name` unset already delivers
     // silently.
     #[cfg(windows)]
-    if sound {
-        n.sound_name("Default");
+    {
+        n.app_id(app_id);
+        if sound {
+            n.sound_name("Default");
+        }
     }
+    #[cfg(unix)]
+    let _ = app_id;
     // XDG servers pick their own default sound, so ask them not to play it.
     #[cfg(unix)]
     if !sound {
@@ -495,10 +565,8 @@ fn show_native_notification(
     n.action("default", "Open");
     let mut clicked = false;
     if let Ok(handle) = n.show() {
-        handle.wait_for_action(|action| {
-            // notify-rust reports `__closed` for a dismissal; anything else is an
-            // activation (the body or our `default`/`Open` action).
-            clicked = action != "__closed";
+        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            clicked = notification_response_was_clicked(response);
         });
     }
     clicked
@@ -608,6 +676,28 @@ mod tests {
         assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
     }
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn notification_responses_distinguish_activation_from_dismissal() {
+        use notify_rust::{CloseReason, NotificationResponse};
+
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Default
+        ));
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Action("open".into())
+        ));
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Reply("hello".into())
+        ));
+        assert!(!notification_response_was_clicked(
+            &NotificationResponse::Closed(CloseReason::Dismissed)
+        ));
+        assert!(!notification_response_was_clicked(
+            &NotificationResponse::Closed(CloseReason::Expired)
+        ));
+    }
+
     #[test]
     fn distinct_notification_ids_keep_independent_routes() {
         // Two notifications with unique ids must not clobber each other's route,
@@ -702,5 +792,30 @@ mod tests {
         assert!(deduper.should_deliver_at(&jane, now));
         assert!(deduper.should_deliver_at(&john, now));
         assert!(!deduper.should_deliver_at(&jane_replay, now));
+    }
+
+    #[test]
+    fn notification_rate_limiter_caps_bursts_and_recovers() {
+        let start = Instant::now();
+        let mut limiter = NotificationRateLimiter::default();
+
+        for offset in 0..MAX_NOTIFICATIONS_PER_WINDOW {
+            assert_eq!(
+                limiter.classify(start + Duration::from_millis(offset as u64)),
+                RateLimitDecision::Allow
+            );
+        }
+        assert_eq!(
+            limiter.classify(start + Duration::from_secs(30)),
+            RateLimitDecision::SuppressAndLog
+        );
+        assert_eq!(
+            limiter.classify(start + Duration::from_secs(31)),
+            RateLimitDecision::Suppress
+        );
+        assert_eq!(
+            limiter.classify(start + NOTIFICATION_RATE_WINDOW + Duration::from_millis(1)),
+            RateLimitDecision::Allow
+        );
     }
 }

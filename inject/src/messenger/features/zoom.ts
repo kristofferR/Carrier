@@ -21,6 +21,10 @@ function applyZoom(percent: number, fromSettings?: boolean) {
     document.body.style.transform = `scale(${scale})`;
     document.body.style.width = `${100 / scale}%`;
     document.body.style.height = `${100 / scale}%`;
+    // The transform does not resize the layout viewport, so features that
+    // position privacy masks and login surfaces off `resize` need an explicit
+    // relayout signal just like the non-Windows zoom path.
+    window.dispatchEvent(new Event("resize"));
   } else {
     document.documentElement.style.zoom = `${clamped}%`;
     window.dispatchEvent(new Event("resize"));
