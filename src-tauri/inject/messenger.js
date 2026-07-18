@@ -3076,8 +3076,11 @@
     const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
     const offset = viewerControlOffset(controlTops, currentOffset);
     if (!offset) return false;
-    element.setAttribute(attr, "");
-    element.style.setProperty(OFFSET, `${offset}px`);
+    if (!element.hasAttribute(attr)) element.setAttribute(attr, "");
+    const value = `${offset}px`;
+    if (element.style.getPropertyValue(OFFSET) !== value) {
+      element.style.setProperty(OFFSET, value);
+    }
     return true;
   };
   var actionGroupFor = (download, dialog) => {
