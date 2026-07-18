@@ -23,6 +23,10 @@ fn background_for_color_scheme(scheme: ColorScheme) -> Option<tauri::webview::Co
     }
 }
 
+fn should_log_portal_error(last_error: Option<&str>, message: &str) -> bool {
+    last_error != Some(message)
+}
+
 fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
     let follows_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
     if !follows_system {
@@ -69,7 +73,7 @@ async fn watch_portal_color_scheme(app: tauri::AppHandle) {
                 // running and retry in case the desktop service starts later,
                 // but do not write the same warning to disk every 30 seconds.
                 let message = error.to_string();
-                if last_error.as_deref() != Some(&message) {
+                if should_log_portal_error(last_error.as_deref(), &message) {
                     log::warn!("desktop color-scheme portal unavailable: {message}");
                     last_error = Some(message);
                 }
@@ -111,5 +115,18 @@ mod tests {
             background_for_color_scheme(ColorScheme::NoPreference),
             Some(tauri::webview::Color(255, 255, 255, 255))
         );
+    }
+
+    #[test]
+    fn repeated_portal_errors_are_not_logged_again() {
+        assert!(should_log_portal_error(None, "portal unavailable"));
+        assert!(!should_log_portal_error(
+            Some("portal unavailable"),
+            "portal unavailable"
+        ));
+        assert!(should_log_portal_error(
+            Some("portal unavailable"),
+            "portal restarted"
+        ));
     }
 }
