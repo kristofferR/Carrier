@@ -23,6 +23,8 @@ describe("hand-maintained injected assets", () => {
     expect(source).toContain("if (!visibleNow) return");
     expect(source).toContain("truncated: exhausted");
     expect(source).toContain("var contentSource = roots");
+    expect(source).toContain("return mapVisible(root)");
+    expect(source).not.toContain("return root.innerText || root.textContent");
     expect(source).toContain(
       "if (!scopes.length && document.documentElement) roots.push(document.documentElement)",
     );

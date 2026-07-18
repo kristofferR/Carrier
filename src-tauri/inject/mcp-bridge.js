@@ -1110,8 +1110,11 @@
           walk(root, 0, null, true);
         });
         var contentSource = roots
+          .filter(function (root) {
+            return mapVisible(root);
+          })
           .map(function (root) {
-            return root.innerText || root.textContent || "";
+            return root.innerText || "";
           })
           .join(" ");
         var content = includeContent
