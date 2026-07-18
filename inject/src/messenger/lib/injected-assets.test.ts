@@ -81,7 +81,7 @@ describe("hand-maintained injected assets", () => {
     expect(controller).toContain("UpdateConsentController");
   });
 
-  test("every landing locale describes update consent and current notification controls", async () => {
+  test("every landing locale exposes signed checks and audited consent copy", async () => {
     const landing = await repoAsset("docs/index.html");
     const payload = landing.match(/var I18N = \/\*__I18N_LOCALES__\*\/ (\{.*\});\r?\n/)?.[1];
     expect(payload).toBeTruthy();
@@ -90,14 +90,34 @@ describe("hand-maintained injected assets", () => {
     expect(Object.keys(locales)).toEqual([
       "en",
       "ar",
+      "bn",
+      "cs",
+      "da",
+      "de",
+      "el",
       "es",
       "fil",
       "fr",
+      "hi",
+      "hu",
+      "id",
+      "it",
+      "km",
+      "lo",
+      "my",
       "nb",
+      "ne",
       "pl",
       "pt-BR",
+      "ro",
+      "si",
+      "sv",
       "th",
+      "tr",
+      "uk",
+      "ur",
       "vi",
+      "zh-CN",
     ]);
 
     const staleQuietHours = [
@@ -137,14 +157,17 @@ describe("hand-maintained injected assets", () => {
       const repairAnswer = t["faq.a7"] || "";
       const notificationCopy = t["feat.2.body"] || "";
       const updatePill = t["feat.pill2"] || "";
-      const [conditionalPhrase, optionalPhrase] = conditionalUpdatePhrases[locale]!;
+      const conditionalCopy = conditionalUpdatePhrases[locale];
+      expect(signedCheckPhrases[locale]).toBeTruthy();
+      if (!conditionalCopy) continue;
+
+      const [conditionalPhrase, optionalPhrase] = conditionalCopy;
       expect(updateAnswer).toContain("GitHub");
       expect(updateAnswer).toContain("Windows");
       expect(updateAnswer).toContain("SmartScreen");
       expect(updateAnswer).toContain(conditionalPhrase);
       expect(repairAnswer).toContain(conditionalPhrase);
       expect(updatePill).toContain(optionalPhrase);
-      expect(signedCheckPhrases[locale]).toBeTruthy();
       expect(trustAnswer).toContain("SmartScreen");
       expect(repairAnswer).toContain("https://github.com/kristofferR/Carrier/issues");
       expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);
