@@ -59,7 +59,7 @@ tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "
 # async-std backend into Linux builds; these direct declarations expose the
 # portal signal stream without adding another backend or dependency version.
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.10", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 futures-util = "0.3"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
