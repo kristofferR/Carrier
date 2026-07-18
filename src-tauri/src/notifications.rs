@@ -494,32 +494,43 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     }
 
     #[cfg(not(target_os = "macos"))]
-    std::thread::spawn(move || {
-        let clicked = show_native_notification(&title, &body, image.as_deref(), sound);
-        // The notification has been shown and dismissed/clicked, so the OS is
-        // done with the avatar file — delete it now rather than leaving it for
-        // the next startup's clear_avatar_cache().
-        if let Some(path) = image.as_deref() {
-            let _ = std::fs::remove_file(path);
-        }
-        if clicked {
-            on_notification_click(app, id);
-        } else {
-            let _ = take_notification_route(id);
-        }
-    });
+    {
+        let app_id = app.config().identifier.clone();
+        std::thread::spawn(move || {
+            let clicked = show_native_notification(&title, &body, image.as_deref(), sound, &app_id);
+            // The notification has been shown and dismissed/clicked, so the OS is
+            // done with the avatar file — delete it now rather than leaving it for
+            // the next startup's clear_avatar_cache().
+            if let Some(path) = image.as_deref() {
+                let _ = std::fs::remove_file(path);
+            }
+            if clicked {
+                on_notification_click(app, id);
+            } else {
+                let _ = take_notification_route(id);
+            }
+        });
+    }
 }
 
-/// See the macOS variant. On Linux/Windows notify-rust's `wait_for_action`
-/// blocks until the notification closes; a freedesktop notification needs an
-/// explicit `default` action for a body click to be reported (it shows no
-/// button), which Windows toasts don't.
+/// A response represents a click unless the platform explicitly reports that
+/// the notification closed. In particular, Windows reports a toast body click
+/// as `Default` rather than as a named action.
+#[cfg(not(target_os = "macos"))]
+fn notification_response_was_clicked(response: &notify_rust::NotificationResponse) -> bool {
+    !matches!(response, notify_rust::NotificationResponse::Closed(_))
+}
+
+/// See the macOS variant. On Linux/Windows notify-rust blocks until the
+/// notification closes; a freedesktop notification needs an explicit `default`
+/// action for a body click to be reported (it shows no button).
 #[cfg(not(target_os = "macos"))]
 fn show_native_notification(
     title: &str,
     body: &str,
     image: Option<&std::path::Path>,
     sound: bool,
+    app_id: &str,
 ) -> bool {
     let mut n = notify_rust::Notification::new();
     n.summary(title);
@@ -527,6 +538,9 @@ fn show_native_notification(
         n.body(body);
     }
     if let Some(path) = image.and_then(|p| p.to_str()) {
+        #[cfg(windows)]
+        n.image_path(path);
+        #[cfg(unix)]
         n.icon(path);
     }
     // Windows toasts are silent unless a sound is named (notify-rust maps an
@@ -534,9 +548,14 @@ fn show_native_notification(
     // sound is on; when it's off, leaving `sound_name` unset already delivers
     // silently.
     #[cfg(windows)]
-    if sound {
-        n.sound_name("Default");
+    {
+        n.app_id(app_id);
+        if sound {
+            n.sound_name("Default");
+        }
     }
+    #[cfg(unix)]
+    let _ = app_id;
     // XDG servers pick their own default sound, so ask them not to play it.
     #[cfg(unix)]
     if !sound {
@@ -546,10 +565,8 @@ fn show_native_notification(
     n.action("default", "Open");
     let mut clicked = false;
     if let Ok(handle) = n.show() {
-        handle.wait_for_action(|action| {
-            // notify-rust reports `__closed` for a dismissal; anything else is an
-            // activation (the body or our `default`/`Open` action).
-            clicked = action != "__closed";
+        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            clicked = notification_response_was_clicked(response);
         });
     }
     clicked
@@ -657,6 +674,28 @@ mod tests {
         assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
         assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
         assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn notification_responses_distinguish_activation_from_dismissal() {
+        use notify_rust::{CloseReason, NotificationResponse};
+
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Default
+        ));
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Action("open".into())
+        ));
+        assert!(notification_response_was_clicked(
+            &NotificationResponse::Reply("hello".into())
+        ));
+        assert!(!notification_response_was_clicked(
+            &NotificationResponse::Closed(CloseReason::Dismissed)
+        ));
+        assert!(!notification_response_was_clicked(
+            &NotificationResponse::Closed(CloseReason::Expired)
+        ));
     }
 
     #[test]
