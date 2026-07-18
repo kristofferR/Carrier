@@ -999,7 +999,7 @@
             } catch (_) {}
           });
         }
-        if (!roots.length && document.documentElement) roots.push(document.documentElement);
+        if (!scopes.length && document.documentElement) roots.push(document.documentElement);
 
         var interactiveTags = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|DETAILS|SUMMARY)$/;
         var semanticTags =
