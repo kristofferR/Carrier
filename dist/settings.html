@@ -386,6 +386,8 @@
       window.addEventListener("focus", refresh);
 
       document.getElementById("check").onclick = async () => {
+        const button = document.getElementById("check");
+        button.disabled = true;
         setStatus("Checking for updates…");
         let installing = false;
         try {
@@ -409,6 +411,8 @@
         } catch (e) {
           setStatus(installing ? "Update install failed." : "Update check failed.");
           console.error(e);
+        } finally {
+          button.disabled = false;
         }
       };
 

@@ -143,10 +143,18 @@ static NOTIFICATION_DEDUPER: OnceLock<Mutex<NotificationDeduper>> = OnceLock::ne
 #[derive(Default)]
 struct NotificationRateLimiter {
     delivered: VecDeque<Instant>,
+    suppression_logged: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RateLimitDecision {
+    Allow,
+    SuppressAndLog,
+    Suppress,
 }
 
 impl NotificationRateLimiter {
-    fn allow(&mut self, now: Instant) -> bool {
+    fn classify(&mut self, now: Instant) -> RateLimitDecision {
         while self
             .delivered
             .front()
@@ -155,10 +163,15 @@ impl NotificationRateLimiter {
             self.delivered.pop_front();
         }
         if self.delivered.len() >= MAX_NOTIFICATIONS_PER_WINDOW {
-            return false;
+            if self.suppression_logged {
+                return RateLimitDecision::Suppress;
+            }
+            self.suppression_logged = true;
+            return RateLimitDecision::SuppressAndLog;
         }
+        self.suppression_logged = false;
         self.delivered.push_back(now);
-        true
+        RateLimitDecision::Allow
     }
 }
 
@@ -439,13 +452,15 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         return;
     }
 
-    if !NOTIFICATION_RATE_LIMITER
+    let rate_decision = NOTIFICATION_RATE_LIMITER
         .get_or_init(|| Mutex::new(NotificationRateLimiter::default()))
         .lock()
         .unwrap()
-        .allow(Instant::now())
-    {
+        .classify(Instant::now());
+    if rate_decision == RateLimitDecision::SuppressAndLog {
         log::warn!("carrier:notify suppressed by native rate limit");
+    }
+    if rate_decision != RateLimitDecision::Allow {
         return;
     }
 
@@ -746,9 +761,22 @@ mod tests {
         let mut limiter = NotificationRateLimiter::default();
 
         for offset in 0..MAX_NOTIFICATIONS_PER_WINDOW {
-            assert!(limiter.allow(start + Duration::from_millis(offset as u64)));
+            assert_eq!(
+                limiter.classify(start + Duration::from_millis(offset as u64)),
+                RateLimitDecision::Allow
+            );
         }
-        assert!(!limiter.allow(start + Duration::from_secs(30)));
-        assert!(limiter.allow(start + NOTIFICATION_RATE_WINDOW + Duration::from_millis(1)));
+        assert_eq!(
+            limiter.classify(start + Duration::from_secs(30)),
+            RateLimitDecision::SuppressAndLog
+        );
+        assert_eq!(
+            limiter.classify(start + Duration::from_secs(31)),
+            RateLimitDecision::Suppress
+        );
+        assert_eq!(
+            limiter.classify(start + NOTIFICATION_RATE_WINDOW + Duration::from_millis(1)),
+            RateLimitDecision::Allow
+        );
     }
 }

@@ -9,4 +9,12 @@ describe("hand-maintained injected assets", () => {
 
     expect(source).not.toContain("\0");
   });
+
+  test("release capabilities cannot listen for app events", async () => {
+    const release = await repoAsset("src-tauri/capabilities/default.json");
+    const development = await repoAsset("src-tauri/dev-capabilities/mcp.json");
+
+    expect(release).not.toContain("core:event:allow-listen");
+    expect(development).toContain("core:event:allow-listen");
+  });
 });

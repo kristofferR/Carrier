@@ -192,6 +192,8 @@ pub fn run() {
             settings: Mutex::new(initial.clone()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
+            update_installing: std::sync::atomic::AtomicBool::new(false),
+            tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
         })
@@ -207,6 +209,12 @@ pub fn run() {
             commands::open_log_folder
         ])
         .setup(move |app| {
+            // Event listening is needed only by the development MCP responder.
+            // Add it dynamically so release builds never grant remote Facebook
+            // scripts access to app events.
+            #[cfg(feature = "mcp")]
+            app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
+
             clear_pending_webview_data(app.handle());
 
             let mut settings = load_settings(app.handle());

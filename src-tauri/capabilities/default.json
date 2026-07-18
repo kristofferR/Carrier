@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal capabilities for Carrier's Messenger windows. Every listed remote origin's own scripts—not just Carrier's injection—can call these commands, so grant only the event bridge, unread badge, notification permission query, and scoped external opener that the page actually uses. Event listen is retained for the dev-only MCP responder; release page features only emit. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft.",
+  "description": "Minimal release capabilities for Carrier's Messenger windows. Every listed remote origin's own scripts—not just Carrier's injection—can call these commands, so grant only event emission, unread badge, notification permission query, and the scoped external opener that the page actually uses. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -17,7 +17,6 @@
   },
   "permissions": [
     "core:event:allow-emit",
-    "core:event:allow-listen",
     "core:window:allow-set-badge-count",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

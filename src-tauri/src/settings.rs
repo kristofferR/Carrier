@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -124,10 +124,16 @@ pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
     pub(crate) tray: Mutex<Option<TrayIcon>>,
     pub(crate) next_window: AtomicUsize,
+    /// Serializes update installation even if the trusted Settings page is
+    /// invoked concurrently from multiple windows or automation.
+    pub(crate) update_installing: AtomicBool,
+    /// Prevents a successfully delivered first tray notice from repeating in
+    /// the current process even while its settings write is being merged.
+    pub(crate) tray_notice_delivered: AtomicBool,
     /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
     /// is between destroying and rebuilding, so the run loop doesn't exit when
     /// the window count hits zero.
-    pub(crate) recreating: std::sync::atomic::AtomicBool,
+    pub(crate) recreating: AtomicBool,
     /// The page-scraped recent-conversations list backing the Dock/tray menus.
     /// In memory only — never persisted (see `carrier:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,

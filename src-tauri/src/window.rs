@@ -15,7 +15,9 @@ use crate::download::{
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
-use crate::settings::{save_settings, AppState, Settings, ZOOM_MAX, ZOOM_MIN};
+use crate::settings::{
+    load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
+};
 use crate::url_rules::{is_internal, unwrap_tracking};
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
@@ -143,6 +145,36 @@ pub(crate) fn recreate_on_theme_change(app: &tauri::AppHandle, prev: &str, next:
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _next: &str) {}
 
+fn persist_tray_notice_shown(app: &tauri::AppHandle) {
+    const MAX_ATTEMPTS: usize = 3;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        // Merge the internal flag into the newest snapshot on disk rather than
+        // overwriting a concurrent Settings-window change with an older clone.
+        let mut latest = load_settings(app);
+        latest.tray_notice_shown = true;
+        match save_settings(app, &latest) {
+            Ok(SaveOutcome::Written) => {
+                app.state::<AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .tray_notice_shown = true;
+                return;
+            }
+            Ok(SaveOutcome::Superseded) if attempt < MAX_ATTEMPTS => continue,
+            Ok(SaveOutcome::Superseded) => {
+                log::warn!("first tray notice state was repeatedly superseded");
+                return;
+            }
+            Err(error) => {
+                log::warn!("failed to persist first tray notice state: {error}");
+                return;
+            }
+        }
+    }
+}
+
 /// Install the `main` window's close behaviour: hide to the tray when
 /// `hide_on_close` is set and a tray exists, otherwise quit. Reinstalled on every
 /// `main` window the app creates (startup and after a themed rebuild) so the
@@ -154,21 +186,16 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
             let state = handle.state::<AppState>();
             let has_tray = state.tray.lock().unwrap().is_some();
             let (hide, first_tray_notice) = {
-                let mut settings = state.settings.lock().unwrap();
+                let settings = state.settings.lock().unwrap();
                 let hide = settings.hide_on_close;
-                let notice = if hide && has_tray && !settings.tray_notice_shown {
-                    settings.tray_notice_shown = true;
-                    Some(settings.clone())
-                } else {
-                    None
-                };
+                let notice = hide
+                    && has_tray
+                    && !settings.tray_notice_shown
+                    && !state
+                        .tray_notice_delivered
+                        .load(std::sync::atomic::Ordering::Acquire);
                 (hide, notice)
             };
-            if let Some(settings) = first_tray_notice.as_ref() {
-                if let Err(error) = save_settings(&handle, settings) {
-                    log::warn!("failed to persist first tray notice state: {error}");
-                }
-            }
             // Only hide to the tray if one was actually created (tray creation can
             // fail, e.g. on a Linux session without an AppIndicator); otherwise
             // closing the main window quits the app (don't let an open Settings
@@ -178,13 +205,24 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w.hide();
                 }
-                if first_tray_notice.is_some() {
-                    let _ = handle
+                if first_tray_notice {
+                    match handle
                         .notification()
                         .builder()
                         .title("Carrier is still running")
                         .body("Use the tray icon to reopen or quit Carrier.")
-                        .show();
+                        .show()
+                    {
+                        Ok(()) => {
+                            state
+                                .tray_notice_delivered
+                                .store(true, std::sync::atomic::Ordering::Release);
+                            persist_tray_notice_shown(&handle);
+                        }
+                        Err(error) => {
+                            log::warn!("failed to show first tray notice: {error}");
+                        }
+                    }
                 }
             } else {
                 handle.exit(0);

@@ -12,6 +12,27 @@ use crate::settings::{
 use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
+struct UpdateInstallGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl<'a> UpdateInstallGuard<'a> {
+    fn acquire(flag: &'a std::sync::atomic::AtomicBool) -> Result<Self, String> {
+        flag.compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .map(|_| Self(flag))
+        .map_err(|_| "an update install is already in progress".to_string())
+    }
+}
+
+impl Drop for UpdateInstallGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 #[tauri::command]
 pub(crate) fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
@@ -156,7 +177,11 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub(crate) async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+pub(crate) async fn install_update(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let _guard = UpdateInstallGuard::acquire(&state.update_installing)?;
     run_update_install(&app).await
 }
 
@@ -385,4 +410,26 @@ pub(crate) fn open_log_folder(app: tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     open::that_detached(&dir).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateInstallGuard;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn update_install_guard_is_single_flight_and_releases_on_drop() {
+        let flag = AtomicBool::new(false);
+        let first = UpdateInstallGuard::acquire(&flag).unwrap();
+        assert!(
+            UpdateInstallGuard::acquire(&flag).is_err(),
+            "a concurrent update install must be rejected"
+        );
+
+        drop(first);
+        assert!(
+            UpdateInstallGuard::acquire(&flag).is_ok(),
+            "the guard must release after success or failure"
+        );
+    }
 }
