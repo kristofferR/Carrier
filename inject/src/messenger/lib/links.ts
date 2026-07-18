@@ -26,7 +26,7 @@ function isAuth(u: URL): boolean {
 // the real browser — Carrier only wraps Messenger, and the stripped-chrome CSS
 // renders the rest of Facebook broken.
 const FACEBOOK_APP_PATH_RE =
-  /^\/(messages|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
+  /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
 
 /** Classify an href (resolved against `base`) as external (real browser) or not. */
 export function classifyHref(href: string, base: string): { external: boolean } {

@@ -940,7 +940,7 @@
     const host = u.hostname.toLowerCase();
     return AUTH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
   }
-  var FACEBOOK_APP_PATH_RE = /^\/(messages|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
+  var FACEBOOK_APP_PATH_RE = /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
   function classifyHref(href, base) {
     try {
       const u = new URL(href, base);

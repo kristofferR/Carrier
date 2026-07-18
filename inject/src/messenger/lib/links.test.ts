@@ -34,6 +34,13 @@ describe("classifyHref", () => {
   test("keeps Messenger and auth paths on facebook.com in-app", () => {
     expect(classifyHref("https://www.facebook.com/messages", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/messages/e2ee/t/5/", BASE).external).toBe(false);
+    expect(
+      classifyHref("https://www.facebook.com/messenger_media/attachment/?id=1", BASE).external,
+    ).toBe(false);
+    expect(
+      classifyHref("https://web.facebook.com/messenger_media/attachment/123", BASE).external,
+    ).toBe(false);
+    expect(classifyHref("/messenger_media/attachment/?id=1", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/t/12345", BASE).external).toBe(false);
     expect(classifyHref("https://web.facebook.com/messages/t/5/", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/login.php?next=x", BASE).external).toBe(false);
@@ -42,6 +49,12 @@ describe("classifyHref", () => {
     expect(classifyHref("https://www.facebook.com/recover/initiate", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/reg/", BASE).external).toBe(false);
     expect(classifyHref("https://www.facebook.com/r.php", BASE).external).toBe(false);
+    expect(classifyHref("https://www.facebook.com/messenger_media_evil/1", BASE).external).toBe(
+      true,
+    );
+    expect(classifyHref("https://www.facebook.com/messenger_media-old/1", BASE).external).toBe(
+      true,
+    );
   });
 
   test("sends non-Facebook sites to the real browser", () => {
