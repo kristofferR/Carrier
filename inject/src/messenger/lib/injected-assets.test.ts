@@ -75,7 +75,7 @@ describe("hand-maintained injected assets", () => {
       repoAsset("dist/settings-update.js"),
     ]);
 
-    expect(settings).toContain('<button class="action" id="check" disabled>');
+    expect(settings).toContain('<button class="action" id="check" type="button" disabled>');
     expect(settings).toContain('<script src="settings-update.js"></script>');
     expect(controller).toContain("GENERATED FILE — DO NOT EDIT");
     expect(controller).toContain("UpdateConsentController");
