@@ -86,6 +86,10 @@ export function initDownloadAnchors() {
       const a = (e.target as Element | null)?.closest?.("a[download]") as HTMLAnchorElement | null;
       const href = a?.href;
       if (!a || !href || !/^(blob:|data:|https?:)/i.test(href)) return;
+      // downloadSrc() creates this one-shot anchor to enter Tauri's native
+      // download pipeline. Intercepting it again would recurse forever, never
+      // reach the WebView hook, and continuously reset the success toast.
+      if (a.hasAttribute("data-carrier-native-download")) return;
       a.removeAttribute("target");
       e.preventDefault();
       e.stopImmediatePropagation();

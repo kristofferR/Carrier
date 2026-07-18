@@ -2,6 +2,7 @@
 // Right-click an image, video or link to get the relevant actions
 // (download / copy / copy address / open in browser), matching the original.
 import { openUrl, toast } from "../bridge";
+import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
 const MAX_BLOB = 512 * 1024 * 1024;
@@ -32,6 +33,7 @@ export async function downloadSrc(src: string, fallbackName: string) {
   const blob = await res.blob();
   if (blob.size > MAX_BLOB) throw new Error("file too large");
   const href = URL.createObjectURL(blob);
+  const completion = waitForNativeDownload(window, href);
   let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
   if (!name.includes(".")) {
     const ext = ((blob.type || "").split("/")[1] || "").split(";")[0];
@@ -40,11 +42,16 @@ export async function downloadSrc(src: string, fallbackName: string) {
   const a = document.createElement("a");
   a.href = href;
   a.download = name;
+  a.setAttribute("data-carrier-native-download", "");
   a.style.display = "none";
   document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 10000);
+  try {
+    a.click();
+    await completion;
+  } finally {
+    a.remove();
+    URL.revokeObjectURL(href);
+  }
 }
 
 async function copyImageSrc(src: string) {

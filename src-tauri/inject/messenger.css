@@ -38,6 +38,19 @@ body:not(:has(div[role="dialog"][aria-label]:not([hidden] *))) div[role="banner"
   --header-height: 56px !important;
 }
 
+/* Facebook independently positions the media viewer's close and action
+   controls, and either group can end up partly above the WebView on different
+   platforms/window sizes. messenger.js measures the visible controls and
+   supplies only the downward offset needed to retain an 8px safe inset. Use
+   the individual translate property so Facebook's own transforms survive. */
+body:has(div[role="dialog"][aria-label]:not([hidden] *))
+  :is(
+    div[role="banner"][data-carrier-media-controls],
+    [data-carrier-media-actions]
+  ) {
+  translate: 0 var(--carrier-media-controls-offset, 0px) !important;
+}
+
 /* Inside the banner, hide the bits that are pure Facebook (logo, global search,
    center nav links, the nav button cluster) but leave dialog controls alone. */
 div[role="banner"] a[aria-label="Facebook"],

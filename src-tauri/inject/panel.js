@@ -60,6 +60,7 @@
   function main() {
     let toastEl = null;
     let toastTimer;
+    let toastRemoveTimer;
     window.__carrierToast = (msg) => {
       if (!toastEl) {
         toastEl = document.createElement("div");
@@ -92,9 +93,16 @@
         el.style.transform = "translateX(-50%) translateY(0)";
       });
       clearTimeout(toastTimer);
+      clearTimeout(toastRemoveTimer);
       toastTimer = setTimeout(() => {
         el.style.opacity = "0";
         el.style.transform = "translateX(-50%) translateY(8px)";
+        toastRemoveTimer = setTimeout(() => {
+          if (toastEl === el) {
+            el.remove();
+            toastEl = null;
+          }
+        }, 250);
       }, 2600);
     };
     window.__carrierCheckUpdates = () => {

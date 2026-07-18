@@ -150,6 +150,37 @@
     );
   }
 
+  // inject/src/messenger/lib/download-completion.ts
+  var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+  function detailFor(event) {
+    const detail = event.detail;
+    if (!detail || typeof detail !== "object") return null;
+    const candidate = detail;
+    if (typeof candidate.url !== "string" || typeof candidate.success !== "boolean") return null;
+    return { url: candidate.url, success: candidate.success };
+  }
+  function waitForNativeDownload(target, expectedUrl, timeoutMs = 12e4) {
+    return new Promise((resolve, reject) => {
+      let timer;
+      const cleanup = () => {
+        clearTimeout(timer);
+        target.removeEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+      };
+      const onFinished = (event) => {
+        const detail = detailFor(event);
+        if (!detail || detail.url !== expectedUrl) return;
+        cleanup();
+        if (detail.success) resolve();
+        else reject(new Error("native download failed"));
+      };
+      target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+      timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("native download timed out"));
+      }, timeoutMs);
+    });
+  }
+
   // inject/src/messenger/lib/downloads.ts
   var filenameFromUrl = (u, base) => {
     try {
@@ -187,6 +218,7 @@
     const blob = await res.blob();
     if (blob.size > MAX_BLOB) throw new Error("file too large");
     const href = URL.createObjectURL(blob);
+    const completion = waitForNativeDownload(window, href);
     let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
     if (!name.includes(".")) {
       const ext = ((blob.type || "").split("/")[1] || "").split(";")[0];
@@ -195,11 +227,16 @@
     const a = document.createElement("a");
     a.href = href;
     a.download = name;
+    a.setAttribute("data-carrier-native-download", "");
     a.style.display = "none";
     document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(href), 1e4);
+    try {
+      a.click();
+      await completion;
+    } finally {
+      a.remove();
+      URL.revokeObjectURL(href);
+    }
   }
   async function copyImageSrc(src) {
     const res = await fetch(src);
@@ -596,6 +633,7 @@
         const a = e.target?.closest?.("a[download]");
         const href = a?.href;
         if (!a || !href || !/^(blob:|data:|https?:)/i.test(href)) return;
+        if (a.hasAttribute("data-carrier-native-download")) return;
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -3015,6 +3053,92 @@
     setTimeout(() => apply(true), 4e3);
   }
 
+  // inject/src/messenger/lib/viewer-controls.ts
+  var SAFE_TOP = 8;
+  var MAX_OFFSET = 64;
+  function viewerControlOffset(controlTops, appliedOffset = 0) {
+    const naturalTops = controlTops.filter(Number.isFinite).map((top) => top - (Number.isFinite(appliedOffset) ? appliedOffset : 0));
+    if (!naturalTops.length) return 0;
+    return Math.min(MAX_OFFSET, Math.max(0, Math.ceil(SAFE_TOP - Math.min(...naturalTops))));
+  }
+
+  // inject/src/messenger/features/viewer-controls.ts
+  var DIALOG = 'div[role="dialog"][aria-label]:not([hidden] *)';
+  var BANNER = 'div[role="banner"]';
+  var CONTROL = 'a[href], button, [role="button"]';
+  var BANNER_ATTR = "data-carrier-media-controls";
+  var ACTIONS_ATTR = "data-carrier-media-actions";
+  var OFFSET = "--carrier-media-controls-offset";
+  var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control) => control.getBoundingClientRect()).filter(
+    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && rect.top < 96 && rect.right > 0 && rect.left < window.innerWidth
+  );
+  var applyOffset = (element, controlTops, attr) => {
+    const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
+    const offset = viewerControlOffset(controlTops, currentOffset);
+    if (!offset) return false;
+    element.setAttribute(attr, "");
+    element.style.setProperty(OFFSET, `${offset}px`);
+    return true;
+  };
+  var actionGroupFor = (download, dialog) => {
+    let candidate = download;
+    for (let parent = download.parentElement; parent && parent !== dialog; parent = parent.parentElement) {
+      const rect = parent.getBoundingClientRect();
+      const controls = visibleControls(parent);
+      if (controls.length >= 2 && rect.width <= 240 && rect.height <= 96) return parent;
+      if (rect.width <= 240 && rect.height <= 96) candidate = parent;
+    }
+    return candidate;
+  };
+  function initViewerControls() {
+    let frame = 0;
+    const refresh = () => {
+      frame = 0;
+      const previouslyMarked = new Set(
+        document.querySelectorAll(`[${BANNER_ATTR}], [${ACTIONS_ATTR}]`)
+      );
+      const dialog = document.querySelector(DIALOG);
+      if (dialog) {
+        for (const banner of document.querySelectorAll(BANNER)) {
+          if (applyOffset(
+            banner,
+            visibleControls(banner).map((rect) => rect.top),
+            BANNER_ATTR
+          )) {
+            previouslyMarked.delete(banner);
+          }
+        }
+        for (const download of dialog.querySelectorAll("a[download]")) {
+          const group = actionGroupFor(download, dialog);
+          if (applyOffset(
+            group,
+            visibleControls(group).map((rect) => rect.top),
+            ACTIONS_ATTR
+          )) {
+            previouslyMarked.delete(group);
+          }
+        }
+      }
+      for (const element of previouslyMarked) {
+        element.removeAttribute(BANNER_ATTR);
+        element.removeAttribute(ACTIONS_ATTR);
+        element.style.removeProperty(OFFSET);
+      }
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(refresh);
+    };
+    new MutationObserver(schedule).observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+    window.addEventListener("resize", schedule, { passive: true });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) schedule();
+    });
+    schedule();
+  }
+
   // inject/src/messenger/index.ts
   function initFeature(name, init) {
     try {
@@ -3050,6 +3174,7 @@
     initFeature("cookie-consent", initCookieAutoDecline);
     initFeature("login-tidy", initLoginTidy);
     initFeature("media-viewer", initMediaViewer);
+    initFeature("viewer-controls", initViewerControls);
     initFeature("fullscreen", initFullscreenPolyfill);
   }
   if (window.top === window.self) main();

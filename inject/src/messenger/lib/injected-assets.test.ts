@@ -69,6 +69,14 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
+  test("media viewer controls use a measured safe top inset", async () => {
+    const css = await repoAsset("src-tauri/inject/messenger.css");
+
+    expect(css).toContain("data-carrier-media-controls");
+    expect(css).toContain("data-carrier-media-actions");
+    expect(css).toContain("translate: 0 var(--carrier-media-controls-offset");
+  });
+
   test("Settings loads the generated update consent controller", async () => {
     const [settings, controller] = await Promise.all([
       repoAsset("dist/settings.html"),
