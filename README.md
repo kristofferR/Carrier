@@ -209,6 +209,15 @@ On macOS, if `Carrier.app` is already present in `/Applications`, adopt it with:
 brew install --cask --adopt kristofferR/tap/carrier
 ```
 
+### Arch Linux (AUR)
+
+The [carrier](https://aur.archlinux.org/packages/carrier) package repackages
+the `.deb`, so it uses the system WebKitGTK instead of bundling it:
+
+```bash
+yay -S carrier
+```
+
 ## Non-goals
 
 Carrier stays deliberately narrow. It does not add its own do-not-disturb
