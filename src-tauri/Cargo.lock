@@ -651,9 +651,11 @@ dependencies = [
 name = "carrier"
 version = "1.3.1"
 dependencies = [
+ "ashpd",
  "base64 0.22.1",
  "block2 0.6.2",
  "dark-light",
+ "futures-util",
  "log",
  "mac-notification-sys",
  "muda",

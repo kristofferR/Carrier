@@ -16,6 +16,8 @@ mod custom_css;
 mod diag;
 mod download;
 mod hotkey;
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 mod menu;
@@ -28,6 +30,8 @@ mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
 use hotkey::reconcile_startup_global_hotkey;
+#[cfg(target_os = "linux")]
+use linux::observe_system_theme_changes;
 #[cfg(target_os = "macos")]
 use macos::{
     dock::install_dock_menu_provider, notifications::setup_macos_notifications,
@@ -238,7 +242,7 @@ pub fn run() {
             // Follow live OS light/dark switches while Theme = System (macOS only;
             // other platforms re-theme the chrome on their own). Registered once —
             // the observer is process-wide and survives the window rebuilds.
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             observe_system_theme_changes(app.handle());
 
             // Don't sync autostart at startup; the OS registration already
