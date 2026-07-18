@@ -12,7 +12,7 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 use crate::settings::{
-    apply_settings, save_settings, schedule_webview_data_clear, AppState, Settings,
+    apply_settings, save_settings, schedule_webview_data_clear, AppState, SaveOutcome, Settings,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
@@ -160,22 +160,31 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 /// (Used for view-style toggles — not autostart, which syncs separately.)
 fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings)) {
     let state = app.state::<AppState>();
-    // Mutate in place under the lock so concurrent callers can't read-modify-write
-    // a stale clone and lose each other's changes. Persist/apply after releasing
-    // it (apply_settings touches windows and must not run while holding the lock).
+    let _settings_operation = state.settings_operation.lock().unwrap();
+    // Build the next snapshot without publishing it in memory. A failed or
+    // superseded disk write must not leave runtime state ahead of persistence.
     let (prev_theme, s) = {
-        let mut settings = state.settings.lock().unwrap();
+        let settings = state.settings.lock().unwrap();
         let prev_theme = settings.theme.clone();
-        f(&mut settings);
-        (prev_theme, settings.clone())
+        let mut next = settings.clone();
+        f(&mut next);
+        (prev_theme, next)
     };
-    if let Err(e) = save_settings(app, &s) {
-        log::error!("failed to save settings: {e}");
+    match save_settings(app, &s) {
+        Ok(SaveOutcome::Written) => {
+            *state.settings.lock().unwrap() = s.clone();
+            apply_settings(app, &s);
+            // macOS needs a window rebuild to re-theme the title bar; other
+            // platforms already re-themed the chrome live in apply_settings.
+            recreate_on_theme_change(app, &prev_theme, &s.theme);
+        }
+        Ok(SaveOutcome::Superseded) => {
+            log::warn!("native menu settings update was superseded");
+        }
+        Err(e) => {
+            log::error!("failed to save settings: {e}");
+        }
     }
-    apply_settings(app, &s);
-    // macOS needs a window rebuild to re-theme the title bar; other platforms
-    // already re-themed the chrome live in apply_settings.
-    recreate_on_theme_change(app, &prev_theme, &s.theme);
 }
 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
