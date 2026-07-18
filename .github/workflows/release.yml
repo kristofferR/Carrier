@@ -483,11 +483,17 @@ jobs:
               echo "${path} already current for ${TAG}."
               return
             fi
-            gh api --method PUT "repos/${REPO}/contents/${path}" \
-              -f message="docs: point ${path} at ${TAG} [skip ci]" \
-              -f content="$(base64 -w 0 "$temp")" \
-              -f sha="${sha}" \
-              -f branch="main"
+            # Send the request body via --input: the base64 of a large file
+            # (docs/index.html) as a -f argument exceeds the kernel's
+            # per-argument size limit ("Argument list too long", v1.4.0).
+            base64 -w 0 "$temp" | tr -d '\n' > "${temp}.b64"
+            jq -n \
+              --arg message "docs: point ${path} at ${TAG} [skip ci]" \
+              --rawfile content "${temp}.b64" \
+              --arg sha "$sha" \
+              '{message: $message, content: $content, sha: $sha, branch: "main"}' \
+              > "${temp}.json"
+            gh api --method PUT "repos/${REPO}/contents/${path}" --input "${temp}.json"
           }
           update_release_file README.md
           update_release_file docs/index.html
