@@ -33,7 +33,6 @@ export async function downloadSrc(src: string, fallbackName: string) {
   const blob = await res.blob();
   if (blob.size > MAX_BLOB) throw new Error("file too large");
   const href = URL.createObjectURL(blob);
-  const completion = waitForNativeDownload(window, href);
   let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
   if (!name.includes(".")) {
     const ext = ((blob.type || "").split("/")[1] || "").split(";")[0];
@@ -46,6 +45,7 @@ export async function downloadSrc(src: string, fallbackName: string) {
   a.style.display = "none";
   document.body.appendChild(a);
   try {
+    const completion = waitForNativeDownload(window, href);
     a.click();
     await completion;
   } finally {

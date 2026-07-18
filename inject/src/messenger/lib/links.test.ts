@@ -120,6 +120,21 @@ describe("stripFacebookTracking", () => {
     expect(stripFacebookTracking(href, BASE)).toBe(href);
   });
 
+  test("preserves the raw bytes of signed parameters while removing Facebook tracking", () => {
+    expect(
+      stripFacebookTracking(
+        "https://cdn.example.com/file?token=hello%20world&fbclid=spam&tilde=~&sig=a%2Bb%2Fc%3D",
+        BASE,
+      ),
+    ).toBe("https://cdn.example.com/file?token=hello%20world&tilde=~&sig=a%2Bb%2Fc%3D");
+  });
+
+  test("recognizes encoded Facebook parameter names without rewriting neighboring pairs", () => {
+    expect(stripFacebookTracking("https://example.com/?keep=a+b&fb%63lid=spam&empty=", BASE)).toBe(
+      "https://example.com/?keep=a+b&empty=",
+    );
+  });
+
   test("unwraps Facebook link shims and cleans their real destination", () => {
     const destination = "https://example.com/article?id=7&fbclid=spam#comments";
     const wrapped = `https://l.facebook.com/l.php?u=${encodeURIComponent(destination)}&h=checksum`;

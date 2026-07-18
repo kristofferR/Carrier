@@ -49,6 +49,35 @@ function facebookRedirectTarget(url: URL): string | null {
   }
 }
 
+function trackingKey(rawPair: string): string | null {
+  const rawKey = rawPair.split("=", 1)[0] ?? "";
+  try {
+    return decodeURIComponent(rawKey.replace(/\+/g, " ")).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function stripRawFacebookParams(href: string): { href: string; removed: boolean } {
+  const hashAt = href.indexOf("#");
+  const beforeHash = hashAt < 0 ? href : href.slice(0, hashAt);
+  const hash = hashAt < 0 ? "" : href.slice(hashAt);
+  const queryAt = beforeHash.indexOf("?");
+  if (queryAt < 0) return { href, removed: false };
+
+  const prefix = beforeHash.slice(0, queryAt);
+  const pairs = beforeHash.slice(queryAt + 1).split("&");
+  const kept = pairs.filter((pair) => {
+    const key = trackingKey(pair);
+    return !key || !FACEBOOK_TRACKING_PARAMS.has(key);
+  });
+  if (kept.length === pairs.length) return { href, removed: false };
+  return {
+    href: `${prefix}${kept.length ? `?${kept.join("&")}` : ""}${hash}`,
+    removed: true,
+  };
+}
+
 /**
  * Remove Facebook's cross-site tracking from a URL copied or opened by
  * Carrier. Unwrap Facebook's link-shim redirect, then remove only known
@@ -75,15 +104,14 @@ export function stripFacebookTracking(href: string, base: string): string {
     unwrapped = true;
   }
 
-  const removable = new Set<string>();
-  for (const key of url.searchParams.keys()) {
-    if (FACEBOOK_TRACKING_PARAMS.has(key.toLowerCase())) removable.add(key);
-  }
-  for (const key of removable) url.searchParams.delete(key);
+  // Work on the raw serialized query instead of URLSearchParams: mutating the
+  // latter rewrites unrelated bytes (`%20` → `+`, `~` → `%7E`), which can
+  // invalidate signed destination URLs.
+  const cleaned = stripRawFacebookParams(url.href);
 
   // Avoid normalizing untouched URLs. This matters for signed media URLs and
   // also preserves the user's exact spelling/encoding when there is no spam.
-  return unwrapped || removable.size ? url.href : href;
+  return unwrapped || cleaned.removed ? cleaned.href : href;
 }
 
 // facebook.com paths that belong to the Messenger app or its login/auth flows.

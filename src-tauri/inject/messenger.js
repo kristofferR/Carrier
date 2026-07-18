@@ -42,6 +42,32 @@
       return null;
     }
   }
+  function trackingKey(rawPair) {
+    const rawKey = rawPair.split("=", 1)[0] ?? "";
+    try {
+      return decodeURIComponent(rawKey.replace(/\+/g, " ")).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  function stripRawFacebookParams(href) {
+    const hashAt = href.indexOf("#");
+    const beforeHash = hashAt < 0 ? href : href.slice(0, hashAt);
+    const hash = hashAt < 0 ? "" : href.slice(hashAt);
+    const queryAt = beforeHash.indexOf("?");
+    if (queryAt < 0) return { href, removed: false };
+    const prefix = beforeHash.slice(0, queryAt);
+    const pairs = beforeHash.slice(queryAt + 1).split("&");
+    const kept = pairs.filter((pair) => {
+      const key = trackingKey(pair);
+      return !key || !FACEBOOK_TRACKING_PARAMS.has(key);
+    });
+    if (kept.length === pairs.length) return { href, removed: false };
+    return {
+      href: `${prefix}${kept.length ? `?${kept.join("&")}` : ""}${hash}`,
+      removed: true
+    };
+  }
   function stripFacebookTracking(href, base) {
     let url;
     try {
@@ -59,12 +85,8 @@
       url = new URL(target);
       unwrapped = true;
     }
-    const removable = /* @__PURE__ */ new Set();
-    for (const key of url.searchParams.keys()) {
-      if (FACEBOOK_TRACKING_PARAMS.has(key.toLowerCase())) removable.add(key);
-    }
-    for (const key of removable) url.searchParams.delete(key);
-    return unwrapped || removable.size ? url.href : href;
+    const cleaned = stripRawFacebookParams(url.href);
+    return unwrapped || cleaned.removed ? cleaned.href : href;
   }
   var FACEBOOK_APP_PATH_RE = /^\/(messages|messenger_media|t|login(\.php)?|checkpoint|two_step_verification|two_factor|recover|reg|r\.php)(\/|$)/;
   function classifyHref(href, base) {
@@ -295,7 +317,6 @@
     const blob = await res.blob();
     if (blob.size > MAX_BLOB) throw new Error("file too large");
     const href = URL.createObjectURL(blob);
-    const completion = waitForNativeDownload(window, href);
     let name = friendlyDownloadName(filenameFromUrl(src, location.href) || fallbackName);
     if (!name.includes(".")) {
       const ext = ((blob.type || "").split("/")[1] || "").split(";")[0];
@@ -308,6 +329,7 @@
     a.style.display = "none";
     document.body.appendChild(a);
     try {
+      const completion = waitForNativeDownload(window, href);
       a.click();
       await completion;
     } finally {
