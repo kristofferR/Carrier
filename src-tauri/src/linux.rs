@@ -88,6 +88,24 @@ pub(crate) fn observe_system_theme_changes(app: &tauri::AppHandle) {
     tauri::async_runtime::spawn(watch_portal_color_scheme(app.clone()));
 }
 
+/// Point-in-time read of `org.freedesktop.appearance color-scheme`, used by
+/// `window::is_dark` while Theme = System. This is what `dark-light` did on
+/// Linux, minus the wrapper (and its second ashpd version). Portal-less or
+/// hung sessions fall back to light: errors immediately, a stalled portal
+/// after a short timeout so window creation is never blocked indefinitely.
+pub(crate) fn system_prefers_dark() -> bool {
+    use futures_util::future::{select, Either};
+
+    let read = std::pin::pin!(async { PortalSettings::new().await?.color_scheme().await });
+    let timeout = std::pin::pin!(async_io::Timer::after(std::time::Duration::from_secs(2)));
+    async_io::block_on(async {
+        match select(read, timeout).await {
+            Either::Left((Ok(scheme), _)) => matches!(scheme, ColorScheme::PreferDark),
+            _ => false,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

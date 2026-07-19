@@ -48,9 +48,18 @@ pub(crate) fn is_dark(s: &Settings) -> bool {
     match s.theme.as_str() {
         "dark" => true,
         "light" => false,
-        _ => matches!(dark_light::detect(), Ok(dark_light::Mode::Dark)),
+        _ => system_prefers_dark(),
     }
 }
+
+/// Point-in-time read of the OS dark-mode preference. Linux asks the settings
+/// portal directly (see linux.rs); other platforms go through `dark-light`.
+#[cfg(not(target_os = "linux"))]
+fn system_prefers_dark() -> bool {
+    matches!(dark_light::detect(), Ok(dark_light::Mode::Dark))
+}
+#[cfg(target_os = "linux")]
+use crate::linux::system_prefers_dark;
 
 /// A theme-appropriate window background so there's no white flash before the
 /// remote page paints (Facebook glares white in dark mode while loading).
@@ -566,7 +575,7 @@ mod tests {
         assert_eq!(theme_for(&with_theme("")), None);
     }
 
-    // "system" calls dark_light::detect() (OS-dependent), so only the
+    // "system" calls system_prefers_dark() (OS-dependent), so only the
     // explicitly-forced cases are asserted here.
     #[test]
     fn is_dark_forced_dark() {

@@ -47,7 +47,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 open = "5"
-dark-light = "2"
 # Already in the tree via Tauri; the short delay when recreating a window on a
 # theme switch (the macOS title bar can only be re-themed at window creation).
 tokio = { version = "1", features = ["time"] }
@@ -55,11 +54,19 @@ tokio = { version = "1", features = ["time"] }
 # Pinned to a rev: an unpinned git dep is a supply-chain/reproducibility snag.
 tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "c7d271a06469bdf4744bfdeadca7458a1f3d02e5", optional = true }
 
-# Linux system-theme observation. `dark-light` already brings ashpd's
-# async-std backend into Linux builds; these direct declarations expose the
-# portal signal stream without adding another backend or dependency version.
+# System-theme detection outside Linux. On Linux `dark-light` is only a
+# wrapper around the same ashpd settings portal that linux.rs already talks
+# to, and it pins an older ashpd — keeping it non-Linux avoids compiling two
+# ashpd versions/backends into Linux builds.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+dark-light = "2"
+
+# Linux system-theme observation and detection, straight from the
+# `org.freedesktop.appearance` settings portal (see linux.rs). `async-io`
+# supplies the `block_on` for the synchronous point-in-time read.
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.10", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+async-io = "2"
 futures-util = "0.3"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
