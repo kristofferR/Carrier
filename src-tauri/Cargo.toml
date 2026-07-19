@@ -22,7 +22,7 @@ tauri-build = { version = "2", features = [] }
 mcp = ["dep:tauri-plugin-mcp"]
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-updater = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
@@ -60,6 +60,8 @@ tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "
 # ashpd versions/backends into Linux builds.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 dark-light = "2"
+# Keep Tauri's native tray path on macOS and Windows; Linux uses KSNI below.
+tauri = { version = "2", features = ["tray-icon"] }
 
 # Linux system-theme observation and detection, straight from the
 # `org.freedesktop.appearance` settings portal (see linux.rs). `async-io`
@@ -68,6 +70,9 @@ dark-light = "2"
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 async-io = "2"
 futures-util = "0.3"
+# Tauri's AppIndicator tray backend cannot emit click events or expose a real
+# tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
+ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window
