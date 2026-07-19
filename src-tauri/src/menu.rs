@@ -339,6 +339,7 @@ pub(crate) fn sanitize_recent_threads(threads: Vec<RecentThread>) -> Vec<RecentT
     out
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 fn recent_thread_id(href: &str) -> Option<&str> {
     let id = href.strip_prefix("/t/")?.trim_end_matches('/');
     if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
@@ -347,6 +348,7 @@ fn recent_thread_id(href: &str) -> Option<&str> {
     Some(id)
 }
 
+#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) fn recent_menu_id(thread: &RecentThread) -> String {
     let id = recent_thread_id(&thread.href).expect("recent thread href is sanitized");
     format!("recent:{id}")
@@ -377,7 +379,7 @@ pub(crate) fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThrea
 /// navigation, falling back to a hard navigation). The href is encoded into the
 /// menu id when the menu is built, so a later recents refresh cannot make a
 /// visible native menu item open a different thread.
-fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
+pub(crate) fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
     show_main(app);
     if let Some(w) = target_window(app) {
         // `href` is validated to `/t/<digits>/`; JSON-encode it anyway so the

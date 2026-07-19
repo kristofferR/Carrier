@@ -10,14 +10,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::{tray::TrayIcon, Manager};
+use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::hotkey::apply_global_hotkey;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
-use crate::tray::{build_tray_menu, build_tray_with_menu, show_main, wants_tray};
+use crate::tray::{build_tray_menu, build_tray_with_menu, show_main, wants_tray, PlatformTrayIcon};
 #[cfg(target_os = "macos")]
 use crate::window::is_dark;
 #[cfg(not(target_os = "macos"))]
@@ -155,7 +155,7 @@ pub(crate) struct AppState {
     /// blocking/native work. Awaiting this queue avoids both stale snapshots and
     /// one waiting OS thread per mutation during a burst.
     pub(crate) settings_worker: tokio::sync::Mutex<()>,
-    pub(crate) tray: Mutex<Option<TrayIcon>>,
+    pub(crate) tray: Mutex<Option<PlatformTrayIcon>>,
     pub(crate) next_window: AtomicUsize,
     /// Serializes update installation even if the trusted Settings page is
     /// invoked concurrently from multiple windows or automation.
@@ -565,9 +565,14 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             // Removing the only way back, so make sure the main window is
             // visible before dropping the tray icon.
             show_main(app);
-            // `build()` also registers a clone in Tauri's resource table, so
-            // dropping our handle alone leaves the icon visible — remove it by id.
-            let _ = app.remove_tray_by_id("carrier-tray");
+            #[cfg(not(target_os = "linux"))]
+            {
+                // `build()` also registers a clone in Tauri's resource table,
+                // so dropping our handle alone leaves the icon visible.
+                let _ = app.remove_tray_by_id("carrier-tray");
+            }
+            // The Linux KSNI service is owned exclusively by this handle and
+            // shuts down here; Tauri's handle was removed from its table above.
             *tray = None;
         }
         _ => {}

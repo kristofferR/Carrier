@@ -1,18 +1,161 @@
-//! Tray icon: creation, the left-click toggle / right-click Quit behaviour,
-//! and showing or reopening the main window.
+//! Tray icon creation and showing or reopening the main window. Linux uses
+//! StatusNotifierItem directly because Tauri's AppIndicator backend cannot
+//! provide tooltips or click events there.
 
+use tauri::{Manager, WebviewWindow};
+
+#[cfg(not(target_os = "linux"))]
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    Manager, WebviewWindow,
 };
 
+#[cfg(target_os = "linux")]
+use crate::menu::open_recent_thread;
+#[cfg(not(target_os = "linux"))]
+use crate::menu::recent_menu_id;
+use crate::menu::recent_threads_for_menu;
 #[cfg(target_os = "macos")]
 use crate::menu::target_window;
-use crate::menu::{recent_menu_id, recent_threads_for_menu};
 use crate::settings::{AppState, Settings};
 use crate::window::{build_app_window, install_main_close_handler};
 use crate::APP_TITLE;
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) type PlatformTrayIcon = TrayIcon;
+
+#[cfg(target_os = "linux")]
+pub(crate) struct PlatformTrayIcon {
+    handle: ksni::blocking::Handle<LinuxTray>,
+}
+
+#[cfg(target_os = "linux")]
+impl PlatformTrayIcon {
+    pub(crate) fn set_tooltip<S: AsRef<str>>(&self, tooltip: Option<S>) -> tauri::Result<()> {
+        let tooltip = tooltip
+            .as_ref()
+            .map(AsRef::as_ref)
+            .unwrap_or_default()
+            .to_string();
+        self.handle
+            .update(move |tray| tray.tooltip = tooltip)
+            .ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_menu(&self, _menu: Option<()>) -> tauri::Result<()> {
+        // Recent conversations live in AppState and LinuxTray::menu reads them
+        // fresh. An empty update asks KSNI to diff that newly built menu and
+        // notify the desktop shell.
+        self.handle.update(|_| ()).ok_or_else(tray_service_closed)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PlatformTrayIcon {
+    fn drop(&mut self) {
+        self.handle.shutdown().wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn tray_service_closed() -> tauri::Error {
+    tauri::Error::Io(std::io::Error::new(
+        std::io::ErrorKind::BrokenPipe,
+        "Linux tray service is no longer running",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxTray {
+    app: tauri::AppHandle,
+    icon: ksni::Icon,
+    tooltip: String,
+}
+
+#[cfg(target_os = "linux")]
+impl ksni::Tray for LinuxTray {
+    fn id(&self) -> String {
+        "carrier".into()
+    }
+
+    fn category(&self) -> ksni::Category {
+        ksni::Category::Communications
+    }
+
+    fn title(&self) -> String {
+        APP_TITLE.into()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        vec![self.icon.clone()]
+    }
+
+    fn tool_tip(&self) -> ksni::ToolTip {
+        ksni::ToolTip {
+            icon_pixmap: self.icon_pixmap(),
+            title: self.tooltip.clone(),
+            ..Default::default()
+        }
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        toggle_main(&self.app);
+    }
+
+    fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+        use ksni::menu::StandardItem;
+
+        let threads = recent_threads_for_menu(&self.app);
+        let mut menu = Vec::with_capacity(threads.len() + 2);
+        for thread in threads {
+            let href = thread.href;
+            menu.push(
+                StandardItem {
+                    label: thread.name,
+                    activate: Box::new(move |tray: &mut Self| {
+                        open_recent_thread(&tray.app, &href);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        if !menu.is_empty() {
+            menu.push(ksni::MenuItem::Separator);
+        }
+        menu.push(
+            StandardItem {
+                label: "Quit Carrier".into(),
+                activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
+                ..Default::default()
+            }
+            .into(),
+        );
+        menu
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn rgba_to_argb(mut pixels: Vec<u8>) -> Vec<u8> {
+    assert_eq!(
+        pixels.len() % 4,
+        0,
+        "bundled tray icon must contain complete RGBA pixels"
+    );
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel.rotate_right(1);
+    }
+    pixels
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_icon(image: &tauri::image::Image<'_>) -> ksni::Icon {
+    ksni::Icon {
+        width: i32::try_from(image.width()).expect("bundled icon width fits i32"),
+        height: i32::try_from(image.height()).expect("bundled icon height fits i32"),
+        data: rgba_to_argb(image.rgba().to_vec()),
+    }
+}
 
 fn clear_reveal_guard_if_current(
     active_generation: &std::sync::atomic::AtomicUsize,
@@ -146,6 +289,7 @@ pub(crate) fn wants_tray(s: &Settings) -> bool {
             && (s.hide_on_minimize || s.hide_on_focus_loss || s.hide_taskbar_icon))
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::new(app)?;
     // Most recent conversations first (mirrors the macOS Dock menu); clicking
@@ -173,6 +317,11 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     Ok(menu)
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn build_tray_menu(_app: &tauri::AppHandle) -> tauri::Result<()> {
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn show_tray_menu(app: &tauri::AppHandle) {
     let Some(window) = target_window(app).or_else(|| app.get_webview_window("main")) else {
@@ -193,10 +342,11 @@ pub(crate) fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 pub(crate) fn build_tray_with_menu(
     app: &tauri::AppHandle,
     menu: Menu<tauri::Wry>,
-) -> tauri::Result<TrayIcon> {
+) -> tauri::Result<PlatformTrayIcon> {
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(app.default_window_icon().expect("bundled icon").clone())
@@ -232,6 +382,28 @@ pub(crate) fn build_tray_with_menu(
     builder.build(app)
 }
 
+#[cfg(target_os = "linux")]
+pub(crate) fn build_tray_with_menu(
+    app: &tauri::AppHandle,
+    _menu: (),
+) -> tauri::Result<PlatformTrayIcon> {
+    use ksni::blocking::TrayMethods;
+
+    let image = app.default_window_icon().expect("bundled icon");
+    let tray = LinuxTray {
+        app: app.clone(),
+        icon: linux_tray_icon(image),
+        tooltip: APP_TITLE.into(),
+    };
+    // Autostart can run before the desktop's StatusNotifierWatcher exists.
+    // Keep the service alive so KSNI registers the icon when the watcher appears.
+    let handle = tray
+        .assume_sni_available(true)
+        .spawn()
+        .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
+    Ok(PlatformTrayIcon { handle })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +416,14 @@ mod tests {
     fn wants_tray_true_when_show_tray_set() {
         // show_tray defaults to true.
         assert!(wants_tray(&Settings::default()));
+    }
+
+    #[test]
+    fn linux_tray_icon_pixels_are_argb() {
+        assert_eq!(
+            rgba_to_argb(vec![0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc, 0xdd]),
+            vec![0x44, 0x11, 0x22, 0x33, 0xdd, 0xaa, 0xbb, 0xcc]
+        );
     }
 
     #[test]
