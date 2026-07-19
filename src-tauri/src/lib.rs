@@ -26,6 +26,7 @@ mod preflight;
 mod settings;
 mod tray;
 mod url_rules;
+mod webview_watchdog;
 mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};

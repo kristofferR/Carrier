@@ -54,6 +54,8 @@ interface Window {
     invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
   };
   __CARRIER_SETTINGS__?: CarrierSettings;
+  /** Native watchdog generation baked into this Messenger window. */
+  __CARRIER_HEARTBEAT_ID__?: number;
 
   // panel.js
   __carrierToast?: (msg: string) => void;
@@ -74,6 +76,8 @@ interface Window {
   __carrierOnNotification?: () => void;
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */
   __carrierInCall?: boolean;
+  /** Respond to the native renderer watchdog without exposing page content. */
+  __carrierHeartbeat?: (expectedId: number) => void;
 }
 
 interface XMLHttpRequest {

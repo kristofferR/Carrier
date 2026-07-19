@@ -19,7 +19,8 @@ use crate::macos::theme::make_webview_transparent;
 use crate::settings::{
     load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
 };
-use crate::url_rules::{is_internal, unwrap_tracking};
+use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
+use crate::webview_watchdog::WebviewWatchdog;
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
 fn notify_download_finished(webview: &tauri::Webview, url: &Url, success: bool) {
@@ -77,6 +78,9 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
+    let watchdog = WebviewWatchdog::new();
+    let watchdog_id = watchdog.id();
+    let page_load_watchdog = watchdog.clone();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -84,9 +88,13 @@ pub(crate) fn build_app_window(
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
         .user_agent(user_agent())
-        .initialization_script(init_script(settings))
-        .on_page_load(|window, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+        .initialization_script(init_script(settings, watchdog_id))
+        .on_page_load(move |window, payload| match payload.event() {
+            tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
+            tauri::webview::PageLoadEvent::Finished => {
+                if !is_messenger_web_url(payload.url()) {
+                    page_load_watchdog.disarm();
+                }
                 apply_custom_css(&window, payload.url());
             }
         })
@@ -165,6 +173,7 @@ pub(crate) fn build_app_window(
             make_webview_transparent(window);
         })?;
     install_app_window_runtime_handler(app, &window);
+    watchdog.install(&window);
     Ok(window)
 }
 
@@ -456,7 +465,7 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     }
 }
 
-fn init_script(settings: &Settings) -> String {
+fn init_script(settings: &Settings, watchdog_id: u64) -> String {
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     format!(
@@ -476,6 +485,8 @@ fn init_script(settings: &Settings) -> String {
     }}
     return;
   }}
+
+  window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -667,7 +678,8 @@ mod tests {
 
     #[test]
     fn init_script_waits_for_webview2_document_element() {
-        let script = init_script(&Settings::default());
+        let script = init_script(&Settings::default(), 42);
+        assert!(script.contains("window.__CARRIER_HEARTBEAT_ID__ = 42;"));
         assert!(script.contains("if (!document.documentElement) return false;"));
         assert!(script.contains(").observe(document, { childList: true, subtree: true });"));
 
@@ -683,7 +695,7 @@ mod tests {
     #[cfg(feature = "mcp")]
     #[test]
     fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
-        let script = init_script(&Settings::default());
+        let script = init_script(&Settings::default(), 42);
         let local_branch = script
             .find("if (carrierHost === 'tauri.localhost')")
             .unwrap();

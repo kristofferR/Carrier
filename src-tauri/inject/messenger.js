@@ -135,18 +135,240 @@
     () => diag("ipc.open-url", "opener invoke failed")
   );
 
+  // inject/src/messenger/lib/auto-refresh.ts
+  var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
+  var NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1e3;
+  var RESUME_GAP_MS = 2e4;
+  var elapsed = (now, since) => Math.max(0, now - since);
+  var AutoRefreshWatchdog = class {
+    constructor(now, active) {
+      __publicField(this, "inactiveSince");
+      __publicField(this, "lastHeartbeatAt");
+      __publicField(this, "lastFreshAt");
+      this.lastFreshAt = now;
+      this.lastHeartbeatAt = now;
+      this.inactiveSince = active ? null : now;
+    }
+    setActive(active, now) {
+      if (!active) {
+        this.inactiveSince ?? (this.inactiveSince = now);
+        return null;
+      }
+      const inactiveFor = this.inactiveSince === null ? 0 : elapsed(now, this.inactiveSince);
+      this.inactiveSince = null;
+      this.lastFreshAt = Math.max(this.lastFreshAt, now);
+      return inactiveFor >= PERIODIC_REFRESH_MS ? "foreground" : null;
+    }
+    heartbeat(active, now) {
+      const heartbeatGap = elapsed(now, this.lastHeartbeatAt);
+      this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
+      const transition = this.setActive(active, now);
+      if (heartbeatGap >= RESUME_GAP_MS) return "resume";
+      if (transition) return transition;
+      if (!active && this.inactiveSince !== null && elapsed(now, this.inactiveSince) >= PERIODIC_REFRESH_MS) {
+        return "background";
+      }
+      return null;
+    }
+    canRefreshFromNotification(now) {
+      return elapsed(now, this.lastFreshAt) >= NOTIFICATION_REFRESH_GAP_MS;
+    }
+  };
+
+  // inject/src/messenger/lib/realtime-health.ts
+  var REALTIME_CONNECT_GRACE_MS = 15e3;
+  var REALTIME_SILENCE_MS = 9e4;
+  var elapsed2 = (now, since) => Math.max(0, now - since);
+  var ConsecutiveFailureThreshold = class {
+    constructor(limit) {
+      __publicField(this, "limit", limit);
+      __publicField(this, "failures", 0);
+    }
+    succeeded() {
+      this.failures = 0;
+    }
+    failed() {
+      this.failures += 1;
+      return this.failures >= this.limit;
+    }
+  };
+  var RealtimeRecoveryTracker = class {
+    constructor() {
+      __publicField(this, "staleSources", /* @__PURE__ */ new Set());
+    }
+    healthy(source) {
+      this.staleSources.delete(source);
+    }
+    stale(source) {
+      this.staleSources.add(source);
+    }
+    needsRecovery() {
+      return this.staleSources.size > 0;
+    }
+  };
+  function isMessengerRealtimeUrl(raw, base) {
+    let url;
+    try {
+      url = new URL(raw, base);
+    } catch (_) {
+      return false;
+    }
+    if (url.protocol !== "wss:" && url.protocol !== "ws:") return false;
+    const host = url.hostname.toLowerCase();
+    return host === "edge-chat.facebook.com" || host.endsWith(".edge-chat.facebook.com") || host === "gateway.facebook.com" || host.endsWith(".gateway.facebook.com") || host === "gateway.messenger.com";
+  }
+  var RealtimeHealthWatchdog = class {
+    constructor() {
+      __publicField(this, "sockets", /* @__PURE__ */ new Map());
+      __publicField(this, "everOpened", false);
+      __publicField(this, "recoveryStartedAt", null);
+    }
+    created(socket, now) {
+      if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
+      this.sockets.set(socket, { state: "connecting", since: now, lastInboundAt: now });
+    }
+    opened(socket, now) {
+      if (!this.sockets.has(socket)) return;
+      this.everOpened = true;
+      this.recoveryStartedAt = null;
+      this.sockets.set(socket, { state: "open", since: now, lastInboundAt: now });
+    }
+    received(socket, now) {
+      const state = this.sockets.get(socket);
+      if (state?.state !== "open") return;
+      state.lastInboundAt = now;
+    }
+    closed(socket, now) {
+      this.sockets.delete(socket);
+      if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
+    }
+    hasOpenSocket() {
+      return [...this.sockets.values()].some((state) => state.state === "open");
+    }
+    health(now) {
+      const states = [...this.sockets.values()];
+      const open = states.filter((state) => state.state === "open");
+      if (open.length) {
+        const freshestInbound = Math.max(...open.map((state) => state.lastInboundAt));
+        return elapsed2(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
+      }
+      const connecting = states.filter((state) => state.state === "connecting");
+      if (!this.everOpened) return "starting";
+      if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
+        return "recovering";
+      }
+      return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
+    }
+  };
+
+  // inject/src/messenger/features/realtime-health.ts
+  var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
+  var WORKER_FAILURE_LIMIT = 3;
+  var facebookBridgeModule = () => {
+    try {
+      const facebookRequire = window.require;
+      const module = facebookRequire?.("MAWBridgeSendAndReceive");
+      return module && typeof module === "object" ? module : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  function monitorRealtimeHealth(callbacks) {
+    const watchdog = new RealtimeHealthWatchdog();
+    const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
+    let workerProbePending = false;
+    const checkSockets = () => {
+      const health = watchdog.health(Date.now());
+      if (health === "healthy") callbacks.onHealthy("socket");
+      if (health === "stale") callbacks.onStale("socket");
+      return health;
+    };
+    const checkWorker = () => {
+      if (workerProbePending) return;
+      const bridge = facebookBridgeModule();
+      if (!bridge?.sendAndReceive) return;
+      const sendAndReceive = bridge.sendAndReceive.bind(bridge);
+      workerProbePending = true;
+      let timeout;
+      const deadline = new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("Messenger worker heartbeat timed out")),
+          WORKER_HEARTBEAT_TIMEOUT_MS
+        );
+      });
+      Promise.resolve().then(
+        () => Promise.race([
+          sendAndReceive("backend", "getWorkerHeartbeat", void 0, {
+            isLoggingDisabled: true,
+            timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
+          }),
+          deadline
+        ])
+      ).then(() => {
+        workerFailures.succeeded();
+        callbacks.onHealthy("worker");
+      }).catch(() => {
+        if (workerFailures.failed()) callbacks.onStale("worker");
+      }).finally(() => {
+        clearTimeout(timeout);
+        workerProbePending = false;
+      });
+    };
+    const check = () => {
+      checkSockets();
+      checkWorker();
+    };
+    try {
+      const NativeWebSocket = window.WebSocket;
+      const WrappedWebSocket = new Proxy(NativeWebSocket, {
+        construct(target, args, newTarget) {
+          const socket = Reflect.construct(target, args, newTarget);
+          const rawUrl = args[0];
+          if (!isMessengerRealtimeUrl(String(rawUrl || ""), location.href)) return socket;
+          watchdog.created(socket, Date.now());
+          socket.addEventListener("open", () => {
+            watchdog.opened(socket, Date.now());
+            callbacks.onHealthy("socket");
+          });
+          socket.addEventListener("message", () => {
+            watchdog.received(socket, Date.now());
+            callbacks.onHealthy("socket");
+          });
+          const failed = () => setTimeout(checkSockets, 1e3);
+          socket.addEventListener("error", failed);
+          socket.addEventListener("close", () => {
+            watchdog.closed(socket, Date.now());
+            failed();
+          });
+          return socket;
+        }
+      });
+      Object.defineProperty(window, "WebSocket", {
+        value: WrappedWebSocket,
+        writable: true,
+        configurable: true
+      });
+    } catch (_) {
+      diag("sync.monitor", "could not observe Messenger realtime WebSockets");
+    }
+    return { check };
+  }
+
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
-    const PERIODIC_MS = 15 * 60 * 1e3;
-    const NOTIF_GAP_MS = 5 * 60 * 1e3;
-    let lastFresh = Date.now();
+    const pageIsActive = () => !document.hidden && document.hasFocus();
+    const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive());
     let pending = false;
+    let reloadWhileActive = false;
+    let pendingReason = "background";
     let timer;
+    const RECOVERY_MIN_GAP_MS = 6e4;
+    const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
     const clearPending = () => {
       pending = false;
+      reloadWhileActive = false;
       clearTimeout(timer);
       timer = void 0;
-      lastFresh = Date.now();
     };
     const composerHasText = () => {
       try {
@@ -157,11 +379,37 @@
       }
       return false;
     };
-    const pageIsActive = () => !document.hidden || document.hasFocus();
+    const heartbeatId = window.__CARRIER_HEARTBEAT_ID__;
+    try {
+      delete window.__CARRIER_HEARTBEAT_ID__;
+    } catch (_) {
+      window.__CARRIER_HEARTBEAT_ID__ = void 0;
+    }
+    let lastHeartbeatProtection;
+    const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+    const emitHeartbeat = () => {
+      if (typeof heartbeatId !== "number") return;
+      const protectedNow = heartbeatProtection();
+      lastHeartbeatProtection = protectedNow;
+      invoke("plugin:event|emit", {
+        event: "carrier:webview-heartbeat",
+        payload: { id: heartbeatId, protected: protectedNow }
+      })?.catch?.(() => {
+      });
+    };
+    const emitProtectionChange = () => {
+      if (heartbeatProtection() !== lastHeartbeatProtection) emitHeartbeat();
+    };
+    window.__carrierHeartbeat = (expectedId) => {
+      if (expectedId === heartbeatId) emitHeartbeat();
+    };
+    window.addEventListener("input", emitProtectionChange, true);
+    window.addEventListener("carrier:protection-change", emitProtectionChange);
+    emitHeartbeat();
     const maybeReload = () => {
       timer = void 0;
       if (!pending) return;
-      if (pageIsActive()) {
+      if (pageIsActive() && !reloadWhileActive) {
         clearPending();
         return;
       }
@@ -169,33 +417,78 @@
         timer = setTimeout(maybeReload, 8e3);
         return;
       }
+      if (!navigator.onLine) {
+        timer = setTimeout(maybeReload, 8e3);
+        return;
+      }
+      if (pendingReason !== "background") {
+        diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
+      }
+      if (pendingReason === "realtime") {
+        try {
+          sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()));
+        } catch (_) {
+        }
+      }
       pending = false;
-      lastFresh = Date.now();
       location.reload();
     };
-    const schedule = (delay) => {
-      if (pageIsActive()) {
-        lastFresh = Date.now();
+    const schedule = (delay, reason, allowWhileActive = false) => {
+      if (pageIsActive() && !allowWhileActive) {
         return;
       }
       pending = true;
+      reloadWhileActive || (reloadWhileActive = allowWhileActive);
+      pendingReason = reason;
       clearTimeout(timer);
       timer = setTimeout(maybeReload, delay);
     };
-    window.addEventListener("focus", clearPending);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) clearPending();
+    const realtimeRecoveryDelay = () => {
+      try {
+        const lastRecoveryAt = Number(sessionStorage.getItem(RECOVERY_STORAGE_KEY)) || 0;
+        return Math.max(1e3, RECOVERY_MIN_GAP_MS - Math.max(0, Date.now() - lastRecoveryAt));
+      } catch (_) {
+        return 1e3;
+      }
+    };
+    const realtimeRecovery = new RealtimeRecoveryTracker();
+    const realtime = monitorRealtimeHealth({
+      onHealthy: (source) => {
+        realtimeRecovery.healthy(source);
+        if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
+          clearPending();
+        }
+      },
+      onStale: (source) => {
+        realtimeRecovery.stale(source);
+        schedule(realtimeRecoveryDelay(), "realtime", true);
+      }
     });
+    const noteLifecycle = () => {
+      const reason = watchdog.setActive(pageIsActive(), Date.now());
+      if (reason) {
+        schedule(1e3, reason, true);
+      } else if (pageIsActive() && !reloadWhileActive) {
+        clearPending();
+      }
+    };
+    window.addEventListener("focus", noteLifecycle);
+    window.addEventListener("blur", noteLifecycle);
+    document.addEventListener("visibilitychange", noteLifecycle);
+    window.addEventListener("online", () => schedule(1e3, "online", true));
     window.__carrierOnNotification = () => {
-      if (!pageIsActive() && Date.now() - lastFresh >= NOTIF_GAP_MS) schedule(4e3);
+      if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
+        schedule(4e3, "background");
+      }
     };
     setInterval(() => {
-      if (pageIsActive()) {
-        lastFresh = Date.now();
-        return;
+      emitHeartbeat();
+      const reason = watchdog.heartbeat(pageIsActive(), Date.now());
+      if (reason) {
+        schedule(reason === "background" ? 2e3 : 1e3, reason, reason !== "background");
       }
-      if (Date.now() - lastFresh >= PERIODIC_MS) schedule(2e3);
-    }, 60 * 1e3);
+      realtime.check();
+    }, 5e3);
   }
 
   // inject/src/messenger/lib/composer-keys.ts
@@ -1464,6 +1757,7 @@
     const original = md.getUserMedia.bind(md);
     const liveTracks = new LiveMediaTrackCounter((inCall) => {
       window.__carrierInCall = inCall;
+      window.dispatchEvent(new Event("carrier:protection-change"));
     });
     md.getUserMedia = async (constraints) => {
       try {
