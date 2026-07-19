@@ -53,7 +53,7 @@ dark-light = "2"
 tokio = { version = "1", features = ["time"] }
 # Dev-only (the `mcp` feature): webview inspection over a local socket.
 # Pinned to a rev: an unpinned git dep is a supply-chain/reproducibility snag.
-tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "d5e0b807f14c79de14bac15146fd5e730d4a1b89", optional = true }
+tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "c7d271a06469bdf4744bfdeadca7458a1f3d02e5", optional = true }
 
 # Linux system-theme observation. `dark-light` already brings ashpd's
 # async-std backend into Linux builds; these direct declarations expose the
