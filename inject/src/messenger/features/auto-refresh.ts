@@ -5,6 +5,7 @@
 
 import { diag, invoke } from "../bridge";
 import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
+import { RealtimeRecoveryTracker } from "../lib/realtime-health";
 import { monitorRealtimeHealth } from "./realtime-health";
 
 export function initAutoRefresh() {
@@ -104,11 +105,18 @@ export function initAutoRefresh() {
       return 1000;
     }
   };
+  const realtimeRecovery = new RealtimeRecoveryTracker();
   const realtime = monitorRealtimeHealth({
-    onHealthy: () => {
-      if (pending && pendingReason === "realtime") clearPending();
+    onHealthy: (source) => {
+      realtimeRecovery.healthy(source);
+      if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
+        clearPending();
+      }
     },
-    onStale: () => schedule(realtimeRecoveryDelay(), "realtime", true),
+    onStale: (source) => {
+      realtimeRecovery.stale(source);
+      schedule(realtimeRecoveryDelay(), "realtime", true);
+    },
   });
 
   const noteLifecycle = () => {

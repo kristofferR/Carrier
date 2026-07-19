@@ -2,6 +2,7 @@ export const REALTIME_CONNECT_GRACE_MS = 15_000;
 export const REALTIME_SILENCE_MS = 90_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
+export type RealtimeHealthSource = "socket" | "worker";
 
 type SocketState = {
   state: "connecting" | "open";
@@ -10,6 +11,37 @@ type SocketState = {
 };
 
 const elapsed = (now: number, since: number) => Math.max(0, now - since);
+
+export class ConsecutiveFailureThreshold {
+  private failures = 0;
+
+  constructor(private readonly limit: number) {}
+
+  succeeded(): void {
+    this.failures = 0;
+  }
+
+  failed(): boolean {
+    this.failures += 1;
+    return this.failures >= this.limit;
+  }
+}
+
+export class RealtimeRecoveryTracker {
+  private readonly staleSources = new Set<RealtimeHealthSource>();
+
+  healthy(source: RealtimeHealthSource): void {
+    this.staleSources.delete(source);
+  }
+
+  stale(source: RealtimeHealthSource): void {
+    this.staleSources.add(source);
+  }
+
+  needsRecovery(): boolean {
+    return this.staleSources.size > 0;
+  }
+}
 
 /** Messenger's messaging-critical MQTT-over-WebSocket endpoints. */
 export function isMessengerRealtimeUrl(raw: string | URL, base: string): boolean {

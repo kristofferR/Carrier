@@ -80,6 +80,33 @@
   var REALTIME_CONNECT_GRACE_MS = 15e3;
   var REALTIME_SILENCE_MS = 9e4;
   var elapsed2 = (now, since) => Math.max(0, now - since);
+  var ConsecutiveFailureThreshold = class {
+    constructor(limit) {
+      __publicField(this, "limit", limit);
+      __publicField(this, "failures", 0);
+    }
+    succeeded() {
+      this.failures = 0;
+    }
+    failed() {
+      this.failures += 1;
+      return this.failures >= this.limit;
+    }
+  };
+  var RealtimeRecoveryTracker = class {
+    constructor() {
+      __publicField(this, "staleSources", /* @__PURE__ */ new Set());
+    }
+    healthy(source) {
+      this.staleSources.delete(source);
+    }
+    stale(source) {
+      this.staleSources.add(source);
+    }
+    needsRecovery() {
+      return this.staleSources.size > 0;
+    }
+  };
   function isMessengerRealtimeUrl(raw, base) {
     let url;
     try {
@@ -137,6 +164,7 @@
 
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
+  var WORKER_FAILURE_LIMIT = 3;
   var facebookBridgeModule = () => {
     try {
       const facebookRequire = window.require;
@@ -148,11 +176,12 @@
   };
   function monitorRealtimeHealth(callbacks) {
     const watchdog = new RealtimeHealthWatchdog();
-    let workerHeartbeatHealthy = false;
+    const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
     let workerProbePending = false;
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
-      if (health === "stale") callbacks.onStale();
+      if (health === "healthy") callbacks.onHealthy("socket");
+      if (health === "stale") callbacks.onStale("socket");
       return health;
     };
     const checkWorker = () => {
@@ -177,10 +206,10 @@
           deadline
         ])
       ).then(() => {
-        workerHeartbeatHealthy = true;
-        callbacks.onHealthy();
+        workerFailures.succeeded();
+        callbacks.onHealthy("worker");
       }).catch(() => {
-        if (workerHeartbeatHealthy) callbacks.onStale();
+        if (workerFailures.failed()) callbacks.onStale("worker");
       }).finally(() => {
         clearTimeout(timeout);
         workerProbePending = false;
@@ -200,11 +229,11 @@
           watchdog.created(socket, Date.now());
           socket.addEventListener("open", () => {
             watchdog.opened(socket, Date.now());
-            callbacks.onHealthy();
+            callbacks.onHealthy("socket");
           });
           socket.addEventListener("message", () => {
             watchdog.received(socket, Date.now());
-            callbacks.onHealthy();
+            callbacks.onHealthy("socket");
           });
           const failed = () => setTimeout(checkSockets, 1e3);
           socket.addEventListener("error", failed);
@@ -323,11 +352,18 @@
         return 1e3;
       }
     };
+    const realtimeRecovery = new RealtimeRecoveryTracker();
     const realtime = monitorRealtimeHealth({
-      onHealthy: () => {
-        if (pending && pendingReason === "realtime") clearPending();
+      onHealthy: (source) => {
+        realtimeRecovery.healthy(source);
+        if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
+          clearPending();
+        }
       },
-      onStale: () => schedule(realtimeRecoveryDelay(), "realtime", true)
+      onStale: (source) => {
+        realtimeRecovery.stale(source);
+        schedule(realtimeRecoveryDelay(), "realtime", true);
+      }
     });
     const noteLifecycle = () => {
       const reason = watchdog.setActive(pageIsActive(), Date.now());

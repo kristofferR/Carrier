@@ -1,9 +1,14 @@
 import { diag } from "../bridge";
-import { isMessengerRealtimeUrl, RealtimeHealthWatchdog } from "../lib/realtime-health";
+import {
+  ConsecutiveFailureThreshold,
+  isMessengerRealtimeUrl,
+  type RealtimeHealthSource,
+  RealtimeHealthWatchdog,
+} from "../lib/realtime-health";
 
 type RealtimeHealthCallbacks = {
-  onHealthy: () => void;
-  onStale: () => void;
+  onHealthy: (source: RealtimeHealthSource) => void;
+  onStale: (source: RealtimeHealthSource) => void;
 };
 
 export type RealtimeHealthMonitor = {
@@ -11,6 +16,7 @@ export type RealtimeHealthMonitor = {
 };
 
 const WORKER_HEARTBEAT_TIMEOUT_MS = 8_000;
+const WORKER_FAILURE_LIMIT = 3;
 
 type FacebookBridgeModule = {
   sendAndReceive?: (
@@ -39,12 +45,13 @@ const facebookBridgeModule = (): FacebookBridgeModule | null => {
  */
 export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): RealtimeHealthMonitor {
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
-  let workerHeartbeatHealthy = false;
+  const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
   let workerProbePending = false;
 
   const checkSockets = () => {
     const health = watchdog.health(Date.now());
-    if (health === "stale") callbacks.onStale();
+    if (health === "healthy") callbacks.onHealthy("socket");
+    if (health === "stale") callbacks.onStale("socket");
     return health;
   };
   const checkWorker = () => {
@@ -72,11 +79,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         ]),
       )
       .then(() => {
-        workerHeartbeatHealthy = true;
-        callbacks.onHealthy();
+        workerFailures.succeeded();
+        callbacks.onHealthy("worker");
       })
       .catch(() => {
-        if (workerHeartbeatHealthy) callbacks.onStale();
+        if (workerFailures.failed()) callbacks.onStale("worker");
       })
       .finally(() => {
         clearTimeout(timeout);
@@ -99,11 +106,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         watchdog.created(socket, Date.now());
         socket.addEventListener("open", () => {
           watchdog.opened(socket, Date.now());
-          callbacks.onHealthy();
+          callbacks.onHealthy("socket");
         });
         socket.addEventListener("message", () => {
           watchdog.received(socket, Date.now());
-          callbacks.onHealthy();
+          callbacks.onHealthy("socket");
         });
         const failed = () => setTimeout(checkSockets, 1000);
         socket.addEventListener("error", failed);

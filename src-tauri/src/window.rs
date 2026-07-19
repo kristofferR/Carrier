@@ -19,7 +19,7 @@ use crate::macos::theme::make_webview_transparent;
 use crate::settings::{
     load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
 };
-use crate::url_rules::{is_internal, unwrap_tracking};
+use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
@@ -70,8 +70,13 @@ pub(crate) fn build_app_window(
         .user_agent(user_agent())
         .initialization_script(init_script(settings, watchdog_id))
         .on_page_load(move |window, payload| match payload.event() {
-            tauri::webview::PageLoadEvent::Started => page_load_watchdog.disarm(),
-            tauri::webview::PageLoadEvent::Finished => apply_custom_css(&window, payload.url()),
+            tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
+            tauri::webview::PageLoadEvent::Finished => {
+                if !is_messenger_web_url(payload.url()) {
+                    page_load_watchdog.disarm();
+                }
+                apply_custom_css(&window, payload.url());
+            }
         })
         .on_navigation(|url| {
             // External tracking redirect -> open the real (web-only) destination.

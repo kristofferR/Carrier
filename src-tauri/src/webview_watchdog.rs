@@ -20,6 +20,7 @@ const PING_INTERVAL: Duration = Duration::from_secs(5);
 const PING_RESPONSE_GRACE: Duration = Duration::from_millis(250);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
 const PROTECTED_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(60);
 const REACHABILITY_RETRY: Duration = Duration::from_secs(10);
 
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
@@ -42,16 +43,25 @@ enum WatchdogAction {
 #[derive(Debug, Default)]
 struct WatchdogState {
     last_heartbeat_at: Option<Duration>,
+    navigation_started_at: Option<Duration>,
     protected: bool,
 }
 
 impl WatchdogState {
     fn heartbeat(&mut self, now: Duration, protected: bool) {
         self.last_heartbeat_at = Some(now);
+        self.navigation_started_at = None;
         self.protected = protected;
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
+        if let Some(navigation_started_at) = self.navigation_started_at {
+            return if now.saturating_sub(navigation_started_at) < NAVIGATION_TIMEOUT {
+                WatchdogAction::None
+            } else {
+                WatchdogAction::Reload
+            };
+        }
         let Some(last_heartbeat_at) = self.last_heartbeat_at else {
             return WatchdogAction::None;
         };
@@ -66,8 +76,17 @@ impl WatchdogState {
         }
     }
 
+    fn navigation_started(&mut self, now: Duration) {
+        self.navigation_started_at = Some(now);
+    }
+
+    fn navigation_failed(&mut self) {
+        self.navigation_started_at = None;
+    }
+
     fn disarm(&mut self) {
         self.last_heartbeat_at = None;
+        self.navigation_started_at = None;
         self.protected = false;
     }
 }
@@ -75,6 +94,7 @@ impl WatchdogState {
 #[derive(Clone)]
 pub(crate) struct WebviewWatchdog {
     id: u64,
+    started_at: Instant,
     state: Arc<Mutex<WatchdogState>>,
 }
 
@@ -82,6 +102,7 @@ impl WebviewWatchdog {
     pub(crate) fn new() -> Self {
         Self {
             id: NEXT_WATCHDOG_ID.fetch_add(1, Ordering::Relaxed),
+            started_at: Instant::now(),
             state: Arc::new(Mutex::new(WatchdogState::default())),
         }
     }
@@ -90,8 +111,17 @@ impl WebviewWatchdog {
         self.id
     }
 
-    /// Forget the previous document's heartbeat while a navigation is loading.
-    /// The new Messenger document re-arms the watchdog with its first reply.
+    /// Pause stale checks while a replacement document loads. A new heartbeat
+    /// clears this state; a load that never answers becomes recoverable again.
+    pub(crate) fn navigation_started(&self) {
+        self.state
+            .lock()
+            .unwrap()
+            .navigation_started(self.started_at.elapsed());
+    }
+
+    /// Forget the previous document when navigation reaches a page outside the
+    /// Messenger injection scope, such as an OAuth or captcha surface.
     pub(crate) fn disarm(&self) {
         self.state.lock().unwrap().disarm();
     }
@@ -104,7 +134,7 @@ impl WebviewWatchdog {
     /// macOS theme change rebuilds a window under the same label.
     pub(crate) fn install(&self, window: &WebviewWindow) {
         let watchdog_id = self.id;
-        let started_at = Instant::now();
+        let started_at = self.started_at;
         let heartbeat_state = Arc::clone(&self.state);
         let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
             let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
@@ -185,13 +215,13 @@ impl WebviewWatchdog {
                         log::warn!(
                             "Messenger webview {label} stopped responding; reloading to restore sync"
                         );
+                        state.lock().unwrap().navigation_started(now);
                         match watchdog_window.reload() {
                             Ok(()) => {
-                                // A successful reload will re-arm this generation.
-                                state.lock().unwrap().disarm();
                                 next_recovery_attempt = Duration::ZERO;
                             }
                             Err(error) => {
+                                state.lock().unwrap().navigation_failed();
                                 log::warn!(
                                     "failed to reload stale Messenger webview {label}: {error}"
                                 );
@@ -252,5 +282,27 @@ mod tests {
         state.disarm();
 
         assert_eq!(state.action(HEARTBEAT_TIMEOUT * 2), WatchdogAction::None);
+    }
+
+    #[test]
+    fn navigation_waits_for_a_new_page_then_recovers_if_it_never_answers() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false);
+        state.navigation_started(Duration::from_secs(1));
+
+        assert_eq!(
+            state.action(Duration::from_secs(1) + NAVIGATION_TIMEOUT - Duration::from_millis(1)),
+            WatchdogAction::None
+        );
+        assert_eq!(
+            state.action(Duration::from_secs(1) + NAVIGATION_TIMEOUT),
+            WatchdogAction::Reload
+        );
+
+        state.heartbeat(Duration::from_secs(2), false);
+        assert_eq!(
+            state.action(Duration::from_secs(2) + HEARTBEAT_TIMEOUT - Duration::from_millis(1)),
+            WatchdogAction::None
+        );
     }
 }

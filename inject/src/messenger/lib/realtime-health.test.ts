@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ConsecutiveFailureThreshold,
   isMessengerRealtimeUrl,
   REALTIME_CONNECT_GRACE_MS,
   REALTIME_SILENCE_MS,
   RealtimeHealthWatchdog,
+  RealtimeRecoveryTracker,
 } from "./realtime-health";
 
 describe("isMessengerRealtimeUrl", () => {
@@ -99,5 +101,30 @@ describe("RealtimeHealthWatchdog", () => {
     watchdog.received("new", REALTIME_SILENCE_MS);
 
     expect(watchdog.health(REALTIME_SILENCE_MS + 1)).toBe("healthy");
+  });
+});
+
+describe("realtime recovery signals", () => {
+  test("requires every stale source to recover independently", () => {
+    const tracker = new RealtimeRecoveryTracker();
+    tracker.stale("socket");
+    tracker.stale("worker");
+
+    tracker.healthy("worker");
+    expect(tracker.needsRecovery()).toBe(true);
+
+    tracker.healthy("socket");
+    expect(tracker.needsRecovery()).toBe(false);
+  });
+
+  test("reports a worker that misses its first three probes", () => {
+    const failures = new ConsecutiveFailureThreshold(3);
+
+    expect(failures.failed()).toBe(false);
+    expect(failures.failed()).toBe(false);
+    expect(failures.failed()).toBe(true);
+
+    failures.succeeded();
+    expect(failures.failed()).toBe(false);
   });
 });
