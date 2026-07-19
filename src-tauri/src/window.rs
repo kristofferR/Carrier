@@ -20,7 +20,7 @@ use crate::settings::{
     load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
 };
 use crate::url_rules::{is_internal, unwrap_tracking};
-use crate::webview_watchdog::{install_webview_watchdog, next_watchdog_id};
+use crate::webview_watchdog::WebviewWatchdog;
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
 /// The window/chrome theme to apply for a given preference: an explicit
@@ -58,7 +58,9 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    let watchdog_id = next_watchdog_id();
+    let watchdog = WebviewWatchdog::new();
+    let watchdog_id = watchdog.id();
+    let page_load_watchdog = watchdog.clone();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -67,10 +69,9 @@ pub(crate) fn build_app_window(
         .background_color(splash_background(settings))
         .user_agent(user_agent())
         .initialization_script(init_script(settings, watchdog_id))
-        .on_page_load(|window, payload| {
-            if payload.event() == tauri::webview::PageLoadEvent::Finished {
-                apply_custom_css(&window, payload.url());
-            }
+        .on_page_load(move |window, payload| match payload.event() {
+            tauri::webview::PageLoadEvent::Started => page_load_watchdog.disarm(),
+            tauri::webview::PageLoadEvent::Finished => apply_custom_css(&window, payload.url()),
         })
         .on_navigation(|url| {
             // External tracking redirect -> open the real (web-only) destination.
@@ -138,7 +139,7 @@ pub(crate) fn build_app_window(
             make_webview_transparent(window);
         })?;
     install_app_window_runtime_handler(app, &window);
-    install_webview_watchdog(&window, watchdog_id);
+    watchdog.install(&window);
     Ok(window)
 }
 

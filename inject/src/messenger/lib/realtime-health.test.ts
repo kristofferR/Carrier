@@ -42,27 +42,39 @@ describe("RealtimeHealthWatchdog", () => {
     watchdog.created("first", 0);
 
     expect(watchdog.health(REALTIME_CONNECT_GRACE_MS * 2)).toBe("starting");
-    watchdog.closed("first");
+    watchdog.closed("first", REALTIME_CONNECT_GRACE_MS * 2);
     expect(watchdog.health(REALTIME_CONNECT_GRACE_MS * 3)).toBe("starting");
   });
 
-  test("reports a previously connected transport as stale when it closes", () => {
+  test("gives a previously connected transport time to replace a closed socket", () => {
     const watchdog = new RealtimeHealthWatchdog<string>();
     watchdog.created("first", 0);
     watchdog.opened("first", 100);
-    watchdog.closed("first");
+    watchdog.closed("first", 200);
 
-    expect(watchdog.health(200)).toBe("stale");
+    expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS - 1)).toBe("recovering");
+    expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS)).toBe("stale");
   });
 
   test("allows a replacement socket a bounded connection grace period", () => {
     const watchdog = new RealtimeHealthWatchdog<string>();
     watchdog.created("old", 0);
     watchdog.opened("old", 100);
-    watchdog.closed("old");
+    watchdog.closed("old", 200);
     watchdog.created("replacement", 200);
 
     expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS - 1)).toBe("recovering");
+    expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS)).toBe("stale");
+  });
+
+  test("does not extend reconnect grace for repeated replacement attempts", () => {
+    const watchdog = new RealtimeHealthWatchdog<string>();
+    watchdog.created("old", 0);
+    watchdog.opened("old", 100);
+    watchdog.closed("old", 200);
+    watchdog.created("replacement-1", 300);
+    watchdog.created("replacement-2", 200 + REALTIME_CONNECT_GRACE_MS - 1);
+
     expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS)).toBe("stale");
   });
 

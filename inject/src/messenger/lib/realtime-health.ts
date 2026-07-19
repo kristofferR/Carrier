@@ -39,14 +39,17 @@ export function isMessengerRealtimeUrl(raw: string | URL, base: string): boolean
 export class RealtimeHealthWatchdog<T> {
   private readonly sockets = new Map<T, SocketState>();
   private everOpened = false;
+  private recoveryStartedAt: number | null = null;
 
   created(socket: T, now: number): void {
+    if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ??= now;
     this.sockets.set(socket, { state: "connecting", since: now, lastInboundAt: now });
   }
 
   opened(socket: T, now: number): void {
     if (!this.sockets.has(socket)) return;
     this.everOpened = true;
+    this.recoveryStartedAt = null;
     this.sockets.set(socket, { state: "open", since: now, lastInboundAt: now });
   }
 
@@ -56,8 +59,13 @@ export class RealtimeHealthWatchdog<T> {
     state.lastInboundAt = now;
   }
 
-  closed(socket: T): void {
+  closed(socket: T, now: number): void {
     this.sockets.delete(socket);
+    if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ??= now;
+  }
+
+  private hasOpenSocket(): boolean {
+    return [...this.sockets.values()].some((state) => state.state === "open");
   }
 
   health(now: number): RealtimeHealth {
@@ -69,13 +77,14 @@ export class RealtimeHealthWatchdog<T> {
     }
 
     const connecting = states.filter((state) => state.state === "connecting");
-    if (connecting.length) {
-      const newestConnection = Math.max(...connecting.map((state) => state.since));
-      if (!this.everOpened || elapsed(now, newestConnection) < REALTIME_CONNECT_GRACE_MS) {
-        return this.everOpened ? "recovering" : "starting";
-      }
+    if (!this.everOpened) return "starting";
+    if (
+      this.recoveryStartedAt !== null &&
+      elapsed(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS
+    ) {
+      return "recovering";
     }
 
-    return this.everOpened ? "stale" : "starting";
+    return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
   }
 }

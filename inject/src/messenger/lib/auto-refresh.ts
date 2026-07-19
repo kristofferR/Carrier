@@ -14,10 +14,10 @@ const elapsed = (now: number, since: number) => Math.max(0, now - since);
 export class AutoRefreshWatchdog {
   private inactiveSince: number | null;
   private lastHeartbeatAt: number;
-  private readonly loadedAt: number;
+  private lastFreshAt: number;
 
   constructor(now: number, active: boolean) {
-    this.loadedAt = now;
+    this.lastFreshAt = now;
     this.lastHeartbeatAt = now;
     this.inactiveSince = active ? null : now;
   }
@@ -30,6 +30,7 @@ export class AutoRefreshWatchdog {
 
     const inactiveFor = this.inactiveSince === null ? 0 : elapsed(now, this.inactiveSince);
     this.inactiveSince = null;
+    this.lastFreshAt = Math.max(this.lastFreshAt, now);
     return inactiveFor >= PERIODIC_REFRESH_MS ? "foreground" : null;
   }
 
@@ -52,6 +53,6 @@ export class AutoRefreshWatchdog {
   }
 
   canRefreshFromNotification(now: number): boolean {
-    return elapsed(now, this.loadedAt) >= NOTIFICATION_REFRESH_GAP_MS;
+    return elapsed(now, this.lastFreshAt) >= NOTIFICATION_REFRESH_GAP_MS;
   }
 }

@@ -108,7 +108,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         const failed = () => setTimeout(checkSockets, 1000);
         socket.addEventListener("error", failed);
         socket.addEventListener("close", () => {
-          watchdog.closed(socket);
+          watchdog.closed(socket, Date.now());
           failed();
         });
         return socket;

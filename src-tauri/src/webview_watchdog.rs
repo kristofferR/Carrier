@@ -11,10 +11,16 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use tauri::{Listener, WebviewWindow, WindowEvent};
 
+use crate::preflight::messenger_dns_preflight;
+use crate::url_rules::is_messenger_web_url;
+use crate::MESSENGER_DNS_TIMEOUT;
+
 const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const PING_RESPONSE_GRACE: Duration = Duration::from_millis(250);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
+const PROTECTED_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const REACHABILITY_RETRY: Duration = Duration::from_secs(10);
 
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -49,10 +55,11 @@ impl WatchdogState {
         let Some(last_heartbeat_at) = self.last_heartbeat_at else {
             return WatchdogAction::None;
         };
-        if now.saturating_sub(last_heartbeat_at) < HEARTBEAT_TIMEOUT {
+        let stalled_for = now.saturating_sub(last_heartbeat_at);
+        if stalled_for < HEARTBEAT_TIMEOUT {
             return WatchdogAction::None;
         }
-        if self.protected {
+        if self.protected && stalled_for < PROTECTED_HEARTBEAT_TIMEOUT {
             WatchdogAction::Protected
         } else {
             WatchdogAction::Reload
@@ -65,75 +72,138 @@ impl WatchdogState {
     }
 }
 
-pub(crate) fn next_watchdog_id() -> u64 {
-    NEXT_WATCHDOG_ID.fetch_add(1, Ordering::Relaxed)
+#[derive(Clone)]
+pub(crate) struct WebviewWatchdog {
+    id: u64,
+    state: Arc<Mutex<WatchdogState>>,
 }
 
-/// Install one watchdog for a Messenger window generation.
-///
-/// The watchdog arms only after the injected page answers once, so Carrier's
-/// local connectivity screen and a page that has not loaded yet are never put
-/// into a reload loop. A destroyed window stops its task; this matters when a
-/// macOS theme change rebuilds a window under the same label.
-pub(crate) fn install_webview_watchdog(window: &WebviewWindow, watchdog_id: u64) {
-    let started_at = Instant::now();
-    let state = Arc::new(Mutex::new(WatchdogState::default()));
-    let heartbeat_state = Arc::clone(&state);
-    let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
-        let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
-            return;
-        };
-        if payload.id != watchdog_id {
-            return;
+impl WebviewWatchdog {
+    pub(crate) fn new() -> Self {
+        Self {
+            id: NEXT_WATCHDOG_ID.fetch_add(1, Ordering::Relaxed),
+            state: Arc::new(Mutex::new(WatchdogState::default())),
         }
-        heartbeat_state
-            .lock()
-            .unwrap()
-            .heartbeat(started_at.elapsed(), payload.protected);
-    });
+    }
 
-    let alive = Arc::new(AtomicBool::new(true));
-    let window_alive = Arc::clone(&alive);
-    window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::Destroyed) {
-            window_alive.store(false, Ordering::Release);
-        }
-    });
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
 
-    let watchdog_window = window.clone();
-    let label = window.label().to_string();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::time::sleep(PING_INTERVAL).await;
-            if !alive.load(Ordering::Acquire) {
-                break;
+    /// Forget the previous document's heartbeat while a navigation is loading.
+    /// The new Messenger document re-arms the watchdog with its first reply.
+    pub(crate) fn disarm(&self) {
+        self.state.lock().unwrap().disarm();
+    }
+
+    /// Install one watchdog task for this Messenger window generation.
+    ///
+    /// The watchdog arms only after the injected page answers once, so Carrier's
+    /// local connectivity screen and a page that has not loaded yet are never put
+    /// into a reload loop. A destroyed window stops its task; this matters when a
+    /// macOS theme change rebuilds a window under the same label.
+    pub(crate) fn install(&self, window: &WebviewWindow) {
+        let watchdog_id = self.id;
+        let started_at = Instant::now();
+        let heartbeat_state = Arc::clone(&self.state);
+        let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
+            let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
+                return;
+            };
+            if payload.id != watchdog_id {
+                return;
             }
+            heartbeat_state
+                .lock()
+                .unwrap()
+                .heartbeat(started_at.elapsed(), payload.protected);
+        });
 
-            // Native eval wakes a throttled renderer. The event response proves
-            // the page actually executed it; a successful eval call alone only
-            // proves that WebKit accepted the request.
-            let _ = watchdog_window.eval(format!("window.__carrierHeartbeat?.({watchdog_id});"));
-            tokio::time::sleep(PING_RESPONSE_GRACE).await;
+        let alive = Arc::new(AtomicBool::new(true));
+        let window_alive = Arc::clone(&alive);
+        window.on_window_event(move |event| {
+            if matches!(event, WindowEvent::Destroyed) {
+                window_alive.store(false, Ordering::Release);
+            }
+        });
 
-            let action = state.lock().unwrap().action(started_at.elapsed());
-            match action {
-                WatchdogAction::None | WatchdogAction::Protected => {}
-                WatchdogAction::Reload => {
-                    log::warn!(
-                        "Messenger webview {label} stopped responding; reloading to restore sync"
-                    );
-                    if let Err(error) = watchdog_window.reload() {
-                        log::warn!("failed to reload stale Messenger webview {label}: {error}");
+        let state = Arc::clone(&self.state);
+        let watchdog_window = window.clone();
+        let label = window.label().to_string();
+        tauri::async_runtime::spawn(async move {
+            let mut next_recovery_attempt = Duration::ZERO;
+            loop {
+                tokio::time::sleep(PING_INTERVAL).await;
+                if !alive.load(Ordering::Acquire) {
+                    break;
+                }
+
+                // Native eval wakes a throttled renderer. The event response proves
+                // the page actually executed it; a successful eval call alone only
+                // proves that WebKit accepted the request.
+                let _ =
+                    watchdog_window.eval(format!("window.__carrierHeartbeat?.({watchdog_id});"));
+                tokio::time::sleep(PING_RESPONSE_GRACE).await;
+
+                let action = state.lock().unwrap().action(started_at.elapsed());
+                match action {
+                    WatchdogAction::None | WatchdogAction::Protected => {}
+                    WatchdogAction::Reload => {
+                        let now = started_at.elapsed();
+                        if now < next_recovery_attempt {
+                            continue;
+                        }
+                        let Ok(url) = watchdog_window.url() else {
+                            next_recovery_attempt = now + REACHABILITY_RETRY;
+                            continue;
+                        };
+                        // Auth providers and captcha pages intentionally do not run
+                        // Carrier's injection. Forget the Messenger heartbeat rather
+                        // than reloading a user out of an in-progress login flow.
+                        if !is_messenger_web_url(&url) {
+                            state.lock().unwrap().disarm();
+                            continue;
+                        }
+
+                        // A native reload can strand WebKit on its network-error
+                        // document, where neither injection nor the `online` event
+                        // runs. Keep the stale state armed and retry reachability so
+                        // recovery happens automatically when the network returns.
+                        let reachable = matches!(
+                            tokio::time::timeout(
+                                MESSENGER_DNS_TIMEOUT,
+                                tauri::async_runtime::spawn_blocking(messenger_dns_preflight)
+                            )
+                            .await,
+                            Ok(Ok(Ok(())))
+                        );
+                        if !reachable {
+                            next_recovery_attempt = now + REACHABILITY_RETRY;
+                            continue;
+                        }
+
+                        log::warn!(
+                            "Messenger webview {label} stopped responding; reloading to restore sync"
+                        );
+                        match watchdog_window.reload() {
+                            Ok(()) => {
+                                // A successful reload will re-arm this generation.
+                                state.lock().unwrap().disarm();
+                                next_recovery_attempt = Duration::ZERO;
+                            }
+                            Err(error) => {
+                                log::warn!(
+                                    "failed to reload stale Messenger webview {label}: {error}"
+                                );
+                                next_recovery_attempt = now + REACHABILITY_RETRY;
+                            }
+                        }
                     }
-                    // A successful reload will re-arm this generation. If the
-                    // reload lands on Carrier's local connectivity screen, it
-                    // intentionally remains disarmed instead of looping.
-                    state.lock().unwrap().disarm();
                 }
             }
-        }
-        watchdog_window.unlisten(listener_id);
-    });
+            watchdog_window.unlisten(listener_id);
+        });
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +235,14 @@ mod tests {
         state.heartbeat(Duration::ZERO, true);
 
         assert_eq!(state.action(HEARTBEAT_TIMEOUT), WatchdogAction::Protected);
+        assert_eq!(
+            state.action(PROTECTED_HEARTBEAT_TIMEOUT - Duration::from_millis(1)),
+            WatchdogAction::Protected
+        );
+        assert_eq!(
+            state.action(PROTECTED_HEARTBEAT_TIMEOUT),
+            WatchdogAction::Reload
+        );
     }
 
     #[test]

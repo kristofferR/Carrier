@@ -45,8 +45,8 @@
     constructor(now, active) {
       __publicField(this, "inactiveSince");
       __publicField(this, "lastHeartbeatAt");
-      __publicField(this, "loadedAt");
-      this.loadedAt = now;
+      __publicField(this, "lastFreshAt");
+      this.lastFreshAt = now;
       this.lastHeartbeatAt = now;
       this.inactiveSince = active ? null : now;
     }
@@ -57,6 +57,7 @@
       }
       const inactiveFor = this.inactiveSince === null ? 0 : elapsed(now, this.inactiveSince);
       this.inactiveSince = null;
+      this.lastFreshAt = Math.max(this.lastFreshAt, now);
       return inactiveFor >= PERIODIC_REFRESH_MS ? "foreground" : null;
     }
     heartbeat(active, now) {
@@ -71,7 +72,7 @@
       return null;
     }
     canRefreshFromNotification(now) {
-      return elapsed(now, this.loadedAt) >= NOTIFICATION_REFRESH_GAP_MS;
+      return elapsed(now, this.lastFreshAt) >= NOTIFICATION_REFRESH_GAP_MS;
     }
   };
 
@@ -94,13 +95,16 @@
     constructor() {
       __publicField(this, "sockets", /* @__PURE__ */ new Map());
       __publicField(this, "everOpened", false);
+      __publicField(this, "recoveryStartedAt", null);
     }
     created(socket, now) {
+      if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
       this.sockets.set(socket, { state: "connecting", since: now, lastInboundAt: now });
     }
     opened(socket, now) {
       if (!this.sockets.has(socket)) return;
       this.everOpened = true;
+      this.recoveryStartedAt = null;
       this.sockets.set(socket, { state: "open", since: now, lastInboundAt: now });
     }
     received(socket, now) {
@@ -108,8 +112,12 @@
       if (state?.state !== "open") return;
       state.lastInboundAt = now;
     }
-    closed(socket) {
+    closed(socket, now) {
       this.sockets.delete(socket);
+      if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
+    }
+    hasOpenSocket() {
+      return [...this.sockets.values()].some((state) => state.state === "open");
     }
     health(now) {
       const states = [...this.sockets.values()];
@@ -119,13 +127,11 @@
         return elapsed2(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
       }
       const connecting = states.filter((state) => state.state === "connecting");
-      if (connecting.length) {
-        const newestConnection = Math.max(...connecting.map((state) => state.since));
-        if (!this.everOpened || elapsed2(now, newestConnection) < REALTIME_CONNECT_GRACE_MS) {
-          return this.everOpened ? "recovering" : "starting";
-        }
+      if (!this.everOpened) return "starting";
+      if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
+        return "recovering";
       }
-      return this.everOpened ? "stale" : "starting";
+      return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
     }
   };
 
@@ -203,7 +209,7 @@
           const failed = () => setTimeout(checkSockets, 1e3);
           socket.addEventListener("error", failed);
           socket.addEventListener("close", () => {
-            watchdog.closed(socket);
+            watchdog.closed(socket, Date.now());
             failed();
           });
           return socket;

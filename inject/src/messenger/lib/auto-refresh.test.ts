@@ -54,4 +54,17 @@ describe("AutoRefreshWatchdog", () => {
     );
     expect(watchdog.canRefreshFromNotification(10_000 + NOTIFICATION_REFRESH_GAP_MS)).toBe(true);
   });
+
+  test("does not refresh for a notification immediately after active use", () => {
+    const watchdog = new AutoRefreshWatchdog(0, true);
+    watchdog.heartbeat(true, PERIODIC_REFRESH_MS);
+    watchdog.setActive(false, PERIODIC_REFRESH_MS + 1_000);
+
+    expect(
+      watchdog.canRefreshFromNotification(PERIODIC_REFRESH_MS + NOTIFICATION_REFRESH_GAP_MS - 1),
+    ).toBe(false);
+    expect(
+      watchdog.canRefreshFromNotification(PERIODIC_REFRESH_MS + NOTIFICATION_REFRESH_GAP_MS),
+    ).toBe(true);
+  });
 });
