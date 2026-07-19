@@ -10,6 +10,7 @@ export function initMediaPermissionWarning() {
   const original = md.getUserMedia.bind(md);
   const liveTracks = new LiveMediaTrackCounter<MediaStreamTrack>((inCall) => {
     window.__carrierInCall = inCall;
+    window.dispatchEvent(new Event("carrier:protection-change"));
   });
   md.getUserMedia = async (constraints?: MediaStreamConstraints) => {
     try {
