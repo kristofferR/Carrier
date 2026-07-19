@@ -395,7 +395,10 @@ pub(crate) fn build_tray_with_menu(
         icon: linux_tray_icon(image),
         tooltip: APP_TITLE.into(),
     };
+    // Autostart can run before the desktop's StatusNotifierWatcher exists.
+    // Keep the service alive so KSNI registers the icon when the watcher appears.
     let handle = tray
+        .assume_sni_available(true)
         .spawn()
         .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
     Ok(PlatformTrayIcon { handle })
