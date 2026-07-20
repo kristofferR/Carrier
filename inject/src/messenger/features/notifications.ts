@@ -370,14 +370,15 @@ export function initNotificationBridge() {
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
+      const detectedAt = Date.now();
       // "Read" means the row is no longer unread — not merely filtered from
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
       notifiedStore.observeRead(
         new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
         observed.map(({ key }) => key),
+        detectedAt,
       );
-      const detectedAt = Date.now();
       const changed = new Set(
         conversationTracker.observe(
           conversations.map(({ key, body, title }) => ({ key, signature: body || title })),

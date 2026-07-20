@@ -2002,14 +2002,14 @@
     return hash.toString(16).padStart(16, "0");
   }
   var NOTIFIED_STORE_LIMIT = 300;
-  var STABLE_READ_SCANS = 3;
+  var STABLE_READ_MS = 3e4;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
-      /** In-memory only: read-observation streaks per conversation (see observeRead). */
-      __publicField(this, "readStreak", /* @__PURE__ */ new Map());
+      /** In-memory only: when each continuously observed read state began. */
+      __publicField(this, "readSince", /* @__PURE__ */ new Map());
       try {
         const raw = this.storage?.getItem(this.storageKey);
         if (!raw) return;
@@ -2039,38 +2039,41 @@
       return this.entries.get(conversationKey) === fingerprint;
     }
     markNotified(conversationKey, fingerprint) {
-      this.readStreak.delete(conversationKey);
+      this.readSince.delete(conversationKey);
       if (this.entries.get(conversationKey) === fingerprint) return;
       this.entries.delete(conversationKey);
       this.entries.set(conversationKey, fingerprint);
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);
-        this.readStreak.delete(oldest);
+        this.readSince.delete(oldest);
       }
       this.persist();
     }
     /**
      * Forget conversations that are rendered without an unread preview — the
      * user has read them, so an identical future preview must notify again.
-     * Requires STABLE_READ_SCANS consecutive read observations (an unread
-     * observation resets the count) because hydration can transiently render
-     * an unread row as read, and one flicker must not clear the suppression.
+     * The read state must remain continuously observed for [[STABLE_READ_MS]];
+     * an unread observation resets the timer. This keeps rapid post-reload
+     * hydration scans from clearing replay suppression.
      */
-    observeRead(unreadKeys, observedKeys) {
+    observeRead(unreadKeys, observedKeys, observedAt = Date.now()) {
       let dropped = false;
       for (const key of new Set(observedKeys)) {
         if (unreadKeys.has(key)) {
-          this.readStreak.delete(key);
+          this.readSince.delete(key);
           continue;
         }
         if (!this.entries.has(key)) continue;
-        const streak = (this.readStreak.get(key) || 0) + 1;
-        if (streak < STABLE_READ_SCANS) {
-          this.readStreak.set(key, streak);
+        const since = this.readSince.get(key);
+        if (since === void 0 || observedAt < since) {
+          this.readSince.set(key, observedAt);
           continue;
         }
-        this.readStreak.delete(key);
+        if (observedAt - since < STABLE_READ_MS) {
+          continue;
+        }
+        this.readSince.delete(key);
         this.entries.delete(key);
         dropped = true;
       }
@@ -2514,11 +2517,12 @@
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
+        const detectedAt = Date.now();
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
-          observed.map(({ key }) => key)
+          observed.map(({ key }) => key),
+          detectedAt
         );
-        const detectedAt = Date.now();
         const changed = new Set(
           conversationTracker.observe(
             conversations.map(({ key, body, title }) => ({ key, signature: body || title })),

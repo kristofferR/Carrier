@@ -6,6 +6,7 @@ import {
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
+  STABLE_READ_MS,
   UnreadArrivalTracker,
 } from "./notification-fallback";
 
@@ -76,40 +77,43 @@ describe("NotifiedSignatureStore", () => {
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 
-  test("forgets a conversation after stable read observations", () => {
+  test("forgets a conversation after a continuously stable read interval", () => {
     const storage = memoryStorage();
     const store = new NotifiedSignatureStore(storage);
     store.markNotified("1", "aaaa");
     // Rendered rows: "1" no longer unread, "2" was never tracked.
-    store.observeRead(new Set(["2"]), ["1", "2"]);
-    store.observeRead(new Set(["2"]), ["1", "2"]);
+    store.observeRead(new Set(["2"]), ["1", "2"], 1_000);
+    store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS - 1);
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
-    store.observeRead(new Set(["2"]), ["1", "2"]);
+    store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(false);
   });
 
-  test("a transient read flicker does not clear a delivered entry", () => {
-    const store = new NotifiedSignatureStore();
-    store.markNotified("1", "aaaa");
-    // Two hydration scans render the row as read, then it settles unread
-    // again — the streak resets and the suppression entry survives further
-    // read flickers short of a stable streak.
-    store.observeRead(new Set(), ["1"]);
-    store.observeRead(new Set(), ["1"]);
-    store.observeRead(new Set(["1"]), ["1"]);
-    store.observeRead(new Set(), ["1"]);
-    store.observeRead(new Set(), ["1"]);
+  test("rapid hydration scans do not clear a delivered entry", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    // Recreate the store as a real document reload does.
+    const store = new NotifiedSignatureStore(storage);
+    // A reload can produce far more than the old three-scan threshold while
+    // the row temporarily lacks its unread styling.
+    for (let scan = 0; scan < 100; scan++) {
+      store.observeRead(new Set(), ["1"], scan * 100);
+    }
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 
-  test("counts repeated keys in one scan as a single observation", () => {
+  test("an unread observation resets pending read confirmation", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
-    store.observeRead(new Set(), ["1", "1", "1"]);
-    store.observeRead(new Set(), ["1", "1", "1"]);
+    store.observeRead(new Set(), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 1_000 + STABLE_READ_MS - 1);
+    store.observeRead(new Set(["1"]), ["1"], 1_000 + STABLE_READ_MS);
+    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS);
+    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS * 2 - 1);
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
-    store.observeRead(new Set(), ["1", "1", "1"]);
+    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS * 2);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
   });
 
