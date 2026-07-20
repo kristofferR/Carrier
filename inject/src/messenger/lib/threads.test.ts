@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { SEPARATOR_RE, threadIdFromHref, threadPathId } from "./threads";
+import { isMessengerContentPath, SEPARATOR_RE, threadIdFromHref, threadPathId } from "./threads";
 
 describe("threadIdFromHref", () => {
   test("extracts the id from chat-list hrefs", () => {
@@ -29,6 +29,23 @@ describe("threadPathId", () => {
     expect(threadPathId("")).toBeNull();
     expect(threadPathId(null)).toBeNull();
     expect(threadPathId(42)).toBeNull();
+  });
+});
+
+describe("isMessengerContentPath", () => {
+  test("checks Facebook inbox paths and exact Messenger thread paths", () => {
+    expect(isMessengerContentPath("/messages")).toBe(true);
+    expect(isMessengerContentPath("/messages/t/123/")).toBe(true);
+    expect(isMessengerContentPath("/t/123")).toBe(true);
+    expect(isMessengerContentPath("/t/123/")).toBe(true);
+  });
+
+  test("leaves login, checkpoint, and malformed thread pages user-driven", () => {
+    expect(isMessengerContentPath("/login")).toBe(false);
+    expect(isMessengerContentPath("/checkpoint/123")).toBe(false);
+    expect(isMessengerContentPath("/t/not-a-thread")).toBe(false);
+    expect(isMessengerContentPath("/t/123/extra")).toBe(false);
+    expect(isMessengerContentPath("/messagesarchive")).toBe(false);
   });
 });
 

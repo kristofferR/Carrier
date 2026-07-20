@@ -354,6 +354,109 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
     });
 }
 
+/// Replace one Messenger webview after its document stays content-free even
+/// through a native reload. A fresh webview process recovers failures that
+/// `WKWebView.reload()` / WebView2 reload cannot, while keeping cookies,
+/// settings, window geometry, and the rest of the app process intact.
+///
+/// Returns whether a rebuild was scheduled. Theme changes and other recovery
+/// attempts share the `recreating` guard so two destroy/build cycles cannot
+/// overlap.
+pub(crate) fn recreate_messenger_window(app: &tauri::AppHandle, label: &str) -> bool {
+    use std::sync::atomic::Ordering;
+
+    if label == "settings" {
+        return false;
+    }
+    let Some(window) = app.get_webview_window(label) else {
+        return false;
+    };
+    if app
+        .state::<AppState>()
+        .recreating
+        .swap(true, Ordering::SeqCst)
+    {
+        return false;
+    }
+
+    let app = app.clone();
+    let label = label.to_string();
+    tauri::async_runtime::spawn(async move {
+        let geometry = window.outer_position().ok().zip(window.inner_size().ok());
+        let was_visible = window.is_visible().unwrap_or(true);
+        let was_minimized = window.is_minimized().unwrap_or(false);
+        let was_maximized = window.is_maximized().unwrap_or(false);
+        let was_fullscreen = window.is_fullscreen().unwrap_or(false);
+        let was_focused = window.is_focused().unwrap_or(false);
+
+        if let Err(error) = window.destroy() {
+            log::warn!("failed to destroy blank Messenger webview {label}: {error}");
+            app.state::<AppState>()
+                .recreating
+                .store(false, Ordering::SeqCst);
+            return;
+        }
+
+        // Let the event loop release the old native label before rebuilding.
+        const MAX_BUILD_ATTEMPTS: usize = 3;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+        for attempt in 1..=MAX_BUILD_ATTEMPTS {
+            match build_app_window(&app, &label, &settings) {
+                Ok(rebuilt) => {
+                    if label == "main" {
+                        install_main_close_handler(&app, &rebuilt);
+                    }
+                    if let Some((position, size)) = geometry {
+                        let _ = rebuilt.set_position(tauri::Position::Physical(position));
+                        let _ = rebuilt.set_size(tauri::Size::Physical(size));
+                    }
+                    if was_maximized {
+                        let _ = rebuilt.maximize();
+                    }
+                    if was_fullscreen {
+                        let _ = rebuilt.set_fullscreen(true);
+                    }
+                    if was_visible {
+                        let _ = rebuilt.show();
+                    } else {
+                        let _ = rebuilt.hide();
+                    }
+                    if was_minimized {
+                        let _ = rebuilt.minimize();
+                    } else if was_focused {
+                        let _ = rebuilt.set_focus();
+                    }
+                    app.state::<AppState>()
+                        .recreating
+                        .store(false, Ordering::SeqCst);
+                    return;
+                }
+                Err(error) => {
+                    log::warn!(
+                        "failed to rebuild blank Messenger webview {label} \
+                         (attempt {attempt}/{MAX_BUILD_ATTEMPTS}): {error}"
+                    );
+                    if attempt < MAX_BUILD_ATTEMPTS {
+                        tokio::time::sleep(std::time::Duration::from_millis(250 * attempt as u64))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        // The old window is already gone, so there is nothing left for its
+        // watchdog to supervise. Restarting is the final recovery path and uses
+        // the same persisted cookies/settings as an ordinary app launch.
+        log::error!(
+            "failed to rebuild blank Messenger webview {label} after \
+             {MAX_BUILD_ATTEMPTS} attempts; restarting Carrier"
+        );
+        app.restart();
+    });
+    true
+}
+
 /// Rebuild every Messenger window (not the Settings dialog) with the current
 /// settings. The macOS title bar's theme is fixed at window creation — no
 /// runtime call repaints it — so a live theme switch is reflected by recreating

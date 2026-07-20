@@ -261,6 +261,21 @@
     }
   };
 
+  // inject/src/messenger/lib/threads.ts
+  function threadIdFromHref(href) {
+    const m = (href || "").match(/\/t\/(\d+)/);
+    return m ? m[1] : null;
+  }
+  function threadPathId(href) {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    return m ? m[1] : null;
+  }
+  function isMessengerContentPath(pathname) {
+    const path = String(pathname || "");
+    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
+  }
+  var SEPARATOR_RE = /^[·•.,\s]+$/;
+
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
   var WORKER_FAILURE_LIMIT = 3;
@@ -387,13 +402,41 @@
     }
     let lastHeartbeatProtection;
     const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+    const messengerContentPresent = () => {
+      if (!isMessengerContentPath(location.pathname)) return true;
+      const candidates = document.querySelectorAll(
+        'a[href], button, input, textarea, [contenteditable="true"], [role="navigation"], [role="main"]'
+      );
+      for (const el of candidates) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 1 || rect.height <= 1 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
+          continue;
+        }
+        let current = el;
+        let hidden = false;
+        while (current) {
+          const style = getComputedStyle(current);
+          if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.contentVisibility === "hidden" || Number(style.opacity) <= 0) {
+            hidden = true;
+            break;
+          }
+          current = current.parentElement;
+        }
+        if (!hidden) return true;
+      }
+      return false;
+    };
     const emitHeartbeat = () => {
       if (typeof heartbeatId !== "number") return;
       const protectedNow = heartbeatProtection();
       lastHeartbeatProtection = protectedNow;
       invoke("plugin:event|emit", {
         event: "carrier:webview-heartbeat",
-        payload: { id: heartbeatId, protected: protectedNow }
+        payload: {
+          id: heartbeatId,
+          protected: protectedNow,
+          content_present: messengerContentPresent()
+        }
       })?.catch?.(() => {
       });
     };
@@ -2143,17 +2186,6 @@
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
-
-  // inject/src/messenger/lib/threads.ts
-  function threadIdFromHref(href) {
-    const m = (href || "").match(/\/t\/(\d+)/);
-    return m ? m[1] : null;
-  }
-  function threadPathId(href) {
-    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
-    return m ? m[1] : null;
-  }
-  var SEPARATOR_RE = /^[·•.,\s]+$/;
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {

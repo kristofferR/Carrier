@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tauri::{Listener, WebviewWindow, WindowEvent};
+use tauri::{Listener, Manager, WebviewWindow, WindowEvent};
 
 use crate::preflight::messenger_dns_preflight;
 use crate::url_rules::is_messenger_web_url;
@@ -20,6 +20,7 @@ const PING_INTERVAL: Duration = Duration::from_secs(5);
 const PING_RESPONSE_GRACE: Duration = Duration::from_millis(250);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
 const PROTECTED_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const MISSING_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(60);
 const REACHABILITY_RETRY: Duration = Duration::from_secs(10);
 
@@ -31,6 +32,9 @@ struct HeartbeatPayload {
     // security credential. The remote page already has event-plugin access.
     id: u64,
     protected: bool,
+    /// Whether a `/messages` document still has visible page controls. Older
+    /// payloads omit this and retain the renderer-only watchdog behaviour.
+    content_present: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -38,20 +42,34 @@ enum WatchdogAction {
     None,
     Protected,
     Reload,
+    ReloadBlank,
+    RecreateBlank,
 }
 
 #[derive(Debug, Default)]
 struct WatchdogState {
     last_heartbeat_at: Option<Duration>,
     navigation_started_at: Option<Duration>,
+    missing_content_since: Option<Duration>,
+    blank_reload_attempted: bool,
     protected: bool,
 }
 
 impl WatchdogState {
-    fn heartbeat(&mut self, now: Duration, protected: bool) {
+    fn heartbeat(&mut self, now: Duration, protected: bool, content_present: Option<bool>) {
         self.last_heartbeat_at = Some(now);
         self.navigation_started_at = None;
         self.protected = protected;
+        match content_present {
+            Some(true) => {
+                self.missing_content_since = None;
+                self.blank_reload_attempted = false;
+            }
+            Some(false) => {
+                self.missing_content_since.get_or_insert(now);
+            }
+            None => {}
+        }
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
@@ -60,6 +78,19 @@ impl WatchdogState {
                 WatchdogAction::None
             } else {
                 WatchdogAction::Reload
+            };
+        }
+        if self
+            .missing_content_since
+            .is_some_and(|since| now.saturating_sub(since) >= MISSING_CONTENT_TIMEOUT)
+        {
+            if self.protected {
+                return WatchdogAction::Protected;
+            }
+            return if self.blank_reload_attempted {
+                WatchdogAction::RecreateBlank
+            } else {
+                WatchdogAction::ReloadBlank
             };
         }
         let Some(last_heartbeat_at) = self.last_heartbeat_at else {
@@ -84,9 +115,17 @@ impl WatchdogState {
         self.navigation_started_at = None;
     }
 
+    fn blank_reload_started(&mut self, now: Duration) {
+        self.blank_reload_attempted = true;
+        self.missing_content_since = None;
+        self.navigation_started(now);
+    }
+
     fn disarm(&mut self) {
         self.last_heartbeat_at = None;
         self.navigation_started_at = None;
+        self.missing_content_since = None;
+        self.blank_reload_attempted = false;
         self.protected = false;
     }
 }
@@ -143,10 +182,11 @@ impl WebviewWatchdog {
             if payload.id != watchdog_id {
                 return;
             }
-            heartbeat_state
-                .lock()
-                .unwrap()
-                .heartbeat(started_at.elapsed(), payload.protected);
+            heartbeat_state.lock().unwrap().heartbeat(
+                started_at.elapsed(),
+                payload.protected,
+                payload.content_present,
+            );
         });
 
         let alive = Arc::new(AtomicBool::new(true));
@@ -178,7 +218,9 @@ impl WebviewWatchdog {
                 let action = state.lock().unwrap().action(started_at.elapsed());
                 match action {
                     WatchdogAction::None | WatchdogAction::Protected => {}
-                    WatchdogAction::Reload => {
+                    WatchdogAction::Reload
+                    | WatchdogAction::ReloadBlank
+                    | WatchdogAction::RecreateBlank => {
                         let now = started_at.elapsed();
                         if now < next_recovery_attempt {
                             continue;
@@ -212,21 +254,72 @@ impl WebviewWatchdog {
                             continue;
                         }
 
-                        log::warn!(
-                            "Messenger webview {label} stopped responding; reloading to restore sync"
-                        );
-                        state.lock().unwrap().navigation_started(now);
-                        match watchdog_window.reload() {
-                            Ok(()) => {
-                                next_recovery_attempt = Duration::ZERO;
-                            }
-                            Err(error) => {
-                                state.lock().unwrap().navigation_failed();
+                        match action {
+                            WatchdogAction::Reload => {
                                 log::warn!(
-                                    "failed to reload stale Messenger webview {label}: {error}"
+                                    "Messenger webview {label} stopped responding; reloading to restore sync"
                                 );
+                                state.lock().unwrap().navigation_started(now);
+                                match watchdog_window.reload() {
+                                    Ok(()) => {
+                                        next_recovery_attempt = Duration::ZERO;
+                                    }
+                                    Err(error) => {
+                                        state.lock().unwrap().navigation_failed();
+                                        log::warn!(
+                                            "failed to reload stale Messenger webview {label}: {error}"
+                                        );
+                                        next_recovery_attempt = now + REACHABILITY_RETRY;
+                                    }
+                                }
+                            }
+                            WatchdogAction::ReloadBlank => {
+                                log::warn!(
+                                    "Messenger webview {label} lost its visible page content; reloading"
+                                );
+                                state.lock().unwrap().blank_reload_started(now);
+                                match watchdog_window.reload() {
+                                    Ok(()) => {
+                                        next_recovery_attempt = Duration::ZERO;
+                                    }
+                                    Err(error) => {
+                                        state.lock().unwrap().navigation_failed();
+                                        log::warn!(
+                                            "failed to reload blank Messenger webview {label}: {error}"
+                                        );
+                                        next_recovery_attempt = now + REACHABILITY_RETRY;
+                                    }
+                                }
+                            }
+                            WatchdogAction::RecreateBlank => {
+                                // DNS resolution ran off-thread. Messenger may
+                                // have rendered while it was in flight, so do
+                                // not destroy a webview that has since reported
+                                // visible content.
+                                if state.lock().unwrap().action(started_at.elapsed())
+                                    != WatchdogAction::RecreateBlank
+                                {
+                                    next_recovery_attempt = Duration::ZERO;
+                                    continue;
+                                }
+                                log::warn!(
+                                    "Messenger webview {label} stayed blank after reload; rebuilding it"
+                                );
+                                if crate::window::recreate_messenger_window(
+                                    watchdog_window.app_handle(),
+                                    &label,
+                                ) {
+                                    // Keep supervising until the async rebuild
+                                    // actually destroys this window. If destroy
+                                    // fails, `alive` stays set and a later pass
+                                    // retries instead of leaving the label
+                                    // without a watchdog.
+                                    next_recovery_attempt = now + REACHABILITY_RETRY;
+                                    continue;
+                                }
                                 next_recovery_attempt = now + REACHABILITY_RETRY;
                             }
+                            WatchdogAction::None | WatchdogAction::Protected => unreachable!(),
                         }
                     }
                 }
@@ -250,7 +343,7 @@ mod tests {
     #[test]
     fn reloads_immediately_after_the_heartbeat_deadline() {
         let mut state = WatchdogState::default();
-        state.heartbeat(Duration::ZERO, false);
+        state.heartbeat(Duration::ZERO, false, None);
 
         assert_eq!(
             state.action(HEARTBEAT_TIMEOUT - Duration::from_millis(1)),
@@ -262,7 +355,7 @@ mod tests {
     #[test]
     fn protects_a_draft_or_call_during_a_renderer_stall() {
         let mut state = WatchdogState::default();
-        state.heartbeat(Duration::ZERO, true);
+        state.heartbeat(Duration::ZERO, true, None);
 
         assert_eq!(state.action(HEARTBEAT_TIMEOUT), WatchdogAction::Protected);
         assert_eq!(
@@ -278,7 +371,7 @@ mod tests {
     #[test]
     fn a_reload_disarms_until_the_new_page_responds() {
         let mut state = WatchdogState::default();
-        state.heartbeat(Duration::ZERO, false);
+        state.heartbeat(Duration::ZERO, false, None);
         state.disarm();
 
         assert_eq!(state.action(HEARTBEAT_TIMEOUT * 2), WatchdogAction::None);
@@ -287,7 +380,7 @@ mod tests {
     #[test]
     fn navigation_waits_for_a_new_page_then_recovers_if_it_never_answers() {
         let mut state = WatchdogState::default();
-        state.heartbeat(Duration::ZERO, false);
+        state.heartbeat(Duration::ZERO, false, None);
         state.navigation_started(Duration::from_secs(1));
 
         assert_eq!(
@@ -299,10 +392,75 @@ mod tests {
             WatchdogAction::Reload
         );
 
-        state.heartbeat(Duration::from_secs(2), false);
+        state.heartbeat(Duration::from_secs(2), false, None);
         assert_eq!(
             state.action(Duration::from_secs(2) + HEARTBEAT_TIMEOUT - Duration::from_millis(1)),
             WatchdogAction::None
         );
+    }
+
+    #[test]
+    fn blank_content_reloads_once_then_recreates_the_webview() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, Some(false));
+        state.heartbeat(
+            MISSING_CONTENT_TIMEOUT - Duration::from_millis(1),
+            false,
+            Some(false),
+        );
+        assert_eq!(
+            state.action(MISSING_CONTENT_TIMEOUT - Duration::from_millis(1)),
+            WatchdogAction::None
+        );
+
+        state.heartbeat(MISSING_CONTENT_TIMEOUT, false, Some(false));
+        assert_eq!(
+            state.action(MISSING_CONTENT_TIMEOUT),
+            WatchdogAction::ReloadBlank
+        );
+        state.blank_reload_started(MISSING_CONTENT_TIMEOUT);
+        assert_eq!(
+            state.action(MISSING_CONTENT_TIMEOUT + Duration::from_millis(500)),
+            WatchdogAction::None
+        );
+
+        let next_document = MISSING_CONTENT_TIMEOUT + Duration::from_secs(1);
+        state.heartbeat(next_document, false, Some(false));
+        state.heartbeat(next_document + MISSING_CONTENT_TIMEOUT, false, Some(false));
+        assert_eq!(
+            state.action(next_document + MISSING_CONTENT_TIMEOUT),
+            WatchdogAction::RecreateBlank
+        );
+    }
+
+    #[test]
+    fn visible_content_cancels_blank_recovery_escalation() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, Some(false));
+        state.blank_reload_started(MISSING_CONTENT_TIMEOUT);
+        state.heartbeat(
+            MISSING_CONTENT_TIMEOUT + Duration::from_secs(1),
+            false,
+            Some(true),
+        );
+
+        assert_eq!(
+            state.action(
+                MISSING_CONTENT_TIMEOUT + Duration::from_secs(1) + HEARTBEAT_TIMEOUT
+                    - Duration::from_millis(1)
+            ),
+            WatchdogAction::None
+        );
+        assert!(!state.blank_reload_attempted);
+        assert!(state.missing_content_since.is_none());
+    }
+
+    #[test]
+    fn heartbeat_payload_without_content_signal_stays_compatible() {
+        let payload: HeartbeatPayload =
+            serde_json::from_str(r#"{"id":7,"protected":false}"#).unwrap();
+
+        assert_eq!(payload.id, 7);
+        assert_eq!(payload.content_present, None);
     }
 }

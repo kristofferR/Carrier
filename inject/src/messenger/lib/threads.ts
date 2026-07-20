@@ -13,6 +13,12 @@ export function threadPathId(href: unknown): string | null {
   return m ? m[1]! : null;
 }
 
+/** Whether a pathname is a Messenger inbox/thread surface that should render controls. */
+export function isMessengerContentPath(pathname: unknown): boolean {
+  const path = String(pathname || "");
+  return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
+}
+
 // Structural separators that can appear between row fragments. Do not filter
 // short or metadata-looking words: they can be real display names.
 export const SEPARATOR_RE = /^[·•.,\s]+$/;

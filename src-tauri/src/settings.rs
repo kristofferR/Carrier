@@ -182,9 +182,9 @@ pub(crate) struct AppState {
     /// The event listener queues work away from the UI thread, so older tasks
     /// must be able to yield to the newest zoom event.
     pub(crate) zoom_generation: AtomicUsize,
-    /// True while [`recreate_themed_windows`](crate::window::recreate_themed_windows)
-    /// is between destroying and rebuilding, so the run loop doesn't exit when
-    /// the window count hits zero.
+    /// True while Messenger windows are being destroyed and rebuilt for a theme
+    /// change or blank-webview recovery, so the run loop doesn't exit when the
+    /// window count hits zero.
     pub(crate) recreating: AtomicBool,
     /// The page-scraped recent-conversations list backing the Dock/tray menus.
     /// In memory only — never persisted (see `carrier:recent-threads`).

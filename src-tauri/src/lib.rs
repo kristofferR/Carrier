@@ -455,8 +455,8 @@ pub fn run() {
                 reopen_main_if_needed(app, has_visible_windows);
             }
 
-            // A theme switch destroys and rebuilds the windows; don't let the
-            // momentary zero-window state quit the app.
+            // A theme switch or blank-webview recovery destroys and rebuilds
+            // windows; don't let the momentary zero-window state quit the app.
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 if app
                     .state::<AppState>()
