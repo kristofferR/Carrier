@@ -6,6 +6,7 @@
 import { diag, invoke } from "../bridge";
 import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
 import { RealtimeRecoveryTracker } from "../lib/realtime-health";
+import { isMessengerContentPath } from "../lib/threads";
 import { monitorRealtimeHealth } from "./realtime-health";
 
 export function initAutoRefresh() {
@@ -48,7 +49,7 @@ export function initAutoRefresh() {
     // coupling recovery to the feature selectors (which Facebook may rename):
     // any visible page control is enough to prove this is not that blank state.
     // Error/login/checkpoint UI also has controls, so it remains user-driven.
-    if (!location.pathname.startsWith("/messages")) return true;
+    if (!isMessengerContentPath(location.pathname)) return true;
     const candidates = document.querySelectorAll<HTMLElement>(
       'a[href], button, input, textarea, [contenteditable="true"], [role="navigation"], [role="main"]',
     );

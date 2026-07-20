@@ -261,6 +261,21 @@
     }
   };
 
+  // inject/src/messenger/lib/threads.ts
+  function threadIdFromHref(href) {
+    const m = (href || "").match(/\/t\/(\d+)/);
+    return m ? m[1] : null;
+  }
+  function threadPathId(href) {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    return m ? m[1] : null;
+  }
+  function isMessengerContentPath(pathname) {
+    const path = String(pathname || "");
+    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
+  }
+  var SEPARATOR_RE = /^[·•.,\s]+$/;
+
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
   var WORKER_FAILURE_LIMIT = 3;
@@ -388,7 +403,7 @@
     let lastHeartbeatProtection;
     const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
     const messengerContentPresent = () => {
-      if (!location.pathname.startsWith("/messages")) return true;
+      if (!isMessengerContentPath(location.pathname)) return true;
       const candidates = document.querySelectorAll(
         'a[href], button, input, textarea, [contenteditable="true"], [role="navigation"], [role="main"]'
       );
@@ -2171,17 +2186,6 @@
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
-
-  // inject/src/messenger/lib/threads.ts
-  function threadIdFromHref(href) {
-    const m = (href || "").match(/\/t\/(\d+)/);
-    return m ? m[1] : null;
-  }
-  function threadPathId(href) {
-    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
-    return m ? m[1] : null;
-  }
-  var SEPARATOR_RE = /^[·•.,\s]+$/;
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
