@@ -20,8 +20,44 @@ const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from
 const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
 const MESSENGER_DNS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 type MessengerPreflightTask = tauri::async_runtime::JoinHandle<Result<(), MessengerPreflightError>>;
-static MESSENGER_PREFLIGHT_TASK: tokio::sync::Mutex<Option<MessengerPreflightTask>> =
-    tokio::sync::Mutex::const_new(None);
+
+struct MessengerPreflightTasks {
+    active: Option<MessengerPreflightTask>,
+    // Keep one detached timeout handle so repeated clicks cannot grow the
+    // blocking pool without bound while still allowing one fresh lookup.
+    retired: Option<MessengerPreflightTask>,
+}
+
+impl MessengerPreflightTasks {
+    fn prune_retired(&mut self) {
+        if self
+            .retired
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished())
+        {
+            self.retired.take();
+        }
+    }
+
+    fn retire_active_after_timeout(&mut self) {
+        self.prune_retired();
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished())
+        {
+            self.active.take();
+        } else if self.retired.is_none() {
+            self.retired = self.active.take();
+        }
+    }
+}
+
+static MESSENGER_PREFLIGHT_TASKS: tokio::sync::Mutex<MessengerPreflightTasks> =
+    tokio::sync::Mutex::const_new(MessengerPreflightTasks {
+        active: None,
+        retired: None,
+    });
 
 struct UpdateInstallGuard<'a>(&'a std::sync::atomic::AtomicBool);
 
@@ -623,16 +659,18 @@ pub(crate) async fn connect_messenger(
 
     loop {
         let (preflight, inherited_result) = {
-            let mut preflight_task = MESSENGER_PREFLIGHT_TASK.lock().await;
+            let mut preflight_tasks = MESSENGER_PREFLIGHT_TASKS.lock().await;
+            preflight_tasks.prune_retired();
             if polling_inherited_task
-                && preflight_task
+                && preflight_tasks
+                    .active
                     .as_ref()
                     .is_some_and(|task| task.inner().is_finished())
             {
-                preflight_task.take();
+                preflight_tasks.active.take();
             }
-            if preflight_task.is_none() {
-                *preflight_task = Some(tauri::async_runtime::spawn_blocking(
+            if preflight_tasks.active.is_none() {
+                preflight_tasks.active = Some(tauri::async_runtime::spawn_blocking(
                     messenger_dns_preflight,
                 ));
                 polling_inherited_task = false;
@@ -640,21 +678,27 @@ pub(crate) async fn connect_messenger(
 
             let result = match tokio::time::timeout(
                 MESSENGER_DNS_TIMEOUT,
-                preflight_task
+                preflight_tasks
+                    .active
                     .as_mut()
                     .expect("the preflight task slot is initialized before polling"),
             )
             .await
             {
                 Ok(Ok(result)) => {
-                    preflight_task.take();
+                    preflight_tasks.active.take();
                     MessengerPreflightAttempt::Completed(result)
                 }
                 Ok(Err(error)) => {
-                    preflight_task.take();
+                    preflight_tasks.active.take();
                     MessengerPreflightAttempt::TaskFailed(error.to_string())
                 }
-                Err(_) => MessengerPreflightAttempt::TimedOut,
+                Err(_) => {
+                    if attempt >= max_attempts {
+                        preflight_tasks.retire_active_after_timeout();
+                    }
+                    MessengerPreflightAttempt::TimedOut
+                }
             };
             (result, polling_inherited_task)
         };
@@ -686,8 +730,6 @@ pub(crate) async fn connect_messenger(
                      timed out during startup; continuing to wait"
                 );
             }
-            // Keep a timed-out task in the shared slot. Dropping its handle
-            // would let the next command overlap the still-running resolver.
             MessengerPreflightDecision::Return(status) => return status,
         }
 
