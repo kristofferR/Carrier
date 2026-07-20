@@ -4,6 +4,7 @@ export type UpdatePhase =
   | "available"
   | "cancelled"
   | "installing"
+  | "opening-manual"
   | "up-to-date";
 
 export interface UpdateUiState {
@@ -17,17 +18,56 @@ export interface UpdateUiState {
 type UpdateInvoke = (command: string) => Promise<unknown>;
 type StateListener = (state: UpdateUiState) => void;
 
+type UpdateInstallMode =
+  | { kind: "built-in" }
+  | { kind: "manual"; buttonLabel: string; instructions: string };
+
+function parseInstallMode(value: unknown): UpdateInstallMode {
+  if (typeof value !== "object" || value === null || !("kind" in value)) {
+    throw new Error("missing update install mode");
+  }
+  if (value.kind === "built-in") return { kind: "built-in" };
+  if (
+    value.kind === "manual" &&
+    "buttonLabel" in value &&
+    typeof value.buttonLabel === "string" &&
+    value.buttonLabel &&
+    "instructions" in value &&
+    typeof value.instructions === "string" &&
+    value.instructions
+  ) {
+    return {
+      kind: "manual",
+      buttonLabel: value.buttonLabel,
+      instructions: value.instructions,
+    };
+  }
+  throw new Error("invalid update install mode");
+}
+
 function availableState(
   version: string,
+  installMode: UpdateInstallMode,
   status = `Carrier ${version} is available.`,
 ): UpdateUiState {
+  const manual = installMode.kind === "manual";
   return {
     phase: "available",
-    buttonLabel: `Install Carrier ${version}`,
-    status,
+    buttonLabel: manual ? installMode.buttonLabel : `Install Carrier ${version}`,
+    status: manual ? `${status} ${installMode.instructions}` : status,
     busy: false,
     version,
   };
+}
+
+function failureDetail(error: unknown): string {
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : String(error ?? "");
+  return raw.replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
 /**
@@ -38,6 +78,7 @@ function availableState(
 export class UpdateConsentController {
   private version = "";
   private phase: UpdatePhase = "idle";
+  private installMode: UpdateInstallMode | null = null;
 
   constructor(
     private readonly invoke: UpdateInvoke,
@@ -51,10 +92,14 @@ export class UpdateConsentController {
   }
 
   async initialize(): Promise<UpdateUiState> {
-    const discovered = await this.invoke("discovered_update");
+    const [rawInstallMode, discovered] = await Promise.all([
+      this.invoke("update_install_mode"),
+      this.invoke("discovered_update"),
+    ]);
+    this.installMode = parseInstallMode(rawInstallMode);
     if (typeof discovered === "string" && discovered) {
       this.version = discovered;
-      return this.publish(availableState(discovered));
+      return this.publish(availableState(discovered, this.installMode));
     }
     return this.publish({
       phase: "idle",
@@ -65,6 +110,7 @@ export class UpdateConsentController {
   }
 
   async activate(confirmInstall: (message: string) => boolean): Promise<UpdateUiState> {
+    if (!this.installMode) throw new Error("update controller was not initialized");
     if (!this.version) {
       this.publish({
         phase: "checking",
@@ -85,11 +131,34 @@ export class UpdateConsentController {
       if (!this.version) throw new Error(`unexpected update-check result: ${result}`);
     }
 
-    this.publish(availableState(this.version));
+    this.publish(availableState(this.version, this.installMode));
+    if (this.installMode.kind === "manual") {
+      if (
+        !confirmInstall(
+          `Carrier ${this.version} is available. Open the package page for update instructions?`,
+        )
+      ) {
+        return this.publish(
+          availableState(this.version, this.installMode, "Update page not opened."),
+        );
+      }
+      this.publish({
+        phase: "opening-manual",
+        buttonLabel: this.installMode.buttonLabel,
+        status: "Opening package-manager update instructions…",
+        busy: true,
+        version: this.version,
+      });
+      await this.invoke("open_manual_update");
+      return this.publish(availableState(this.version, this.installMode, "Update page opened."));
+    }
+
     if (
       !confirmInstall(`Carrier ${this.version} is available. Install it now and restart Carrier?`)
     ) {
-      return this.publish(availableState(this.version, "Update install cancelled."));
+      return this.publish(
+        availableState(this.version, this.installMode, "Update install cancelled."),
+      );
     }
 
     this.publish({
@@ -109,15 +178,26 @@ export class UpdateConsentController {
         busy: false,
       });
     }
-    return this.publish(availableState(this.version));
+    return this.publish(availableState(this.version, this.installMode));
   }
 
-  fail(): UpdateUiState {
-    const installing = this.phase === "installing";
+  fail(error?: unknown): UpdateUiState {
+    const action =
+      this.phase === "installing"
+        ? "Update install failed."
+        : this.phase === "opening-manual"
+          ? "Could not open the update page."
+          : "Update check failed.";
+    const detail = failureDetail(error);
     return this.publish({
       phase: this.version ? "available" : "idle",
-      buttonLabel: this.version ? `Install Carrier ${this.version}` : "Check for updates",
-      status: installing ? "Update install failed." : "Update check failed.",
+      buttonLabel:
+        this.version && this.installMode?.kind === "manual"
+          ? this.installMode.buttonLabel
+          : this.version
+            ? `Install Carrier ${this.version}`
+            : "Check for updates",
+      status: detail ? `${action} ${detail}` : action,
       busy: false,
       version: this.version || undefined,
     });

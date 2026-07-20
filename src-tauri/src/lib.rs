@@ -219,6 +219,8 @@ pub fn run() {
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
+            commands::update_install_mode,
+            commands::open_manual_update,
             commands::discovered_update,
             commands::install_update,
             commands::connect_messenger,
