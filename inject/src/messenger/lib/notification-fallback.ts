@@ -83,10 +83,16 @@ export function notificationDedupeKey(title: string, body: string): string {
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
-// Consecutive read observations required before a delivered entry is dropped —
-// hydration can transiently render an unread row as read, and a single such
-// flicker must not clear the replay suppression.
-const STABLE_READ_SCANS = 3;
+// Messenger can produce many mutation-driven scans within a few hundred
+// milliseconds while a reloaded row hydrates. Require a continuously observed
+// read state for real elapsed time so those scans cannot erase replay
+// suppression merely by arriving in a burst.
+export const STABLE_READ_MS = 30_000;
+// Once the current document has actually observed the row as unread, a later
+// read-looking state is a real transition rather than initial hydration. Keep
+// a short confirmation for ordinary styling flicker without suppressing an
+// identical new message for the full reload guard.
+export const READ_TRANSITION_CONFIRM_MS = 1_000;
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -100,8 +106,10 @@ const STABLE_READ_SCANS = 3;
  */
 export class NotifiedSignatureStore {
   private readonly entries = new Map<string, string>();
-  /** In-memory only: read-observation streaks per conversation (see observeRead). */
-  private readonly readStreak = new Map<string, number>();
+  /** In-memory only: when each continuously observed read state began. */
+  private readonly readSince = new Map<string, number>();
+  /** Entries whose unread state has been established in this document. */
+  private readonly observedUnread = new Set<string>();
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
@@ -140,8 +148,8 @@ export class NotifiedSignatureStore {
   }
 
   markNotified(conversationKey: string, fingerprint: string): void {
-    // A fresh delivery means the row is unread again — restart read counting.
-    this.readStreak.delete(conversationKey);
+    // A fresh delivery means the row is unread again — cancel read confirmation.
+    this.readSince.delete(conversationKey);
     if (this.entries.get(conversationKey) === fingerprint) return;
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
@@ -149,7 +157,8 @@ export class NotifiedSignatureStore {
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);
-      this.readStreak.delete(oldest);
+      this.readSince.delete(oldest);
+      this.observedUnread.delete(oldest);
     }
     this.persist();
   }
@@ -157,26 +166,44 @@ export class NotifiedSignatureStore {
   /**
    * Forget conversations that are rendered without an unread preview — the
    * user has read them, so an identical future preview must notify again.
-   * Requires STABLE_READ_SCANS consecutive read observations (an unread
-   * observation resets the count) because hydration can transiently render
-   * an unread row as read, and one flicker must not clear the suppression.
+   * Persisted entries must remain continuously observed read for
+   * [[STABLE_READ_MS]] until this document has first established their unread
+   * state. After that, [[READ_TRANSITION_CONFIRM_MS]] is enough to confirm a
+   * real unread-to-read transition. An unread or missing observation resets
+   * the timer so virtualized rows cannot accumulate read time off-screen.
    */
-  observeRead(unreadKeys: ReadonlySet<string>, observedKeys: Iterable<string>): void {
+  observeRead(
+    unreadKeys: ReadonlySet<string>,
+    observedKeys: Iterable<string>,
+    observedAt = Date.now(),
+  ): void {
     let dropped = false;
-    // Dedupe: the DOM can briefly render two anchors for one thread, and a
-    // key must count as at most one observation per scan.
-    for (const key of new Set(observedKeys)) {
+    const observed = new Set(observedKeys);
+    for (const key of this.readSince.keys()) {
+      if (!observed.has(key)) this.readSince.delete(key);
+    }
+    for (const key of observed) {
       if (unreadKeys.has(key)) {
-        this.readStreak.delete(key);
+        this.readSince.delete(key);
+        if (this.entries.has(key)) this.observedUnread.add(key);
         continue;
       }
       if (!this.entries.has(key)) continue;
-      const streak = (this.readStreak.get(key) || 0) + 1;
-      if (streak < STABLE_READ_SCANS) {
-        this.readStreak.set(key, streak);
+      const since = this.readSince.get(key);
+      if (since === undefined || observedAt < since) {
+        // A backwards wall-clock adjustment restarts confirmation rather than
+        // making an entry look older than it is.
+        this.readSince.set(key, observedAt);
         continue;
       }
-      this.readStreak.delete(key);
+      const confirmAfter = this.observedUnread.has(key)
+        ? READ_TRANSITION_CONFIRM_MS
+        : STABLE_READ_MS;
+      if (observedAt - since < confirmAfter) {
+        continue;
+      }
+      this.readSince.delete(key);
+      this.observedUnread.delete(key);
       this.entries.delete(key);
       dropped = true;
     }
