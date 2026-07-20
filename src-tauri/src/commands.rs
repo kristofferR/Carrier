@@ -15,6 +15,10 @@ use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+// Autostart can beat the OS network/DNS service by a few seconds. Keep the
+// existing recovery screen for persistent failures, but absorb that launch race.
+const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
+const MESSENGER_DNS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 struct UpdateInstallGuard<'a>(&'a std::sync::atomic::AtomicBool);
 
@@ -548,30 +552,66 @@ fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
     }
 }
 
+fn has_more_messenger_preflight_attempts(attempt: usize) -> bool {
+    attempt < MESSENGER_DNS_MAX_ATTEMPTS
+}
+
+fn should_retry_messenger_preflight(attempt: usize, error: &MessengerPreflightError) -> bool {
+    has_more_messenger_preflight_attempts(attempt)
+        && matches!(error, MessengerPreflightError::DnsFailed { .. })
+}
+
 #[tauri::command]
 pub(crate) async fn connect_messenger(window: WebviewWindow) -> MessengerLoadStatus {
-    let preflight = tokio::time::timeout(
-        MESSENGER_DNS_TIMEOUT,
-        tauri::async_runtime::spawn_blocking(messenger_dns_preflight),
-    )
-    .await;
+    for attempt in 1..=MESSENGER_DNS_MAX_ATTEMPTS {
+        let preflight = tokio::time::timeout(
+            MESSENGER_DNS_TIMEOUT,
+            tauri::async_runtime::spawn_blocking(messenger_dns_preflight),
+        )
+        .await;
 
-    match preflight {
-        Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
-        Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
-        Ok(Ok(Err(error))) => {
-            log::warn!("Messenger DNS preflight failed ({error:?})");
-            error.into()
+        match preflight {
+            Ok(Ok(Ok(()))) => return navigate_to_messenger(&window),
+            Ok(Ok(Err(error))) if should_retry_messenger_preflight(attempt, &error) => {
+                log::info!(
+                    "Messenger DNS preflight attempt {attempt}/{MESSENGER_DNS_MAX_ATTEMPTS} \
+                     failed during startup ({error:?}); retrying"
+                );
+            }
+            Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => {
+                return error.into();
+            }
+            Ok(Ok(Err(error))) => {
+                log::warn!("Messenger DNS preflight failed after {attempt} attempt(s) ({error:?})");
+                return error.into();
+            }
+            Ok(Err(e)) => {
+                return MessengerLoadStatus::unexpected(
+                    "Messenger check failed",
+                    format!("DNS preflight task failed: {e}"),
+                );
+            }
+            Err(_) if has_more_messenger_preflight_attempts(attempt) => {
+                log::info!(
+                    "Messenger DNS preflight attempt {attempt}/{MESSENGER_DNS_MAX_ATTEMPTS} \
+                     timed out during startup; retrying"
+                );
+            }
+            Err(_) => {
+                return MessengerLoadStatus::unexpected(
+                    "Messenger check timed out",
+                    format!("The Messenger DNS preflight did not finish after {attempt} attempts."),
+                );
+            }
         }
-        Ok(Err(e)) => MessengerLoadStatus::unexpected(
-            "Messenger check failed",
-            format!("DNS preflight task failed: {e}"),
-        ),
-        Err(_) => MessengerLoadStatus::unexpected(
-            "Messenger check timed out",
-            "The Messenger DNS preflight did not finish in time.".into(),
-        ),
+
+        tokio::time::sleep(MESSENGER_DNS_RETRY_DELAY).await;
     }
+
+    MessengerLoadStatus::unexpected(
+        "Messenger check failed",
+        "The Messenger DNS preflight ended unexpectedly.".into(),
+    )
 }
 
 /// Bypass the OS DNS preflight when the user explicitly asks to try the
@@ -601,7 +641,11 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_surface_update, UpdateInstallGuard};
+    use super::{
+        has_more_messenger_preflight_attempts, should_retry_messenger_preflight,
+        should_surface_update, UpdateInstallGuard, MESSENGER_DNS_MAX_ATTEMPTS,
+    };
+    use crate::preflight::MessengerPreflightError;
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -626,5 +670,30 @@ mod tests {
         assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
         assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
         assert!(!should_surface_update(Some("1.4.0"), None));
+    }
+
+    #[test]
+    fn startup_preflight_retries_only_transient_dns_failures() {
+        let dns_failure = MessengerPreflightError::DnsFailed {
+            host: "www.facebook.com",
+            error: "temporary failure".into(),
+        };
+        let blocker = MessengerPreflightError::Blocked {
+            host: "www.facebook.com",
+            ips: vec!["127.0.0.1".parse().unwrap()],
+        };
+
+        assert!(should_retry_messenger_preflight(1, &dns_failure));
+        assert!(!should_retry_messenger_preflight(
+            MESSENGER_DNS_MAX_ATTEMPTS,
+            &dns_failure
+        ));
+        assert!(!should_retry_messenger_preflight(1, &blocker));
+        assert!(has_more_messenger_preflight_attempts(
+            MESSENGER_DNS_MAX_ATTEMPTS - 1
+        ));
+        assert!(!has_more_messenger_preflight_attempts(
+            MESSENGER_DNS_MAX_ATTEMPTS
+        ));
     }
 }
