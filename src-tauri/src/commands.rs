@@ -15,6 +15,49 @@ use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+// Autostart can beat the OS network/DNS service by a few seconds. Keep the
+// existing recovery screen for persistent failures, but absorb that launch race.
+const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
+const MESSENGER_DNS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+type MessengerPreflightTask = tauri::async_runtime::JoinHandle<Result<(), MessengerPreflightError>>;
+
+struct MessengerPreflightTasks {
+    active: Option<MessengerPreflightTask>,
+    // Keep one detached timeout handle so repeated clicks cannot grow the
+    // blocking pool without bound while still allowing one fresh lookup.
+    retired: Option<MessengerPreflightTask>,
+}
+
+impl MessengerPreflightTasks {
+    fn prune_retired(&mut self) {
+        if self
+            .retired
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished())
+        {
+            self.retired.take();
+        }
+    }
+
+    fn retire_active_after_timeout(&mut self) {
+        self.prune_retired();
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|task| task.inner().is_finished())
+        {
+            self.active.take();
+        } else if self.retired.is_none() {
+            self.retired = self.active.take();
+        }
+    }
+}
+
+static MESSENGER_PREFLIGHT_TASKS: tokio::sync::Mutex<MessengerPreflightTasks> =
+    tokio::sync::Mutex::const_new(MessengerPreflightTasks {
+        active: None,
+        retired: None,
+    });
 
 struct UpdateInstallGuard<'a>(&'a std::sync::atomic::AtomicBool);
 
@@ -548,29 +591,150 @@ fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
     }
 }
 
-#[tauri::command]
-pub(crate) async fn connect_messenger(window: WebviewWindow) -> MessengerLoadStatus {
-    let preflight = tokio::time::timeout(
-        MESSENGER_DNS_TIMEOUT,
-        tauri::async_runtime::spawn_blocking(messenger_dns_preflight),
-    )
-    .await;
+enum MessengerPreflightAttempt {
+    Completed(Result<(), MessengerPreflightError>),
+    TaskFailed(String),
+    TimedOut,
+}
 
-    match preflight {
-        Ok(Ok(Ok(()))) => navigate_to_messenger(&window),
-        Ok(Ok(Err(error @ MessengerPreflightError::Blocked { .. }))) => error.into(),
-        Ok(Ok(Err(error))) => {
-            log::warn!("Messenger DNS preflight failed ({error:?})");
-            error.into()
+enum MessengerPreflightDecision {
+    Navigate,
+    RetryDns(MessengerPreflightError),
+    RetryTimeout,
+    Return(MessengerLoadStatus),
+}
+
+fn classify_messenger_preflight_attempt(
+    attempt: usize,
+    max_attempts: usize,
+    result: MessengerPreflightAttempt,
+) -> MessengerPreflightDecision {
+    let has_more_attempts = attempt < max_attempts;
+
+    match result {
+        MessengerPreflightAttempt::Completed(Ok(())) => MessengerPreflightDecision::Navigate,
+        MessengerPreflightAttempt::Completed(Err(error))
+            if has_more_attempts && error.is_retryable() =>
+        {
+            MessengerPreflightDecision::RetryDns(error)
         }
-        Ok(Err(e)) => MessengerLoadStatus::unexpected(
-            "Messenger check failed",
-            format!("DNS preflight task failed: {e}"),
-        ),
-        Err(_) => MessengerLoadStatus::unexpected(
-            "Messenger check timed out",
-            "The Messenger DNS preflight did not finish in time.".into(),
-        ),
+        MessengerPreflightAttempt::Completed(Err(error)) => {
+            MessengerPreflightDecision::Return(error.into())
+        }
+        MessengerPreflightAttempt::TaskFailed(error) => {
+            MessengerPreflightDecision::Return(MessengerLoadStatus::unexpected(
+                "Messenger check failed",
+                format!("DNS preflight task failed: {error}"),
+            ))
+        }
+        MessengerPreflightAttempt::TimedOut if has_more_attempts => {
+            MessengerPreflightDecision::RetryTimeout
+        }
+        MessengerPreflightAttempt::TimedOut => {
+            MessengerPreflightDecision::Return(MessengerLoadStatus::unexpected(
+                "Messenger check timed out",
+                format!("The Messenger DNS preflight did not finish after {attempt} attempts."),
+            ))
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn connect_messenger(
+    window: WebviewWindow,
+    retry_startup_transients: bool,
+) -> MessengerLoadStatus {
+    // Only the automatic startup check gets the full retry window. A manual
+    // retry should quickly restore the recovery screen and its DNS bypass.
+    let max_attempts = if retry_startup_transients {
+        MESSENGER_DNS_MAX_ATTEMPTS
+    } else {
+        1
+    };
+    let mut attempt = 1;
+    // A task already in the slot belongs to an earlier command. Its completed
+    // failure is stale for this call; an unfinished task must still be reused
+    // because dropping spawn_blocking's handle would not cancel the lookup.
+    let mut polling_inherited_task = true;
+
+    loop {
+        let (preflight, inherited_result) = {
+            let mut preflight_tasks = MESSENGER_PREFLIGHT_TASKS.lock().await;
+            preflight_tasks.prune_retired();
+            if polling_inherited_task
+                && preflight_tasks
+                    .active
+                    .as_ref()
+                    .is_some_and(|task| task.inner().is_finished())
+            {
+                preflight_tasks.active.take();
+            }
+            if preflight_tasks.active.is_none() {
+                preflight_tasks.active = Some(tauri::async_runtime::spawn_blocking(
+                    messenger_dns_preflight,
+                ));
+                polling_inherited_task = false;
+            }
+
+            let result = match tokio::time::timeout(
+                MESSENGER_DNS_TIMEOUT,
+                preflight_tasks
+                    .active
+                    .as_mut()
+                    .expect("the preflight task slot is initialized before polling"),
+            )
+            .await
+            {
+                Ok(Ok(result)) => {
+                    preflight_tasks.active.take();
+                    MessengerPreflightAttempt::Completed(result)
+                }
+                Ok(Err(error)) => {
+                    preflight_tasks.active.take();
+                    MessengerPreflightAttempt::TaskFailed(error.to_string())
+                }
+                Err(_) => {
+                    if attempt >= max_attempts {
+                        preflight_tasks.retire_active_after_timeout();
+                    }
+                    MessengerPreflightAttempt::TimedOut
+                }
+            };
+            (result, polling_inherited_task)
+        };
+
+        if inherited_result
+            && matches!(
+                &preflight,
+                MessengerPreflightAttempt::Completed(Err(_))
+                    | MessengerPreflightAttempt::TaskFailed(_)
+            )
+        {
+            log::info!("Discarding a completed DNS preflight result from an earlier command");
+            continue;
+        }
+
+        match classify_messenger_preflight_attempt(attempt, max_attempts, preflight) {
+            MessengerPreflightDecision::Navigate => return navigate_to_messenger(&window),
+            MessengerPreflightDecision::RetryDns(error) => {
+                log::info!(
+                    "Messenger DNS preflight attempt {attempt}/{max_attempts} \
+                     failed during startup ({error:?}); retrying"
+                );
+            }
+            MessengerPreflightDecision::RetryTimeout => {
+                // A running spawn_blocking task cannot be cancelled. Poll the
+                // same resolver call again so timed-out lookups do not overlap.
+                log::info!(
+                    "Messenger DNS preflight attempt {attempt}/{max_attempts} \
+                     timed out during startup; continuing to wait"
+                );
+            }
+            MessengerPreflightDecision::Return(status) => return status,
+        }
+
+        tokio::time::sleep(MESSENGER_DNS_RETRY_DELAY).await;
+        attempt += 1;
     }
 }
 
@@ -601,7 +765,12 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_surface_update, UpdateInstallGuard};
+    use super::{
+        classify_messenger_preflight_attempt, should_surface_update, MessengerPreflightAttempt,
+        MessengerPreflightDecision, UpdateInstallGuard, MESSENGER_DNS_MAX_ATTEMPTS,
+    };
+    use crate::preflight::MessengerPreflightError;
+    use std::io::ErrorKind;
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -626,5 +795,125 @@ mod tests {
         assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
         assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
         assert!(!should_surface_update(Some("1.4.0"), None));
+    }
+
+    #[test]
+    fn startup_preflight_retries_only_completed_dns_failures() {
+        let dns_failure = || MessengerPreflightError::DnsFailed {
+            host: "www.facebook.com",
+            kind: ErrorKind::TimedOut,
+            resolver_status: None,
+            retryable: true,
+            error: "temporary failure".into(),
+        };
+        let blocker = MessengerPreflightError::Blocked {
+            host: "www.facebook.com",
+            ips: vec!["127.0.0.1".parse().unwrap()],
+        };
+
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::Completed(Err(dns_failure()))
+            ),
+            MessengerPreflightDecision::RetryDns(_)
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::Completed(Err(dns_failure()))
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::Completed(Err(blocker))
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
+    }
+
+    #[test]
+    fn startup_preflight_classifies_success_task_failure_and_timeouts() {
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::Completed(Ok(()))
+            ),
+            MessengerPreflightDecision::Navigate
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::TaskFailed("panic".into())
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::TimedOut
+            ),
+            MessengerPreflightDecision::RetryTimeout
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::TimedOut
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
+    }
+
+    #[test]
+    fn manual_preflight_does_not_retry_transient_dns_failures() {
+        let dns_failure = MessengerPreflightError::DnsFailed {
+            host: "www.facebook.com",
+            kind: ErrorKind::TimedOut,
+            resolver_status: None,
+            retryable: true,
+            error: "temporary resolver timeout".into(),
+        };
+
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                1,
+                MessengerPreflightAttempt::Completed(Err(dns_failure))
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
+        assert!(matches!(
+            classify_messenger_preflight_attempt(1, 1, MessengerPreflightAttempt::TimedOut),
+            MessengerPreflightDecision::Return(_)
+        ));
+    }
+
+    #[test]
+    fn startup_preflight_does_not_retry_permanent_dns_failures() {
+        let dns_failure = MessengerPreflightError::DnsFailed {
+            host: "www.facebook.com",
+            kind: ErrorKind::NotFound,
+            resolver_status: None,
+            retryable: false,
+            error: "name does not exist".into(),
+        };
+
+        assert!(matches!(
+            classify_messenger_preflight_attempt(
+                1,
+                MESSENGER_DNS_MAX_ATTEMPTS,
+                MessengerPreflightAttempt::Completed(Err(dns_failure))
+            ),
+            MessengerPreflightDecision::Return(_)
+        ));
     }
 }

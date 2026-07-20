@@ -740,6 +740,7 @@ dependencies = [
  "dark-light",
  "futures-util",
  "ksni",
+ "libc",
  "log",
  "mac-notification-sys",
  "muda",
