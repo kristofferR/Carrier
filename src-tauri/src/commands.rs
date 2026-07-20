@@ -182,6 +182,20 @@ fn current_update_install_mode() -> UpdateInstallMode {
     }
 }
 
+async fn current_update_install_mode_off_main() -> Result<UpdateInstallMode, String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(current_update_install_mode)
+            .await
+            .map_err(|error| format!("update install mode worker failed: {error}"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(current_update_install_mode())
+    }
+}
+
 #[tauri::command]
 pub(crate) fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
@@ -345,16 +359,16 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
 /// so letting Tauri invoke `dpkg` would always fail and would bypass pacman's
 /// ownership database if forced.
 #[tauri::command]
-pub(crate) fn update_install_mode() -> UpdateInstallMode {
-    current_update_install_mode()
+pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
+    current_update_install_mode_off_main().await
 }
 
 /// Open the distribution-owned update page for installations that must remain
 /// under their system package manager. The URL is fixed here rather than
 /// accepted from the webview.
 #[tauri::command]
-pub(crate) fn open_manual_update() -> Result<(), String> {
-    if !current_update_install_mode().is_manual() {
+pub(crate) async fn open_manual_update() -> Result<(), String> {
+    if !current_update_install_mode_off_main().await?.is_manual() {
         return Err("This Carrier installation supports built-in updates.".into());
     }
 
@@ -402,16 +416,22 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             }
             let version = update.version.clone();
             if remember_available_update(app, Some(update)) {
-                let body = if current_update_install_mode().is_manual() {
-                    format!(
+                let body = match current_update_install_mode_off_main().await {
+                    Ok(mode) if mode.is_manual() => format!(
                         "Carrier {} is available. Open Settings for package-manager instructions.",
                         version
-                    )
-                } else {
-                    format!(
+                    ),
+                    Ok(_) => format!(
                         "Carrier {} is available. Open Settings to review and install it.",
                         version
-                    )
+                    ),
+                    Err(error) => {
+                        log::warn!("failed to detect the update install mode: {error}");
+                        format!(
+                            "Carrier {} is available. Open Settings to review it.",
+                            version
+                        )
+                    }
                 };
                 if let Err(error) = app
                     .notification()
@@ -529,7 +549,7 @@ pub(crate) async fn install_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    if let Some(instructions) = current_update_install_mode().instructions {
+    if let Some(instructions) = current_update_install_mode_off_main().await?.instructions {
         return Err(instructions);
     }
     let _guard = UpdateInstallGuard::acquire(&state.update_installing)?;
