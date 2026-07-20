@@ -88,6 +88,11 @@ const NOTIFIED_STORE_LIMIT = 300;
 // read state for real elapsed time so those scans cannot erase replay
 // suppression merely by arriving in a burst.
 export const STABLE_READ_MS = 30_000;
+// Once the current document has actually observed the row as unread, a later
+// read-looking state is a real transition rather than initial hydration. Keep
+// a short confirmation for ordinary styling flicker without suppressing an
+// identical new message for the full reload guard.
+export const READ_TRANSITION_CONFIRM_MS = 1_000;
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -103,6 +108,8 @@ export class NotifiedSignatureStore {
   private readonly entries = new Map<string, string>();
   /** In-memory only: when each continuously observed read state began. */
   private readonly readSince = new Map<string, number>();
+  /** Entries whose unread state has been established in this document. */
+  private readonly observedUnread = new Set<string>();
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
@@ -151,6 +158,7 @@ export class NotifiedSignatureStore {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);
       this.readSince.delete(oldest);
+      this.observedUnread.delete(oldest);
     }
     this.persist();
   }
@@ -158,9 +166,11 @@ export class NotifiedSignatureStore {
   /**
    * Forget conversations that are rendered without an unread preview — the
    * user has read them, so an identical future preview must notify again.
-   * The read state must remain continuously observed for [[STABLE_READ_MS]];
-   * an unread observation resets the timer. This keeps rapid post-reload
-   * hydration scans from clearing replay suppression.
+   * Persisted entries must remain continuously observed read for
+   * [[STABLE_READ_MS]] until this document has first established their unread
+   * state. After that, [[READ_TRANSITION_CONFIRM_MS]] is enough to confirm a
+   * real unread-to-read transition. An unread or missing observation resets
+   * the timer so virtualized rows cannot accumulate read time off-screen.
    */
   observeRead(
     unreadKeys: ReadonlySet<string>,
@@ -168,9 +178,14 @@ export class NotifiedSignatureStore {
     observedAt = Date.now(),
   ): void {
     let dropped = false;
-    for (const key of new Set(observedKeys)) {
+    const observed = new Set(observedKeys);
+    for (const key of this.readSince.keys()) {
+      if (!observed.has(key)) this.readSince.delete(key);
+    }
+    for (const key of observed) {
       if (unreadKeys.has(key)) {
         this.readSince.delete(key);
+        if (this.entries.has(key)) this.observedUnread.add(key);
         continue;
       }
       if (!this.entries.has(key)) continue;
@@ -181,10 +196,14 @@ export class NotifiedSignatureStore {
         this.readSince.set(key, observedAt);
         continue;
       }
-      if (observedAt - since < STABLE_READ_MS) {
+      const confirmAfter = this.observedUnread.has(key)
+        ? READ_TRANSITION_CONFIRM_MS
+        : STABLE_READ_MS;
+      if (observedAt - since < confirmAfter) {
         continue;
       }
       this.readSince.delete(key);
+      this.observedUnread.delete(key);
       this.entries.delete(key);
       dropped = true;
     }

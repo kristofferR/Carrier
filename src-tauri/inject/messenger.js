@@ -2003,6 +2003,7 @@
   }
   var NOTIFIED_STORE_LIMIT = 300;
   var STABLE_READ_MS = 3e4;
+  var READ_TRANSITION_CONFIRM_MS = 1e3;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
@@ -2010,6 +2011,8 @@
       __publicField(this, "entries", /* @__PURE__ */ new Map());
       /** In-memory only: when each continuously observed read state began. */
       __publicField(this, "readSince", /* @__PURE__ */ new Map());
+      /** Entries whose unread state has been established in this document. */
+      __publicField(this, "observedUnread", /* @__PURE__ */ new Set());
       try {
         const raw = this.storage?.getItem(this.storageKey);
         if (!raw) return;
@@ -2047,21 +2050,29 @@
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);
         this.readSince.delete(oldest);
+        this.observedUnread.delete(oldest);
       }
       this.persist();
     }
     /**
      * Forget conversations that are rendered without an unread preview — the
      * user has read them, so an identical future preview must notify again.
-     * The read state must remain continuously observed for [[STABLE_READ_MS]];
-     * an unread observation resets the timer. This keeps rapid post-reload
-     * hydration scans from clearing replay suppression.
+     * Persisted entries must remain continuously observed read for
+     * [[STABLE_READ_MS]] until this document has first established their unread
+     * state. After that, [[READ_TRANSITION_CONFIRM_MS]] is enough to confirm a
+     * real unread-to-read transition. An unread or missing observation resets
+     * the timer so virtualized rows cannot accumulate read time off-screen.
      */
     observeRead(unreadKeys, observedKeys, observedAt = Date.now()) {
       let dropped = false;
-      for (const key of new Set(observedKeys)) {
+      const observed = new Set(observedKeys);
+      for (const key of this.readSince.keys()) {
+        if (!observed.has(key)) this.readSince.delete(key);
+      }
+      for (const key of observed) {
         if (unreadKeys.has(key)) {
           this.readSince.delete(key);
+          if (this.entries.has(key)) this.observedUnread.add(key);
           continue;
         }
         if (!this.entries.has(key)) continue;
@@ -2070,10 +2081,12 @@
           this.readSince.set(key, observedAt);
           continue;
         }
-        if (observedAt - since < STABLE_READ_MS) {
+        const confirmAfter = this.observedUnread.has(key) ? READ_TRANSITION_CONFIRM_MS : STABLE_READ_MS;
+        if (observedAt - since < confirmAfter) {
           continue;
         }
         this.readSince.delete(key);
+        this.observedUnread.delete(key);
         this.entries.delete(key);
         dropped = true;
       }
