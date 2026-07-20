@@ -616,17 +616,29 @@ pub(crate) async fn connect_messenger(
         1
     };
     let mut attempt = 1;
+    // A task already in the slot belongs to an earlier command. Its completed
+    // failure is stale for this call; an unfinished task must still be reused
+    // because dropping spawn_blocking's handle would not cancel the lookup.
+    let mut polling_inherited_task = true;
 
     loop {
-        let preflight = {
+        let (preflight, inherited_result) = {
             let mut preflight_task = MESSENGER_PREFLIGHT_TASK.lock().await;
+            if polling_inherited_task
+                && preflight_task
+                    .as_ref()
+                    .is_some_and(|task| task.inner().is_finished())
+            {
+                preflight_task.take();
+            }
             if preflight_task.is_none() {
                 *preflight_task = Some(tauri::async_runtime::spawn_blocking(
                     messenger_dns_preflight,
                 ));
+                polling_inherited_task = false;
             }
 
-            match tokio::time::timeout(
+            let result = match tokio::time::timeout(
                 MESSENGER_DNS_TIMEOUT,
                 preflight_task
                     .as_mut()
@@ -643,8 +655,20 @@ pub(crate) async fn connect_messenger(
                     MessengerPreflightAttempt::TaskFailed(error.to_string())
                 }
                 Err(_) => MessengerPreflightAttempt::TimedOut,
-            }
+            };
+            (result, polling_inherited_task)
         };
+
+        if inherited_result
+            && matches!(
+                &preflight,
+                MessengerPreflightAttempt::Completed(Err(_))
+                    | MessengerPreflightAttempt::TaskFailed(_)
+            )
+        {
+            log::info!("Discarding a completed DNS preflight result from an earlier command");
+            continue;
+        }
 
         match classify_messenger_preflight_attempt(attempt, max_attempts, preflight) {
             MessengerPreflightDecision::Navigate => return navigate_to_messenger(&window),
@@ -662,6 +686,8 @@ pub(crate) async fn connect_messenger(
                      timed out during startup; continuing to wait"
                 );
             }
+            // Keep a timed-out task in the shared slot. Dropping its handle
+            // would let the next command overlap the still-running resolver.
             MessengerPreflightDecision::Return(status) => return status,
         }
 
