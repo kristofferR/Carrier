@@ -104,7 +104,7 @@
         ["hide_on_minimize", "Hide When Minimized", "Windows: move Carrier into the tray instead of leaving it minimized."],
         ["hide_on_focus_loss", "Hide When Focus Is Lost", "Windows: move Carrier into the tray whenever another app gets focus."],
         ["hide_taskbar_icon", "Hide Taskbar Icon", "Windows: keep Carrier out of the taskbar and reopen it from the tray."],
-        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Installation always asks first."],
+        ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Carrier asks before installing or opening package-manager instructions."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs from links you copy or open in your browser."],
@@ -445,7 +445,7 @@
         try {
           await updateController.activate((message) => confirm(message));
         } catch (e) {
-          updateController.fail();
+          updateController.fail(e);
           console.error(e);
         }
       };
@@ -460,7 +460,7 @@
         try {
           await updateController.initialize();
         } catch (e) {
-          updateController.fail();
+          updateController.fail(e);
           console.error(e);
         }
         try {

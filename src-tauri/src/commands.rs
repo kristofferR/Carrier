@@ -15,6 +15,8 @@ use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+#[cfg(target_os = "linux")]
+const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
 // existing recovery screen for persistent failures, but absorb that launch race.
 const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
@@ -77,6 +79,120 @@ impl<'a> UpdateInstallGuard<'a> {
 impl Drop for UpdateInstallGuard<'_> {
     fn drop(&mut self) {
         self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UpdateInstallMode {
+    kind: UpdateInstallKind,
+    button_label: Option<String>,
+    instructions: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum UpdateInstallKind {
+    BuiltIn,
+    Manual,
+}
+
+impl UpdateInstallMode {
+    fn built_in() -> Self {
+        Self {
+            kind: UpdateInstallKind::BuiltIn,
+            button_label: None,
+            instructions: None,
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn aur(has_paru: bool, has_yay: bool) -> Self {
+        let instructions = if has_paru {
+            "Run paru -S carrier to update."
+        } else if has_yay {
+            "Run yay -S carrier to update."
+        } else {
+            "Update the carrier package with your AUR helper."
+        };
+        Self {
+            kind: UpdateInstallKind::Manual,
+            button_label: Some("Open Carrier on AUR".into()),
+            instructions: Some(instructions.into()),
+        }
+    }
+
+    fn is_manual(&self) -> bool {
+        self.kind == UpdateInstallKind::Manual
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn command_available(program: &str) -> bool {
+    std::process::Command::new(program)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "linux")]
+fn pacman_owns_current_executable() -> bool {
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new("pacman")
+        .arg("-Qo")
+        .arg(executable)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_update_install_mode(
+    pacman_owned: bool,
+    has_paru: bool,
+    has_yay: bool,
+) -> UpdateInstallMode {
+    if pacman_owned {
+        UpdateInstallMode::aur(has_paru, has_yay)
+    } else {
+        UpdateInstallMode::built_in()
+    }
+}
+
+fn current_update_install_mode() -> UpdateInstallMode {
+    #[cfg(target_os = "linux")]
+    {
+        linux_update_install_mode(
+            pacman_owns_current_executable(),
+            command_available("paru"),
+            command_available("yay"),
+        )
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        UpdateInstallMode::built_in()
+    }
+}
+
+async fn current_update_install_mode_off_main() -> Result<UpdateInstallMode, String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(current_update_install_mode)
+            .await
+            .map_err(|error| format!("update install mode worker failed: {error}"))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(current_update_install_mode())
     }
 }
 
@@ -238,6 +354,31 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
     }
 }
 
+/// Describe whether this installation can safely replace itself. AUR packages
+/// are managed by pacman even though they reuse Carrier's signed Debian bundle,
+/// so letting Tauri invoke `dpkg` would always fail and would bypass pacman's
+/// ownership database if forced.
+#[tauri::command]
+pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
+    current_update_install_mode_off_main().await
+}
+
+/// Open the distribution-owned update page for installations that must remain
+/// under their system package manager. The URL is fixed here rather than
+/// accepted from the webview.
+#[tauri::command]
+pub(crate) async fn open_manual_update() -> Result<(), String> {
+    if !current_update_install_mode_off_main().await?.is_manual() {
+        return Err("This Carrier installation supports built-in updates.".into());
+    }
+
+    #[cfg(target_os = "linux")]
+    return open::that_detached(AUR_PACKAGE_URL).map_err(|error| error.to_string());
+
+    #[cfg(not(target_os = "linux"))]
+    Err("No manual update page is configured for this platform.".into())
+}
+
 /// Return the last version found by automatic/manual discovery without another
 /// network request. The trusted Settings page uses it to label its update
 /// button as soon as it opens.
@@ -275,10 +416,23 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             }
             let version = update.version.clone();
             if remember_available_update(app, Some(update)) {
-                let body = format!(
-                    "Carrier {} is available. Open Settings to review and install it.",
-                    version
-                );
+                let body = match current_update_install_mode_off_main().await {
+                    Ok(mode) if mode.is_manual() => format!(
+                        "Carrier {} is available. Open Settings for package-manager instructions.",
+                        version
+                    ),
+                    Ok(_) => format!(
+                        "Carrier {} is available. Open Settings to review and install it.",
+                        version
+                    ),
+                    Err(error) => {
+                        log::warn!("failed to detect the update install mode: {error}");
+                        format!(
+                            "Carrier {} is available. Open Settings to review it.",
+                            version
+                        )
+                    }
+                };
                 if let Err(error) = app
                     .notification()
                     .builder()
@@ -395,8 +549,15 @@ pub(crate) async fn install_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    if let Some(instructions) = current_update_install_mode_off_main().await?.instructions {
+        return Err(instructions);
+    }
     let _guard = UpdateInstallGuard::acquire(&state.update_installing)?;
-    run_update_install(&app).await
+    let result = run_update_install(&app).await;
+    if let Err(error) = &result {
+        log::warn!("update install failed: {error}");
+    }
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -766,8 +927,9 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_messenger_preflight_attempt, should_surface_update, MessengerPreflightAttempt,
-        MessengerPreflightDecision, UpdateInstallGuard, MESSENGER_DNS_MAX_ATTEMPTS,
+        classify_messenger_preflight_attempt, linux_update_install_mode, should_surface_update,
+        MessengerPreflightAttempt, MessengerPreflightDecision, UpdateInstallGuard,
+        UpdateInstallKind, MESSENGER_DNS_MAX_ATTEMPTS,
     };
     use crate::preflight::MessengerPreflightError;
     use std::io::ErrorKind;
@@ -795,6 +957,43 @@ mod tests {
         assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
         assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
         assert!(!should_surface_update(Some("1.4.0"), None));
+    }
+
+    #[test]
+    fn pacman_owned_install_uses_the_available_aur_helper() {
+        let paru = linux_update_install_mode(true, true, true);
+        assert_eq!(paru.kind, UpdateInstallKind::Manual);
+        assert_eq!(
+            paru.instructions.as_deref(),
+            Some("Run paru -S carrier to update.")
+        );
+        assert_eq!(
+            serde_json::to_value(&paru).unwrap(),
+            serde_json::json!({
+                "kind": "manual",
+                "buttonLabel": "Open Carrier on AUR",
+                "instructions": "Run paru -S carrier to update."
+            })
+        );
+
+        let yay = linux_update_install_mode(true, false, true);
+        assert_eq!(
+            yay.instructions.as_deref(),
+            Some("Run yay -S carrier to update.")
+        );
+
+        let generic = linux_update_install_mode(true, false, false);
+        assert_eq!(
+            generic.instructions.as_deref(),
+            Some("Update the carrier package with your AUR helper.")
+        );
+    }
+
+    #[test]
+    fn non_pacman_install_keeps_the_builtin_updater() {
+        let mode = linux_update_install_mode(false, true, true);
+        assert_eq!(mode.kind, UpdateInstallKind::BuiltIn);
+        assert_eq!(mode.instructions, None);
     }
 
     #[test]
