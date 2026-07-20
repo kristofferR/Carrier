@@ -42,13 +42,59 @@ export function initAutoRefresh() {
   }
   let lastHeartbeatProtection: boolean | undefined;
   const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+  const messengerContentPresent = () => {
+    // The renderer can stay JavaScript-responsive after Facebook's app root has
+    // disappeared, leaving only Messenger's background colour behind. Avoid
+    // coupling recovery to the feature selectors (which Facebook may rename):
+    // any visible page control is enough to prove this is not that blank state.
+    // Error/login/checkpoint UI also has controls, so it remains user-driven.
+    if (!location.pathname.startsWith("/messages")) return true;
+    const candidates = document.querySelectorAll<HTMLElement>(
+      'a[href], button, input, textarea, [contenteditable="true"], [role="navigation"], [role="main"]',
+    );
+    for (const el of candidates) {
+      const rect = el.getBoundingClientRect();
+      if (
+        rect.width <= 1 ||
+        rect.height <= 1 ||
+        rect.bottom <= 0 ||
+        rect.right <= 0 ||
+        rect.top >= innerHeight ||
+        rect.left >= innerWidth
+      ) {
+        continue;
+      }
+      let current: HTMLElement | null = el;
+      let hidden = false;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          style.contentVisibility === "hidden" ||
+          Number(style.opacity) <= 0
+        ) {
+          hidden = true;
+          break;
+        }
+        current = current.parentElement;
+      }
+      if (!hidden) return true;
+    }
+    return false;
+  };
   const emitHeartbeat = () => {
     if (typeof heartbeatId !== "number") return;
     const protectedNow = heartbeatProtection();
     lastHeartbeatProtection = protectedNow;
     invoke("plugin:event|emit", {
       event: "carrier:webview-heartbeat",
-      payload: { id: heartbeatId, protected: protectedNow },
+      payload: {
+        id: heartbeatId,
+        protected: protectedNow,
+        content_present: messengerContentPresent(),
+      },
     })?.catch?.(() => {});
   };
   const emitProtectionChange = () => {
