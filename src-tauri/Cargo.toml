@@ -49,10 +49,15 @@ url = "2"
 open = "5"
 # Already in the tree via Tauri; the short delay when recreating a window on a
 # theme switch (the macOS title bar can only be re-themed at window creation).
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["sync", "time"] }
 # Dev-only (the `mcp` feature): webview inspection over a local socket.
 # Pinned to a rev: an unpinned git dep is a supply-chain/reproducibility snag.
 tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "c7d271a06469bdf4744bfdeadca7458a1f3d02e5", optional = true }
+
+# `ToSocketAddrs` collapses Unix getaddrinfo statuses into an uncategorized
+# I/O error. Preserve EAI_AGAIN so startup retries remain narrowly transient.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # System-theme detection outside Linux. On Linux `dark-light` is only a
 # wrapper around the same ashpd settings portal that linux.rs already talks
@@ -100,7 +105,7 @@ mac-notification-sys = "0.6"
 muda = "0.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Storage_FileSystem"] }
 
 [profile.release]
 panic = "abort"

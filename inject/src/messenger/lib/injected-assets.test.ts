@@ -48,6 +48,9 @@ describe("hand-maintained injected assets", () => {
 
     expect(splash).toContain('id="open-anyway"');
     expect(splash).toContain('invoke("open_messenger_anyway")');
+    expect(splash).toContain('invoke("connect_messenger", { retryStartupTransients })');
+    expect(splash).toContain('retry.addEventListener("click", () => connect(false))');
+    expect(splash).toContain("connect(true)");
     expect(splash).toContain('["blocked", "unreachable", "error"]');
   });
 

@@ -149,14 +149,14 @@
         openAnyway.disabled = false;
       }
 
-      async function connect() {
+      async function connect(retryStartupTransients) {
         render({
           state: "checking",
           title: "Checking Messenger",
           message: "Carrier is checking whether Facebook Messenger is reachable.",
         });
         try {
-          render(await invoke("connect_messenger"));
+          render(await invoke("connect_messenger", { retryStartupTransients }));
         } catch (error) {
           render({
             state: "error",
@@ -167,7 +167,7 @@
         }
       }
 
-      retry.addEventListener("click", connect);
+      retry.addEventListener("click", () => connect(false));
       openAnyway.addEventListener("click", async () => {
         retry.disabled = true;
         openAnyway.disabled = true;
@@ -187,7 +187,7 @@
           });
         }
       });
-      connect();
+      connect(true);
     </script>
   </body>
 </html>
