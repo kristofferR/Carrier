@@ -2205,8 +2205,13 @@
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
-    const m = (title || "").match(/\((\d+)\)/);
+    const m = (title || "").match(/^\s*\((\d+)\)/);
     return m ? parseInt(m[1], 10) : 0;
+  }
+  function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy) {
+    if (!conversationListTrustworthy) return titleCount;
+    if (unreadConversations === 0) return 0;
+    return Math.max(titleCount, unreadConversations);
   }
 
   // inject/src/messenger/features/conversation-actions.ts
@@ -3384,23 +3389,34 @@
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
-    const countUnreadMessages = () => unreadCountFromTitle(document.title || "");
-    const countUnreadConversations = () => {
+    const unreadConversationState = () => {
+      const links = chatRows();
       const seen = /* @__PURE__ */ new Set();
-      let n = 0;
-      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+      let count = 0;
+      for (const a of links) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
         for (const span of row.querySelectorAll("span")) {
           if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
-            n++;
+            count++;
             break;
           }
         }
       }
-      return n;
+      let scrolledFromTop = false;
+      const first = links[0];
+      for (let el = first?.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollHeight <= el.clientHeight + 16) continue;
+        scrolledFromTop = el.scrollTop > 8;
+        break;
+      }
+      return {
+        count,
+        ready: links.length > 0,
+        trustworthy: links.length > 0 && !scrolledFromTop
+      };
     };
     let last = null;
     const setBadge = (n, force) => {
@@ -3419,9 +3435,14 @@
         setBadge(0, force);
         return;
       }
+      const conversations = unreadConversationState();
       const conv = s.badge_mode === "conversations";
-      const n = conv ? countUnreadConversations() : countUnreadMessages();
-      const ready = conv ? document.querySelector('a[href*="/t/"]') !== null : document.readyState === "complete" && (document.title || "").trim().length > 0;
+      const n = conv ? conversations.count : reconcileUnreadMessageCount(
+        unreadCountFromTitle(document.title || ""),
+        conversations.count,
+        conversations.trustworthy
+      );
+      const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
       if (n === 0 && !ready) return;
       setBadge(n, force);
     };
