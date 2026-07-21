@@ -6,34 +6,49 @@
 import { diag, invoke } from "../bridge";
 import { isUnreadConversationText } from "../lib/conversation-row";
 import { threadIdFromHref } from "../lib/threads";
-import { unreadCountFromTitle } from "../lib/unread";
+import { reconcileUnreadMessageCount, unreadCountFromTitle } from "../lib/unread";
+import { chatRows } from "./conversation-actions";
 
 export function initUnreadBadge() {
   if (!window.__TAURI_INTERNALS__) return;
 
-  const countUnreadMessages = () => unreadCountFromTitle(document.title || "");
-
   // Unread conversations: Facebook renders a chat's name/preview bold only
   // while it has unread messages. The class names are hashed and unstable, so
   // we key off the computed font-weight of each list row instead. Rows are the
-  // links to a thread (`/t/<id>`); dedupe by thread id so a conversation that
-  // also appears elsewhere (e.g. the open thread) isn't double-counted.
-  const countUnreadConversations = () => {
+  // visible links in the navigation list (`/t/<id>`), excluding duplicate or
+  // unrelated thread links elsewhere in the page.
+  const unreadConversationState = () => {
+    const links = chatRows();
     const seen = new Set<string>();
-    let n = 0;
-    for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+    let count = 0;
+    for (const a of links) {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
       seen.add(id);
       const row = a.closest('[role="row"]') || a;
       for (const span of row.querySelectorAll("span")) {
         if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
-          n++;
+          count++;
           break;
         }
       }
     }
-    return n;
+
+    // A virtualized list only represents the newest chats while it is at the
+    // top. Do not let a user scrolling through older rows invalidate the title
+    // count merely because the unread rows are temporarily outside the DOM.
+    let scrolledFromTop = false;
+    const first = links[0];
+    for (let el = first?.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (el.scrollHeight <= el.clientHeight + 16) continue;
+      scrolledFromTop = el.scrollTop > 8;
+      break;
+    }
+    return {
+      count,
+      ready: links.length > 0,
+      trustworthy: links.length > 0 && !scrolledFromTop,
+    };
   };
 
   let last: number | null = null;
@@ -59,15 +74,22 @@ export function initUnreadBadge() {
       setBadge(0, force);
       return;
     }
+    const conversations = unreadConversationState();
     const conv = s.badge_mode === "conversations";
-    const n = conv ? countUnreadConversations() : countUnreadMessages();
+    const n = conv
+      ? conversations.count
+      : reconcileUnreadMessageCount(
+          unreadCountFromTitle(document.title || ""),
+          conversations.count,
+          conversations.trustworthy,
+        );
     // While Facebook is reloading the page, the title carries no "(N)" and the
     // chat list hasn't rendered yet, so both counts read 0. The OS keeps the
     // Dock badge across the reload on its own, so don't clear it during that
     // window — it would blink off and back. Only a "ready" page can be trusted
     // to mean 0 unread. (A non-zero count only happens once ready anyway.)
     const ready = conv
-      ? document.querySelector('a[href*="/t/"]') !== null
+      ? conversations.ready
       : document.readyState === "complete" && (document.title || "").trim().length > 0;
     if (n === 0 && !ready) return;
     setBadge(n, force);
