@@ -333,6 +333,20 @@ describe("PageNotificationReceiptStore", () => {
     expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
   });
 
+  test("consumes the oldest of duplicate receipts and drops the newer", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    // Facebook fired the same notification twice: the native deduper showed
+    // id 42 and suppressed id 43, so the route must target id 42.
+    store.add("Jane", "OK", 42, 1_000);
+    store.add("Jane", "OK", 43, 1_050);
+    const consumed = store.consumeUniquelyMatching(
+      [{ key: "1", title: "Jane", body: "OK" }],
+      1_100,
+    );
+    expect(consumed.get("1")).toEqual({ nativeId: 42 });
+    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
+  });
+
   test("retires a receipt matching only read rows", () => {
     const store = new PageNotificationReceiptStore(memoryStorage());
     store.add("Jane", "OK", 42, 1_000);
@@ -498,6 +512,27 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual([]);
     tracker.markRowsChanged(["d"], 1_400);
     expect(tracker.observeUnreadCount(5, 1_500, 2_000)).toEqual(["d"]);
+  });
+
+  test("a read-observed thread arriving during settle still reports", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // Reload into an all-read inbox whose rows have not hydrated at first
+    // scan — the zero cannot be corroborated yet.
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    // A message arrives at t+4s: its row was seen hydrated-read earlier in
+    // this document, so the read→unread transition is a real arrival, not
+    // title hydration.
+    tracker.markRowsChanged(["a"], 5_000);
+    expect(tracker.observeUnreadCount(1, 5_100, 2_000, false, new Set(["a"]))).toEqual(["a"]);
+  });
+
+  test("hydrating rows never qualify for the early-arrival rescue", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    // Pre-existing unread rows hydrate (mutations) and the title stamps (3):
+    // none were ever observed read, so the count still primes silently.
+    tracker.markRowsChanged(["a", "b", "c"], 1_100);
+    expect(tracker.observeUnreadCount(3, 1_200, 2_000, false, new Set(["z"]))).toEqual([]);
   });
 
   test("a corroborated zero baselines immediately for in-window arrivals", () => {

@@ -164,7 +164,7 @@ export function initNotificationBridge() {
     body: string,
   ): {
     threadPath?: string;
-    deliver?: { key: string; fingerprint: string; bodyHash?: string };
+    deliver?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
     signal?: PageNotificationSignal;
   } => {
     for (const [key, pending] of pendingFallbacks) {
@@ -177,6 +177,7 @@ export function initNotificationBridge() {
           key,
           fingerprint: pending.fingerprint,
           bodyHash: notificationDedupeKey("", pending.body),
+          expect: notifiedStore.notifiedFingerprint(key),
         },
       };
     }
@@ -250,8 +251,15 @@ export function initNotificationBridge() {
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
         // before construction (deliver) or during the conversion
-        // (pendingDelivery, parked by scheduleFallback).
-        if (pageMatch.deliver) {
+        // (pendingDelivery, parked by scheduleFallback). Each write is
+        // conditional on the store still holding what it held at pairing
+        // time: if a NEWER message in the thread was delivered during the
+        // conversion, this late write must not regress the store to the
+        // older fingerprint (the next scan would mismatch and replay).
+        if (
+          pageMatch.deliver &&
+          notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+        ) {
           notifiedStore.markNotified(
             pageMatch.deliver.key,
             pageMatch.deliver.fingerprint,
@@ -261,8 +269,9 @@ export function initNotificationBridge() {
         if (pageMatch.signal) {
           pageMatch.signal.emitted = true;
           const delivery = pageMatch.signal.pendingDelivery;
-          if (delivery)
+          if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
             notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+          }
         }
       });
     }
@@ -360,7 +369,12 @@ export function initNotificationBridge() {
         // The signal's native emit is still waiting on the avatar conversion.
         // A reload before it queues would leave no banner, so the delivered
         // state must ride the emitter, not this pairing.
-        pageSignal.pendingDelivery = { key: conversation.key, fingerprint, bodyHash };
+        pageSignal.pendingDelivery = {
+          key: conversation.key,
+          fingerprint,
+          bodyHash,
+          expect: notifiedStore.notifiedFingerprint(conversation.key),
+        };
       }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
@@ -422,6 +436,10 @@ export function initNotificationBridge() {
   // keys the later hydration would prime silently and the arrival would
   // never notify. Delivered once the row hydrates; dropped if it turns read.
   const pendingArrivalKeys = new Set<string>();
+  // Threads this document has observed rendered hydrated-and-read. A row from
+  // this set turning unread is a real arrival even during the settle window —
+  // hydrating rows are never observed read first.
+  const readObservedKeys = new Set<string>();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -461,6 +479,11 @@ export function initNotificationBridge() {
           observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
         ),
       );
+      for (const conversation of observed) {
+        if (!conversation.unread && conversation.body.length > 0) {
+          readObservedKeys.add(conversation.key);
+        }
+      }
       for (const key of unreadArrivals.observeUnreadCount(
         unreadCountFromTitle(document.title || ""),
         detectedAt,
@@ -471,6 +494,7 @@ export function initNotificationBridge() {
         observed.length > 0 &&
           conversations.length === 0 &&
           observed.every(({ body }) => body.length > 0),
+        readObservedKeys,
       )) {
         changed.add(key);
       }

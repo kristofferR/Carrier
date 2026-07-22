@@ -2363,8 +2363,8 @@
           identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
         }
       }
-      let changed = false;
-      for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const remove = [];
+      for (let index = 0; index < this.receipts.length; index++) {
         const receipt = this.receipts[index];
         let match = null;
         let ambiguous = false;
@@ -2377,12 +2377,12 @@
           match = key;
         }
         if (match === null) continue;
-        this.receipts.splice(index, 1);
-        changed = true;
+        remove.push(index);
         if (ambiguous || consumed.has(match)) continue;
         consumed.set(match, { nativeId: receipt.nativeId });
       }
-      if (changed) this.persist();
+      for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i], 1);
+      if (remove.length) this.persist();
       return consumed;
     }
     /**
@@ -2460,8 +2460,14 @@
      * state rather than a still-unstamped title. A corroborated zero baselines
      * immediately, letting a first arrival inside the settle window report
      * instead of being absorbed as priming.
+     *
+     * `readObservedKeys` — threads this document has already seen rendered
+     * hydrated-and-read. A mutated row from that set turning up in an early
+     * count increase is a real read→unread transition, never title hydration
+     * (hydrating rows are never observed read first), so it can be reported
+     * even inside the settle window after an uncorroborated zero.
      */
-    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false) {
+    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys) {
       for (const [key, changedAt] of this.changedAt) {
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
       }
@@ -2475,6 +2481,13 @@
       this.unreadCount = count;
       if (previous === null) {
         if (!(this.sawDeferredZero && settled && count > 0)) {
+          if (this.sawDeferredZero && count > 0 && readObservedKeys) {
+            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1] - left[1]).slice(0, count).map(([key]) => key);
+            if (transitions.length) {
+              this.changedAt.clear();
+              return transitions;
+            }
+          }
           this.changedAt.clear();
           return [];
         }
@@ -2752,7 +2765,8 @@
           deliver: {
             key,
             fingerprint: pending.fingerprint,
-            bodyHash: notificationDedupeKey("", pending.body)
+            bodyHash: notificationDedupeKey("", pending.body),
+            expect: notifiedStore.notifiedFingerprint(key)
           }
         };
       }
@@ -2787,7 +2801,7 @@
             },
             pageMatch.threadPath
           );
-          if (pageMatch.deliver) {
+          if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
               pageMatch.deliver.key,
               pageMatch.deliver.fingerprint,
@@ -2797,8 +2811,9 @@
           if (pageMatch.signal) {
             pageMatch.signal.emitted = true;
             const delivery = pageMatch.signal.pendingDelivery;
-            if (delivery)
+            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
               notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+            }
           }
         });
       }
@@ -2878,7 +2893,12 @@
         if (pageSignal.emitted) {
           notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
         } else {
-          pageSignal.pendingDelivery = { key: conversation.key, fingerprint, bodyHash };
+          pageSignal.pendingDelivery = {
+            key: conversation.key,
+            fingerprint,
+            bodyHash,
+            expect: notifiedStore.notifiedFingerprint(conversation.key)
+          };
         }
         pageNotificationReceipts.consumeMatching(conversation, detectedAt);
         pendingFallbacks.delete(conversation.key);
@@ -2928,6 +2948,7 @@
     const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
+    const readObservedKeys = /* @__PURE__ */ new Set();
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -2954,6 +2975,11 @@
             observed.filter(({ body }) => body.length > 0).map(({ key }) => key)
           )
         );
+        for (const conversation of observed) {
+          if (!conversation.unread && conversation.body.length > 0) {
+            readObservedKeys.add(conversation.key);
+          }
+        }
         for (const key of unreadArrivals.observeUnreadCount(
           unreadCountFromTitle(document.title || ""),
           detectedAt,
@@ -2961,7 +2987,8 @@
           // A fully hydrated list with no unread rows corroborates a zero
           // title: it is the inbox's real state, not a still-unstamped title,
           // so a first arrival inside the settle window can still report.
-          observed.length > 0 && conversations.length === 0 && observed.every(({ body }) => body.length > 0)
+          observed.length > 0 && conversations.length === 0 && observed.every(({ body }) => body.length > 0),
+          readObservedKeys
         )) {
           changed.add(key);
         }

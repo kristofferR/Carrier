@@ -60,7 +60,13 @@ export interface PageNotificationSignal extends NotificationText {
    * their delivery here instead and the emitter persists it after emitting.
    */
   emitted?: boolean;
-  pendingDelivery?: { key: string; fingerprint: string; bodyHash?: string };
+  /**
+   * `expect` snapshots the store's fingerprint for the key at pairing time;
+   * the emitter only persists the delivery if the store is still in that
+   * state, so a newer delivery during the avatar conversion is never
+   * regressed to this older one.
+   */
+  pendingDelivery?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
 }
 
 const normalizeNotificationText = (value: string) =>
@@ -544,8 +550,11 @@ export class PageNotificationReceiptStore {
         identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
       }
     }
-    let changed = false;
-    for (let index = this.receipts.length - 1; index >= 0; index--) {
+    // Oldest first: with duplicate page notifications the native deduper
+    // shows the FIRST id and suppresses the newer copies, so the oldest
+    // receipt is the one whose id the user can actually see and click.
+    const remove: number[] = [];
+    for (let index = 0; index < this.receipts.length; index++) {
       const receipt = this.receipts[index]!;
       let match: string | null = null;
       let ambiguous = false;
@@ -558,15 +567,15 @@ export class PageNotificationReceiptStore {
         match = key;
       }
       if (match === null) continue;
-      this.receipts.splice(index, 1);
-      changed = true;
-      // Ambiguous, or a second receipt for an already-consumed row: dropped,
+      remove.push(index);
+      // Ambiguous, or a newer duplicate for an already-consumed row: dropped,
       // not consumed — the fallback path takes over and the native 30s
       // dedupe absorbs a same-text duplicate.
       if (ambiguous || consumed.has(match)) continue;
       consumed.set(match, { nativeId: receipt.nativeId });
     }
-    if (changed) this.persist();
+    for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i]!, 1);
+    if (remove.length) this.persist();
     return consumed;
   }
 
@@ -658,12 +667,19 @@ export class UnreadArrivalTracker {
    * state rather than a still-unstamped title. A corroborated zero baselines
    * immediately, letting a first arrival inside the settle window report
    * instead of being absorbed as priming.
+   *
+   * `readObservedKeys` — threads this document has already seen rendered
+   * hydrated-and-read. A mutated row from that set turning up in an early
+   * count increase is a real read→unread transition, never title hydration
+   * (hydrating rows are never observed read first), so it can be reported
+   * even inside the settle window after an uncorroborated zero.
    */
   observeUnreadCount(
     count: number,
     at: number,
     maxMutationAgeMs: number,
     zeroCorroborated = false,
+    readObservedKeys?: ReadonlySet<string>,
   ): string[] {
     for (const [key, changedAt] of this.changedAt) {
       if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
@@ -688,6 +704,21 @@ export class UnreadArrivalTracker {
       // between (a hidden window can go 60s without one). Otherwise the first
       // arrival after a quiet reload would prime silently and never notify.
       if (!(this.sawDeferredZero && settled && count > 0)) {
+        // Early-arrival rescue: after a deferred zero, a mutated row this
+        // document already observed hydrated-read is a genuine read→unread
+        // transition — report it even before the window settles. Everything
+        // else primes silently below.
+        if (this.sawDeferredZero && count > 0 && readObservedKeys) {
+          const transitions = [...this.changedAt]
+            .filter(([key]) => readObservedKeys.has(key))
+            .sort((left, right) => right[1] - left[1])
+            .slice(0, count)
+            .map(([key]) => key);
+          if (transitions.length) {
+            this.changedAt.clear();
+            return transitions;
+          }
+        }
         // Mutations recorded up to a silent priming belong to hydration, not
         // to arrivals — a follow-up increase inside the attribution window
         // must not resurrect them as fresh rows.
