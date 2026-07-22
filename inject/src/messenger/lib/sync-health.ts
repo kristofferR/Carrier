@@ -75,14 +75,21 @@ export class SyncHealthTracker {
     return id;
   }
 
+  // Outcomes only count while the request is still outstanding: a request
+  // already swept as hung must not add a second outcome when it eventually
+  // completes, however it completes.
   succeeded(id: number, now: number): void {
-    this.outstanding.delete(id);
-    this.outcomes.push({ at: now, ok: true });
+    if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: true });
   }
 
   failed(id: number, now: number): void {
+    if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
+  }
+
+  /** Forget a request without recording an outcome (e.g. it failed while the
+   * machine was offline — that says nothing about Facebook). */
+  abandoned(id: number): void {
     this.outstanding.delete(id);
-    this.outcomes.push({ at: now, ok: false });
   }
 
   /** Count requests hung past the deadline as failures, each once. */

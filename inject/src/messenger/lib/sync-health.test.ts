@@ -117,4 +117,22 @@ describe("SyncHealthTracker", () => {
     }
     expect(tracker.degraded(2_000)).toBe(false);
   });
+
+  test("a completion after being swept records no second outcome", () => {
+    const tracker = new SyncHealthTracker();
+    const slow = tracker.started(0);
+    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("1 failed / 0 ok in window");
+
+    tracker.succeeded(slow, SYNC_REQUEST_TIMEOUT_MS + 1);
+    tracker.failed(slow, SYNC_REQUEST_TIMEOUT_MS + 1);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS + 1)).toBe("1 failed / 0 ok in window");
+  });
+
+  test("an abandoned request records no outcome at all", () => {
+    const tracker = new SyncHealthTracker();
+    tracker.abandoned(tracker.started(0));
+    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("0 failed / 0 ok in window");
+  });
 });

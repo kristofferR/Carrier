@@ -496,6 +496,17 @@ impl WebviewWatchdog {
                                     next_recovery_attempt = now + REACHABILITY_RETRY;
                                     continue;
                                 }
+                                if action == WatchdogAction::RecreateRealtime {
+                                    // No rebuild happened (another recreation held
+                                    // the guard) — refund the claimed budget.
+                                    // Saturating: an Ok heartbeat may have reset
+                                    // the counter to zero in the meantime.
+                                    let _ = REALTIME_RECREATES.fetch_update(
+                                        Ordering::Relaxed,
+                                        Ordering::Relaxed,
+                                        |n| Some(n.saturating_sub(1)),
+                                    );
+                                }
                                 next_recovery_attempt = now + REACHABILITY_RETRY;
                             }
                             WatchdogAction::None | WatchdogAction::Protected => unreachable!(),

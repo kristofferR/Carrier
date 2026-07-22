@@ -47,12 +47,17 @@ export function initSyncHealth() {
         if (tracked !== undefined) {
           const id = tracked;
           // Observe the outcome without altering the promise Messenger gets.
+          // Failures while offline say nothing about Facebook — drop them.
           result.then(
             (response) => {
               if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
-              else tracker.failed(id, Date.now());
+              else if (navigator.onLine) tracker.failed(id, Date.now());
+              else tracker.abandoned(id);
             },
-            () => tracker.failed(id, Date.now()),
+            () => {
+              if (navigator.onLine) tracker.failed(id, Date.now());
+              else tracker.abandoned(id);
+            },
           );
         }
         return result;
@@ -88,10 +93,16 @@ export function initSyncHealth() {
         const url = xhrUrls.get(this);
         if (url && isMessengerSyncRequest(url, location.href)) {
           const id = tracker.started(Date.now());
-          this.addEventListener("loadend", () => {
-            if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
-            else tracker.failed(id, Date.now());
-          });
+          // `once`: a reused XHR instance must not stack listeners across sends.
+          this.addEventListener(
+            "loadend",
+            () => {
+              if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
+              else if (navigator.onLine) tracker.failed(id, Date.now());
+              else tracker.abandoned(id);
+            },
+            { once: true },
+          );
         }
       } catch (_) {}
       return nativeSend.apply(this, args);
@@ -173,6 +184,10 @@ export function initSyncHealth() {
 
   let degraded = false;
   setInterval(() => {
+    // While offline everything fails and spinners hang for local reasons; the
+    // realtime recovery machinery owns that state. Freeze the detector (and
+    // whatever the banner currently shows) until connectivity returns.
+    if (!navigator.onLine) return;
     const now = Date.now();
     tracker.sweep(now);
     // Only sample the spinner while the page is visible Messenger content — a

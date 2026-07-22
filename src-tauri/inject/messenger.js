@@ -3164,13 +3164,19 @@
       this.outstanding.set(id, now);
       return id;
     }
+    // Outcomes only count while the request is still outstanding: a request
+    // already swept as hung must not add a second outcome when it eventually
+    // completes, however it completes.
     succeeded(id, now) {
-      this.outstanding.delete(id);
-      this.outcomes.push({ at: now, ok: true });
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: true });
     }
     failed(id, now) {
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
+    }
+    /** Forget a request without recording an outcome (e.g. it failed while the
+     * machine was offline — that says nothing about Facebook). */
+    abandoned(id) {
       this.outstanding.delete(id);
-      this.outcomes.push({ at: now, ok: false });
     }
     /** Count requests hung past the deadline as failures, each once. */
     sweep(now) {
@@ -3226,9 +3232,13 @@
             result.then(
               (response) => {
                 if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
-                else tracker.failed(id, Date.now());
+                else if (navigator.onLine) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
               },
-              () => tracker.failed(id, Date.now())
+              () => {
+                if (navigator.onLine) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
+              }
             );
           }
           return result;
@@ -3258,10 +3268,15 @@
           const url = xhrUrls.get(this);
           if (url && isMessengerSyncRequest(url, location.href)) {
             const id = tracker.started(Date.now());
-            this.addEventListener("loadend", () => {
-              if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
-              else tracker.failed(id, Date.now());
-            });
+            this.addEventListener(
+              "loadend",
+              () => {
+                if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
+                else if (navigator.onLine) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
+              },
+              { once: true }
+            );
           }
         } catch (_) {
         }
@@ -3332,6 +3347,7 @@
     });
     let degraded = false;
     setInterval(() => {
+      if (!navigator.onLine) return;
       const now = Date.now();
       tracker.sweep(now);
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
