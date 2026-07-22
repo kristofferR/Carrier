@@ -3,7 +3,9 @@
   // Scoped to the typed inject sources; the generated bundles in
   // src-tauri/inject/ and the dev-only mcp-bridge.js are not linted.
   "files": {
-    "includes": ["inject/**"]
+    // Agent worktrees live under .worktrees/ and carry their own root
+    // configs; keep the scanner out so they cannot break the gate.
+    "includes": ["inject/**", "!!**/.worktrees"]
   },
   "formatter": {
     "enabled": true,
