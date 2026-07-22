@@ -562,7 +562,13 @@ export class UnreadArrivalTracker {
       // once the window has elapsed, even when no scan re-observed it in
       // between (a hidden window can go 60s without one). Otherwise the first
       // arrival after a quiet reload would prime silently and never notify.
-      if (!(this.sawDeferredZero && settled && count > 0)) return [];
+      if (!(this.sawDeferredZero && settled && count > 0)) {
+        // Mutations recorded up to a silent priming belong to hydration, not
+        // to arrivals — a follow-up increase inside the attribution window
+        // must not resurrect them as fresh rows.
+        this.changedAt.clear();
+        return [];
+      }
       previous = 0;
     }
     if (count <= previous) return [];

@@ -404,6 +404,18 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
   });
 
+  test("a silent priming clears queued hydration mutations", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // Rows mutate while hydrating, then the first "(3)" primes silently.
+    tracker.markRowsChanged(["a"], 1_100);
+    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
+    // A second increase right behind it must not resurrect row "a" — only a
+    // mutation recorded after the baseline may be attributed.
+    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["d"], 1_400);
+    expect(tracker.observeUnreadCount(5, 1_500, 2_000)).toEqual(["d"]);
+  });
+
   test("a deferred zero becomes the baseline for a late first arrival", () => {
     const tracker = new UnreadArrivalTracker(10_000);
     // Reload into an all-read inbox: the only scan sees the still-hydrating

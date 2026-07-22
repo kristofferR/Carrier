@@ -2344,7 +2344,10 @@
       let previous = this.unreadCount;
       this.unreadCount = count;
       if (previous === null) {
-        if (!(this.sawDeferredZero && settled && count > 0)) return [];
+        if (!(this.sawDeferredZero && settled && count > 0)) {
+          this.changedAt.clear();
+          return [];
+        }
         previous = 0;
       }
       if (count <= previous) return [];
