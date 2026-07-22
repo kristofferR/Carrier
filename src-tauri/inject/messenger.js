@@ -3173,10 +3173,15 @@
     failed(id, now) {
       if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
     }
-    /** Forget a request without recording an outcome (e.g. it failed while the
-     * machine was offline — that says nothing about Facebook). */
+    /** Forget a request without recording an outcome (e.g. it was aborted
+     * locally or failed while offline — that says nothing about Facebook). */
     abandoned(id) {
       this.outstanding.delete(id);
+    }
+    /** Forget everything in flight (the machine went offline: whatever those
+     * requests do next is about the local network, not Facebook). */
+    abandonOutstanding() {
+      this.outstanding.clear();
     }
     /** Count requests hung past the deadline as failures, each once. */
     sweep(now) {
@@ -3221,7 +3226,7 @@
           try {
             const input = args[0];
             const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
-            if (url && isMessengerSyncRequest(url, location.href)) {
+            if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
               tracked = tracker.started(Date.now());
             }
           } catch (_) {
@@ -3235,8 +3240,9 @@
                 else if (navigator.onLine) tracker.failed(id, Date.now());
                 else tracker.abandoned(id);
               },
-              () => {
-                if (navigator.onLine) tracker.failed(id, Date.now());
+              (error) => {
+                const aborted = error?.name === "AbortError";
+                if (navigator.onLine && !aborted) tracker.failed(id, Date.now());
                 else tracker.abandoned(id);
               }
             );
@@ -3266,8 +3272,9 @@
       XMLHttpRequest.prototype.send = function(...args) {
         try {
           const url = xhrUrls.get(this);
-          if (url && isMessengerSyncRequest(url, location.href)) {
+          if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
             const id = tracker.started(Date.now());
+            this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
             this.addEventListener(
               "loadend",
               () => {
@@ -3294,11 +3301,25 @@
       }
       return false;
     };
+    const isActuallyVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 1 || rect.height <= 1 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
+        return false;
+      }
+      let current = el;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity) <= 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
     const loadingSpinnerVisible = () => {
       try {
         for (const el of document.querySelectorAll('[role="progressbar"], [role="status"]')) {
-          const rect = el.getBoundingClientRect();
-          if (rect.width > 1 && rect.height > 1 && hasRunningAnimation(el)) return true;
+          if (isActuallyVisible(el) && hasRunningAnimation(el)) return true;
         }
       } catch (_) {
       }
@@ -3345,9 +3366,13 @@
       payload: { kind }
     })?.catch?.(() => {
     });
+    window.addEventListener("offline", () => tracker.abandonOutstanding());
     let degraded = false;
     setInterval(() => {
-      if (!navigator.onLine) return;
+      if (!navigator.onLine) {
+        tracker.abandonOutstanding();
+        return;
+      }
       const now = Date.now();
       tracker.sweep(now);
       if (!document.hidden && isMessengerContentPath(location.pathname)) {

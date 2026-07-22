@@ -47,6 +47,14 @@ static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
 // whenever any heartbeat proves the realtime transport healthy.
 static REALTIME_RECREATES: AtomicU32 = AtomicU32::new(0);
 
+/// Refund a claimed realtime rebuild that never actually happened. Saturating:
+/// an Ok heartbeat may have reset the counter to zero in the meantime.
+fn refund_realtime_recreate() {
+    let _ = REALTIME_RECREATES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+        Some(n.saturating_sub(1))
+    });
+}
+
 #[derive(Debug, Deserialize)]
 struct HeartbeatPayload {
     // This routes heartbeats to the right window generation; it is not a
@@ -476,9 +484,18 @@ impl WebviewWatchdog {
                                         "Messenger webview {label} stayed blank after reload; rebuilding it"
                                     );
                                 }
+                                // A realtime rebuild that ends up not happening —
+                                // declined synchronously, or abandoned because the
+                                // destroy call failed — must refund its budget.
+                                let refund =
+                                    (action == WatchdogAction::RecreateRealtime).then(|| {
+                                        Box::new(refund_realtime_recreate)
+                                            as Box<dyn FnOnce() + Send>
+                                    });
                                 if crate::window::recreate_messenger_window(
                                     watchdog_window.app_handle(),
                                     &label,
+                                    refund,
                                 ) {
                                     // Keep supervising until the async rebuild
                                     // actually destroys this window. If destroy
@@ -489,15 +506,7 @@ impl WebviewWatchdog {
                                     continue;
                                 }
                                 if action == WatchdogAction::RecreateRealtime {
-                                    // No rebuild happened (another recreation held
-                                    // the guard) — refund the claimed budget.
-                                    // Saturating: an Ok heartbeat may have reset
-                                    // the counter to zero in the meantime.
-                                    let _ = REALTIME_RECREATES.fetch_update(
-                                        Ordering::Relaxed,
-                                        Ordering::Relaxed,
-                                        |n| Some(n.saturating_sub(1)),
-                                    );
+                                    refund_realtime_recreate();
                                 }
                                 next_recovery_attempt = now + REACHABILITY_RETRY;
                             }

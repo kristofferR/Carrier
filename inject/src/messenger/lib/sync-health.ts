@@ -86,10 +86,16 @@ export class SyncHealthTracker {
     if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
   }
 
-  /** Forget a request without recording an outcome (e.g. it failed while the
-   * machine was offline — that says nothing about Facebook). */
+  /** Forget a request without recording an outcome (e.g. it was aborted
+   * locally or failed while offline — that says nothing about Facebook). */
   abandoned(id: number): void {
     this.outstanding.delete(id);
+  }
+
+  /** Forget everything in flight (the machine went offline: whatever those
+   * requests do next is about the local network, not Facebook). */
+  abandonOutstanding(): void {
+    this.outstanding.clear();
   }
 
   /** Count requests hung past the deadline as failures, each once. */

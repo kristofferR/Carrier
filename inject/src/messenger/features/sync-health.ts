@@ -45,7 +45,13 @@ export function initSyncHealth() {
               : input instanceof Request
                 ? input.url
                 : "";
-          if (url && isMessengerSyncRequest(url, location.href)) {
+          // Facebook uses /api/graphql on login/checkpoint surfaces too; only
+          // Messenger content pages say anything about Messenger sync.
+          if (
+            url &&
+            isMessengerContentPath(location.pathname) &&
+            isMessengerSyncRequest(url, location.href)
+          ) {
             tracked = tracker.started(Date.now());
           }
         } catch (_) {}
@@ -53,15 +59,17 @@ export function initSyncHealth() {
         if (tracked !== undefined) {
           const id = tracked;
           // Observe the outcome without altering the promise Messenger gets.
-          // Failures while offline say nothing about Facebook — drop them.
+          // Failures while offline and local aborts (route changes cancel
+          // in-flight queries) say nothing about Facebook — drop them.
           result.then(
             (response) => {
               if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
               else if (navigator.onLine) tracker.failed(id, Date.now());
               else tracker.abandoned(id);
             },
-            () => {
-              if (navigator.onLine) tracker.failed(id, Date.now());
+            (error: unknown) => {
+              const aborted = (error as { name?: string } | null)?.name === "AbortError";
+              if (navigator.onLine && !aborted) tracker.failed(id, Date.now());
               else tracker.abandoned(id);
             },
           );
@@ -97,9 +105,16 @@ export function initSyncHealth() {
     ) {
       try {
         const url = xhrUrls.get(this);
-        if (url && isMessengerSyncRequest(url, location.href)) {
+        if (
+          url &&
+          isMessengerContentPath(location.pathname) &&
+          isMessengerSyncRequest(url, location.href)
+        ) {
           const id = tracker.started(Date.now());
-          // `once`: a reused XHR instance must not stack listeners across sends.
+          // `once`: a reused XHR instance must not stack listeners across
+          // sends. A local abort fires before loadend and abandons the sample,
+          // so the loadend status-0 that follows records nothing.
+          this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
           this.addEventListener(
             "loadend",
             () => {
@@ -130,11 +145,39 @@ export function initSyncHealth() {
     }
     return false;
   };
+  // An animated spinner hidden via visibility/opacity or parked off-screen
+  // keeps a nonzero rect; only what the user can actually see counts.
+  const isActuallyVisible = (el: Element): boolean => {
+    const rect = el.getBoundingClientRect();
+    if (
+      rect.width <= 1 ||
+      rect.height <= 1 ||
+      rect.bottom <= 0 ||
+      rect.right <= 0 ||
+      rect.top >= innerHeight ||
+      rect.left >= innerWidth
+    ) {
+      return false;
+    }
+    let current: Element | null = el;
+    while (current) {
+      const style = getComputedStyle(current);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number(style.opacity) <= 0
+      ) {
+        return false;
+      }
+      current = current.parentElement;
+    }
+    return true;
+  };
   const loadingSpinnerVisible = () => {
     try {
       for (const el of document.querySelectorAll('[role="progressbar"], [role="status"]')) {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 1 && rect.height > 1 && hasRunningAnimation(el)) return true;
+        if (isActuallyVisible(el) && hasRunningAnimation(el)) return true;
       }
     } catch (_) {}
     return false;
@@ -188,12 +231,19 @@ export function initSyncHealth() {
       payload: { kind },
     })?.catch?.(() => {});
 
+  // Requests caught in flight by an offline transition must not be swept as
+  // hung "failures" on the first tick after connectivity returns.
+  window.addEventListener("offline", () => tracker.abandonOutstanding());
+
   let degraded = false;
   setInterval(() => {
     // While offline everything fails and spinners hang for local reasons; the
     // realtime recovery machinery owns that state. Freeze the detector (and
     // whatever the banner currently shows) until connectivity returns.
-    if (!navigator.onLine) return;
+    if (!navigator.onLine) {
+      tracker.abandonOutstanding();
+      return;
+    }
     const now = Date.now();
     tracker.sweep(now);
     // Only sample the spinner while the page is visible Messenger content — a

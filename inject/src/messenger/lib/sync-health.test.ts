@@ -135,4 +135,12 @@ describe("SyncHealthTracker", () => {
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
     expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("0 failed / 0 ok in window");
   });
+
+  test("abandoning everything in flight leaves nothing for the sweep", () => {
+    const tracker = new SyncHealthTracker();
+    for (let i = 0; i < SYNC_FAILURE_FLOOR; i++) tracker.started(0);
+    tracker.abandonOutstanding();
+    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("0 failed / 0 ok in window");
+  });
 });
