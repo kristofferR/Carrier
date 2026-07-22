@@ -3125,6 +3125,19 @@
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
   var SYNC_WINDOW_MS = 18e4;
   var SYNC_FAILURE_FLOOR = 5;
+  var STUCK_LOADING_SAMPLES = 12;
+  var SampledPersistence = class {
+    constructor(limit) {
+      __publicField(this, "limit", limit);
+      __publicField(this, "count", 0);
+    }
+    observe(present) {
+      this.count = present ? this.count + 1 : 0;
+    }
+    persistent() {
+      return this.count >= this.limit;
+    }
+  };
   function isMessengerSyncRequest(raw, base) {
     let url;
     try {
@@ -3227,20 +3240,63 @@
         configurable: true
       });
     } catch (_) {
-      diag("sync.requests", "could not observe Messenger sync requests");
+      diag("sync.requests", "could not observe Messenger sync fetches");
     }
+    try {
+      const xhrUrls = /* @__PURE__ */ new WeakMap();
+      const nativeOpen = XMLHttpRequest.prototype.open;
+      const nativeSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(...args) {
+        try {
+          xhrUrls.set(this, String(args[1]));
+        } catch (_) {
+        }
+        return nativeOpen.apply(this, args);
+      };
+      XMLHttpRequest.prototype.send = function(...args) {
+        try {
+          const url = xhrUrls.get(this);
+          if (url && isMessengerSyncRequest(url, location.href)) {
+            const id = tracker.started(Date.now());
+            this.addEventListener("loadend", () => {
+              if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
+              else tracker.failed(id, Date.now());
+            });
+          }
+        } catch (_) {
+        }
+        return nativeSend.apply(this, args);
+      };
+    } catch (_) {
+      diag("sync.requests", "could not observe Messenger sync XHRs");
+    }
+    const stuckLoading = new SampledPersistence(STUCK_LOADING_SAMPLES);
+    const loadingSpinnerVisible = () => {
+      try {
+        for (const el of document.querySelectorAll('[role="progressbar"]')) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width > 1 && rect.height > 1) return true;
+        }
+      } catch (_) {
+      }
+      return false;
+    };
     let degraded = false;
     let announcePending = false;
     let announced = false;
     setInterval(() => {
       const now = Date.now();
       tracker.sweep(now);
-      const degradedNow = tracker.degraded(now);
+      if (!document.hidden && isMessengerContentPath(location.pathname)) {
+        stuckLoading.observe(loadingSpinnerVisible());
+      }
+      const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
       if (degradedNow && !degraded) {
         degraded = true;
         announcePending = true;
         announced = false;
-        diag("sync.stalled", `messenger sync degraded (${tracker.summary(now)})`);
+        const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        diag("sync.stalled", `messenger sync degraded: ${reason}`);
       } else if (!degradedNow && degraded) {
         degraded = false;
         announcePending = false;

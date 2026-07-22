@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   isMessengerSyncRequest,
+  SampledPersistence,
   SYNC_FAILURE_FLOOR,
   SYNC_REQUEST_TIMEOUT_MS,
   SYNC_WINDOW_MS,
@@ -87,6 +88,23 @@ describe("SyncHealthTracker", () => {
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS + 1);
     expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS + 1)).toBe("1 failed / 0 ok in window");
+  });
+
+  test("a condition becomes persistent only after enough consecutive samples", () => {
+    const persistence = new SampledPersistence(3);
+    persistence.observe(true);
+    persistence.observe(true);
+    expect(persistence.persistent()).toBe(false);
+
+    persistence.observe(true);
+    expect(persistence.persistent()).toBe(true);
+    persistence.observe(true);
+    expect(persistence.persistent()).toBe(true);
+
+    persistence.observe(false);
+    expect(persistence.persistent()).toBe(false);
+    persistence.observe(true);
+    expect(persistence.persistent()).toBe(false);
   });
 
   test("recovery needs fresh successes, not just time passing failures out", () => {

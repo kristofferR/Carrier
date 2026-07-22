@@ -2,15 +2,22 @@
 // The realtime transport can be healthy while Facebook refuses every actual
 // sync query (observed 2026-07-22: a throttled session kept its MQTT socket
 // but got no data — the app silently showed stale chats for hours). Nothing
-// local can fix a server-side refusal, so the honest move is to say so:
-// watch Messenger's own GraphQL requests and toast when they are all failing.
+// local can fix a server-side refusal, so the honest move is to say so.
+// Two complementary detectors, because Messenger's sync engine lives in a
+// worker whose network traffic the page cannot see:
+//  - request-level: page-context GraphQL over fetch and XHR, failure-majority
+//    in a rolling window;
+//  - symptom-level: a loading spinner that stays visible for minutes.
 
 import { diag, toast } from "../bridge";
 import {
   isMessengerSyncRequest,
+  SampledPersistence,
+  STUCK_LOADING_SAMPLES,
   SyncHealthTracker,
   syncResponseSucceeded,
 } from "../lib/sync-health";
+import { isMessengerContentPath } from "../lib/threads";
 
 const SYNC_CHECK_INTERVAL_MS = 10_000;
 
@@ -55,8 +62,52 @@ export function initSyncHealth() {
       configurable: true,
     });
   } catch (_) {
-    diag("sync.requests", "could not observe Messenger sync requests");
+    diag("sync.requests", "could not observe Messenger sync fetches");
   }
+
+  try {
+    const xhrUrls = new WeakMap<XMLHttpRequest, string>();
+    const nativeOpen = XMLHttpRequest.prototype.open;
+    const nativeSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (
+      this: XMLHttpRequest,
+      ...args: Parameters<XMLHttpRequest["open"]>
+    ) {
+      try {
+        xhrUrls.set(this, String(args[1]));
+      } catch (_) {}
+      return nativeOpen.apply(this, args);
+    } as typeof XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.send = function (
+      this: XMLHttpRequest,
+      ...args: Parameters<XMLHttpRequest["send"]>
+    ) {
+      try {
+        const url = xhrUrls.get(this);
+        if (url && isMessengerSyncRequest(url, location.href)) {
+          const id = tracker.started(Date.now());
+          this.addEventListener("loadend", () => {
+            if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
+            else tracker.failed(id, Date.now());
+          });
+        }
+      } catch (_) {}
+      return nativeSend.apply(this, args);
+    } as typeof XMLHttpRequest.prototype.send;
+  } catch (_) {
+    diag("sync.requests", "could not observe Messenger sync XHRs");
+  }
+
+  const stuckLoading = new SampledPersistence(STUCK_LOADING_SAMPLES);
+  const loadingSpinnerVisible = () => {
+    try {
+      for (const el of document.querySelectorAll('[role="progressbar"]')) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 1 && rect.height > 1) return true;
+      }
+    } catch (_) {}
+    return false;
+  };
 
   let degraded = false;
   let announcePending = false;
@@ -64,12 +115,20 @@ export function initSyncHealth() {
   setInterval(() => {
     const now = Date.now();
     tracker.sweep(now);
-    const degradedNow = tracker.degraded(now);
+    // Only sample the spinner while the page is visible Messenger content — a
+    // hidden window may legitimately pause loading work mid-spinner.
+    if (!document.hidden && isMessengerContentPath(location.pathname)) {
+      stuckLoading.observe(loadingSpinnerVisible());
+    }
+    const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
     if (degradedNow && !degraded) {
       degraded = true;
       announcePending = true;
       announced = false;
-      diag("sync.stalled", `messenger sync degraded (${tracker.summary(now)})`);
+      const reason = stuckLoading.persistent()
+        ? "loading UI stuck"
+        : `requests failing (${tracker.summary(now)})`;
+      diag("sync.stalled", `messenger sync degraded: ${reason}`);
     } else if (!degradedNow && degraded) {
       degraded = false;
       announcePending = false;
@@ -78,7 +137,7 @@ export function initSyncHealth() {
       diag("sync.stalled", "messenger sync recovered");
     }
     // Announce when the user can actually see it. While offline the realtime
-    // recovery machinery owns the messaging — failed fetches are expected.
+    // recovery machinery owns the messaging — failed requests are expected.
     if (degraded && announcePending && !document.hidden && navigator.onLine) {
       announcePending = false;
       announced = true;
