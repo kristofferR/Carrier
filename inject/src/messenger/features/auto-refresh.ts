@@ -5,7 +5,7 @@
 
 import { diag, invoke } from "../bridge";
 import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
-import { RealtimeRecoveryTracker } from "../lib/realtime-health";
+import { looksLikeFacebookErrorPage, RealtimeRecoveryTracker } from "../lib/realtime-health";
 import { isMessengerContentPath } from "../lib/threads";
 import { monitorRealtimeHealth } from "./realtime-health";
 
@@ -43,6 +43,26 @@ export function initAutoRefresh() {
   }
   let lastHeartbeatProtection: boolean | undefined;
   const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+  // Constructed before the first emitHeartbeat() call below. Non-content paths
+  // (login, checkpoint) report "pending": the native watchdog must neither act
+  // there nor treat them as proof the transport works.
+  const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
+  const onFacebookErrorPage = () => {
+    try {
+      return looksLikeFacebookErrorPage({
+        hasBackLink: !!document.getElementById("back"),
+        hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
+        elementCount: document.getElementsByTagName("*").length,
+      });
+    } catch (_) {
+      return false;
+    }
+  };
+  const realtimeStatus = () => {
+    if (!isMessengerContentPath(location.pathname)) return "pending";
+    if (onFacebookErrorPage()) return "error";
+    return realtimeRecovery.status(Date.now());
+  };
   const messengerContentPresent = () => {
     // The renderer can stay JavaScript-responsive after Facebook's app root has
     // disappeared, leaving only Messenger's background colour behind. Avoid
@@ -95,6 +115,7 @@ export function initAutoRefresh() {
         id: heartbeatId,
         protected: protectedNow,
         content_present: messengerContentPresent(),
+        realtime: realtimeStatus(),
       },
     })?.catch?.(() => {});
   };
@@ -152,7 +173,6 @@ export function initAutoRefresh() {
       return 1000;
     }
   };
-  const realtimeRecovery = new RealtimeRecoveryTracker();
   const realtime = monitorRealtimeHealth({
     onHealthy: (source) => {
       realtimeRecovery.healthy(source);
@@ -192,13 +212,14 @@ export function initAutoRefresh() {
 
   // Check often enough that an overdue callback recovers immediately when a
   // suspended WebView resumes. The same tick checks Messenger's realtime MQTT
-  // transport for disconnects, stuck reconnects, and half-open silence.
+  // transport for disconnects, stuck reconnects, and half-open silence — before
+  // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
+    realtime.check();
     emitHeartbeat();
     const reason = watchdog.heartbeat(pageIsActive(), Date.now());
     if (reason) {
       schedule(reason === "background" ? 2000 : 1000, reason, reason !== "background");
     }
-    realtime.check();
   }, 5_000);
 }

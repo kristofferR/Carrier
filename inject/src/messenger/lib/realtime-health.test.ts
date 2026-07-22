@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   ConsecutiveFailureThreshold,
   isMessengerRealtimeUrl,
+  looksLikeFacebookErrorPage,
   REALTIME_CONNECT_GRACE_MS,
+  REALTIME_NEVER_CONNECTED_MS,
   REALTIME_SILENCE_MS,
   RealtimeHealthWatchdog,
   RealtimeRecoveryTracker,
@@ -106,7 +108,7 @@ describe("RealtimeHealthWatchdog", () => {
 
 describe("realtime recovery signals", () => {
   test("requires every stale source to recover independently", () => {
-    const tracker = new RealtimeRecoveryTracker();
+    const tracker = new RealtimeRecoveryTracker(0);
     tracker.stale("socket");
     tracker.stale("worker");
 
@@ -115,6 +117,57 @@ describe("realtime recovery signals", () => {
 
     tracker.healthy("socket");
     expect(tracker.needsRecovery()).toBe(false);
+  });
+
+  test("reports pending then never when no source ever connects", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+
+    expect(tracker.status(REALTIME_NEVER_CONNECTED_MS - 1)).toBe("pending");
+    expect(tracker.status(REALTIME_NEVER_CONNECTED_MS)).toBe("never");
+  });
+
+  test("reports ok once any source has been healthy", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("worker");
+
+    expect(tracker.status(REALTIME_NEVER_CONNECTED_MS * 10)).toBe("ok");
+  });
+
+  test("a healthy history prevents never", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("socket");
+    tracker.stale("socket");
+    tracker.healthy("socket");
+
+    expect(tracker.status(REALTIME_NEVER_CONNECTED_MS * 10)).toBe("ok");
+  });
+
+  test("recognizes Facebook's static error page skeleton and nothing bigger", () => {
+    expect(
+      looksLikeFacebookErrorPage({ hasBackLink: true, hasIconImage: true, elementCount: 30 }),
+    ).toBe(true);
+    expect(
+      looksLikeFacebookErrorPage({ hasBackLink: true, hasIconImage: true, elementCount: 100 }),
+    ).toBe(false);
+    expect(
+      looksLikeFacebookErrorPage({ hasBackLink: false, hasIconImage: true, elementCount: 30 }),
+    ).toBe(false);
+    expect(
+      looksLikeFacebookErrorPage({ hasBackLink: true, hasIconImage: false, elementCount: 30 }),
+    ).toBe(false);
+  });
+
+  test("reports stale while any source is stale and ok after all recover", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("socket");
+    tracker.stale("socket");
+    tracker.stale("worker");
+
+    tracker.healthy("worker");
+    expect(tracker.status(0)).toBe("stale");
+
+    tracker.healthy("socket");
+    expect(tracker.status(0)).toBe("ok");
   });
 
   test("reports a worker that misses its first three probes", () => {

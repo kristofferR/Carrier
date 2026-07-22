@@ -362,7 +362,16 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
 /// Returns whether a rebuild was scheduled. Theme changes and other recovery
 /// attempts share the `recreating` guard so two destroy/build cycles cannot
 /// overlap.
-pub(crate) fn recreate_messenger_window(app: &tauri::AppHandle, label: &str) -> bool {
+/// Returns whether a rebuild was scheduled. `on_abandoned` runs only when a
+/// scheduled rebuild is later abandoned without destroying the window (the
+/// destroy call failed, so the old window and its watchdog live on) — callers
+/// budgeting rebuilds refund there. A `false` return never invokes it; the
+/// caller still owns that case.
+pub(crate) fn recreate_messenger_window(
+    app: &tauri::AppHandle,
+    label: &str,
+    on_abandoned: Option<Box<dyn FnOnce() + Send>>,
+) -> bool {
     use std::sync::atomic::Ordering;
 
     if label == "settings" {
@@ -394,6 +403,9 @@ pub(crate) fn recreate_messenger_window(app: &tauri::AppHandle, label: &str) -> 
             app.state::<AppState>()
                 .recreating
                 .store(false, Ordering::SeqCst);
+            if let Some(on_abandoned) = on_abandoned {
+                on_abandoned();
+            }
             return;
         }
 

@@ -1,8 +1,32 @@
 export const REALTIME_CONNECT_GRACE_MS = 15_000;
 export const REALTIME_SILENCE_MS = 90_000;
+export const REALTIME_NEVER_CONNECTED_MS = 90_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
 export type RealtimeHealthSource = "socket" | "worker";
+/**
+ * Transport status reported to the native watchdog in every heartbeat.
+ * "never" flags a page whose realtime transport has not connected once since
+ * load — the state where both health sources are mute and only the native
+ * side (which can check DNS and rebuild the webview) can still recover.
+ * "error" flags Facebook's static error document, which is unambiguous the
+ * moment it renders and gets a much faster native recovery ladder.
+ */
+export type RealtimeStatus = "ok" | "pending" | "stale" | "never" | "error";
+
+/**
+ * Facebook's static "Sorry, something went wrong." document, served in place
+ * of Messenger. Detection is structural (its `#back` / `#icon` skeleton on a
+ * near-empty page) rather than textual, because the page is localized. A miss
+ * just falls back to the slower never-connected path.
+ */
+export function looksLikeFacebookErrorPage(doc: {
+  hasBackLink: boolean;
+  hasIconImage: boolean;
+  elementCount: number;
+}): boolean {
+  return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
+}
 
 type SocketState = {
   state: "connecting" | "open";
@@ -29,8 +53,12 @@ export class ConsecutiveFailureThreshold {
 
 export class RealtimeRecoveryTracker {
   private readonly staleSources = new Set<RealtimeHealthSource>();
+  private everHealthy = false;
+
+  constructor(private readonly startedAt: number) {}
 
   healthy(source: RealtimeHealthSource): void {
+    this.everHealthy = true;
     this.staleSources.delete(source);
   }
 
@@ -40,6 +68,15 @@ export class RealtimeRecoveryTracker {
 
   needsRecovery(): boolean {
     return this.staleSources.size > 0;
+  }
+
+  // "pending" (fresh page, transport still unproven) deliberately differs from
+  // "ok": the native side pauses its bad-transport timer on both, but only a
+  // proven-healthy "ok" resets its escalation counters.
+  status(now: number): RealtimeStatus {
+    if (this.staleSources.size > 0) return "stale";
+    if (this.everHealthy) return "ok";
+    return elapsed(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
   }
 }
 

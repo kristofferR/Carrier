@@ -30,6 +30,7 @@ import { initSelectorHealth } from "./features/selector-health";
 import { initSettingsButton } from "./features/settings-button";
 import { initFunctionKeys, initShortcutRegistry, initShortcuts } from "./features/shortcuts";
 import { initSpellcheck } from "./features/spellcheck";
+import { initSyncHealth } from "./features/sync-health";
 import { initSystemEmoji } from "./features/system-emoji";
 import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
@@ -61,6 +62,7 @@ function main() {
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
   initFeature("notifications", initNotificationBridge);
+  initFeature("sync-health", initSyncHealth);
   initFeature("auto-refresh", initAutoRefresh);
   initFeature("force-theme", initForceTheme);
   initFeature("unread-badge", initUnreadBadge);
