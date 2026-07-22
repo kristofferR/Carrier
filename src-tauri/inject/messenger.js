@@ -8,6 +8,33 @@
   var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
+  // inject/src/messenger/lib/downloads.ts
+  var filenameFromUrl = (u, base) => {
+    try {
+      const p = new URL(u, base).pathname.split("/").pop();
+      return p?.includes(".") ? decodeURIComponent(p) : "";
+    } catch {
+      return "";
+    }
+  };
+  var GENERIC_DOWNLOAD_STEMS = /* @__PURE__ */ new Set(["download", "image", "video"]);
+  var splitDownloadName = (name) => {
+    const file = String(name || "").trim().split(/[\\/]/).pop() || "";
+    const dot = file.lastIndexOf(".");
+    if (dot > 0 && dot < file.length - 1) {
+      return { stem: file.slice(0, dot), ext: file.slice(dot) };
+    }
+    return { stem: file, ext: "" };
+  };
+  var friendlyDownloadName = (name) => {
+    const { stem, ext } = splitDownloadName(name);
+    if (!stem || GENERIC_DOWNLOAD_STEMS.has(stem.toLowerCase())) {
+      return `Messenger${ext}`;
+    }
+    return name;
+  };
+  var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+
   // inject/src/messenger/lib/links.ts
   var INTERNAL_HOSTS = [
     "facebook.com",
@@ -108,7 +135,7 @@
 
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var toast = (msg) => window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
+  var toast = (msg, action) => window.__carrierToast ? window.__carrierToast(msg, action) : console.log("[carrier]", msg);
   var diag = /* @__PURE__ */ (() => {
     const RATE_MS = 6e4;
     const lastSent = /* @__PURE__ */ new Map();
@@ -134,6 +161,14 @@
   var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
+  var revealDownload = (url) => invoke("plugin:event|emit", {
+    event: "carrier:reveal-download",
+    payload: { url }
+  })?.catch?.(() => diag("ipc.reveal-download", "reveal event failed"));
+  var toastDownloadSaved = (url) => toast("Saved to Downloads", {
+    label: downloadRevealLabel(navigator.userAgent),
+    onClick: () => revealDownload(url)
+  });
 
   // inject/src/messenger/lib/auto-refresh.ts
   var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
@@ -637,7 +672,7 @@
         const detail = detailFor(event);
         if (!detail || detail.url !== expectedUrl) return;
         cleanup();
-        if (detail.success) resolve();
+        if (detail.success) resolve(expectedUrl);
         else reject(new Error("native download failed"));
       };
       target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
@@ -647,32 +682,6 @@
       }, timeoutMs);
     });
   }
-
-  // inject/src/messenger/lib/downloads.ts
-  var filenameFromUrl = (u, base) => {
-    try {
-      const p = new URL(u, base).pathname.split("/").pop();
-      return p?.includes(".") ? decodeURIComponent(p) : "";
-    } catch {
-      return "";
-    }
-  };
-  var GENERIC_DOWNLOAD_STEMS = /* @__PURE__ */ new Set(["download", "image", "video"]);
-  var splitDownloadName = (name) => {
-    const file = String(name || "").trim().split(/[\\/]/).pop() || "";
-    const dot = file.lastIndexOf(".");
-    if (dot > 0 && dot < file.length - 1) {
-      return { stem: file.slice(0, dot), ext: file.slice(dot) };
-    }
-    return { stem: file, ext: "" };
-  };
-  var friendlyDownloadName = (name) => {
-    const { stem, ext } = splitDownloadName(name);
-    if (!stem || GENERIC_DOWNLOAD_STEMS.has(stem.toLowerCase())) {
-      return `Messenger${ext}`;
-    }
-    return name;
-  };
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
@@ -699,7 +708,7 @@
     try {
       const completion = waitForNativeDownload(window, href);
       a.click();
-      await completion;
+      return await completion;
     } finally {
       a.remove();
       URL.revokeObjectURL(href);
@@ -743,14 +752,14 @@
           ]);
           items.push([
             "Download image",
-            () => downloadSrc(imgSrc, "image").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))
+            () => downloadSrc(imgSrc, "image").then(toastDownloadSaved).catch(() => toast("Download failed"))
           ]);
           items.push(["Copy image address", () => copyAddress(imgSrc)]);
           items.push(["Open image in browser", () => openUrl(imgSrc)]);
         } else if (vidSrc) {
           items.push([
             "Download video",
-            () => downloadSrc(vidSrc, "video").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"))
+            () => downloadSrc(vidSrc, "video").then(toastDownloadSaved).catch(() => toast("Download failed"))
           ]);
           items.push(["Copy video address", () => copyAddress(vidSrc)]);
         } else if (linkHref && !linkHref.startsWith("javascript:")) {
@@ -1104,7 +1113,7 @@
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
-        downloadSrc(href, a.getAttribute("download") || "download").then(() => toast("Saved to Downloads")).catch(() => toast("Download failed"));
+        downloadSrc(href, a.getAttribute("download") || "download").then(toastDownloadSaved).catch(() => toast("Download failed"));
       },
       true
     );

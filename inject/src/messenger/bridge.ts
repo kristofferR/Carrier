@@ -1,4 +1,5 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
+import { downloadRevealLabel } from "./lib/downloads";
 import { stripFacebookTracking } from "./lib/links";
 
 // Use the always-present internal bridge directly instead of the global
@@ -7,8 +8,8 @@ import { stripFacebookTracking } from "./lib/links";
 export const invoke = (cmd: string, args?: Record<string, unknown>) =>
   window.__TAURI_INTERNALS__?.invoke(cmd, args);
 
-export const toast = (msg: string) =>
-  window.__carrierToast ? window.__carrierToast(msg) : console.log("[carrier]", msg);
+export const toast = (msg: string, action?: CarrierToastAction) =>
+  window.__carrierToast ? window.__carrierToast(msg, action) : console.log("[carrier]", msg);
 
 /* ----------------------------- Diagnostics ---------------------------- */
 // Every page feature hangs off Facebook's unstable DOM, and failures used to
@@ -50,3 +51,15 @@ export const openUrl = (url: string) =>
   invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(() =>
     diag("ipc.open-url", "opener invoke failed"),
   );
+
+export const revealDownload = (url: string) =>
+  invoke("plugin:event|emit", {
+    event: "carrier:reveal-download",
+    payload: { url },
+  })?.catch?.(() => diag("ipc.reveal-download", "reveal event failed"));
+
+export const toastDownloadSaved = (url: string) =>
+  toast("Saved to Downloads", {
+    label: downloadRevealLabel(navigator.userAgent),
+    onClick: () => revealDownload(url),
+  });

@@ -8,7 +8,7 @@
 //      path so a click becomes an ordinary, cancelable in-page activation.
 //   2. Intercept that click and run downloadSrc() — the same fetch -> untargeted
 //      anchor -> Rust `on_download` path the working right-click "Download" uses.
-import { toast } from "../bridge";
+import { toast, toastDownloadSaved } from "../bridge";
 import { downloadSrc } from "./context-menu";
 
 const stripDlTarget = (a: Node | null) => {
@@ -94,7 +94,7 @@ export function initDownloadAnchors() {
       e.preventDefault();
       e.stopImmediatePropagation();
       downloadSrc(href, a.getAttribute("download") || "download")
-        .then(() => toast("Saved to Downloads"))
+        .then(toastDownloadSaved)
         .catch(() => toast("Download failed"));
     },
     true,

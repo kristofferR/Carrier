@@ -53,15 +53,12 @@
     ];
   }
 
-  // inject/src/panel/index.ts
-  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var emit = (event) => invoke("plugin:event|emit", { event, payload: null })?.catch?.(() => {
-  });
-  function main() {
+  // inject/src/panel/toast.ts
+  function installToast() {
     let toastEl = null;
     let toastTimer;
     let toastRemoveTimer;
-    window.__carrierToast = (msg) => {
+    window.__carrierToast = (msg, action) => {
       if (!toastEl) {
         toastEl = document.createElement("div");
         toastEl.setAttribute("role", "status");
@@ -73,6 +70,9 @@
           left: "50%",
           transform: "translateX(-50%)",
           zIndex: 2147483647,
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
           background: "#242526",
           color: "#e4e6eb",
           padding: "10px 16px",
@@ -87,24 +87,65 @@
         document.body.appendChild(toastEl);
       }
       const el = toastEl;
-      el.textContent = msg;
+      const message = document.createElement("span");
+      message.textContent = msg;
+      el.replaceChildren(message);
+      el.style.pointerEvents = action ? "auto" : "none";
+      if (action) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = action.label;
+        Object.assign(button.style, {
+          border: "0",
+          padding: "0",
+          background: "transparent",
+          color: "#8ab4ff",
+          font: "inherit",
+          fontWeight: "600",
+          whiteSpace: "nowrap",
+          cursor: "pointer"
+        });
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          action.onClick();
+        });
+        el.append(button);
+      }
       requestAnimationFrame(() => {
         el.style.opacity = "1";
         el.style.transform = "translateX(-50%) translateY(0)";
       });
       clearTimeout(toastTimer);
       clearTimeout(toastRemoveTimer);
-      toastTimer = setTimeout(() => {
-        el.style.opacity = "0";
-        el.style.transform = "translateX(-50%) translateY(8px)";
-        toastRemoveTimer = setTimeout(() => {
-          if (toastEl === el) {
-            el.remove();
-            toastEl = null;
-          }
-        }, 250);
-      }, 2600);
+      toastTimer = setTimeout(
+        () => {
+          el.style.opacity = "0";
+          el.style.transform = "translateX(-50%) translateY(8px)";
+          toastRemoveTimer = setTimeout(() => {
+            if (toastEl === el) {
+              el.remove();
+              toastEl = null;
+            }
+          }, 250);
+        },
+        action ? 6e3 : 2600
+      );
     };
+    return () => {
+      clearTimeout(toastTimer);
+      clearTimeout(toastRemoveTimer);
+      toastEl?.remove();
+      toastEl = null;
+      delete window.__carrierToast;
+    };
+  }
+
+  // inject/src/panel/index.ts
+  var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
+  var emit = (event) => invoke("plugin:event|emit", { event, payload: null })?.catch?.(() => {
+  });
+  function main() {
+    installToast();
     window.__carrierCheckUpdates = () => {
       window.__carrierToast?.("Opening Settings to check for updates…");
       emit("carrier:open-settings");

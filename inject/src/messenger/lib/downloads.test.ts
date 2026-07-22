@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { filenameFromUrl, friendlyDownloadName, splitDownloadName } from "./downloads";
+import {
+  downloadRevealLabel,
+  filenameFromUrl,
+  friendlyDownloadName,
+  splitDownloadName,
+} from "./downloads";
 
 const BASE = "https://www.facebook.com/messages/";
 
@@ -44,5 +49,15 @@ describe("friendlyDownloadName", () => {
   test("keeps real filenames untouched", () => {
     expect(friendlyDownloadName("holiday_2025.jpg")).toBe("holiday_2025.jpg");
     expect(friendlyDownloadName("report final.pdf")).toBe("report final.pdf");
+  });
+});
+
+describe("downloadRevealLabel", () => {
+  test("uses Finder only for the macOS user agent", () => {
+    expect(downloadRevealLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")).toBe(
+      "Show in Finder",
+    );
+    expect(downloadRevealLabel("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("Show in folder");
+    expect(downloadRevealLabel("Mozilla/5.0 (X11; Linux x86_64)")).toBe("Show in folder");
   });
 });

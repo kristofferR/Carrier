@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{Listener, Manager};
+use tauri_plugin_opener::OpenerExt;
 mod commands;
 mod custom_css;
 mod diag;
@@ -30,6 +31,7 @@ mod webview_watchdog;
 mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
+use download::lookup_download;
 use hotkey::reconcile_startup_global_hotkey;
 #[cfg(target_os = "linux")]
 use linux::observe_system_theme_changes;
@@ -270,6 +272,32 @@ pub fn run() {
             app.listen_any("carrier:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
+            });
+
+            // The remote page echoes only the download URL from the completion
+            // event. Resolve it through the short-lived trusted map populated by
+            // `on_download`; a page-supplied filesystem path is never accepted.
+            let reveal_handle = app.handle().clone();
+            app.listen_any("carrier:reveal-download", move |event| {
+                #[derive(serde::Deserialize)]
+                struct RevealDownloadMsg {
+                    url: String,
+                }
+
+                let Ok(msg) = serde_json::from_str::<RevealDownloadMsg>(event.payload()) else {
+                    log::warn!("carrier:reveal-download payload did not parse");
+                    return;
+                };
+                let Some(path) = lookup_download(&msg.url) else {
+                    log::warn!("carrier:reveal-download had no recent matching download");
+                    return;
+                };
+                let h = reveal_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = h.opener().reveal_item_in_dir(path) {
+                        log::warn!("failed to reveal recent download: {error}");
+                    }
+                });
             });
 
             // Unread count from the page → tray tooltip (the Dock badge is set

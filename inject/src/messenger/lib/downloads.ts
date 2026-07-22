@@ -35,3 +35,6 @@ export const friendlyDownloadName = (name: string): string => {
   }
   return name;
 };
+
+export const downloadRevealLabel = (userAgent: string): string =>
+  /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";

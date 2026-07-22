@@ -1,9 +1,102 @@
 //! Download safety for `on_download`: a strict media allowlist, filename
-//! sanitising, and the executable-extension blocklist.
+//! sanitising, the executable-extension blocklist, and a short-lived trusted
+//! mapping used to reveal completed downloads in the platform file manager.
+
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
 use url::Url;
 
 use crate::url_rules::percent_decode;
+
+const MAX_RECENT_DOWNLOADS: usize = 32;
+const RECENT_DOWNLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+const MAX_DOWNLOAD_URL_LEN: usize = 4096;
+
+struct RecentDownload {
+    url: String,
+    path: PathBuf,
+    at: Instant,
+}
+
+#[derive(Default)]
+struct RecentDownloads {
+    entries: VecDeque<RecentDownload>,
+}
+
+impl RecentDownloads {
+    fn prune(&mut self, now: Instant) {
+        while self
+            .entries
+            .front()
+            .is_some_and(|entry| now.saturating_duration_since(entry.at) > RECENT_DOWNLOAD_TTL)
+        {
+            self.entries.pop_front();
+        }
+    }
+
+    fn remember_at(&mut self, url: &str, path: PathBuf, now: Instant) {
+        if url.is_empty() || url.len() > MAX_DOWNLOAD_URL_LEN {
+            return;
+        }
+        self.prune(now);
+        self.entries.retain(|entry| entry.url != url);
+        self.entries.push_back(RecentDownload {
+            url: url.to_string(),
+            path,
+            at: now,
+        });
+        while self.entries.len() > MAX_RECENT_DOWNLOADS {
+            self.entries.pop_front();
+        }
+    }
+
+    fn lookup_at(&mut self, url: &str, now: Instant) -> Option<PathBuf> {
+        if url.is_empty() || url.len() > MAX_DOWNLOAD_URL_LEN {
+            return None;
+        }
+        self.prune(now);
+        self.entries
+            .iter()
+            .find(|entry| entry.url == url)
+            .map(|entry| entry.path.clone())
+    }
+
+    fn forget(&mut self, url: &str) {
+        self.entries.retain(|entry| entry.url != url);
+    }
+}
+
+static RECENT_DOWNLOADS: OnceLock<Mutex<RecentDownloads>> = OnceLock::new();
+
+fn recent_downloads() -> &'static Mutex<RecentDownloads> {
+    RECENT_DOWNLOADS.get_or_init(|| Mutex::new(RecentDownloads::default()))
+}
+
+/// Remember a destination chosen by the trusted WebView download hook. The
+/// remote page receives only the URL key and can never supply a filesystem path.
+pub(crate) fn remember_download(url: &Url, path: PathBuf) {
+    recent_downloads()
+        .lock()
+        .unwrap()
+        .remember_at(url.as_str(), path, Instant::now());
+}
+
+pub(crate) fn forget_download(url: &Url) {
+    recent_downloads().lock().unwrap().forget(url.as_str());
+}
+
+/// Non-consuming lookup so repeated clicks on the toast action keep working.
+pub(crate) fn lookup_download(url: &str) -> Option<PathBuf> {
+    recent_downloads()
+        .lock()
+        .unwrap()
+        .lookup_at(url, Instant::now())
+}
 
 /// Only the commands that fetch a URL (copy/download image & video) are exposed
 /// to the remote page, so restrict them to Facebook/Messenger media hosts over
@@ -24,7 +117,7 @@ fn is_fetchable_media_host(url: &Url) -> bool {
         .any(|s| host == *s || host.ends_with(&format!(".{s}")))
 }
 
-pub(crate) fn downloads_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn downloads_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
     #[cfg(not(target_os = "windows"))]
@@ -164,7 +257,7 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
 }
 
 /// Avoid clobbering an existing file by appending " (n)".
-pub(crate) fn unique_path(p: std::path::PathBuf) -> std::path::PathBuf {
+pub(crate) fn unique_path(p: PathBuf) -> PathBuf {
     if !p.exists() {
         return p;
     }
@@ -314,6 +407,59 @@ mod tests {
         assert_eq!(unique_path(first), third);
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recent_downloads_are_capped_and_lookup_is_non_consuming() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        for n in 0..=MAX_RECENT_DOWNLOADS {
+            downloads.remember_at(
+                &format!("blob:carrier/{n}"),
+                PathBuf::from(format!("download-{n}.png")),
+                now,
+            );
+        }
+
+        assert_eq!(downloads.entries.len(), MAX_RECENT_DOWNLOADS);
+        assert_eq!(downloads.lookup_at("blob:carrier/0", now), None);
+        let newest = PathBuf::from(format!("download-{MAX_RECENT_DOWNLOADS}.png"));
+        assert_eq!(
+            downloads.lookup_at(&format!("blob:carrier/{MAX_RECENT_DOWNLOADS}"), now),
+            Some(newest.clone())
+        );
+        assert_eq!(
+            downloads.lookup_at(&format!("blob:carrier/{MAX_RECENT_DOWNLOADS}"), now),
+            Some(newest)
+        );
+    }
+
+    #[test]
+    fn recent_downloads_expire_and_failed_entries_can_be_forgotten() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        downloads.remember_at("blob:carrier/expired", PathBuf::from("expired.png"), now);
+        assert_eq!(
+            downloads.lookup_at(
+                "blob:carrier/expired",
+                now + RECENT_DOWNLOAD_TTL + Duration::from_millis(1)
+            ),
+            None
+        );
+
+        downloads.remember_at("blob:carrier/failed", PathBuf::from("failed.png"), now);
+        downloads.forget("blob:carrier/failed");
+        assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
+    }
+
+    #[test]
+    fn recent_downloads_reject_oversized_url_keys() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        let oversized = "x".repeat(MAX_DOWNLOAD_URL_LEN + 1);
+        downloads.remember_at(&oversized, PathBuf::from("ignored.png"), now);
+        assert!(downloads.entries.is_empty());
+        assert_eq!(downloads.lookup_at(&oversized, now), None);
     }
 
     // -----------------------------------------------------------------------

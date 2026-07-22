@@ -48,6 +48,11 @@ interface CarrierSettings {
   send_with_accelerator?: boolean;
 }
 
+interface CarrierToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {
@@ -58,7 +63,7 @@ interface Window {
   __CARRIER_HEARTBEAT_ID__?: number;
 
   // panel.js
-  __carrierToast?: (msg: string) => void;
+  __carrierToast?: (msg: string, action?: CarrierToastAction) => void;
   __carrierCheckUpdates?: () => void;
   __carrierToggleSettings?: () => void;
   __carrierToggleShortcuts?: () => void;

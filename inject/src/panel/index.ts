@@ -6,6 +6,7 @@
  * Source of the generated src-tauri/inject/panel.js (see inject/build.ts).
  */
 import { shortcutGroups } from "./shortcut-data";
+import { installToast } from "./toast";
 
 // Internal bridge directly (no global window.__TAURI__ exposed to the page).
 const invoke = (cmd: string, args?: Record<string, unknown>) =>
@@ -17,53 +18,7 @@ const emit = (event: string) =>
 
 function main() {
   /* ------------------------------- Toast -------------------------------- */
-  let toastEl: HTMLDivElement | null = null;
-  let toastTimer: number | undefined;
-  let toastRemoveTimer: number | undefined;
-  window.__carrierToast = (msg: string) => {
-    if (!toastEl) {
-      toastEl = document.createElement("div");
-      toastEl.setAttribute("role", "status");
-      toastEl.setAttribute("aria-live", "polite");
-      toastEl.setAttribute("aria-atomic", "true");
-      Object.assign(toastEl.style, {
-        position: "fixed",
-        bottom: "24px",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 2147483647,
-        background: "#242526",
-        color: "#e4e6eb",
-        padding: "10px 16px",
-        borderRadius: "10px",
-        boxShadow: "0 8px 28px rgba(0,0,0,.45)",
-        font: "13px -apple-system, system-ui, sans-serif",
-        opacity: "0",
-        transition: "opacity .2s, transform .2s",
-        pointerEvents: "none",
-        maxWidth: "80vw",
-      });
-      document.body.appendChild(toastEl);
-    }
-    const el = toastEl;
-    el.textContent = msg;
-    requestAnimationFrame(() => {
-      el.style.opacity = "1";
-      el.style.transform = "translateX(-50%) translateY(0)";
-    });
-    clearTimeout(toastTimer);
-    clearTimeout(toastRemoveTimer);
-    toastTimer = setTimeout(() => {
-      el.style.opacity = "0";
-      el.style.transform = "translateX(-50%) translateY(8px)";
-      toastRemoveTimer = setTimeout(() => {
-        if (toastEl === el) {
-          el.remove();
-          toastEl = null;
-        }
-      }, 250);
-    }, 2600);
-  };
+  installToast();
 
   /* --------------------------- Update check ----------------------------- */
   // Updates can replace and restart the app, so the remote Facebook origin

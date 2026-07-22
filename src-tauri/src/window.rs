@@ -11,8 +11,8 @@ use url::Url;
 
 use crate::custom_css::apply_custom_css;
 use crate::download::{
-    downloads_dir, filename_from_url, is_allowed_download, is_unsafe_download, sanitize_filename,
-    unique_path,
+    downloads_dir, filename_from_url, forget_download, is_allowed_download, is_unsafe_download,
+    remember_download, sanitize_filename, unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -152,9 +152,13 @@ pub(crate) fn build_app_window(
                     return false;
                 }
                 *destination = unique_path(dir.join(name));
+                remember_download(&url, destination.clone());
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
+                if !success {
+                    forget_download(&url);
+                }
                 notify_download_finished(&webview, &url, success);
                 true
             }
