@@ -178,6 +178,10 @@
   // inject/src/messenger/lib/realtime-health.ts
   var REALTIME_CONNECT_GRACE_MS = 15e3;
   var REALTIME_SILENCE_MS = 9e4;
+  var REALTIME_NEVER_CONNECTED_MS = 9e4;
+  function looksLikeFacebookErrorPage(doc) {
+    return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
+  }
   var elapsed2 = (now, since) => Math.max(0, now - since);
   var ConsecutiveFailureThreshold = class {
     constructor(limit) {
@@ -193,10 +197,13 @@
     }
   };
   var RealtimeRecoveryTracker = class {
-    constructor() {
+    constructor(startedAt) {
+      __publicField(this, "startedAt", startedAt);
       __publicField(this, "staleSources", /* @__PURE__ */ new Set());
+      __publicField(this, "everHealthy", false);
     }
     healthy(source) {
+      this.everHealthy = true;
       this.staleSources.delete(source);
     }
     stale(source) {
@@ -204,6 +211,14 @@
     }
     needsRecovery() {
       return this.staleSources.size > 0;
+    }
+    // "pending" (fresh page, transport still unproven) deliberately differs from
+    // "ok": the native side pauses its bad-transport timer on both, but only a
+    // proven-healthy "ok" resets its escalation counters.
+    status(now) {
+      if (this.staleSources.size > 0) return "stale";
+      if (this.everHealthy) return "ok";
+      return elapsed2(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
     }
   };
   function isMessengerRealtimeUrl(raw, base) {
@@ -402,6 +417,23 @@
     }
     let lastHeartbeatProtection;
     const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+    const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
+    const onFacebookErrorPage = () => {
+      try {
+        return looksLikeFacebookErrorPage({
+          hasBackLink: !!document.getElementById("back"),
+          hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
+          elementCount: document.getElementsByTagName("*").length
+        });
+      } catch (_) {
+        return false;
+      }
+    };
+    const realtimeStatus = () => {
+      if (!isMessengerContentPath(location.pathname)) return "pending";
+      if (onFacebookErrorPage()) return "error";
+      return realtimeRecovery.status(Date.now());
+    };
     const messengerContentPresent = () => {
       if (!isMessengerContentPath(location.pathname)) return true;
       const candidates = document.querySelectorAll(
@@ -435,7 +467,8 @@
         payload: {
           id: heartbeatId,
           protected: protectedNow,
-          content_present: messengerContentPresent()
+          content_present: messengerContentPresent(),
+          realtime: realtimeStatus()
         }
       })?.catch?.(() => {
       });
@@ -494,7 +527,6 @@
         return 1e3;
       }
     };
-    const realtimeRecovery = new RealtimeRecoveryTracker();
     const realtime = monitorRealtimeHealth({
       onHealthy: (source) => {
         realtimeRecovery.healthy(source);
@@ -525,12 +557,12 @@
       }
     };
     setInterval(() => {
+      realtime.check();
       emitHeartbeat();
       const reason = watchdog.heartbeat(pageIsActive(), Date.now());
       if (reason) {
         schedule(reason === "background" ? 2e3 : 1e3, reason, reason !== "background");
       }
-      realtime.check();
     }, 5e3);
   }
 
