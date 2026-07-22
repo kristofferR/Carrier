@@ -99,11 +99,23 @@ export function initSyncHealth() {
   }
 
   const stuckLoading = new SampledPersistence(STUCK_LOADING_SAMPLES);
+  // Messenger renders its loading spinners as `role="status"` (sometimes
+  // `role="progressbar"`) elements. Those roles are generic live-regions, so
+  // require a running CSS animation — that is what separates an actual
+  // spinner from static status text, without depending on localized labels.
+  const hasRunningAnimation = (root: Element): boolean => {
+    const nodes = [root, ...Array.from(root.querySelectorAll("*")).slice(0, 8)];
+    for (const node of nodes) {
+      const style = getComputedStyle(node);
+      if (style.animationName !== "none" && style.animationPlayState !== "paused") return true;
+    }
+    return false;
+  };
   const loadingSpinnerVisible = () => {
     try {
-      for (const el of document.querySelectorAll('[role="progressbar"]')) {
+      for (const el of document.querySelectorAll('[role="progressbar"], [role="status"]')) {
         const rect = el.getBoundingClientRect();
-        if (rect.width > 1 && rect.height > 1) return true;
+        if (rect.width > 1 && rect.height > 1 && hasRunningAnimation(el)) return true;
       }
     } catch (_) {}
     return false;

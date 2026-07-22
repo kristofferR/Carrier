@@ -3271,11 +3271,19 @@
       diag("sync.requests", "could not observe Messenger sync XHRs");
     }
     const stuckLoading = new SampledPersistence(STUCK_LOADING_SAMPLES);
+    const hasRunningAnimation = (root) => {
+      const nodes = [root, ...Array.from(root.querySelectorAll("*")).slice(0, 8)];
+      for (const node of nodes) {
+        const style = getComputedStyle(node);
+        if (style.animationName !== "none" && style.animationPlayState !== "paused") return true;
+      }
+      return false;
+    };
     const loadingSpinnerVisible = () => {
       try {
-        for (const el of document.querySelectorAll('[role="progressbar"]')) {
+        for (const el of document.querySelectorAll('[role="progressbar"], [role="status"]')) {
           const rect = el.getBoundingClientRect();
-          if (rect.width > 1 && rect.height > 1) return true;
+          if (rect.width > 1 && rect.height > 1 && hasRunningAnimation(el)) return true;
         }
       } catch (_) {
       }
