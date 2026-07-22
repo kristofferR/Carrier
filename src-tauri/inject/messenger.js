@@ -2320,9 +2320,11 @@
     }
   };
   var UnreadArrivalTracker = class {
-    constructor() {
+    constructor(settleMs = 0) {
+      __publicField(this, "settleMs", settleMs);
       __publicField(this, "changedAt", /* @__PURE__ */ new Map());
       __publicField(this, "unreadCount", null);
+      __publicField(this, "firstObservedAt", null);
     }
     markRowsChanged(keys, at) {
       for (const key of keys) this.changedAt.set(key, at);
@@ -2330,6 +2332,10 @@
     observeUnreadCount(count, at, maxMutationAgeMs) {
       for (const [key, changedAt] of this.changedAt) {
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+      }
+      if (this.firstObservedAt === null) this.firstObservedAt = at;
+      if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+        return [];
       }
       const previous = this.unreadCount;
       this.unreadCount = count;
@@ -2524,6 +2530,7 @@
   var FALLBACK_POLL_HIDDEN_MS = 6e4;
   var ROW_MUTATION_MATCH_MS = 2e3;
   var MISMATCH_STABLE_MS = 1e3;
+  var HYDRATION_SETTLE_MS = 1e4;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
@@ -2617,11 +2624,9 @@
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
-        if (pageMatch.signal) {
-          pageMatch.signal.nativeId = id;
-          pageNotificationReceipts.add(originalTitle, originalBody, id);
-        }
+        if (pageMatch.signal) pageMatch.signal.nativeId = id;
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
+          if (pageMatch.signal) pageNotificationReceipts.add(originalTitle, originalBody, id);
           emitNotification(
             id,
             hidePreview ? "Messenger" : originalTitle,
@@ -2753,7 +2758,7 @@
     let scanRunning = false;
     let scanPending = false;
     let mismatchConfirmationTimer;
-    const unreadArrivals = new UnreadArrivalTracker();
+    const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const scanUnreadConversations = () => {
       if (scanRunning) {

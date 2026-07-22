@@ -33,6 +33,9 @@ const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
 // before it counts as new content (see StableMismatchTracker).
 const MISMATCH_STABLE_MS = 1_000;
+// How long after the first scan a zero unread count is treated as the title
+// still hydrating rather than a real all-read baseline (see UnreadArrivalTracker).
+const HYDRATION_SETTLE_MS = 10_000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -199,14 +202,16 @@ export function initNotificationBridge() {
       // fast row match could consume the signal before it learned its id and the
       // reload-safe route would never be attached.
       const id = ++notifySeq;
-      if (pageMatch.signal) {
-        pageMatch.signal.nativeId = id;
-        // Persist only content-opaque matching hashes. If a reload destroys the
-        // in-memory page queue before the row appears, its first hydrated scan
-        // can still attach the route and suppress the fallback copy.
-        pageNotificationReceipts.add(originalTitle, originalBody, id);
-      }
+      if (pageMatch.signal) pageMatch.signal.nativeId = id;
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
+        // Persist only content-opaque matching hashes, and only now that the
+        // native emit is actually queued. If a reload destroys the in-memory
+        // page queue before the row appears, the next document's first
+        // hydrated scan can still attach the route and suppress the fallback
+        // copy — but a reload that lands during the avatar conversion (before
+        // any banner exists) must leave no receipt, or the fallback would be
+        // suppressed for a notification that was never shown.
+        if (pageMatch.signal) pageNotificationReceipts.add(originalTitle, originalBody, id);
         emitNotification(
           id,
           hidePreview ? "Messenger" : originalTitle,
@@ -365,7 +370,7 @@ export function initNotificationBridge() {
   let scanRunning = false;
   let scanPending = false;
   let mismatchConfirmationTimer: number | undefined;
-  const unreadArrivals = new UnreadArrivalTracker();
+  const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
   const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
   const scanUnreadConversations = () => {
     if (scanRunning) {

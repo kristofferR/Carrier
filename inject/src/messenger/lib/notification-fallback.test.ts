@@ -367,15 +367,33 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
   });
 
-  test("reports a first real arrival from a zero baseline", () => {
-    const tracker = new UnreadArrivalTracker();
+  test("absorbs the title hydrating from zero as the baseline", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // Post-reload: the title has no "(N)" yet, rows mutate while hydrating.
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
-    expect(tracker.observeUnreadCount(1, 1_200, 2_000)).toEqual(["a"]);
+    // The hydrated count primes silently instead of replaying row "a".
+    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
+  });
+
+  test("still reports a real arrival right after the baseline settles", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    tracker.observeUnreadCount(0, 1_000, 2_000);
+    tracker.observeUnreadCount(3, 1_200, 2_000);
+    tracker.markRowsChanged(["b"], 1_300);
+    expect(tracker.observeUnreadCount(4, 1_400, 2_000)).toEqual(["b"]);
+  });
+
+  test("a zero count that outlives the settle window is a real baseline", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(0, 12_000, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["a"], 12_100);
+    expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
   });
 
   test("a count already present at first observation primes silently", () => {
-    const tracker = new UnreadArrivalTracker();
+    const tracker = new UnreadArrivalTracker(10_000);
     expect(tracker.observeUnreadCount(5, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
     expect(tracker.observeUnreadCount(6, 1_200, 2_000)).toEqual(["a"]);

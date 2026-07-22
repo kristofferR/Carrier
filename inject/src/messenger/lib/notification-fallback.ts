@@ -510,6 +510,9 @@ export class PageNotificationQueue {
 export class UnreadArrivalTracker {
   private readonly changedAt = new Map<string, number>();
   private unreadCount: number | null = null;
+  private firstObservedAt: number | null = null;
+
+  constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
     for (const key of keys) this.changedAt.set(key, at);
@@ -520,6 +523,17 @@ export class UnreadArrivalTracker {
       if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
     }
 
+    // After a reload the title reads no "(N)" until Facebook hydrates it, so
+    // a zero this early would baseline at 0 and the hydrated count would
+    // masquerade as N fresh arrivals attributed to every hydrating row. The
+    // first non-zero count (or a zero that outlives the settle window) primes
+    // silently instead. Trade-off: a message arriving into a zero-unread
+    // state within the window is absorbed as baseline — the page-Notification
+    // path still covers it.
+    if (this.firstObservedAt === null) this.firstObservedAt = at;
+    if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+      return [];
+    }
     const previous = this.unreadCount;
     this.unreadCount = count;
     if (previous === null || count <= previous) return [];
