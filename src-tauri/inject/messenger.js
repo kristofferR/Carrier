@@ -3121,6 +3121,127 @@
     else applySpellcheck();
   }
 
+  // inject/src/messenger/lib/sync-health.ts
+  var SYNC_REQUEST_TIMEOUT_MS = 3e4;
+  var SYNC_FAILURE_LIMIT = 5;
+  function isMessengerSyncRequest(raw, base) {
+    let url;
+    try {
+      url = new URL(raw, base);
+    } catch (_) {
+      return false;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    const facebookHost = host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
+    return facebookHost && url.pathname.startsWith("/api/graphql");
+  }
+  function syncResponseSucceeded(status) {
+    return status >= 200 && status < 400;
+  }
+  var SyncHealthTracker = class {
+    constructor() {
+      __publicField(this, "outstanding", /* @__PURE__ */ new Map());
+      __publicField(this, "nextId", 1);
+      __publicField(this, "failureStreak", 0);
+    }
+    started(now) {
+      const id = this.nextId++;
+      this.outstanding.set(id, now);
+      return id;
+    }
+    succeeded(id) {
+      this.outstanding.delete(id);
+      this.failureStreak = 0;
+    }
+    failed(id) {
+      this.outstanding.delete(id);
+      this.failureStreak += 1;
+    }
+    /** Count requests hung past the deadline as failures, each once. */
+    sweep(now) {
+      for (const [id, startedAt] of this.outstanding) {
+        if (now - startedAt >= SYNC_REQUEST_TIMEOUT_MS) {
+          this.outstanding.delete(id);
+          this.failureStreak += 1;
+        }
+      }
+    }
+    failing() {
+      return this.failureStreak >= SYNC_FAILURE_LIMIT;
+    }
+    streak() {
+      return this.failureStreak;
+    }
+  };
+
+  // inject/src/messenger/features/sync-health.ts
+  var SYNC_CHECK_INTERVAL_MS = 1e4;
+  function initSyncHealth() {
+    const tracker = new SyncHealthTracker();
+    try {
+      const nativeFetch = window.fetch;
+      const wrappedFetch = new Proxy(nativeFetch, {
+        apply(target, thisArg, args) {
+          let tracked;
+          try {
+            const input = args[0];
+            const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
+            if (url && isMessengerSyncRequest(url, location.href)) {
+              tracked = tracker.started(Date.now());
+            }
+          } catch (_) {
+          }
+          const result = Reflect.apply(target, thisArg, args);
+          if (tracked !== void 0) {
+            const id = tracked;
+            result.then(
+              (response) => {
+                if (syncResponseSucceeded(response.status)) tracker.succeeded(id);
+                else tracker.failed(id);
+              },
+              () => tracker.failed(id)
+            );
+          }
+          return result;
+        }
+      });
+      Object.defineProperty(window, "fetch", {
+        value: wrappedFetch,
+        writable: true,
+        configurable: true
+      });
+    } catch (_) {
+      diag("sync.requests", "could not observe Messenger sync requests");
+    }
+    let stalled = false;
+    let announcePending = false;
+    let announced = false;
+    setInterval(() => {
+      tracker.sweep(Date.now());
+      const failingNow = tracker.failing();
+      if (failingNow && !stalled) {
+        stalled = true;
+        announcePending = true;
+        announced = false;
+        diag("sync.stalled", `messenger sync requests failing (streak ${tracker.streak()})`);
+      } else if (!failingNow && stalled) {
+        stalled = false;
+        announcePending = false;
+        if (announced) toast("Messenger sync recovered.");
+        announced = false;
+        diag("sync.stalled", "messenger sync recovered");
+      }
+      if (stalled && announcePending && !document.hidden && navigator.onLine) {
+        announcePending = false;
+        announced = true;
+        toast(
+          "Messenger sync is stalled — Facebook is not answering sync requests. Chats may be out of date until it recovers."
+        );
+      }
+    }, SYNC_CHECK_INTERVAL_MS);
+  }
+
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
   var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
@@ -3629,6 +3750,7 @@
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("notifications", initNotificationBridge);
+    initFeature("sync-health", initSyncHealth);
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);
     initFeature("unread-badge", initUnreadBadge);
