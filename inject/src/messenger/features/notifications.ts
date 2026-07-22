@@ -210,8 +210,13 @@ export function initNotificationBridge() {
         // hydrated scan can still attach the route and suppress the fallback
         // copy — but a reload that lands during the avatar conversion (before
         // any banner exists) must leave no receipt, or the fallback would be
-        // suppressed for a notification that was never shown.
-        if (pageMatch.signal) pageNotificationReceipts.add(originalTitle, originalBody, id);
+        // suppressed for a notification that was never shown. Likewise a
+        // signal a row already consumed during the conversion is delivered
+        // and done — a receipt written now would outlive it and swallow a
+        // later same-text message.
+        if (pageMatch.signal && !pageMatch.signal.matched) {
+          pageNotificationReceipts.add(originalTitle, originalBody, id);
+        }
         emitNotification(
           id,
           hidePreview ? "Messenger" : originalTitle,

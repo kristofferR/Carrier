@@ -2313,6 +2313,7 @@
         }
         if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
           this.signals.splice(index, 1);
+          signal.matched = true;
           return signal;
         }
       }
@@ -2325,6 +2326,7 @@
       __publicField(this, "changedAt", /* @__PURE__ */ new Map());
       __publicField(this, "unreadCount", null);
       __publicField(this, "firstObservedAt", null);
+      __publicField(this, "sawDeferredZero", false);
     }
     markRowsChanged(keys, at) {
       for (const key of keys) this.changedAt.set(key, at);
@@ -2334,12 +2336,18 @@
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
       }
       if (this.firstObservedAt === null) this.firstObservedAt = at;
-      if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+      const settled = at - this.firstObservedAt >= this.settleMs;
+      if (this.unreadCount === null && count === 0 && !settled) {
+        this.sawDeferredZero = true;
         return [];
       }
-      const previous = this.unreadCount;
+      let previous = this.unreadCount;
       this.unreadCount = count;
-      if (previous === null || count <= previous) return [];
+      if (previous === null) {
+        if (!(this.sawDeferredZero && settled && count > 0)) return [];
+        previous = 0;
+      }
+      if (count <= previous) return [];
       const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
@@ -2626,7 +2634,9 @@
         const id = ++notifySeq;
         if (pageMatch.signal) pageMatch.signal.nativeId = id;
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
-          if (pageMatch.signal) pageNotificationReceipts.add(originalTitle, originalBody, id);
+          if (pageMatch.signal && !pageMatch.signal.matched) {
+            pageNotificationReceipts.add(originalTitle, originalBody, id);
+          }
           emitNotification(
             id,
             hidePreview ? "Messenger" : originalTitle,

@@ -44,6 +44,13 @@ export interface PageNotificationSignal extends NotificationText {
    * can attach a reload-safe route to that already-emitted notification.
    */
   nativeId?: number;
+  /**
+   * Set once a conversation row consumed this signal. The async emitter checks
+   * it before persisting a cross-reload receipt: a row-paired signal was
+   * already marked delivered in this document, and a receipt written after
+   * that pairing would linger and silently swallow a later same-text message.
+   */
+  matched?: boolean;
 }
 
 const normalizeNotificationText = (value: string) =>
@@ -499,6 +506,7 @@ export class PageNotificationQueue {
       }
       if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
         this.signals.splice(index, 1);
+        signal.matched = true;
         return signal;
       }
     }
@@ -511,6 +519,7 @@ export class UnreadArrivalTracker {
   private readonly changedAt = new Map<string, number>();
   private unreadCount: number | null = null;
   private firstObservedAt: number | null = null;
+  private sawDeferredZero = false;
 
   constructor(private readonly settleMs = 0) {}
 
@@ -526,17 +535,27 @@ export class UnreadArrivalTracker {
     // After a reload the title reads no "(N)" until Facebook hydrates it, so
     // a zero this early would baseline at 0 and the hydrated count would
     // masquerade as N fresh arrivals attributed to every hydrating row. The
-    // first non-zero count (or a zero that outlives the settle window) primes
-    // silently instead. Trade-off: a message arriving into a zero-unread
-    // state within the window is absorbed as baseline — the page-Notification
-    // path still covers it.
+    // first non-zero count within the window (or a zero that outlives it)
+    // primes silently instead. Trade-off: a message arriving into a
+    // zero-unread state within the window is absorbed as baseline — the
+    // page-Notification path still covers it.
     if (this.firstObservedAt === null) this.firstObservedAt = at;
-    if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+    const settled = at - this.firstObservedAt >= this.settleMs;
+    if (this.unreadCount === null && count === 0 && !settled) {
+      this.sawDeferredZero = true;
       return [];
     }
-    const previous = this.unreadCount;
+    let previous = this.unreadCount;
     this.unreadCount = count;
-    if (previous === null || count <= previous) return [];
+    if (previous === null) {
+      // A zero deferred during the settle window becomes the real baseline
+      // once the window has elapsed, even when no scan re-observed it in
+      // between (a hidden window can go 60s without one). Otherwise the first
+      // arrival after a quiet reload would prime silently and never notify.
+      if (!(this.sawDeferredZero && settled && count > 0)) return [];
+      previous = 0;
+    }
+    if (count <= previous) return [];
 
     const candidates = [...this.changedAt]
       .sort((left, right) => right[1] - left[1])

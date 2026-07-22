@@ -348,6 +348,18 @@ describe("PageNotificationQueue", () => {
     queue.add({ at: 1_000, title: "Jane", body: "First" });
     expect(queue.consumeMatching({ title: "Jane", body: "First" }, 3_001, 2_000)).toBeNull();
   });
+
+  test("marks a row-consumed signal but not an expired one", () => {
+    const queue = new PageNotificationQueue();
+    const consumed = queue.add({ at: 1_000, title: "Jane", body: "First" });
+    const expired = queue.add({ at: 1_000, title: "John", body: "Second" });
+    expect(queue.consumeMatching({ title: "Jane", body: "First" }, 1_100, 2_000)).not.toBeNull();
+    expect(queue.consumeMatching({ title: "John", body: "Second" }, 3_001, 2_000)).toBeNull();
+    // The async emitter skips the cross-reload receipt only for signals a row
+    // actually paired with — an expired signal still deserves one.
+    expect(consumed.matched).toBe(true);
+    expect(expired.matched).toBeUndefined();
+  });
 });
 
 describe("UnreadArrivalTracker", () => {
@@ -390,6 +402,17 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(0, 12_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 12_100);
     expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
+  });
+
+  test("a deferred zero becomes the baseline for a late first arrival", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // Reload into an all-read inbox: the only scan sees the still-hydrating
+    // zero, then the hidden window goes quiet for a minute.
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    // The first message's own mutation triggers the next scan — it must
+    // report as an arrival, not prime silently as the baseline.
+    tracker.markRowsChanged(["a"], 61_000);
+    expect(tracker.observeUnreadCount(1, 61_100, 2_000)).toEqual(["a"]);
   });
 
   test("a count already present at first observation primes silently", () => {
