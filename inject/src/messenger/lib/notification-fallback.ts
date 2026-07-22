@@ -581,27 +581,22 @@ export class PageNotificationReceiptStore {
 
   /**
    * Drop receipts whose notification was evidently read: the receipt matches
-   * a read rendered row while matching no unread one. Left in place, it
-   * would survive up to its TTL and later swallow the pairing for a NEW
-   * identical-text message, suppressing that message's only notification.
+   * a read rendered row. Left in place, it would survive up to its TTL and
+   * later swallow the pairing for a NEW identical-text message, suppressing
+   * that message's only notification. This drops even when an unread twin
+   * shares the text — the receipt's true thread is unknowable then, and a
+   * duplicate fallback (absorbed by the native dedupe) beats misrouting the
+   * click or marking the wrong thread delivered.
    */
-  discardReadMatches(
-    readRows: Iterable<NotificationText>,
-    unreadRows: Iterable<NotificationText>,
-    now = Date.now(),
-  ): void {
+  discardReadMatches(readRows: Iterable<NotificationText>, now = Date.now()): void {
     this.prune(now);
     if (!this.receipts.length) return;
     const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
     if (!read.length) return;
-    const unread = [...unreadRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
     let changed = false;
     for (let index = this.receipts.length - 1; index >= 0; index--) {
       const receipt = this.receipts[index]!;
       if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
-        continue;
-      }
-      if (unread.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
         continue;
       }
       this.receipts.splice(index, 1);

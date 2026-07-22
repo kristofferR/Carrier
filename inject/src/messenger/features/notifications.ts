@@ -12,6 +12,7 @@ import {
   PageNotificationQueue,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
+  READ_TRANSITION_CONFIRM_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
@@ -436,10 +437,15 @@ export function initNotificationBridge() {
   // keys the later hydration would prime silently and the arrival would
   // never notify. Delivered once the row hydrates; dropped if it turns read.
   const pendingArrivalKeys = new Set<string>();
-  // Threads this document has observed rendered hydrated-and-read. A row from
-  // this set turning unread is a real arrival even during the settle window —
-  // hydrating rows are never observed read first.
+  // Threads this document has observed rendered hydrated-and-read, CONFIRMED
+  // across scans spanning real time: mid-hydration a row can show its text
+  // before its unread styling, and a single such glimpse must not qualify a
+  // pre-existing unread thread for the early-arrival rescue. Bounded like the
+  // sibling stores; a row from this set turning unread is a real arrival even
+  // during the settle window.
+  const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
+  const readCandidateAt = new Map<string, number>();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -480,8 +486,26 @@ export function initNotificationBridge() {
         ),
       );
       for (const conversation of observed) {
-        if (!conversation.unread && conversation.body.length > 0) {
+        if (!conversation.body) continue;
+        if (conversation.unread) {
+          readCandidateAt.delete(conversation.key);
+          continue;
+        }
+        if (readObservedKeys.has(conversation.key)) continue;
+        const since = readCandidateAt.get(conversation.key);
+        if (since === undefined) {
+          readCandidateAt.set(conversation.key, detectedAt);
+          if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
+            readCandidateAt.delete(readCandidateAt.keys().next().value!);
+          }
+          continue;
+        }
+        if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
+          readCandidateAt.delete(conversation.key);
           readObservedKeys.add(conversation.key);
+          if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
+            readObservedKeys.delete(readObservedKeys.keys().next().value!);
+          }
         }
       }
       for (const key of unreadArrivals.observeUnreadCount(
@@ -515,11 +539,14 @@ export function initNotificationBridge() {
       // Receipts are matched against all hydrated rows at once: only an
       // identity with exactly one visible candidate may consume one, so two
       // threads sharing display text cannot steal each other's receipt.
-      // A receipt matching only read rows was evidently read — retire it so
-      // it cannot swallow the pairing for a later identical-text message.
+      // A receipt matching a read row was evidently read — retire it so it
+      // cannot swallow the pairing for a later identical-text message. This
+      // drops even when an unread twin also matches: which thread the
+      // receipt belonged to is unknowable then, and a possible duplicate
+      // fallback (absorbed by the native dedupe) beats routing the click to
+      // the wrong conversation or suppressing the unread thread's banner.
       pageNotificationReceipts.discardReadMatches(
         observed.filter(({ unread, body }) => !unread && body.length > 0),
-        observed.filter(({ unread, body }) => unread && body.length > 0),
         detectedAt,
       );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);

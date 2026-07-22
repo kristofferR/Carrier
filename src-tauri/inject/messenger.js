@@ -2387,23 +2387,22 @@
     }
     /**
      * Drop receipts whose notification was evidently read: the receipt matches
-     * a read rendered row while matching no unread one. Left in place, it
-     * would survive up to its TTL and later swallow the pairing for a NEW
-     * identical-text message, suppressing that message's only notification.
+     * a read rendered row. Left in place, it would survive up to its TTL and
+     * later swallow the pairing for a NEW identical-text message, suppressing
+     * that message's only notification. This drops even when an unread twin
+     * shares the text — the receipt's true thread is unknowable then, and a
+     * duplicate fallback (absorbed by the native dedupe) beats misrouting the
+     * click or marking the wrong thread delivered.
      */
-    discardReadMatches(readRows, unreadRows, now = Date.now()) {
+    discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
       const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
       if (!read.length) return;
-      const unread = [...unreadRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
-          continue;
-        }
-        if (unread.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
           continue;
         }
         this.receipts.splice(index, 1);
@@ -2948,7 +2947,9 @@
     const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
+    const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
+    const readCandidateAt = /* @__PURE__ */ new Map();
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -2976,8 +2977,26 @@
           )
         );
         for (const conversation of observed) {
-          if (!conversation.unread && conversation.body.length > 0) {
+          if (!conversation.body) continue;
+          if (conversation.unread) {
+            readCandidateAt.delete(conversation.key);
+            continue;
+          }
+          if (readObservedKeys.has(conversation.key)) continue;
+          const since = readCandidateAt.get(conversation.key);
+          if (since === void 0) {
+            readCandidateAt.set(conversation.key, detectedAt);
+            if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
+              readCandidateAt.delete(readCandidateAt.keys().next().value);
+            }
+            continue;
+          }
+          if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
+            readCandidateAt.delete(conversation.key);
             readObservedKeys.add(conversation.key);
+            if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
+              readObservedKeys.delete(readObservedKeys.keys().next().value);
+            }
           }
         }
         for (const key of unreadArrivals.observeUnreadCount(
@@ -3003,7 +3022,6 @@
         }
         pageNotificationReceipts.discardReadMatches(
           observed.filter(({ unread, body }) => !unread && body.length > 0),
-          observed.filter(({ unread, body }) => unread && body.length > 0),
           detectedAt
         );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);

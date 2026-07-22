@@ -347,23 +347,21 @@ describe("PageNotificationReceiptStore", () => {
     expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
   });
 
-  test("retires a receipt matching only read rows", () => {
+  test("retires a receipt matching a read row", () => {
     const store = new PageNotificationReceiptStore(memoryStorage());
     store.add("Jane", "OK", 42, 1_000);
     // The thread was read before its unread row ever paired — the receipt
-    // must not linger and swallow a later identical message's pairing.
-    store.discardReadMatches([{ title: "Jane", body: "OK" }], [], 1_100);
+    // must not linger and swallow a later identical message's pairing. This
+    // holds even when an unread twin shares the text: the receipt's true
+    // thread is unknowable, so ambiguity favors the fallback path.
+    store.discardReadMatches([{ title: "Jane", body: "OK" }], 1_100);
     expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
   });
 
-  test("keeps a receipt when an unread row still matches it", () => {
+  test("keeps receipts that match no read row", () => {
     const store = new PageNotificationReceiptStore(memoryStorage());
     store.add("Jane", "OK", 42, 1_000);
-    store.discardReadMatches(
-      [{ title: "Jane", body: "OK" }],
-      [{ title: "Jane", body: "OK" }],
-      1_100,
-    );
+    store.discardReadMatches([{ title: "John", body: "Other" }], 1_100);
     expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toEqual({ nativeId: 42 });
   });
 
