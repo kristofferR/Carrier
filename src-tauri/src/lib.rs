@@ -41,7 +41,7 @@ use macos::{
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
 use notifications::{
     clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
-    NotifyMsg, NotifyRouteMsg, SyncAlertKind,
+    NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
 };
 use settings::AppState;
 use settings::{
@@ -406,7 +406,7 @@ pub fn run() {
                 }
                 match serde_json::from_str::<SyncAlertMsg>(event.payload()) {
                     Ok(msg) => {
-                        show_sync_alert(sync_alert_handle.clone(), msg.kind);
+                        show_sync_alert(sync_alert_handle.clone(), SyncAlertSource::Page, msg.kind);
                     }
                     Err(e) => log::warn!("carrier:sync-alert payload did not parse: {e}"),
                 }

@@ -588,17 +588,36 @@ pub(crate) enum SyncAlertKind {
 
 pub(crate) const SYNC_ALERT_MIN_GAP: Duration = Duration::from_secs(10 * 60);
 
+/// Who raised a sync alert: the page's sync monitor, or the native watchdog's
+/// exhausted recovery ladder. Their episodes are independent — a page-side
+/// recovery must never consume the watchdog's pending recovery pairing (the
+/// transport can come back while sync is still dead, and vice versa).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SyncAlertSource {
+    Page,
+    Watchdog,
+}
+
 /// Decides which sync alerts become native notifications: a degraded notice at
-/// most once per [`SYNC_ALERT_MIN_GAP`] (a flapping outage must not spam), and
-/// a recovery notice only when its degraded counterpart was actually shown.
+/// most once per [`SYNC_ALERT_MIN_GAP`] across both sources (a flapping outage
+/// must not spam), and a recovery notice only when that source's degraded
+/// counterpart was actually shown.
 #[derive(Debug, Default)]
 pub(crate) struct SyncAlertGate {
     last_degraded_at: Option<Instant>,
-    degraded_notified: bool,
+    page_notified: bool,
+    watchdog_notified: bool,
 }
 
 impl SyncAlertGate {
-    pub(crate) fn on_degraded(&mut self, now: Instant) -> bool {
+    fn notified(&mut self, source: SyncAlertSource) -> &mut bool {
+        match source {
+            SyncAlertSource::Page => &mut self.page_notified,
+            SyncAlertSource::Watchdog => &mut self.watchdog_notified,
+        }
+    }
+
+    pub(crate) fn on_degraded(&mut self, source: SyncAlertSource, now: Instant) -> bool {
         let allow = !self
             .last_degraded_at
             .is_some_and(|at| now.duration_since(at) < SYNC_ALERT_MIN_GAP);
@@ -606,44 +625,43 @@ impl SyncAlertGate {
             self.last_degraded_at = Some(now);
             // A suppressed repeat must not clear the pairing of a notice
             // that was actually shown.
-            self.degraded_notified = true;
+            *self.notified(source) = true;
         }
         allow
     }
 
-    pub(crate) fn on_recovered(&mut self) -> bool {
-        std::mem::take(&mut self.degraded_notified)
+    pub(crate) fn on_recovered(&mut self, source: SyncAlertSource) -> bool {
+        std::mem::take(self.notified(source))
     }
 }
 
 static SYNC_ALERT_GATE: OnceLock<Mutex<SyncAlertGate>> = OnceLock::new();
 
-/// Returns whether a notification was actually shown, so a caller can pair a
-/// later recovery notice with it.
-pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) -> bool {
-    let muted = {
-        let state = app.state::<AppState>();
-        let muted = state.settings.lock().unwrap().mute_notifications;
-        muted
-    };
+pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, kind: SyncAlertKind) {
+    let muted = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .mute_notifications;
     if muted {
         log::info!("carrier:sync-alert suppressed by mute_notifications ({kind:?})");
-        return false;
+        return;
     }
     let gate = SYNC_ALERT_GATE.get_or_init(|| Mutex::new(SyncAlertGate::default()));
     let (show, body) = match kind {
         SyncAlertKind::Degraded => (
-            gate.lock().unwrap().on_degraded(Instant::now()),
+            gate.lock().unwrap().on_degraded(source, Instant::now()),
             "Messenger is struggling to sync — chats may be out of date. \
              This is usually a Facebook-side problem that recovers on its own.",
         ),
         SyncAlertKind::Recovered => (
-            gate.lock().unwrap().on_recovered(),
+            gate.lock().unwrap().on_recovered(source),
             "Messenger sync recovered.",
         ),
     };
     if !show {
-        return false;
+        return;
     }
     log::warn!("sync alert notification shown ({kind:?})");
 
@@ -671,7 +689,6 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) -> boo
             }
         });
     }
-    true
 }
 
 /// A notification was clicked: surface Carrier's window and ask the page to open
@@ -704,23 +721,51 @@ mod tests {
     fn sync_alert_gate_limits_degraded_notices_and_pairs_recovery() {
         let mut gate = SyncAlertGate::default();
         let t0 = Instant::now();
+        let page = SyncAlertSource::Page;
 
-        assert!(gate.on_degraded(t0));
-        assert!(gate.on_recovered());
-        assert!(!gate.on_recovered());
+        assert!(gate.on_degraded(page, t0));
+        assert!(gate.on_recovered(page));
+        assert!(!gate.on_recovered(page));
 
         // A flap inside the gap stays silent in both directions.
-        assert!(!gate.on_degraded(t0 + Duration::from_secs(60)));
-        assert!(!gate.on_recovered());
+        assert!(!gate.on_degraded(page, t0 + Duration::from_secs(60)));
+        assert!(!gate.on_recovered(page));
 
         // The suppressed flap did not extend the gap.
-        assert!(gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP));
-        assert!(gate.on_recovered());
+        assert!(gate.on_degraded(page, t0 + SYNC_ALERT_MIN_GAP));
+        assert!(gate.on_recovered(page));
 
         // A suppressed repeat does not clear the pairing of a shown notice.
-        assert!(gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP * 2));
-        assert!(!gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP * 2 + Duration::from_secs(60)));
-        assert!(gate.on_recovered());
+        assert!(gate.on_degraded(page, t0 + SYNC_ALERT_MIN_GAP * 2));
+        assert!(!gate.on_degraded(page, t0 + SYNC_ALERT_MIN_GAP * 2 + Duration::from_secs(60)));
+        assert!(gate.on_recovered(page));
+    }
+
+    #[test]
+    fn sync_alert_sources_pair_recovery_independently() {
+        let mut gate = SyncAlertGate::default();
+        let t0 = Instant::now();
+
+        // The watchdog's exhaustion notice is shown; the page's sync episode
+        // ending must not consume its pending recovery pairing.
+        assert!(gate.on_degraded(SyncAlertSource::Watchdog, t0));
+        assert!(!gate.on_recovered(SyncAlertSource::Page));
+        assert!(gate.on_recovered(SyncAlertSource::Watchdog));
+
+        // And the other way around: a transport-recovery report must not
+        // consume the page's sync-degraded pairing.
+        assert!(gate.on_degraded(SyncAlertSource::Page, t0 + SYNC_ALERT_MIN_GAP));
+        assert!(!gate.on_recovered(SyncAlertSource::Watchdog));
+        assert!(gate.on_recovered(SyncAlertSource::Page));
+
+        // The min-gap stays global: a watchdog notice inside the gap after a
+        // page notice is still suppressed, and gains no pairing.
+        assert!(gate.on_degraded(SyncAlertSource::Page, t0 + SYNC_ALERT_MIN_GAP * 2));
+        assert!(!gate.on_degraded(
+            SyncAlertSource::Watchdog,
+            t0 + SYNC_ALERT_MIN_GAP * 2 + Duration::from_secs(60)
+        ));
+        assert!(!gate.on_recovered(SyncAlertSource::Watchdog));
     }
 
     #[test]

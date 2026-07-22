@@ -21,6 +21,12 @@ import {
 } from "../lib/sync-health";
 import { isMessengerContentPath } from "../lib/threads";
 
+// Hidden/minimized webviews throttle or suspend page timers on every
+// platform, so this interval alone would lag in the background. The native
+// watchdog already evals `window.__carrierHeartbeat?.()` into the page every
+// 5s (webview_watchdog.rs), which wakes a suspended renderer and lets pending
+// timers fire — that keeps this check ticking well enough while hidden. The
+// spinner detector additionally requires a visible document by design.
 const SYNC_CHECK_INTERVAL_MS = 10_000;
 
 export function initSyncHealth() {
