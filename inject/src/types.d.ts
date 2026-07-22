@@ -50,7 +50,8 @@ interface CarrierSettings {
 
 interface CarrierToastAction {
   label: string;
-  onClick: (event: MouseEvent) => void;
+  kind: "reveal-download";
+  url: string;
 }
 
 /**

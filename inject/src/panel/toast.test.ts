@@ -1,7 +1,7 @@
 /// <reference path="../types.d.ts" />
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { installToast } from "./toast";
+import { canActivateToastAction, installToast } from "./toast";
 
 class FakeElement extends EventTarget {
   readonly style: Record<string, string> = {};
@@ -73,15 +73,13 @@ afterEach(() => {
 });
 
 describe("installToast", () => {
-  test("renders and invokes an optional action, then clears it for a plain toast", () => {
+  test("renders an inert action description, then clears it for a plain toast", () => {
     cleanup = installToast();
-    let clicked = 0;
 
     window.__carrierToast?.("Saved to Downloads", {
       label: "Show in folder",
-      onClick: () => {
-        clicked += 1;
-      },
+      kind: "reveal-download",
+      url: "blob:test-download",
     });
 
     const toast = body.children[0];
@@ -90,11 +88,27 @@ describe("installToast", () => {
     expect(toast?.children[1]?.textContent).toBe("Show in folder");
     expect(toast?.children[1]?.type).toBe("button");
     toast?.children[1]?.dispatchEvent(new Event("click"));
-    expect(clicked).toBe(1);
 
     window.__carrierToast?.("Download failed");
     expect(toast?.style.pointerEvents).toBe("none");
     expect(toast?.children).toHaveLength(1);
     expect(toast?.children[0]?.textContent).toBe("Download failed");
+  });
+
+  test("installs an immutable page hook", () => {
+    cleanup = installToast();
+    const descriptor = Object.getOwnPropertyDescriptor(window, "__carrierToast");
+
+    expect(descriptor?.writable).toBe(false);
+    expect(descriptor?.configurable).toBe(false);
+  });
+});
+
+describe("canActivateToastAction", () => {
+  test("requires both a trusted event and an active user gesture", () => {
+    expect(canActivateToastAction(true, true)).toBe(true);
+    expect(canActivateToastAction(false, true)).toBe(false);
+    expect(canActivateToastAction(true, false)).toBe(false);
+    expect(canActivateToastAction(false, false)).toBe(false);
   });
 });

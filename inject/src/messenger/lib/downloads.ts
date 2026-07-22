@@ -38,7 +38,3 @@ export const friendlyDownloadName = (name: string): string => {
 
 export const downloadRevealLabel = (userAgent: string): string =>
   /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
-
-/** Only a browser-generated activation of Carrier's own button may reveal. */
-export const canRevealDownload = (eventIsTrusted: boolean, userActivationIsActive: boolean) =>
-  eventIsTrusted && userActivationIsActive;
