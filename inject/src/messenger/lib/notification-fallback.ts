@@ -49,6 +49,16 @@ export interface PageNotificationSignal extends NotificationText {
 const normalizeNotificationText = (value: string) =>
   value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 
+const hashText = (value: string): string => {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (const byte of new TextEncoder().encode(value)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * prime);
+  }
+  return hash.toString(16).padStart(16, "0");
+};
+
 const matchesExactOrTruncated = (left: string, right: string): boolean => {
   if (left === right) return true;
   const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
@@ -73,16 +83,12 @@ const splitGroupSender = (value: string): { sender: string | null; message: stri
  */
 export function notificationDedupeKey(title: string, body: string): string {
   const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (const byte of new TextEncoder().encode(value)) {
-    hash ^= BigInt(byte);
-    hash = BigInt.asUintN(64, hash * prime);
-  }
-  return hash.toString(16).padStart(16, "0");
+  return hashText(value);
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
+const NOTIFIED_STORE_VERSION = 2;
+const LEGACY_PLACEHOLDER_BODY = "New message";
 // Messenger can produce many mutation-driven scans within a few hundred
 // milliseconds while a reloaded row hydrates. Require a continuously observed
 // read state for real elapsed time so those scans cannot erase replay
@@ -93,6 +99,14 @@ export const STABLE_READ_MS = 30_000;
 // a short confirmation for ordinary styling flicker without suppressing an
 // identical new message for the full reload guard.
 export const READ_TRANSITION_CONFIRM_MS = 1_000;
+
+interface NotifiedEntry {
+  fingerprint: string;
+  /** Loaded from the unversioned schema that could persist placeholder text. */
+  legacy: boolean;
+}
+
+export type FingerprintReconciliation = "missing" | "matched" | "migrated" | "mismatched";
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -105,7 +119,7 @@ export const READ_TRANSITION_CONFIRM_MS = 1_000;
  * repeats the same preview text still notifies.
  */
 export class NotifiedSignatureStore {
-  private readonly entries = new Map<string, string>();
+  private readonly entries = new Map<string, NotifiedEntry>();
   /** In-memory only: when each continuously observed read state began. */
   private readonly readSince = new Map<string, number>();
   /** Entries whose unread state has been established in this document. */
@@ -119,10 +133,25 @@ export class NotifiedSignatureStore {
       const raw = this.storage?.getItem(this.storageKey);
       if (!raw) return;
       const parsed: unknown = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return;
-      for (const entry of parsed) {
-        if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string") {
-          this.entries.set(entry[0], entry[1]);
+      const legacy = Array.isArray(parsed);
+      const persistedEntries = legacy
+        ? parsed
+        : parsed &&
+            typeof parsed === "object" &&
+            "version" in parsed &&
+            parsed.version === NOTIFIED_STORE_VERSION &&
+            "entries" in parsed &&
+            Array.isArray(parsed.entries)
+          ? parsed.entries
+          : [];
+      for (const entry of persistedEntries) {
+        if (
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          typeof entry[1] === "string" &&
+          (legacy || typeof entry[2] === "boolean")
+        ) {
+          this.entries.set(entry[0], { fingerprint: entry[1], legacy: legacy || entry[2] });
         }
       }
     } catch (_) {}
@@ -139,26 +168,64 @@ export class NotifiedSignatureStore {
 
   private persist(): void {
     try {
-      this.storage?.setItem(this.storageKey, JSON.stringify([...this.entries]));
+      this.storage?.setItem(
+        this.storageKey,
+        JSON.stringify({
+          version: NOTIFIED_STORE_VERSION,
+          entries: [...this.entries].map(([key, entry]) => [key, entry.fingerprint, entry.legacy]),
+        }),
+      );
     } catch (_) {}
   }
 
   alreadyNotified(conversationKey: string, fingerprint: string): boolean {
-    return this.entries.get(conversationKey) === fingerprint;
+    return this.entries.get(conversationKey)?.fingerprint === fingerprint;
   }
 
   /** The fingerprint last delivered for this conversation, if any. */
   notifiedFingerprint(conversationKey: string): string | undefined {
-    return this.entries.get(conversationKey);
+    return this.entries.get(conversationKey)?.fingerprint;
+  }
+
+  /**
+   * Compare a hydrated row with its persisted delivery. Old unversioned entries
+   * may contain the synthetic "New message" body from pre-v2 hydration scans;
+   * migrate only those proven-legacy placeholders, never a new-schema message
+   * whose real text happens to be the same phrase.
+   */
+  reconcileFingerprint(
+    conversationKey: string,
+    title: string,
+    fingerprint: string,
+  ): FingerprintReconciliation {
+    const entry = this.entries.get(conversationKey);
+    if (!entry) return "missing";
+    if (entry.fingerprint === fingerprint) {
+      if (entry.legacy) {
+        entry.legacy = false;
+        this.persist();
+      }
+      return "matched";
+    }
+    const legacyPlaceholder =
+      entry.legacy &&
+      (entry.fingerprint === notificationDedupeKey(title, LEGACY_PLACEHOLDER_BODY) ||
+        entry.fingerprint === notificationDedupeKey("Messenger", LEGACY_PLACEHOLDER_BODY));
+    if (!legacyPlaceholder) return "mismatched";
+    entry.fingerprint = fingerprint;
+    entry.legacy = false;
+    this.persist();
+    return "migrated";
   }
 
   markNotified(conversationKey: string, fingerprint: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readSince.delete(conversationKey);
-    if (this.entries.get(conversationKey) === fingerprint) return;
+    const current = this.entries.get(conversationKey);
+    if (current?.fingerprint === fingerprint && !current.legacy) return;
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
-    this.entries.set(conversationKey, fingerprint);
+    this.entries.set(conversationKey, { fingerprint, legacy: false });
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);
@@ -216,6 +283,193 @@ export class NotifiedSignatureStore {
   }
 }
 
+const HASH_RE = /^[0-9a-f]{16}$/;
+const MIN_TRUNCATED_MATCH_LENGTH = 40;
+const TITLE_PREFIX_LIMIT = 80;
+const BODY_PREFIX_LIMIT = 240;
+const PAGE_RECEIPT_LIMIT = 20;
+export const PAGE_NOTIFICATION_RECEIPT_TTL_MS = 120_000;
+
+interface OpaqueTextIdentity {
+  length: number;
+  full: string;
+  prefixes: [number, string][];
+}
+
+interface OpaqueNotificationIdentity {
+  title: OpaqueTextIdentity;
+  body: OpaqueTextIdentity;
+  sender: string | null;
+  message: OpaqueTextIdentity;
+}
+
+interface PageNotificationReceipt {
+  at: number;
+  nativeId: number;
+  identity: OpaqueNotificationIdentity;
+}
+
+const opaqueTextIdentity = (value: string, prefixLimit: number): OpaqueTextIdentity => {
+  const prefixes: [number, string][] = [];
+  const lastPrefix = Math.min(value.length - 1, prefixLimit);
+  for (let length = MIN_TRUNCATED_MATCH_LENGTH; length <= lastPrefix; length++) {
+    prefixes.push([length, hashText(value.slice(0, length))]);
+  }
+  return { length: value.length, full: hashText(value), prefixes };
+};
+
+const opaqueNotificationIdentity = (title: string, body: string): OpaqueNotificationIdentity => {
+  const normalizedTitle = normalizeNotificationText(title);
+  const normalizedBody = normalizeNotificationText(body);
+  const group = splitGroupSender(normalizedBody);
+  return {
+    title: opaqueTextIdentity(normalizedTitle, TITLE_PREFIX_LIMIT),
+    body: opaqueTextIdentity(normalizedBody, BODY_PREFIX_LIMIT),
+    sender: group.sender === null ? null : hashText(group.sender),
+    message: opaqueTextIdentity(group.message, BODY_PREFIX_LIMIT),
+  };
+};
+
+const opaqueTextMatches = (left: OpaqueTextIdentity, right: OpaqueTextIdentity): boolean => {
+  if (left.full === right.full) return true;
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  if (shorter.length < MIN_TRUNCATED_MATCH_LENGTH) return false;
+  return longer.prefixes.some(
+    ([length, fingerprint]) => length === shorter.length && fingerprint === shorter.full,
+  );
+};
+
+const opaqueNotificationMatches = (
+  left: OpaqueNotificationIdentity,
+  right: OpaqueNotificationIdentity,
+): boolean => {
+  if (!opaqueTextMatches(left.title, right.title)) return false;
+  if (left.body.length === 0 || right.body.length === 0) return true;
+  if (opaqueTextMatches(left.body, right.body)) return true;
+  const sendersCompatible =
+    left.sender === null || right.sender === null || left.sender === right.sender;
+  return sendersCompatible && opaqueTextMatches(left.message, right.message);
+};
+
+const validOpaqueTextIdentity = (
+  value: unknown,
+  prefixLimit: number,
+): value is OpaqueTextIdentity => {
+  if (!value || typeof value !== "object") return false;
+  const identity = value as Partial<OpaqueTextIdentity>;
+  return (
+    Number.isSafeInteger(identity.length) &&
+    identity.length! >= 0 &&
+    typeof identity.full === "string" &&
+    HASH_RE.test(identity.full) &&
+    Array.isArray(identity.prefixes) &&
+    identity.prefixes.length <= prefixLimit - MIN_TRUNCATED_MATCH_LENGTH + 1 &&
+    identity.prefixes.every(
+      (prefix) =>
+        Array.isArray(prefix) &&
+        Number.isSafeInteger(prefix[0]) &&
+        prefix[0] >= MIN_TRUNCATED_MATCH_LENGTH &&
+        prefix[0] <= prefixLimit &&
+        prefix[0] < identity.length! &&
+        typeof prefix[1] === "string" &&
+        HASH_RE.test(prefix[1]),
+    )
+  );
+};
+
+const validOpaqueNotificationIdentity = (value: unknown): value is OpaqueNotificationIdentity => {
+  if (!value || typeof value !== "object") return false;
+  const identity = value as Partial<OpaqueNotificationIdentity>;
+  return (
+    validOpaqueTextIdentity(identity.title, TITLE_PREFIX_LIMIT) &&
+    validOpaqueTextIdentity(identity.body, BODY_PREFIX_LIMIT) &&
+    validOpaqueTextIdentity(identity.message, BODY_PREFIX_LIMIT) &&
+    (identity.sender === null ||
+      (typeof identity.sender === "string" && HASH_RE.test(identity.sender)))
+  );
+};
+
+/**
+ * Short-lived, content-opaque receipts for page notifications. They survive a
+ * reload so the first hydrated row can attach its route and mark the per-thread
+ * fingerprint without waiting long enough to leak a fallback duplicate.
+ */
+export class PageNotificationReceiptStore {
+  private readonly receipts: PageNotificationReceipt[] = [];
+
+  constructor(
+    private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
+    private readonly storageKey = "__carrier_page_notification_receipts__",
+    private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
+    now = Date.now(),
+  ) {
+    try {
+      const parsed: unknown = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
+      if (Array.isArray(parsed)) {
+        for (const receipt of parsed) {
+          if (!receipt || typeof receipt !== "object") continue;
+          const candidate = receipt as Partial<PageNotificationReceipt>;
+          if (
+            typeof candidate.at === "number" &&
+            Number.isFinite(candidate.at) &&
+            typeof candidate.nativeId === "number" &&
+            Number.isSafeInteger(candidate.nativeId) &&
+            candidate.nativeId > 0 &&
+            validOpaqueNotificationIdentity(candidate.identity) &&
+            now - candidate.at >= 0 &&
+            now - candidate.at <= this.ttlMs
+          ) {
+            this.receipts.push(candidate as PageNotificationReceipt);
+          }
+        }
+      }
+    } catch (_) {}
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
+      this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
+    }
+    this.persist();
+  }
+
+  private persist(): void {
+    try {
+      this.storage?.setItem(this.storageKey, JSON.stringify(this.receipts));
+    } catch (_) {}
+  }
+
+  private prune(now: number): void {
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const age = now - this.receipts[index]!.at;
+      if (age < 0 || age > this.ttlMs) {
+        this.receipts.splice(index, 1);
+        changed = true;
+      }
+    }
+    if (changed) this.persist();
+  }
+
+  add(title: string, body: string, nativeId: number, at = Date.now()): void {
+    this.prune(at);
+    this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+    this.persist();
+  }
+
+  consumeMatching(row: NotificationText, now = Date.now()): { nativeId: number } | null {
+    this.prune(now);
+    if (!this.receipts.length) return null;
+    const identity = opaqueNotificationIdentity(row.title, row.body);
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const receipt = this.receipts[index]!;
+      if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+      this.receipts.splice(index, 1);
+      this.persist();
+      return { nativeId: receipt.nativeId };
+    }
+    return null;
+  }
+}
+
 /** Keeps concurrent page signals until their matching row update arrives. */
 export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
@@ -252,24 +506,10 @@ export class PageNotificationQueue {
   }
 }
 
-/**
- * Correlates unread-count increases with the rows most recently mutated.
- *
- * After a reload the page title reads no "(N)" until Facebook hydrates it, so
- * the first observation would baseline at zero and the hydrated count would
- * masquerade as N fresh arrivals — replaying every pre-existing unread thread.
- * `settleMs` refuses to baseline a zero count that close to the first
- * observation; the first non-zero count (or a zero that outlives the window)
- * primes silently instead. Trade-off: a message arriving into a zero-unread
- * state within the window is absorbed as baseline — the page-Notification
- * path still covers it.
- */
+/** Correlates unread-count increases with the rows most recently mutated. */
 export class UnreadArrivalTracker {
   private readonly changedAt = new Map<string, number>();
   private unreadCount: number | null = null;
-  private firstObservedAt: number | null = null;
-
-  constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
     for (const key of keys) this.changedAt.set(key, at);
@@ -280,10 +520,6 @@ export class UnreadArrivalTracker {
       if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
     }
 
-    if (this.firstObservedAt === null) this.firstObservedAt = at;
-    if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
-      return [];
-    }
     const previous = this.unreadCount;
     this.unreadCount = count;
     if (previous === null || count <= previous) return [];
@@ -302,18 +538,25 @@ export class UnreadArrivalTracker {
  * from the one [[NotifiedSignatureStore]] last delivered — meaning new content
  * arrived since that delivery (typically while a reload was in flight, when
  * every in-memory tracker primes silently and would otherwise stay quiet).
- * Requiring the same fingerprint across consecutive scans keeps a single
- * mid-hydration mis-scrape from firing it; reporting each streak exactly once
- * keeps it from endlessly re-arming pending fallback timers.
+ * Requiring the same fingerprint for real elapsed time keeps rapid hydration
+ * scans from satisfying the guard. The returned confirmation delay lets the
+ * caller schedule proof promptly instead of waiting for a hidden-window poll.
  */
 export class StableMismatchTracker {
-  private readonly streaks = new Map<string, { fingerprint: string; count: number }>();
+  private readonly streaks = new Map<
+    string,
+    { fingerprint: string; since: number; reported: boolean }
+  >();
 
-  constructor(private readonly stableScans: number) {}
+  constructor(private readonly stableMs: number) {}
 
-  observe(mismatches: Iterable<readonly [string, string]>): string[] {
+  observe(
+    mismatches: Iterable<readonly [string, string]>,
+    at = Date.now(),
+  ): { recovered: string[]; confirmInMs: number | null } {
     const seen = new Set<string>();
-    const reported: string[] = [];
+    const recovered: string[] = [];
+    let confirmInMs: number | null = null;
     for (const [key, fingerprint] of mismatches) {
       // The DOM can briefly render two anchors for one thread; a key counts
       // as at most one observation per scan or a duplicate could reach the
@@ -322,20 +565,33 @@ export class StableMismatchTracker {
       seen.add(key);
       const streak = this.streaks.get(key);
       if (streak?.fingerprint === fingerprint) {
-        streak.count += 1;
-        if (streak.count === this.stableScans) reported.push(key);
+        if (at < streak.since) {
+          streak.since = at;
+          streak.reported = false;
+        }
+        const remaining = Math.max(0, this.stableMs - (at - streak.since));
+        if (!streak.reported && remaining === 0) {
+          streak.reported = true;
+          recovered.push(key);
+        } else if (!streak.reported) {
+          confirmInMs = confirmInMs === null ? remaining : Math.min(confirmInMs, remaining);
+        }
         continue;
       }
-      const count = 1;
-      this.streaks.set(key, { fingerprint, count });
-      if (count === this.stableScans) reported.push(key);
+      const reported = this.stableMs === 0;
+      this.streaks.set(key, { fingerprint, since: at, reported });
+      if (reported) {
+        recovered.push(key);
+      } else {
+        confirmInMs = confirmInMs === null ? this.stableMs : Math.min(confirmInMs, this.stableMs);
+      }
     }
     // A key no longer mismatching (delivered, read, or re-hydrated to match)
     // restarts from scratch if it ever diverges again.
     for (const key of this.streaks.keys()) {
       if (!seen.has(key)) this.streaks.delete(key);
     }
-    return reported;
+    return { recovered, confirmInMs };
   }
 }
 

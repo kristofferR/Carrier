@@ -5,12 +5,22 @@ import {
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationTextMatches,
+  PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
+  PageNotificationReceiptStore,
   READ_TRANSITION_CONFIRM_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
 } from "./notification-fallback";
+
+const memoryStorage = () => {
+  const data = new Map<string, string>();
+  return {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  };
+};
 
 describe("notificationDedupeKey", () => {
   test("normalizes equivalent notification text to the same opaque key", () => {
@@ -56,14 +66,6 @@ describe("ConversationNotificationTracker", () => {
 });
 
 describe("NotifiedSignatureStore", () => {
-  const memoryStorage = () => {
-    const data = new Map<string, string>();
-    return {
-      getItem: (key: string) => data.get(key) ?? null,
-      setItem: (key: string, value: string) => void data.set(key, value),
-    };
-  };
-
   test("recognizes a fingerprint it delivered and distinguishes new ones", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
@@ -84,6 +86,51 @@ describe("NotifiedSignatureStore", () => {
     new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
     // A reload constructs a fresh store over the same storage.
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("silently migrates placeholder fingerprints only from the legacy schema", () => {
+    const storage = memoryStorage();
+    const placeholder = notificationDedupeKey("Jane", "New message");
+    const hydrated = notificationDedupeKey("Jane", "Actual preview");
+    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", placeholder]]));
+
+    const store = new NotifiedSignatureStore(storage);
+    expect(store.reconcileFingerprint("1", "Jane", hydrated)).toBe("migrated");
+    expect(store.alreadyNotified("1", hydrated)).toBe(true);
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", hydrated)).toBe(true);
+  });
+
+  test("migrates the old fully generic placeholder fingerprint", () => {
+    const storage = memoryStorage();
+    const placeholder = notificationDedupeKey("Messenger", "New message");
+    const hydrated = notificationDedupeKey("Jane", "Actual preview");
+    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", placeholder]]));
+
+    expect(new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", hydrated)).toBe(
+      "migrated",
+    );
+  });
+
+  test("never treats a new-schema literal New message as legacy poison", () => {
+    const storage = memoryStorage();
+    const placeholder = notificationDedupeKey("Jane", "New message");
+    const next = notificationDedupeKey("Jane", "Actual preview");
+    new NotifiedSignatureStore(storage).markNotified("1", placeholder);
+
+    expect(new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", next)).toBe(
+      "mismatched",
+    );
+  });
+
+  test("an exact hydrated observation retires a legacy marker", () => {
+    const storage = memoryStorage();
+    const literal = notificationDedupeKey("Jane", "New message");
+    const next = notificationDedupeKey("Jane", "Actual preview");
+    storage.setItem("__carrier_notified_previews__", JSON.stringify([["1", literal]]));
+
+    const store = new NotifiedSignatureStore(storage);
+    expect(store.reconcileFingerprint("1", "Jane", literal)).toBe("matched");
+    expect(store.reconcileFingerprint("1", "Jane", next)).toBe("mismatched");
   });
 
   test("forgets a conversation after a continuously stable read interval", () => {
@@ -192,7 +239,8 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("k0", "f")).toBe(false);
     expect(store.alreadyNotified("k300", "f")).toBe(true);
     const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
-    expect(persisted.length).toBe(300);
+    expect(persisted.version).toBe(2);
+    expect(persisted.entries).toHaveLength(300);
   });
 
   test("tolerates malformed persisted state", () => {
@@ -202,6 +250,77 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
     store.markNotified("1", "aaaa");
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+});
+
+describe("PageNotificationReceiptStore", () => {
+  test("pairs a page notification after reload without persisting raw content", () => {
+    const storage = memoryStorage();
+    const title = "Project group with a deliberately long title that the row truncates later";
+    const body =
+      "Jane: Deployment finished and this deliberately long preview continues beyond the rendered row";
+    new PageNotificationReceiptStore(storage, undefined, undefined, 1_000).add(
+      title,
+      body,
+      42,
+      1_000,
+    );
+    const persisted = storage.getItem("__carrier_page_notification_receipts__")!;
+    expect(persisted).not.toContain("Project group");
+    expect(persisted).not.toContain("Deployment finished");
+
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 1_500);
+    expect(
+      reloaded.consumeMatching(
+        {
+          title: title.slice(0, 50),
+          body: body.slice("Jane: ".length, 60),
+        },
+        1_500,
+      ),
+    ).toEqual({ nativeId: 42 });
+    expect(reloaded.consumeMatching({ title, body }, 1_500)).toBeNull();
+  });
+
+  test("expires old and future-dated receipts across reloads", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Old", 41, 1_000);
+    receipts.add("Jane", "Future", 42, 1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1);
+
+    const reloaded = new PageNotificationReceiptStore(
+      storage,
+      undefined,
+      undefined,
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS,
+    );
+    expect(reloaded.consumeMatching({ title: "Jane", body: "Old" })).toBeNull();
+    expect(reloaded.consumeMatching({ title: "Jane", body: "Future" })).toBeNull();
+  });
+
+  test("keeps different group senders with identical short text separate", () => {
+    const receipts = new PageNotificationReceiptStore();
+    receipts.add("Project group", "Jane: OK", 42, 1_000);
+    expect(
+      receipts.consumeMatching({ title: "Project group", body: "John: OK" }, 1_100),
+    ).toBeNull();
+    expect(receipts.consumeMatching({ title: "Project group", body: "Jane: OK" }, 1_100)).toEqual({
+      nativeId: 42,
+    });
+  });
+
+  test("ignores malformed persisted receipts", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "__carrier_page_notification_receipts__",
+      JSON.stringify([{ at: 1_000, nativeId: 42, identity: { title: "raw content" } }]),
+    );
+    expect(
+      new PageNotificationReceiptStore(storage, undefined, undefined, 1_100).consumeMatching(
+        { title: "raw content", body: "message" },
+        1_100,
+      ),
+    ).toBeNull();
   });
 });
 
@@ -248,33 +367,15 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
   });
 
-  test("absorbs the title hydrating from zero as the baseline", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
-    // Post-reload: the title has no "(N)" yet, rows mutate while hydrating.
+  test("reports a first real arrival from a zero baseline", () => {
+    const tracker = new UnreadArrivalTracker();
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
-    // The hydrated count primes silently instead of replaying row "a".
-    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
-  });
-
-  test("still reports a real arrival right after the baseline settles", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
-    tracker.observeUnreadCount(0, 1_000, 2_000);
-    tracker.observeUnreadCount(3, 1_200, 2_000);
-    tracker.markRowsChanged(["b"], 1_300);
-    expect(tracker.observeUnreadCount(4, 1_400, 2_000)).toEqual(["b"]);
-  });
-
-  test("a zero count that outlives the settle window is a real baseline", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
-    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
-    expect(tracker.observeUnreadCount(0, 12_000, 2_000)).toEqual([]);
-    tracker.markRowsChanged(["a"], 12_100);
-    expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
+    expect(tracker.observeUnreadCount(1, 1_200, 2_000)).toEqual(["a"]);
   });
 
   test("a count already present at first observation primes silently", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     expect(tracker.observeUnreadCount(5, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
     expect(tracker.observeUnreadCount(6, 1_200, 2_000)).toEqual(["a"]);
@@ -282,39 +383,61 @@ describe("UnreadArrivalTracker", () => {
 });
 
 describe("StableMismatchTracker", () => {
-  test("reports a stable mismatch exactly once at the threshold", () => {
-    const tracker = new StableMismatchTracker(2);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
+  test("reports a stable mismatch exactly once after real elapsed time", () => {
+    const tracker = new StableMismatchTracker(1_000);
+    expect(tracker.observe([["1", "bbbb"]], 1_000)).toEqual({
+      recovered: [],
+      confirmInMs: 1_000,
+    });
+    expect(tracker.observe([["1", "bbbb"]], 1_999)).toEqual({
+      recovered: [],
+      confirmInMs: 1,
+    });
+    expect(tracker.observe([["1", "bbbb"]], 2_000)).toEqual({
+      recovered: ["1"],
+      confirmInMs: null,
+    });
+    expect(tracker.observe([["1", "bbbb"]], 3_000)).toEqual({
+      recovered: [],
+      confirmInMs: null,
+    });
   });
 
   test("restarts the streak when a key stops mismatching", () => {
-    const tracker = new StableMismatchTracker(2);
-    tracker.observe([["1", "bbbb"]]);
-    tracker.observe([]);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
+    const tracker = new StableMismatchTracker(1_000);
+    tracker.observe([["1", "bbbb"]], 1_000);
+    tracker.observe([], 1_500);
+    expect(tracker.observe([["1", "bbbb"]], 2_000).recovered).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]], 3_000).recovered).toEqual(["1"]);
   });
 
   test("restarts the streak when the fingerprint keeps shifting", () => {
-    const tracker = new StableMismatchTracker(2);
-    tracker.observe([["1", "bbbb"]]);
-    expect(tracker.observe([["1", "cccc"]])).toEqual([]);
-    expect(tracker.observe([["1", "cccc"]])).toEqual(["1"]);
+    const tracker = new StableMismatchTracker(1_000);
+    tracker.observe([["1", "bbbb"]], 1_000);
+    expect(tracker.observe([["1", "cccc"]], 1_900).recovered).toEqual([]);
+    expect(tracker.observe([["1", "cccc"]], 2_900).recovered).toEqual(["1"]);
   });
 
-  test("counts a duplicated key once per scan", () => {
-    const tracker = new StableMismatchTracker(2);
-    // The DOM can briefly render two anchors for one thread — a single scan
-    // must not reach the stability threshold on its own.
+  test("duplicate keys cannot satisfy elapsed-time stability in one scan", () => {
+    const tracker = new StableMismatchTracker(1_000);
     expect(
-      tracker.observe([
-        ["1", "bbbb"],
-        ["1", "bbbb"],
-      ]),
-    ).toEqual([]);
-    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
+      tracker.observe(
+        [
+          ["1", "bbbb"],
+          ["1", "bbbb"],
+        ],
+        1_000,
+      ),
+    ).toEqual({ recovered: [], confirmInMs: 1_000 });
+    expect(tracker.observe([["1", "bbbb"]], 2_000).recovered).toEqual(["1"]);
+  });
+
+  test("a backward clock jump restarts mismatch confirmation", () => {
+    const tracker = new StableMismatchTracker(1_000);
+    tracker.observe([["1", "bbbb"]], 10_000);
+    expect(tracker.observe([["1", "bbbb"]], 5_000).recovered).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]], 5_999).recovered).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]], 6_000).recovered).toEqual(["1"]);
   });
 });
 

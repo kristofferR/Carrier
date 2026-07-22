@@ -2024,6 +2024,15 @@
     }
   };
   var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  var hashText = (value) => {
+    let hash = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    for (const byte of new TextEncoder().encode(value)) {
+      hash ^= BigInt(byte);
+      hash = BigInt.asUintN(64, hash * prime);
+    }
+    return hash.toString(16).padStart(16, "0");
+  };
   var matchesExactOrTruncated = (left, right) => {
     if (left === right) return true;
     const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
@@ -2036,15 +2045,11 @@
   };
   function notificationDedupeKey(title, body) {
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
-    let hash = 0xcbf29ce484222325n;
-    const prime = 0x100000001b3n;
-    for (const byte of new TextEncoder().encode(value)) {
-      hash ^= BigInt(byte);
-      hash = BigInt.asUintN(64, hash * prime);
-    }
-    return hash.toString(16).padStart(16, "0");
+    return hashText(value);
   }
   var NOTIFIED_STORE_LIMIT = 300;
+  var NOTIFIED_STORE_VERSION = 2;
+  var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
   var READ_TRANSITION_CONFIRM_MS = 1e3;
   var NotifiedSignatureStore = class {
@@ -2060,10 +2065,11 @@
         const raw = this.storage?.getItem(this.storageKey);
         if (!raw) return;
         const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return;
-        for (const entry of parsed) {
-          if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string") {
-            this.entries.set(entry[0], entry[1]);
+        const legacy = Array.isArray(parsed);
+        const persistedEntries = legacy ? parsed : parsed && typeof parsed === "object" && "version" in parsed && parsed.version === NOTIFIED_STORE_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        for (const entry of persistedEntries) {
+          if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
+            this.entries.set(entry[0], { fingerprint: entry[1], legacy: legacy || entry[2] });
           }
         }
       } catch (_) {
@@ -2077,22 +2083,52 @@
     }
     persist() {
       try {
-        this.storage?.setItem(this.storageKey, JSON.stringify([...this.entries]));
+        this.storage?.setItem(
+          this.storageKey,
+          JSON.stringify({
+            version: NOTIFIED_STORE_VERSION,
+            entries: [...this.entries].map(([key, entry]) => [key, entry.fingerprint, entry.legacy])
+          })
+        );
       } catch (_) {
       }
     }
     alreadyNotified(conversationKey, fingerprint) {
-      return this.entries.get(conversationKey) === fingerprint;
+      return this.entries.get(conversationKey)?.fingerprint === fingerprint;
     }
     /** The fingerprint last delivered for this conversation, if any. */
     notifiedFingerprint(conversationKey) {
-      return this.entries.get(conversationKey);
+      return this.entries.get(conversationKey)?.fingerprint;
+    }
+    /**
+     * Compare a hydrated row with its persisted delivery. Old unversioned entries
+     * may contain the synthetic "New message" body from pre-v2 hydration scans;
+     * migrate only those proven-legacy placeholders, never a new-schema message
+     * whose real text happens to be the same phrase.
+     */
+    reconcileFingerprint(conversationKey, title, fingerprint) {
+      const entry = this.entries.get(conversationKey);
+      if (!entry) return "missing";
+      if (entry.fingerprint === fingerprint) {
+        if (entry.legacy) {
+          entry.legacy = false;
+          this.persist();
+        }
+        return "matched";
+      }
+      const legacyPlaceholder = entry.legacy && (entry.fingerprint === notificationDedupeKey(title, LEGACY_PLACEHOLDER_BODY) || entry.fingerprint === notificationDedupeKey("Messenger", LEGACY_PLACEHOLDER_BODY));
+      if (!legacyPlaceholder) return "mismatched";
+      entry.fingerprint = fingerprint;
+      entry.legacy = false;
+      this.persist();
+      return "migrated";
     }
     markNotified(conversationKey, fingerprint) {
       this.readSince.delete(conversationKey);
-      if (this.entries.get(conversationKey) === fingerprint) return;
+      const current = this.entries.get(conversationKey);
+      if (current?.fingerprint === fingerprint && !current.legacy) return;
       this.entries.delete(conversationKey);
-      this.entries.set(conversationKey, fingerprint);
+      this.entries.set(conversationKey, { fingerprint, legacy: false });
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);
@@ -2140,6 +2176,119 @@
       if (dropped) this.persist();
     }
   };
+  var HASH_RE = /^[0-9a-f]{16}$/;
+  var MIN_TRUNCATED_MATCH_LENGTH = 40;
+  var TITLE_PREFIX_LIMIT = 80;
+  var BODY_PREFIX_LIMIT = 240;
+  var PAGE_RECEIPT_LIMIT = 20;
+  var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
+  var opaqueTextIdentity = (value, prefixLimit) => {
+    const prefixes = [];
+    const lastPrefix = Math.min(value.length - 1, prefixLimit);
+    for (let length = MIN_TRUNCATED_MATCH_LENGTH; length <= lastPrefix; length++) {
+      prefixes.push([length, hashText(value.slice(0, length))]);
+    }
+    return { length: value.length, full: hashText(value), prefixes };
+  };
+  var opaqueNotificationIdentity = (title, body) => {
+    const normalizedTitle = normalizeNotificationText(title);
+    const normalizedBody = normalizeNotificationText(body);
+    const group = splitGroupSender(normalizedBody);
+    return {
+      title: opaqueTextIdentity(normalizedTitle, TITLE_PREFIX_LIMIT),
+      body: opaqueTextIdentity(normalizedBody, BODY_PREFIX_LIMIT),
+      sender: group.sender === null ? null : hashText(group.sender),
+      message: opaqueTextIdentity(group.message, BODY_PREFIX_LIMIT)
+    };
+  };
+  var opaqueTextMatches = (left, right) => {
+    if (left.full === right.full) return true;
+    const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+    if (shorter.length < MIN_TRUNCATED_MATCH_LENGTH) return false;
+    return longer.prefixes.some(
+      ([length, fingerprint]) => length === shorter.length && fingerprint === shorter.full
+    );
+  };
+  var opaqueNotificationMatches = (left, right) => {
+    if (!opaqueTextMatches(left.title, right.title)) return false;
+    if (left.body.length === 0 || right.body.length === 0) return true;
+    if (opaqueTextMatches(left.body, right.body)) return true;
+    const sendersCompatible = left.sender === null || right.sender === null || left.sender === right.sender;
+    return sendersCompatible && opaqueTextMatches(left.message, right.message);
+  };
+  var validOpaqueTextIdentity = (value, prefixLimit) => {
+    if (!value || typeof value !== "object") return false;
+    const identity = value;
+    return Number.isSafeInteger(identity.length) && identity.length >= 0 && typeof identity.full === "string" && HASH_RE.test(identity.full) && Array.isArray(identity.prefixes) && identity.prefixes.length <= prefixLimit - MIN_TRUNCATED_MATCH_LENGTH + 1 && identity.prefixes.every(
+      (prefix) => Array.isArray(prefix) && Number.isSafeInteger(prefix[0]) && prefix[0] >= MIN_TRUNCATED_MATCH_LENGTH && prefix[0] <= prefixLimit && prefix[0] < identity.length && typeof prefix[1] === "string" && HASH_RE.test(prefix[1])
+    );
+  };
+  var validOpaqueNotificationIdentity = (value) => {
+    if (!value || typeof value !== "object") return false;
+    const identity = value;
+    return validOpaqueTextIdentity(identity.title, TITLE_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.body, BODY_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.message, BODY_PREFIX_LIMIT) && (identity.sender === null || typeof identity.sender === "string" && HASH_RE.test(identity.sender));
+  };
+  var PageNotificationReceiptStore = class {
+    constructor(storage = null, storageKey = "__carrier_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+      __publicField(this, "storage", storage);
+      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "ttlMs", ttlMs);
+      __publicField(this, "receipts", []);
+      try {
+        const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
+        if (Array.isArray(parsed)) {
+          for (const receipt of parsed) {
+            if (!receipt || typeof receipt !== "object") continue;
+            const candidate = receipt;
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+              this.receipts.push(candidate);
+            }
+          }
+        }
+      } catch (_) {
+      }
+      if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
+        this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
+      }
+      this.persist();
+    }
+    persist() {
+      try {
+        this.storage?.setItem(this.storageKey, JSON.stringify(this.receipts));
+      } catch (_) {
+      }
+    }
+    prune(now) {
+      let changed = false;
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const age = now - this.receipts[index].at;
+        if (age < 0 || age > this.ttlMs) {
+          this.receipts.splice(index, 1);
+          changed = true;
+        }
+      }
+      if (changed) this.persist();
+    }
+    add(title, body, nativeId, at = Date.now()) {
+      this.prune(at);
+      this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
+      if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+      this.persist();
+    }
+    consumeMatching(row, now = Date.now()) {
+      this.prune(now);
+      if (!this.receipts.length) return null;
+      const identity = opaqueNotificationIdentity(row.title, row.body);
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const receipt = this.receipts[index];
+        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        this.receipts.splice(index, 1);
+        this.persist();
+        return { nativeId: receipt.nativeId };
+      }
+      return null;
+    }
+  };
   var PageNotificationQueue = class {
     constructor() {
       __publicField(this, "signals", []);
@@ -2171,11 +2320,9 @@
     }
   };
   var UnreadArrivalTracker = class {
-    constructor(settleMs = 0) {
-      __publicField(this, "settleMs", settleMs);
+    constructor() {
       __publicField(this, "changedAt", /* @__PURE__ */ new Map());
       __publicField(this, "unreadCount", null);
-      __publicField(this, "firstObservedAt", null);
     }
     markRowsChanged(keys, at) {
       for (const key of keys) this.changedAt.set(key, at);
@@ -2183,10 +2330,6 @@
     observeUnreadCount(count, at, maxMutationAgeMs) {
       for (const [key, changedAt] of this.changedAt) {
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
-      }
-      if (this.firstObservedAt === null) this.firstObservedAt = at;
-      if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
-        return [];
       }
       const previous = this.unreadCount;
       this.unreadCount = count;
@@ -2197,30 +2340,44 @@
     }
   };
   var StableMismatchTracker = class {
-    constructor(stableScans) {
-      __publicField(this, "stableScans", stableScans);
+    constructor(stableMs) {
+      __publicField(this, "stableMs", stableMs);
       __publicField(this, "streaks", /* @__PURE__ */ new Map());
     }
-    observe(mismatches) {
+    observe(mismatches, at = Date.now()) {
       const seen = /* @__PURE__ */ new Set();
-      const reported = [];
+      const recovered = [];
+      let confirmInMs = null;
       for (const [key, fingerprint] of mismatches) {
         if (seen.has(key)) continue;
         seen.add(key);
         const streak = this.streaks.get(key);
         if (streak?.fingerprint === fingerprint) {
-          streak.count += 1;
-          if (streak.count === this.stableScans) reported.push(key);
+          if (at < streak.since) {
+            streak.since = at;
+            streak.reported = false;
+          }
+          const remaining = Math.max(0, this.stableMs - (at - streak.since));
+          if (!streak.reported && remaining === 0) {
+            streak.reported = true;
+            recovered.push(key);
+          } else if (!streak.reported) {
+            confirmInMs = confirmInMs === null ? remaining : Math.min(confirmInMs, remaining);
+          }
           continue;
         }
-        const count = 1;
-        this.streaks.set(key, { fingerprint, count });
-        if (count === this.stableScans) reported.push(key);
+        const reported = this.stableMs === 0;
+        this.streaks.set(key, { fingerprint, since: at, reported });
+        if (reported) {
+          recovered.push(key);
+        } else {
+          confirmInMs = confirmInMs === null ? this.stableMs : Math.min(confirmInMs, this.stableMs);
+        }
       }
       for (const key of this.streaks.keys()) {
         if (!seen.has(key)) this.streaks.delete(key);
       }
-      return reported;
+      return { recovered, confirmInMs };
     }
   };
   function isOwnMessagePreview(value) {
@@ -2366,8 +2523,7 @@
   var FALLBACK_POLL_VISIBLE_MS = 1e4;
   var FALLBACK_POLL_HIDDEN_MS = 6e4;
   var ROW_MUTATION_MATCH_MS = 2e3;
-  var HYDRATION_SETTLE_MS = 1e4;
-  var MISMATCH_STABLE_SCANS = 2;
+  var MISMATCH_STABLE_MS = 1e3;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
@@ -2427,15 +2583,15 @@
         payload: { id, thread_path: threadPath }
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
-    const notifiedStore = new NotifiedSignatureStore(
-      (() => {
-        try {
-          return window.localStorage;
-        } catch (_) {
-          return null;
-        }
-      })()
-    );
+    const notificationStorage = (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })();
+    const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
@@ -2461,7 +2617,10 @@
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
-        if (pageMatch.signal) pageMatch.signal.nativeId = id;
+        if (pageMatch.signal) {
+          pageMatch.signal.nativeId = id;
+          pageNotificationReceipts.add(originalTitle, originalBody, id);
+        }
         avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
           emitNotification(
             id,
@@ -2549,6 +2708,7 @@
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         notifiedStore.markNotified(conversation.key, fingerprint);
+        pageNotificationReceipts.consumeMatching(conversation, detectedAt);
         pendingFallbacks.delete(conversation.key);
         return;
       }
@@ -2592,8 +2752,9 @@
     };
     let scanRunning = false;
     let scanPending = false;
-    const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
-    const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_SCANS);
+    let mismatchConfirmationTimer;
+    const unreadArrivals = new UnreadArrivalTracker();
+    const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -2626,34 +2787,52 @@
         )) {
           changed.add(key);
         }
-        const fingerprints = /* @__PURE__ */ new Map();
         const mismatches = [];
+        const stale = /* @__PURE__ */ new Set();
+        const unhydrated = /* @__PURE__ */ new Set();
         for (const conversation of conversations) {
-          if (!conversation.body) continue;
+          if (!conversation.body) {
+            if (changed.has(conversation.key)) unhydrated.add(conversation.key);
+            continue;
+          }
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
-          fingerprints.set(conversation.key, fingerprint);
-          const delivered = notifiedStore.notifiedFingerprint(conversation.key);
-          if (delivered !== void 0 && delivered !== fingerprint) {
+          const pageReceipt = pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+          if (pageReceipt) {
+            notifiedStore.markNotified(conversation.key, fingerprint);
+            unmatchedPageNotifications.consumeMatching(
+              conversation,
+              detectedAt,
+              PAGE_NOTIFICATION_MATCH_MS
+            );
+            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+          }
+          const reconciliation = notifiedStore.reconcileFingerprint(
+            conversation.key,
+            conversation.title,
+            fingerprint
+          );
+          if (reconciliation === "matched" || reconciliation === "migrated") {
+            if (changed.has(conversation.key)) stale.add(conversation.key);
+          } else if (reconciliation === "mismatched") {
+            changed.delete(conversation.key);
             mismatches.push([conversation.key, fingerprint]);
           }
         }
-        const recovered = mismatchTracker.observe(mismatches);
+        const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
+        clearTimeout(mismatchConfirmationTimer);
+        mismatchConfirmationTimer = void 0;
+        if (mismatchObservation.confirmInMs !== null) {
+          mismatchConfirmationTimer = setTimeout(
+            scanUnreadConversations,
+            Math.max(1, mismatchObservation.confirmInMs)
+          );
+        }
+        const recovered = mismatchObservation.recovered;
         if (recovered.length) {
           diag("notify.recovered", "unread preview diverged from its delivered fingerprint");
           for (const key of recovered) changed.add(key);
         }
         if (!changed.size) return;
-        const stale = /* @__PURE__ */ new Set();
-        const unhydrated = /* @__PURE__ */ new Set();
-        for (const conversation of conversations) {
-          if (!changed.has(conversation.key)) continue;
-          const fingerprint = fingerprints.get(conversation.key);
-          if (fingerprint === void 0) {
-            unhydrated.add(conversation.key);
-          } else if (notifiedStore.alreadyNotified(conversation.key, fingerprint)) {
-            stale.add(conversation.key);
-          }
-        }
         if (stale.size) {
           diag("notify.stale", "suppressed replay of an already-delivered preview");
         }

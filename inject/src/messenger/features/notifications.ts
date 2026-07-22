@@ -10,6 +10,7 @@ import {
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
+  PageNotificationReceiptStore,
   type PageNotificationSignal,
   StableMismatchTracker,
   UnreadArrivalTracker,
@@ -29,12 +30,9 @@ const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
 const ROW_MUTATION_MATCH_MS = 2000;
-// How long after the first scan a zero unread count is treated as the title
-// still hydrating rather than a real all-read baseline (see UnreadArrivalTracker).
-const HYDRATION_SETTLE_MS = 10_000;
-// Consecutive scans a delivered-fingerprint mismatch must persist before it
-// counts as new content (see StableMismatchTracker).
-const MISMATCH_STABLE_SCANS = 2;
+// A delivered-fingerprint mismatch must remain unchanged for real elapsed time
+// before it counts as new content (see StableMismatchTracker).
+const MISMATCH_STABLE_MS = 1_000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -130,15 +128,15 @@ export function initNotificationBridge() {
   // The trackers die with every page reload, and the auto-refresh reloads an
   // unfocused window periodically. Persist delivered fingerprints so hydration
   // after a reload cannot replay old unread rows.
-  const notifiedStore = new NotifiedSignatureStore(
-    (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })(),
-  );
+  const notificationStorage = (() => {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
 
   interface PendingFallback {
     timer: number;
@@ -201,7 +199,13 @@ export function initNotificationBridge() {
       // fast row match could consume the signal before it learned its id and the
       // reload-safe route would never be attached.
       const id = ++notifySeq;
-      if (pageMatch.signal) pageMatch.signal.nativeId = id;
+      if (pageMatch.signal) {
+        pageMatch.signal.nativeId = id;
+        // Persist only content-opaque matching hashes. If a reload destroys the
+        // in-memory page queue before the row appears, its first hydrated scan
+        // can still attach the route and suppress the fallback copy.
+        pageNotificationReceipts.add(originalTitle, originalBody, id);
+      }
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
         emitNotification(
           id,
@@ -308,6 +312,7 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       notifiedStore.markNotified(conversation.key, fingerprint);
+      pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
       return;
     }
@@ -359,8 +364,9 @@ export function initNotificationBridge() {
 
   let scanRunning = false;
   let scanPending = false;
-  const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
-  const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_SCANS);
+  let mismatchConfirmationTimer: number | undefined;
+  const unreadArrivals = new UnreadArrivalTracker();
+  const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -400,43 +406,64 @@ export function initNotificationBridge() {
       )) {
         changed.add(key);
       }
-      // An empty body means the row's preview has not hydrated — its
-      // fingerprint would be meaningless, so such rows are never delivered,
-      // matched, or mismatch-tracked. When the body arrives, the signature
-      // change produces a fresh verdict with the real text.
-      const fingerprints = new Map<string, string>();
+      // Reconcile every hydrated row before honoring any changed verdict. This
+      // is the single gate for exact replays, legacy placeholder migration,
+      // reload-persistent page receipts, and stable delivered mismatches.
       const mismatches: [string, string][] = [];
+      const stale = new Set<string>();
+      const unhydrated = new Set<string>();
       for (const conversation of conversations) {
-        if (!conversation.body) continue;
+        if (!conversation.body) {
+          if (changed.has(conversation.key)) unhydrated.add(conversation.key);
+          continue;
+        }
         const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
-        fingerprints.set(conversation.key, fingerprint);
-        const delivered = notifiedStore.notifiedFingerprint(conversation.key);
-        if (delivered !== undefined && delivered !== fingerprint) {
+
+        const pageReceipt = pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+        if (pageReceipt) {
+          notifiedStore.markNotified(conversation.key, fingerprint);
+          // Remove the same-document raw signal too; otherwise it could linger
+          // briefly and pair with a different but text-identical row.
+          unmatchedPageNotifications.consumeMatching(
+            conversation,
+            detectedAt,
+            PAGE_NOTIFICATION_MATCH_MS,
+          );
+          updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+        }
+
+        const reconciliation = notifiedStore.reconcileFingerprint(
+          conversation.key,
+          conversation.title,
+          fingerprint,
+        );
+        if (reconciliation === "matched" || reconciliation === "migrated") {
+          if (changed.has(conversation.key)) stale.add(conversation.key);
+        } else if (reconciliation === "mismatched") {
+          // A raw row/title change cannot bypass the hydration-stability guard.
+          // Only StableMismatchTracker may put this key back into `changed`.
+          changed.delete(conversation.key);
           mismatches.push([conversation.key, fingerprint]);
         }
       }
       // A stably diverged fingerprint means new content since the last
       // delivery — typically a message that arrived while a reload was in
       // flight, which every freshly-primed tracker above stays silent about.
-      const recovered = mismatchTracker.observe(mismatches);
+      const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
+      clearTimeout(mismatchConfirmationTimer);
+      mismatchConfirmationTimer = undefined;
+      if (mismatchObservation.confirmInMs !== null) {
+        mismatchConfirmationTimer = setTimeout(
+          scanUnreadConversations,
+          Math.max(1, mismatchObservation.confirmInMs),
+        );
+      }
+      const recovered = mismatchObservation.recovered;
       if (recovered.length) {
         diag("notify.recovered", "unread preview diverged from its delivered fingerprint");
         for (const key of recovered) changed.add(key);
       }
       if (!changed.size) return;
-      // A "changed" verdict for a preview that already produced a notification
-      // is a replay (typically the post-reload hydration race), not news.
-      const stale = new Set<string>();
-      const unhydrated = new Set<string>();
-      for (const conversation of conversations) {
-        if (!changed.has(conversation.key)) continue;
-        const fingerprint = fingerprints.get(conversation.key);
-        if (fingerprint === undefined) {
-          unhydrated.add(conversation.key);
-        } else if (notifiedStore.alreadyNotified(conversation.key, fingerprint)) {
-          stale.add(conversation.key);
-        }
-      }
       if (stale.size) {
         diag("notify.stale", "suppressed replay of an already-delivered preview");
       }
