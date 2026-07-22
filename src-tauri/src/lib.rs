@@ -40,8 +40,8 @@ use macos::{
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
 use notifications::{
-    clear_avatar_cache, show_message_notification, update_notification_route, NotifyMsg,
-    NotifyRouteMsg,
+    clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
+    NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
 };
 use settings::AppState;
 use settings::{
@@ -392,6 +392,23 @@ pub fn run() {
                         show_message_notification(notify_handle.clone(), msg);
                     }
                     Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
+                }
+            });
+
+            // Health notice from the page's sync monitor: a native heads-up
+            // when Messenger's data sync degrades while the app looks fine.
+            // Fixed strings only — the remote page's text is never rendered.
+            let sync_alert_handle = app.handle().clone();
+            app.listen_any("carrier:sync-alert", move |event| {
+                #[derive(serde::Deserialize)]
+                struct SyncAlertMsg {
+                    kind: SyncAlertKind,
+                }
+                match serde_json::from_str::<SyncAlertMsg>(event.payload()) {
+                    Ok(msg) => {
+                        show_sync_alert(sync_alert_handle.clone(), SyncAlertSource::Page, msg.kind);
+                    }
+                    Err(e) => log::warn!("carrier:sync-alert payload did not parse: {e}"),
                 }
             });
 

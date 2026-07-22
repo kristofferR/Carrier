@@ -178,6 +178,10 @@
   // inject/src/messenger/lib/realtime-health.ts
   var REALTIME_CONNECT_GRACE_MS = 15e3;
   var REALTIME_SILENCE_MS = 9e4;
+  var REALTIME_NEVER_CONNECTED_MS = 9e4;
+  function looksLikeFacebookErrorPage(doc) {
+    return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
+  }
   var elapsed2 = (now, since) => Math.max(0, now - since);
   var ConsecutiveFailureThreshold = class {
     constructor(limit) {
@@ -193,10 +197,13 @@
     }
   };
   var RealtimeRecoveryTracker = class {
-    constructor() {
+    constructor(startedAt) {
+      __publicField(this, "startedAt", startedAt);
       __publicField(this, "staleSources", /* @__PURE__ */ new Set());
+      __publicField(this, "everHealthy", false);
     }
     healthy(source) {
+      this.everHealthy = true;
       this.staleSources.delete(source);
     }
     stale(source) {
@@ -204,6 +211,14 @@
     }
     needsRecovery() {
       return this.staleSources.size > 0;
+    }
+    // "pending" (fresh page, transport still unproven) deliberately differs from
+    // "ok": the native side pauses its bad-transport timer on both, but only a
+    // proven-healthy "ok" resets its escalation counters.
+    status(now) {
+      if (this.staleSources.size > 0) return "stale";
+      if (this.everHealthy) return "ok";
+      return elapsed2(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
     }
   };
   function isMessengerRealtimeUrl(raw, base) {
@@ -402,6 +417,23 @@
     }
     let lastHeartbeatProtection;
     const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+    const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
+    const onFacebookErrorPage = () => {
+      try {
+        return looksLikeFacebookErrorPage({
+          hasBackLink: !!document.getElementById("back"),
+          hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
+          elementCount: document.getElementsByTagName("*").length
+        });
+      } catch (_) {
+        return false;
+      }
+    };
+    const realtimeStatus = () => {
+      if (!isMessengerContentPath(location.pathname)) return "pending";
+      if (onFacebookErrorPage()) return "error";
+      return realtimeRecovery.status(Date.now());
+    };
     const messengerContentPresent = () => {
       if (!isMessengerContentPath(location.pathname)) return true;
       const candidates = document.querySelectorAll(
@@ -435,7 +467,8 @@
         payload: {
           id: heartbeatId,
           protected: protectedNow,
-          content_present: messengerContentPresent()
+          content_present: messengerContentPresent(),
+          realtime: realtimeStatus()
         }
       })?.catch?.(() => {
       });
@@ -494,7 +527,6 @@
         return 1e3;
       }
     };
-    const realtimeRecovery = new RealtimeRecoveryTracker();
     const realtime = monitorRealtimeHealth({
       onHealthy: (source) => {
         realtimeRecovery.healthy(source);
@@ -525,12 +557,12 @@
       }
     };
     setInterval(() => {
+      realtime.check();
       emitHeartbeat();
       const reason = watchdog.heartbeat(pageIsActive(), Date.now());
       if (reason) {
         schedule(reason === "background" ? 2e3 : 1e3, reason, reason !== "background");
       }
-      realtime.check();
     }, 5e3);
   }
 
@@ -3437,6 +3469,279 @@
     else applySpellcheck();
   }
 
+  // inject/src/messenger/lib/sync-health.ts
+  var SYNC_REQUEST_TIMEOUT_MS = 3e4;
+  var SYNC_WINDOW_MS = 18e4;
+  var SYNC_FAILURE_FLOOR = 5;
+  var STUCK_LOADING_SAMPLES = 3;
+  var SampledPersistence = class {
+    constructor(limit) {
+      __publicField(this, "limit", limit);
+      __publicField(this, "count", 0);
+    }
+    observe(present) {
+      this.count = present ? this.count + 1 : 0;
+    }
+    persistent() {
+      return this.count >= this.limit;
+    }
+  };
+  function isMessengerSyncRequest(raw, base) {
+    let url;
+    try {
+      url = new URL(raw, base);
+    } catch (_) {
+      return false;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    const facebookHost = host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
+    return facebookHost && url.pathname.startsWith("/api/graphql");
+  }
+  function syncResponseSucceeded(status) {
+    return status >= 200 && status < 400;
+  }
+  var SyncHealthTracker = class {
+    constructor() {
+      __publicField(this, "outstanding", /* @__PURE__ */ new Map());
+      __publicField(this, "outcomes", []);
+      __publicField(this, "nextId", 1);
+    }
+    started(now) {
+      const id = this.nextId++;
+      this.outstanding.set(id, now);
+      return id;
+    }
+    // Outcomes only count while the request is still outstanding: a request
+    // already swept as hung must not add a second outcome when it eventually
+    // completes, however it completes.
+    succeeded(id, now) {
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: true });
+    }
+    failed(id, now) {
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
+    }
+    /** Forget a request without recording an outcome (e.g. it was aborted
+     * locally or failed while offline — that says nothing about Facebook). */
+    abandoned(id) {
+      this.outstanding.delete(id);
+    }
+    /** Forget everything in flight (the machine went offline: whatever those
+     * requests do next is about the local network, not Facebook). */
+    abandonOutstanding() {
+      this.outstanding.clear();
+    }
+    /** Count requests hung past the deadline as failures, each once. */
+    sweep(now) {
+      for (const [id, startedAt] of this.outstanding) {
+        if (now - startedAt >= SYNC_REQUEST_TIMEOUT_MS) {
+          this.outstanding.delete(id);
+          this.outcomes.push({ at: now, ok: false });
+        }
+      }
+      this.outcomes = this.outcomes.filter((outcome) => now - outcome.at < SYNC_WINDOW_MS);
+    }
+    counts(now) {
+      let ok = 0;
+      let bad = 0;
+      for (const outcome of this.outcomes) {
+        if (now - outcome.at >= SYNC_WINDOW_MS) continue;
+        if (outcome.ok) ok += 1;
+        else bad += 1;
+      }
+      return { ok, bad };
+    }
+    degraded(now) {
+      const { ok, bad } = this.counts(now);
+      return bad >= SYNC_FAILURE_FLOOR && bad > ok;
+    }
+    /** Content-free description of the current window for diagnostics. */
+    summary(now) {
+      const { ok, bad } = this.counts(now);
+      return `${bad} failed / ${ok} ok in window`;
+    }
+  };
+
+  // inject/src/messenger/features/sync-health.ts
+  var SYNC_CHECK_INTERVAL_MS = 1e4;
+  function initSyncHealth() {
+    const tracker = new SyncHealthTracker();
+    try {
+      const nativeFetch = window.fetch;
+      const wrappedFetch = new Proxy(nativeFetch, {
+        apply(target, thisArg, args) {
+          let tracked;
+          try {
+            const input = args[0];
+            const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
+            if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
+              tracked = tracker.started(Date.now());
+            }
+          } catch (_) {
+          }
+          const result = Reflect.apply(target, thisArg, args);
+          if (tracked !== void 0) {
+            const id = tracked;
+            result.then(
+              (response) => {
+                if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
+                else if (navigator.onLine) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
+              },
+              (error) => {
+                const aborted = error?.name === "AbortError";
+                if (navigator.onLine && !aborted) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
+              }
+            );
+          }
+          return result;
+        }
+      });
+      Object.defineProperty(window, "fetch", {
+        value: wrappedFetch,
+        writable: true,
+        configurable: true
+      });
+    } catch (_) {
+      diag("sync.requests", "could not observe Messenger sync fetches");
+    }
+    try {
+      const xhrUrls = /* @__PURE__ */ new WeakMap();
+      const nativeOpen = XMLHttpRequest.prototype.open;
+      const nativeSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(...args) {
+        try {
+          xhrUrls.set(this, String(args[1]));
+        } catch (_) {
+        }
+        return nativeOpen.apply(this, args);
+      };
+      XMLHttpRequest.prototype.send = function(...args) {
+        try {
+          const url = xhrUrls.get(this);
+          if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
+            const id = tracker.started(Date.now());
+            this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
+            this.addEventListener(
+              "loadend",
+              () => {
+                if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
+                else if (navigator.onLine) tracker.failed(id, Date.now());
+                else tracker.abandoned(id);
+              },
+              { once: true }
+            );
+          }
+        } catch (_) {
+        }
+        return nativeSend.apply(this, args);
+      };
+    } catch (_) {
+      diag("sync.requests", "could not observe Messenger sync XHRs");
+    }
+    const stuckLoading = new SampledPersistence(STUCK_LOADING_SAMPLES);
+    const hasRunningAnimation = (root) => {
+      const nodes = [root, ...Array.from(root.querySelectorAll("*")).slice(0, 8)];
+      for (const node of nodes) {
+        const style = getComputedStyle(node);
+        if (style.animationName !== "none" && style.animationPlayState !== "paused") return true;
+      }
+      return false;
+    };
+    const isActuallyVisible = (el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 1 || rect.height <= 1 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
+        return false;
+      }
+      let current = el;
+      while (current) {
+        const style = getComputedStyle(current);
+        if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || Number(style.opacity) <= 0) {
+          return false;
+        }
+        current = current.parentElement;
+      }
+      return true;
+    };
+    const loadingSpinnerVisible = () => {
+      try {
+        for (const el of document.querySelectorAll('[role="progressbar"], [role="status"]')) {
+          if (isActuallyVisible(el) && hasRunningAnimation(el)) return true;
+        }
+      } catch (_) {
+      }
+      return false;
+    };
+    const SYNC_BANNER_ID = "carrier-sync-banner";
+    const showSyncBanner = () => {
+      try {
+        if (document.getElementById(SYNC_BANNER_ID)) return;
+        const banner = document.createElement("div");
+        banner.id = SYNC_BANNER_ID;
+        banner.setAttribute("role", "alert");
+        banner.textContent = "⚠ Messenger sync is broken — chats may be out of date";
+        Object.assign(banner.style, {
+          position: "fixed",
+          top: "10px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: "2147483646",
+          background: "#ffba00",
+          color: "#1c1e21",
+          padding: "6px 14px",
+          borderRadius: "999px",
+          boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+          font: "600 12px -apple-system, system-ui, sans-serif",
+          pointerEvents: "none",
+          maxWidth: "90vw",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis"
+        });
+        (document.body || document.documentElement).appendChild(banner);
+      } catch (_) {
+      }
+    };
+    const hideSyncBanner = () => {
+      try {
+        document.getElementById(SYNC_BANNER_ID)?.remove();
+      } catch (_) {
+      }
+    };
+    const emitSyncAlert = (kind) => invoke("plugin:event|emit", {
+      event: "carrier:sync-alert",
+      payload: { kind }
+    })?.catch?.(() => {
+    });
+    window.addEventListener("offline", () => tracker.abandonOutstanding());
+    let degraded = false;
+    setInterval(() => {
+      if (!navigator.onLine) {
+        tracker.abandonOutstanding();
+        return;
+      }
+      const now = Date.now();
+      tracker.sweep(now);
+      if (!document.hidden && isMessengerContentPath(location.pathname)) {
+        stuckLoading.observe(loadingSpinnerVisible());
+      }
+      const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
+      if (degradedNow && !degraded) {
+        degraded = true;
+        const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        diag("sync.stalled", `messenger sync degraded: ${reason}`);
+        emitSyncAlert("degraded");
+      } else if (!degradedNow && degraded) {
+        degraded = false;
+        diag("sync.stalled", "messenger sync recovered");
+        emitSyncAlert("recovered");
+      }
+      if (degraded) showSyncBanner();
+      else hideSyncBanner();
+    }, SYNC_CHECK_INTERVAL_MS);
+  }
+
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
   var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
@@ -3945,6 +4250,7 @@
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("notifications", initNotificationBridge);
+    initFeature("sync-health", initSyncHealth);
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);
     initFeature("unread-badge", initUnreadBadge);
