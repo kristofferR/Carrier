@@ -14,7 +14,7 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
   title: string;
   body: string;
 } {
-  const values: string[] = [];
+  const values: { text: string; y: number }[] = [];
   for (const candidate of candidates
     .filter(
       ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) =>
@@ -27,11 +27,19 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
     )
     .sort((left, right) => left.y - right.y || left.x - right.x)) {
     const text = candidate.text.replace(/\s+/g, " ").trim();
-    if (text && values[values.length - 1] !== text) values.push(text);
+    if (!text) continue;
+    // Collapse wrapper duplicates: the same text rendered at the same
+    // vertical position. The same text on a different line is real content —
+    // a contact named "OK" sending "OK" must keep both title and preview.
+    const last = values[values.length - 1];
+    if (last && last.text === text && Math.abs(last.y - candidate.y) < 1) continue;
+    values.push({ text, y: candidate.y });
   }
+  // An empty body means the row's preview has not hydrated yet — callers use
+  // that to defer notification decisions instead of acting on placeholder text.
   return {
-    title: (values[0] || "Messenger").slice(0, 80),
-    body: (values[1] || "New message").slice(0, 240),
+    title: (values[0]?.text || "Messenger").slice(0, 80),
+    body: (values[1]?.text || "").slice(0, 240),
   };
 }
 

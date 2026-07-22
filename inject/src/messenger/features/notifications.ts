@@ -10,7 +10,10 @@ import {
   notificationDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
+  PageNotificationReceiptStore,
   type PageNotificationSignal,
+  READ_TRANSITION_CONFIRM_MS,
+  StableMismatchTracker,
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
 import { threadIdFromHref } from "../lib/threads";
@@ -28,6 +31,12 @@ const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
 const ROW_MUTATION_MATCH_MS = 2000;
+// A delivered-fingerprint mismatch must remain unchanged for real elapsed time
+// before it counts as new content (see StableMismatchTracker).
+const MISMATCH_STABLE_MS = 1_000;
+// How long after the first scan a zero unread count is treated as the title
+// still hydrating rather than a real all-read baseline (see UnreadArrivalTracker).
+const HYDRATION_SETTLE_MS = 10_000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -123,15 +132,15 @@ export function initNotificationBridge() {
   // The trackers die with every page reload, and the auto-refresh reloads an
   // unfocused window periodically. Persist delivered fingerprints so hydration
   // after a reload cannot replay old unread rows.
-  const notifiedStore = new NotifiedSignatureStore(
-    (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })(),
-  );
+  const notificationStorage = (() => {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
 
   interface PendingFallback {
     timer: number;
@@ -146,16 +155,32 @@ export function initNotificationBridge() {
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
   // net below never duplicates Facebook's normal native notification.
+  // Persisting "delivered" is NOT this function's job: the native emit is
+  // still waiting on the avatar conversion, and a reload in that window must
+  // find no delivered state or the post-reload fallback would be suppressed
+  // for a banner that never existed. The pairing is returned as `deliver` and
+  // the emitter persists it right after the emit is actually queued.
   const markPageNotification = (
     title: string,
     body: string,
-  ): { threadPath?: string; signal?: PageNotificationSignal } => {
+  ): {
+    threadPath?: string;
+    deliver?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+    signal?: PageNotificationSignal;
+  } => {
     for (const [key, pending] of pendingFallbacks) {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
-      notifiedStore.markNotified(key, pending.fingerprint);
-      return { threadPath: pending.threadPath };
+      return {
+        threadPath: pending.threadPath,
+        deliver: {
+          key,
+          fingerprint: pending.fingerprint,
+          bodyHash: notificationDedupeKey("", pending.body),
+          expect: notifiedStore.notifiedFingerprint(key),
+        },
+      };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
@@ -196,6 +221,19 @@ export function initNotificationBridge() {
       const id = ++notifySeq;
       if (pageMatch.signal) pageMatch.signal.nativeId = id;
       avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
+        // Persist only content-opaque matching hashes, and only now that the
+        // native emit is actually queued. If a reload destroys the in-memory
+        // page queue before the row appears, the next document's first
+        // hydrated scan can still attach the route and suppress the fallback
+        // copy — but a reload that lands during the avatar conversion (before
+        // any banner exists) must leave no receipt, or the fallback would be
+        // suppressed for a notification that was never shown. Likewise a
+        // signal a row already consumed during the conversion is delivered
+        // and done — a receipt written now would outlive it and swallow a
+        // later same-text message.
+        if (pageMatch.signal && !pageMatch.signal.matched) {
+          pageNotificationReceipts.add(originalTitle, originalBody, id);
+        }
         emitNotification(
           id,
           hidePreview ? "Messenger" : originalTitle,
@@ -211,6 +249,31 @@ export function initNotificationBridge() {
           },
           pageMatch.threadPath,
         );
+        // The banner is queued — only now is it safe to persist "delivered"
+        // for the pairings this signal absorbed, whether the row matched
+        // before construction (deliver) or during the conversion
+        // (pendingDelivery, parked by scheduleFallback). Each write is
+        // conditional on the store still holding what it held at pairing
+        // time: if a NEWER message in the thread was delivered during the
+        // conversion, this late write must not regress the store to the
+        // older fingerprint (the next scan would mismatch and replay).
+        if (
+          pageMatch.deliver &&
+          notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+        ) {
+          notifiedStore.markNotified(
+            pageMatch.deliver.key,
+            pageMatch.deliver.fingerprint,
+            pageMatch.deliver.bodyHash,
+          );
+        }
+        if (pageMatch.signal) {
+          pageMatch.signal.emitted = true;
+          const delivery = pageMatch.signal.pendingDelivery;
+          if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+            notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+          }
+        }
       });
     }
     // Nudge the auto-refresh so the conversation view catches up even when
@@ -283,6 +346,7 @@ export function initNotificationBridge() {
 
   const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    const bodyHash = notificationDedupeKey("", conversation.body);
     // Clear an older pending preview for this thread before checking the page
     // queue. Otherwise a page Notification can consume the new row while the
     // stale timer remains armed and later produces a duplicate.
@@ -300,7 +364,20 @@ export function initNotificationBridge() {
       if (pageSignal.nativeId !== undefined && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
-      notifiedStore.markNotified(conversation.key, fingerprint);
+      if (pageSignal.emitted) {
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+      } else {
+        // The signal's native emit is still waiting on the avatar conversion.
+        // A reload before it queues would leave no banner, so the delivered
+        // state must ride the emitter, not this pairing.
+        pageSignal.pendingDelivery = {
+          key: conversation.key,
+          fingerprint,
+          bodyHash,
+          expect: notifiedStore.notifiedFingerprint(conversation.key),
+        };
+      }
+      pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
       return;
     }
@@ -324,7 +401,7 @@ export function initNotificationBridge() {
       pendingFallbacks.delete(conversation.key);
       // Mark only at the actual delivery boundary. A reload before this point
       // must not persist a false "already delivered" state.
-      notifiedStore.markNotified(conversation.key, fingerprint);
+      notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
       diag(
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
@@ -352,7 +429,23 @@ export function initNotificationBridge() {
 
   let scanRunning = false;
   let scanPending = false;
-  const unreadArrivals = new UnreadArrivalTracker();
+  let mismatchConfirmationTimer: number | undefined;
+  const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
+  const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
+  // Arrivals attributed while their row preview was still empty. The
+  // signature tracker only observes hydrated rows, so without carrying these
+  // keys the later hydration would prime silently and the arrival would
+  // never notify. Delivered once the row hydrates; dropped if it turns read.
+  const pendingArrivalKeys = new Set<string>();
+  // Threads this document has observed rendered hydrated-and-read, CONFIRMED
+  // across scans spanning real time: mid-hydration a row can show its text
+  // before its unread styling, and a single such glimpse must not qualify a
+  // pre-existing unread thread for the early-arrival rescue. Bounded like the
+  // sibling stores; a row from this set turning unread is a real arrival even
+  // during the settle window.
+  const READ_OBSERVED_LIMIT = 500;
+  const readObservedKeys = new Set<string>();
+  const readCandidateAt = new Map<string, number>();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -379,45 +472,187 @@ export function initNotificationBridge() {
         observed.map(({ key }) => key),
         detectedAt,
       );
+      // Only hydrated rows feed the signature tracker — in both directions.
+      // Priming an unhydrated row with its title would report a "change" the
+      // moment the body arrives and replay store-less threads after every
+      // reload; and an unhydrated row proves nothing about read state, so it
+      // must not evict a tracked signature either. The first hydrated
+      // observation primes silently instead.
+      const hydrated = conversations.filter(({ body }) => body.length > 0);
       const changed = new Set(
         conversationTracker.observe(
-          conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
-          observed.map(({ key }) => key),
+          hydrated.map(({ key, body }) => ({ key, signature: body })),
+          observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
         ),
       );
+      for (const conversation of observed) {
+        if (!conversation.body) continue;
+        if (conversation.unread) {
+          readCandidateAt.delete(conversation.key);
+          continue;
+        }
+        if (readObservedKeys.has(conversation.key)) continue;
+        const since = readCandidateAt.get(conversation.key);
+        if (since === undefined) {
+          readCandidateAt.set(conversation.key, detectedAt);
+          if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
+            readCandidateAt.delete(readCandidateAt.keys().next().value!);
+          }
+          continue;
+        }
+        if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
+          readCandidateAt.delete(conversation.key);
+          readObservedKeys.add(conversation.key);
+          if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
+            readObservedKeys.delete(readObservedKeys.keys().next().value!);
+          }
+        }
+      }
       for (const key of unreadArrivals.observeUnreadCount(
         unreadCountFromTitle(document.title || ""),
         detectedAt,
         ROW_MUTATION_MATCH_MS,
+        // A fully hydrated list with no unread rows corroborates a zero
+        // title: it is the inbox's real state, not a still-unstamped title,
+        // so a first arrival inside the settle window can still report.
+        observed.length > 0 &&
+          conversations.length === 0 &&
+          observed.every(({ body }) => body.length > 0),
+        readObservedKeys,
       )) {
         changed.add(key);
       }
-      if (!changed.size) return;
-      // A "changed" verdict for a preview that already produced a notification
-      // is a replay (typically the post-reload hydration race), not news.
-      const stale = new Set<string>();
-      for (const conversation of conversations) {
-        if (
-          changed.has(conversation.key) &&
-          notifiedStore.alreadyNotified(
-            conversation.key,
-            notificationDedupeKey(conversation.title, conversation.body),
-          )
-        ) {
-          stale.add(conversation.key);
+      // Carry earlier attributed arrivals whose row has hydrated since, and
+      // drop the ones whose row was read before ever hydrating.
+      for (const conversation of hydrated) {
+        if (pendingArrivalKeys.delete(conversation.key)) changed.add(conversation.key);
+      }
+      for (const key of pendingArrivalKeys) {
+        const row = observed.find((conversation) => conversation.key === key);
+        if (row && !conversations.some((conversation) => conversation.key === key)) {
+          pendingArrivalKeys.delete(key);
         }
       }
+      // Reconcile every hydrated row before honoring any changed verdict. This
+      // is the single gate for exact replays, legacy placeholder migration,
+      // reload-persistent page receipts, and stable delivered mismatches.
+      // Receipts are matched against all hydrated rows at once: only an
+      // identity with exactly one visible candidate may consume one, so two
+      // threads sharing display text cannot steal each other's receipt.
+      // A receipt matching a read row was evidently read — retire it so it
+      // cannot swallow the pairing for a later identical-text message. This
+      // drops even when an unread twin also matches: which thread the
+      // receipt belonged to is unknowable then, and a possible duplicate
+      // fallback (absorbed by the native dedupe) beats routing the click to
+      // the wrong conversation or suppressing the unread thread's banner.
+      pageNotificationReceipts.discardReadMatches(
+        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        detectedAt,
+      );
+      const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
+      const mismatches: [string, string][] = [];
+      const stale = new Set<string>();
+      const unhydrated = new Set<string>();
+      for (const conversation of conversations) {
+        if (!conversation.body) {
+          if (changed.has(conversation.key)) {
+            unhydrated.add(conversation.key);
+            // Park the arrival until a scan sees the hydrated preview —
+            // nothing else will re-report it once the count has moved on.
+            pendingArrivalKeys.add(conversation.key);
+            if (pendingArrivalKeys.size > 50) {
+              pendingArrivalKeys.delete(pendingArrivalKeys.keys().next().value!);
+            }
+          }
+          continue;
+        }
+        const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+        const bodyHash = notificationDedupeKey("", conversation.body);
+
+        const pageReceipt = pageReceipts.get(conversation.key);
+        if (pageReceipt) {
+          // An earlier scan may have armed a fallback while this receipt was
+          // still ambiguous — the page already showed this notification, so
+          // that timer must not fire a duplicate.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) clearTimeout(pending.timer);
+          pendingFallbacks.delete(conversation.key);
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          // Remove the same-document raw signal too; otherwise it could linger
+          // briefly and pair with a different but text-identical row.
+          unmatchedPageNotifications.consumeMatching(
+            conversation,
+            detectedAt,
+            PAGE_NOTIFICATION_MATCH_MS,
+          );
+          updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+        }
+
+        const reconciliation = notifiedStore.reconcileFingerprint(
+          conversation.key,
+          conversation.title,
+          fingerprint,
+          bodyHash,
+        );
+        if (reconciliation === "matched" || reconciliation === "migrated") {
+          if (changed.has(conversation.key)) stale.add(conversation.key);
+          // The current content is already delivered — an armed fallback for
+          // this thread (e.g. from a mismatch the hydration then corrected)
+          // would only replay it or emit an outdated preview.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) {
+            clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+          }
+        } else if (reconciliation === "mismatched") {
+          // A raw row/title change cannot bypass the hydration-stability guard.
+          // Only StableMismatchTracker may put this key back into `changed`.
+          changed.delete(conversation.key);
+          mismatches.push([conversation.key, fingerprint]);
+          // If the preview moved on while a fallback for the old text was
+          // armed, that timer would deliver a stale preview — cancel it; the
+          // mismatch tracker re-arms once the new fingerprint stabilizes.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending && pending.fingerprint !== fingerprint) {
+            clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+          }
+        }
+      }
+      // A stably diverged fingerprint means new content since the last
+      // delivery — typically a message that arrived while a reload was in
+      // flight, which every freshly-primed tracker above stays silent about.
+      const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
+      clearTimeout(mismatchConfirmationTimer);
+      mismatchConfirmationTimer = undefined;
+      if (mismatchObservation.confirmInMs !== null) {
+        mismatchConfirmationTimer = setTimeout(
+          scanUnreadConversations,
+          Math.max(1, mismatchObservation.confirmInMs),
+        );
+      }
+      const recovered = mismatchObservation.recovered;
+      if (recovered.length) {
+        diag("notify.recovered", "unread preview diverged from its delivered fingerprint");
+        for (const key of recovered) changed.add(key);
+      }
+      if (!changed.size) return;
       if (stale.size) {
         diag("notify.stale", "suppressed replay of an already-delivered preview");
       }
       // Skip the auto-refresh nudge too when nothing genuinely changed, so a
-      // stale replay cannot schedule the very reload that re-triggers it.
-      if ([...changed].every((key) => stale.has(key))) return;
+      // stale or unhydrated replay cannot schedule the very reload that
+      // re-triggers it.
+      if ([...changed].every((key) => stale.has(key) || unhydrated.has(key))) return;
       try {
         window.__carrierOnNotification?.();
       } catch (_) {}
       for (const conversation of conversations) {
-        if (changed.has(conversation.key) && !stale.has(conversation.key)) {
+        if (
+          changed.has(conversation.key) &&
+          !stale.has(conversation.key) &&
+          !unhydrated.has(conversation.key)
+        ) {
           scheduleFallback(conversation, detectedAt);
         }
       }
