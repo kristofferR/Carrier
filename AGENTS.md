@@ -137,6 +137,9 @@ v1.0.0 is released; `main` is the trunk. **Live work lives on GitHub, not here**
 - GitHub: **kristofferR** (`gh auth switch -u kristofferR`). Trigger CodeRabbit
   **only** through `crq` (never post `@coderabbitai review` directly). A
   `crq autoreview` daemon may be running.
+- GitHub comments: a request to **draft** a comment is text-only; never post it.
+  A request to **write**, **comment**, **post**, or **send** a comment means
+  publish it on GitHub without asking for separate approval.
 - Commits: branch off by default — though the maintainer may explicitly ask for a
   direct push to `main` (as with the post-v1.0 merge above). One logical change,
   end with the `Claude-Session:` footer, **no AI attribution**, non-closing issue
