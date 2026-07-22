@@ -2614,8 +2614,7 @@
         if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
-        notifiedStore.markNotified(key, pending.fingerprint);
-        return { threadPath: pending.threadPath };
+        return { threadPath: pending.threadPath, deliver: { key, fingerprint: pending.fingerprint } };
       }
       return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
     };
@@ -2648,6 +2647,14 @@
             },
             pageMatch.threadPath
           );
+          if (pageMatch.deliver) {
+            notifiedStore.markNotified(pageMatch.deliver.key, pageMatch.deliver.fingerprint);
+          }
+          if (pageMatch.signal) {
+            pageMatch.signal.emitted = true;
+            const delivery = pageMatch.signal.pendingDelivery;
+            if (delivery) notifiedStore.markNotified(delivery.key, delivery.fingerprint);
+          }
         });
       }
       try {
@@ -2722,7 +2729,11 @@
         if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
-        notifiedStore.markNotified(conversation.key, fingerprint);
+        if (pageSignal.emitted) {
+          notifiedStore.markNotified(conversation.key, fingerprint);
+        } else {
+          pageSignal.pendingDelivery = { key: conversation.key, fingerprint };
+        }
         pageNotificationReceipts.consumeMatching(conversation, detectedAt);
         pendingFallbacks.delete(conversation.key);
         return;

@@ -51,6 +51,16 @@ export interface PageNotificationSignal extends NotificationText {
    * that pairing would linger and silently swallow a later same-text message.
    */
   matched?: boolean;
+  /**
+   * Set once the native emit for this signal has actually been queued (the
+   * avatar conversion resolves first). Until then a row pairing must not
+   * persist its delivered fingerprint — a reload during the conversion would
+   * leave no banner while the persisted state suppresses the post-reload
+   * fallback as already delivered. Pairings that race the conversion park
+   * their delivery here instead and the emitter persists it after emitting.
+   */
+  emitted?: boolean;
+  pendingDelivery?: { key: string; fingerprint: string };
 }
 
 const normalizeNotificationText = (value: string) =>

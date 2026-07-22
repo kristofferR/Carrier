@@ -154,16 +154,24 @@ export function initNotificationBridge() {
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
   // net below never duplicates Facebook's normal native notification.
+  // Persisting "delivered" is NOT this function's job: the native emit is
+  // still waiting on the avatar conversion, and a reload in that window must
+  // find no delivered state or the post-reload fallback would be suppressed
+  // for a banner that never existed. The pairing is returned as `deliver` and
+  // the emitter persists it right after the emit is actually queued.
   const markPageNotification = (
     title: string,
     body: string,
-  ): { threadPath?: string; signal?: PageNotificationSignal } => {
+  ): {
+    threadPath?: string;
+    deliver?: { key: string; fingerprint: string };
+    signal?: PageNotificationSignal;
+  } => {
     for (const [key, pending] of pendingFallbacks) {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
-      notifiedStore.markNotified(key, pending.fingerprint);
-      return { threadPath: pending.threadPath };
+      return { threadPath: pending.threadPath, deliver: { key, fingerprint: pending.fingerprint } };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
@@ -232,6 +240,18 @@ export function initNotificationBridge() {
           },
           pageMatch.threadPath,
         );
+        // The banner is queued — only now is it safe to persist "delivered"
+        // for the pairings this signal absorbed, whether the row matched
+        // before construction (deliver) or during the conversion
+        // (pendingDelivery, parked by scheduleFallback).
+        if (pageMatch.deliver) {
+          notifiedStore.markNotified(pageMatch.deliver.key, pageMatch.deliver.fingerprint);
+        }
+        if (pageMatch.signal) {
+          pageMatch.signal.emitted = true;
+          const delivery = pageMatch.signal.pendingDelivery;
+          if (delivery) notifiedStore.markNotified(delivery.key, delivery.fingerprint);
+        }
       });
     }
     // Nudge the auto-refresh so the conversation view catches up even when
@@ -321,7 +341,14 @@ export function initNotificationBridge() {
       if (pageSignal.nativeId !== undefined && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
-      notifiedStore.markNotified(conversation.key, fingerprint);
+      if (pageSignal.emitted) {
+        notifiedStore.markNotified(conversation.key, fingerprint);
+      } else {
+        // The signal's native emit is still waiting on the avatar conversion.
+        // A reload before it queues would leave no banner, so the delivered
+        // state must ride the emitter, not this pairing.
+        pageSignal.pendingDelivery = { key: conversation.key, fingerprint };
+      }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
       return;
