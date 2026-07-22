@@ -11,8 +11,8 @@ use url::Url;
 
 use crate::custom_css::apply_custom_css;
 use crate::download::{
-    downloads_dir, filename_from_url, is_allowed_download, is_unsafe_download, sanitize_filename,
-    unique_path,
+    downloads_dir, filename_from_url, forget_download, is_allowed_download, is_unsafe_download,
+    remember_download, sanitize_filename, unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -81,6 +81,7 @@ pub(crate) fn build_app_window(
     let watchdog = WebviewWatchdog::new();
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
+    let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -88,7 +89,7 @@ pub(crate) fn build_app_window(
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
         .user_agent(user_agent())
-        .initialization_script(init_script(settings, watchdog_id))
+        .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
         .on_page_load(move |window, payload| match payload.event() {
             tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
             tauri::webview::PageLoadEvent::Finished => {
@@ -152,9 +153,13 @@ pub(crate) fn build_app_window(
                     return false;
                 }
                 *destination = unique_path(dir.join(name));
+                remember_download(&url, destination.clone());
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
+                if !success {
+                    forget_download(&url);
+                }
                 notify_download_finished(&webview, &url, success);
                 true
             }
@@ -172,6 +177,11 @@ pub(crate) fn build_app_window(
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
         })?;
+    app.state::<AppState>()
+        .download_reveal_tokens
+        .lock()
+        .unwrap()
+        .insert(label.to_string(), download_reveal_token);
     install_app_window_runtime_handler(app, &window);
     watchdog.install(&window);
     Ok(window)
@@ -580,9 +590,11 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     }
 }
 
-fn init_script(settings: &Settings, watchdog_id: u64) -> String {
+fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &str) -> String {
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
+    let reveal_token_literal =
+        serde_json::to_string(download_reveal_token).expect("reveal token serialises");
     format!(
         r#"(function () {{
   var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
@@ -602,6 +614,25 @@ fn init_script(settings: &Settings, watchdog_id: u64) -> String {
   }}
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
+
+  // Keep the per-window reveal credential and the original IPC function in
+  // this initialization script's lexical scope. Facebook can emit the same
+  // event name, inspect the DOM, and replace window.__TAURI_INTERNALS__, but it
+  // cannot read this closure or forge the native authorization it carries.
+  var carrierRevealDownload = (function (invoke, authorization) {{
+    return function (url) {{
+      if (!invoke) return;
+      return invoke('plugin:event|emit', {{
+        event: 'carrier:reveal-download',
+        payload: {{ url: url, authorization: authorization }}
+      }});
+    }};
+  }})(
+    window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
+      ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
+      : undefined,
+    {reveal_token_literal}
+  );
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -793,8 +824,9 @@ mod tests {
 
     #[test]
     fn init_script_waits_for_webview2_document_element() {
-        let script = init_script(&Settings::default(), 42);
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
         assert!(script.contains("window.__CARRIER_HEARTBEAT_ID__ = 42;"));
+        assert!(script.contains("test-reveal-token"));
         assert!(script.contains("if (!document.documentElement) return false;"));
         assert!(script.contains(").observe(document, { childList: true, subtree: true });"));
 
@@ -810,7 +842,7 @@ mod tests {
     #[cfg(feature = "mcp")]
     #[test]
     fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
-        let script = init_script(&Settings::default(), 42);
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
         let local_branch = script
             .find("if (carrierHost === 'tauri.localhost')")
             .unwrap();

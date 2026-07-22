@@ -6,11 +6,13 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{Listener, Manager};
+use tauri_plugin_opener::OpenerExt;
 mod commands;
 mod custom_css;
 mod diag;
@@ -30,6 +32,7 @@ mod webview_watchdog;
 mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
+use download::lookup_download;
 use hotkey::reconcile_startup_global_hotkey;
 #[cfg(target_os = "linux")]
 use linux::observe_system_theme_changes;
@@ -52,6 +55,10 @@ use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{build_app_window, install_main_close_handler, show_settings_window};
+
+fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
+    !candidate.is_empty() && tokens.values().any(|token| token == candidate)
+}
 
 /// The page we wrap.
 const HOME_URL: &str = "https://www.facebook.com/messages";
@@ -211,6 +218,7 @@ pub fn run() {
             zoom_generation: AtomicUsize::new(0),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
+            download_reveal_tokens: Mutex::new(HashMap::new()),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -270,6 +278,44 @@ pub fn run() {
             app.listen_any("carrier:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
+            });
+
+            // The injected toast handler echoes the download URL together with
+            // its closure-scoped per-window secret. Remote page scripts can emit
+            // this event too, so require that authorization before resolving the
+            // URL through the trusted map populated by `on_download`; a page-
+            // supplied filesystem path is never accepted.
+            let reveal_handle = app.handle().clone();
+            app.listen_any("carrier:reveal-download", move |event| {
+                #[derive(serde::Deserialize)]
+                struct RevealDownloadMsg {
+                    url: String,
+                    authorization: String,
+                }
+
+                let Ok(msg) = serde_json::from_str::<RevealDownloadMsg>(event.payload()) else {
+                    log::warn!("carrier:reveal-download payload did not parse");
+                    return;
+                };
+                let authorized = {
+                    let state = reveal_handle.state::<AppState>();
+                    let tokens = state.download_reveal_tokens.lock().unwrap();
+                    valid_download_reveal_token(&tokens, &msg.authorization)
+                };
+                if !authorized {
+                    log::warn!("carrier:reveal-download was not authorized by a trusted click");
+                    return;
+                }
+                let Some(path) = lookup_download(&msg.url) else {
+                    log::warn!("carrier:reveal-download had no recent matching download");
+                    return;
+                };
+                let h = reveal_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = h.opener().reveal_item_in_dir(path) {
+                        log::warn!("failed to reveal recent download: {error}");
+                    }
+                });
             });
 
             // Unread count from the page → tray tooltip (the Dock badge is set
@@ -498,5 +544,18 @@ mod tests {
         assert!(!should_disable_webkit_dmabuf_renderer(false, false));
         assert!(!should_disable_webkit_dmabuf_renderer(true, true));
         assert!(!should_disable_webkit_dmabuf_renderer(false, true));
+    }
+
+    #[test]
+    fn download_reveal_tokens_must_match_a_registered_window() {
+        let tokens = HashMap::from([
+            ("main".to_string(), "main-secret".to_string()),
+            ("win-2".to_string(), "second-secret".to_string()),
+        ]);
+
+        assert!(valid_download_reveal_token(&tokens, "main-secret"));
+        assert!(valid_download_reveal_token(&tokens, "second-secret"));
+        assert!(!valid_download_reveal_token(&tokens, ""));
+        assert!(!valid_download_reveal_token(&tokens, "page-supplied"));
     }
 }

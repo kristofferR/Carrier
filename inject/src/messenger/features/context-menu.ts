@@ -1,7 +1,7 @@
 /* --------------------- Adaptive context menu -------------------------- */
 // Right-click an image, video or link to get the relevant actions
 // (download / copy / copy address / open in browser), matching the original.
-import { cleanSharedUrl, openUrl, toast } from "../bridge";
+import { cleanSharedUrl, openUrl, toast, toastDownloadSaved } from "../bridge";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
@@ -22,7 +22,7 @@ const copyAddress = (text: string) =>
 // Download a media src by letting the WebView initiate the download, which the
 // Rust `on_download` handler then writes to Downloads. (Custom commands can't
 // be called from the remote Facebook origin, only plugins / WebView hooks.)
-export async function downloadSrc(src: string, fallbackName: string) {
+export async function downloadSrc(src: string, fallbackName: string): Promise<string> {
   // Fetch into a same-origin blob so the `download` attribute is honoured (it's
   // ignored for cross-origin URLs) and so we can derive the real extension.
   const res = await fetch(src);
@@ -47,7 +47,7 @@ export async function downloadSrc(src: string, fallbackName: string) {
   try {
     const completion = waitForNativeDownload(window, href);
     a.click();
-    await completion;
+    return await completion;
   } finally {
     a.remove();
     URL.revokeObjectURL(href);
@@ -100,7 +100,7 @@ export function initContextMenu() {
           "Download image",
           () =>
             downloadSrc(imgSrc, "image")
-              .then(() => toast("Saved to Downloads"))
+              .then(toastDownloadSaved)
               .catch(() => toast("Download failed")),
         ]);
         items.push(["Copy image address", () => copyAddress(imgSrc)]);
@@ -110,7 +110,7 @@ export function initContextMenu() {
           "Download video",
           () =>
             downloadSrc(vidSrc, "video")
-              .then(() => toast("Saved to Downloads"))
+              .then(toastDownloadSaved)
               .catch(() => toast("Download failed")),
         ]);
         items.push(["Copy video address", () => copyAddress(vidSrc)]);

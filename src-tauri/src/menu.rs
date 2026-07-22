@@ -20,6 +20,9 @@ use crate::tray::show_main;
 use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
 use crate::APP_TITLE;
 
+const NEW_CONVERSATION_JS: &str =
+    "window.__carrierShortcuts && window.__carrierShortcuts.newConversation()";
+
 pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let mi = |id: &str, label: &str, accel: Option<&str>| -> tauri::Result<MenuItem<tauri::Wry>> {
         let mut b = MenuItemBuilder::new(label).id(id);
@@ -209,7 +212,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
     };
     match event.id().as_ref() {
-        "preferences" => {
+        "preferences" | "dock:settings" => {
             let app = app.clone();
             tauri::async_runtime::spawn(async move { show_settings_window(&app) });
         }
@@ -224,8 +227,10 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
-        "new_conversation" => {
-            eval("window.__carrierShortcuts && window.__carrierShortcuts.newConversation()")
+        "new_conversation" => eval(NEW_CONVERSATION_JS),
+        "dock:new_conversation" => {
+            show_main(app);
+            eval(NEW_CONVERSATION_JS);
         }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
         "keyboard_shortcuts" => {
@@ -392,6 +397,27 @@ pub(crate) fn open_recent_thread(app: &tauri::AppHandle, href: &str) {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, PartialEq)]
+enum DockEntry {
+    Recent(RecentThread),
+    Separator,
+    NewConversation,
+    Settings,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn dock_menu_entries(threads: &[RecentThread]) -> Vec<DockEntry> {
+    let mut entries = Vec::with_capacity(threads.len() + 3);
+    entries.extend(threads.iter().cloned().map(DockEntry::Recent));
+    if !threads.is_empty() {
+        entries.push(DockEntry::Separator);
+    }
+    entries.push(DockEntry::NewConversation);
+    entries.push(DockEntry::Settings);
+    entries
+}
+
 /// Rebuild the native menus that mirror the recent-threads list: the macOS
 /// Dock menu, and the tray menu on Windows/Linux (the macOS tray builds its
 /// menu fresh on every right-click, so it needs no push). Must run on the main
@@ -400,27 +426,37 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     {
         let threads = recent_threads_for_menu(app);
-        let ptr = if threads.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            use muda::ContextMenu as _;
-            let menu = muda::Menu::new();
-            for t in &threads {
-                let _ = menu.append(&muda::MenuItem::with_id(
-                    recent_menu_id(t),
-                    &t.name,
+        use muda::ContextMenu as _;
+        let menu = muda::Menu::new();
+        for entry in dock_menu_entries(&threads) {
+            let result = match entry {
+                DockEntry::Recent(thread) => menu.append(&muda::MenuItem::with_id(
+                    recent_menu_id(&thread),
+                    &thread.name,
                     true,
                     None,
-                ));
+                )),
+                DockEntry::Separator => menu.append(&muda::PredefinedMenuItem::separator()),
+                DockEntry::NewConversation => menu.append(&muda::MenuItem::with_id(
+                    "dock:new_conversation",
+                    "New Conversation",
+                    true,
+                    None,
+                )),
+                DockEntry::Settings => menu.append(&muda::MenuItem::with_id(
+                    "dock:settings",
+                    "Settings…",
+                    true,
+                    None,
+                )),
+            };
+            if let Err(error) = result {
+                log::warn!("failed to append macOS Dock menu item: {error}");
             }
-            let ptr = menu.ns_menu();
-            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = Some(menu));
-            ptr
-        };
-        DOCK_NS_MENU.store(ptr, Ordering::SeqCst);
-        if ptr.is_null() {
-            DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = None);
         }
+        let ptr = menu.ns_menu();
+        DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = Some(menu));
+        DOCK_NS_MENU.store(ptr, Ordering::SeqCst);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -497,5 +533,29 @@ mod tests {
         assert_eq!(recent_href_from_menu_id("recent:"), None);
         assert_eq!(recent_href_from_menu_id("recent:abc"), None);
         assert_eq!(recent_href_from_menu_id("recent:12345/../../"), None);
+    }
+
+    #[test]
+    fn dock_menu_keeps_static_actions_without_recent_threads() {
+        assert_eq!(
+            dock_menu_entries(&[]),
+            vec![DockEntry::NewConversation, DockEntry::Settings]
+        );
+    }
+
+    #[test]
+    fn dock_menu_places_recent_threads_before_static_actions() {
+        let alice = thread("Alice", "/t/12345/");
+        let bob = thread("Bob", "/t/67890/");
+        assert_eq!(
+            dock_menu_entries(&[alice.clone(), bob.clone()]),
+            vec![
+                DockEntry::Recent(alice),
+                DockEntry::Recent(bob),
+                DockEntry::Separator,
+                DockEntry::NewConversation,
+                DockEntry::Settings,
+            ]
+        );
     }
 }

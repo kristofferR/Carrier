@@ -15,7 +15,7 @@ describe("waitForNativeDownload", () => {
     target.dispatchEvent(completionEvent("blob:carrier/other", true));
     target.dispatchEvent(completionEvent("blob:carrier/expected", true));
 
-    await expect(pending).resolves.toBeUndefined();
+    await expect(pending).resolves.toBe("blob:carrier/expected");
   });
 
   test("rejects a matching native failure", async () => {

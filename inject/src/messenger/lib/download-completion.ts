@@ -21,7 +21,7 @@ export function waitForNativeDownload(
   target: EventTarget,
   expectedUrl: string,
   timeoutMs = 120_000,
-): Promise<void> {
+): Promise<string> {
   return new Promise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
     const cleanup = () => {
@@ -32,7 +32,7 @@ export function waitForNativeDownload(
       const detail = detailFor(event);
       if (!detail || detail.url !== expectedUrl) return;
       cleanup();
-      if (detail.success) resolve();
+      if (detail.success) resolve(expectedUrl);
       else reject(new Error("native download failed"));
     };
 
