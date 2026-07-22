@@ -1,14 +1,15 @@
 export const SYNC_REQUEST_TIMEOUT_MS = 30_000;
 export const SYNC_WINDOW_MS = 180_000;
 export const SYNC_FAILURE_FLOOR = 5;
-export const STUCK_LOADING_SAMPLES = 12;
+export const STUCK_LOADING_SAMPLES = 3;
 
 /**
  * Debounces a sampled boolean condition: `persistent()` only after `limit`
  * consecutive positive observations. Used for the stuck-loading-UI symptom —
  * Messenger's sync engine lives in a worker whose network traffic the page
- * cannot observe, but a loading spinner that stays visible for minutes is the
- * user-facing proof that sync is dead no matter where the requests failed.
+ * cannot observe, but a spinner that survives 30s of consecutive samples is
+ * far past any normal load and is the user-facing proof that sync is dead
+ * no matter where the requests failed.
  */
 export class SampledPersistence {
   private count = 0;

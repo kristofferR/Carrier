@@ -3125,7 +3125,7 @@
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
   var SYNC_WINDOW_MS = 18e4;
   var SYNC_FAILURE_FLOOR = 5;
-  var STUCK_LOADING_SAMPLES = 12;
+  var STUCK_LOADING_SAMPLES = 3;
   var SampledPersistence = class {
     constructor(limit) {
       __publicField(this, "limit", limit);
