@@ -2850,10 +2850,11 @@
           observed.map(({ key }) => key),
           detectedAt
         );
+        const hydrated = conversations.filter(({ body }) => body.length > 0);
         const changed = new Set(
           conversationTracker.observe(
-            conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
-            observed.map(({ key }) => key)
+            hydrated.map(({ key, body }) => ({ key, signature: body })),
+            observed.filter(({ body }) => body.length > 0).map(({ key }) => key)
           )
         );
         for (const key of unreadArrivals.observeUnreadCount(
@@ -2867,7 +2868,6 @@
         )) {
           changed.add(key);
         }
-        const hydrated = conversations.filter(({ body }) => body.length > 0);
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
@@ -2880,6 +2880,9 @@
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
           if (pageReceipt) {
+            const pending = pendingFallbacks.get(conversation.key);
+            if (pending) clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
             notifiedStore.markNotified(conversation.key, fingerprint);
             unmatchedPageNotifications.consumeMatching(
               conversation,

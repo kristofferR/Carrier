@@ -430,10 +430,17 @@ export function initNotificationBridge() {
         observed.map(({ key }) => key),
         detectedAt,
       );
+      // Only hydrated rows feed the signature tracker — in both directions.
+      // Priming an unhydrated row with its title would report a "change" the
+      // moment the body arrives and replay store-less threads after every
+      // reload; and an unhydrated row proves nothing about read state, so it
+      // must not evict a tracked signature either. The first hydrated
+      // observation primes silently instead.
+      const hydrated = conversations.filter(({ body }) => body.length > 0);
       const changed = new Set(
         conversationTracker.observe(
-          conversations.map(({ key, body, title }) => ({ key, signature: body || title })),
-          observed.map(({ key }) => key),
+          hydrated.map(({ key, body }) => ({ key, signature: body })),
+          observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
         ),
       );
       for (const key of unreadArrivals.observeUnreadCount(
@@ -455,7 +462,6 @@ export function initNotificationBridge() {
       // Receipts are matched against all hydrated rows at once: only an
       // identity with exactly one visible candidate may consume one, so two
       // threads sharing display text cannot steal each other's receipt.
-      const hydrated = conversations.filter(({ body }) => body.length > 0);
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
@@ -469,6 +475,12 @@ export function initNotificationBridge() {
 
         const pageReceipt = pageReceipts.get(conversation.key);
         if (pageReceipt) {
+          // An earlier scan may have armed a fallback while this receipt was
+          // still ambiguous — the page already showed this notification, so
+          // that timer must not fire a duplicate.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) clearTimeout(pending.timer);
+          pendingFallbacks.delete(conversation.key);
           notifiedStore.markNotified(conversation.key, fingerprint);
           // Remove the same-document raw signal too; otherwise it could linger
           // briefly and pair with a different but text-identical row.
