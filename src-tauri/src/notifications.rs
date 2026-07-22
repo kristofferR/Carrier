@@ -572,6 +572,103 @@ fn show_native_notification(
     clicked
 }
 
+/* ---------------------------- Sync alerts ----------------------------- */
+
+/// Health notice from the injected page: Messenger's data sync degraded or
+/// recovered (the `carrier:sync-alert` event). Distinct from message
+/// notifications — fixed strings only (the event comes from the remote
+/// facebook.com origin, so its text is never rendered), no dedupe or route
+/// machinery, and its own episode gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SyncAlertKind {
+    Degraded,
+    Recovered,
+}
+
+pub(crate) const SYNC_ALERT_MIN_GAP: Duration = Duration::from_secs(10 * 60);
+
+/// Decides which sync alerts become native notifications: a degraded notice at
+/// most once per [`SYNC_ALERT_MIN_GAP`] (a flapping outage must not spam), and
+/// a recovery notice only when its degraded counterpart was actually shown.
+#[derive(Debug, Default)]
+pub(crate) struct SyncAlertGate {
+    last_degraded_at: Option<Instant>,
+    degraded_notified: bool,
+}
+
+impl SyncAlertGate {
+    pub(crate) fn on_degraded(&mut self, now: Instant) -> bool {
+        let allow = !self
+            .last_degraded_at
+            .is_some_and(|at| now.duration_since(at) < SYNC_ALERT_MIN_GAP);
+        if allow {
+            self.last_degraded_at = Some(now);
+        }
+        self.degraded_notified = allow;
+        allow
+    }
+
+    pub(crate) fn on_recovered(&mut self) -> bool {
+        std::mem::take(&mut self.degraded_notified)
+    }
+}
+
+static SYNC_ALERT_GATE: OnceLock<Mutex<SyncAlertGate>> = OnceLock::new();
+
+pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) {
+    let muted = {
+        let state = app.state::<AppState>();
+        let muted = state.settings.lock().unwrap().mute_notifications;
+        muted
+    };
+    if muted {
+        log::info!("carrier:sync-alert suppressed by mute_notifications ({kind:?})");
+        return;
+    }
+    let gate = SYNC_ALERT_GATE.get_or_init(|| Mutex::new(SyncAlertGate::default()));
+    let (show, body) = match kind {
+        SyncAlertKind::Degraded => (
+            gate.lock().unwrap().on_degraded(Instant::now()),
+            "Messenger is struggling to sync — chats may be out of date. \
+             This is usually a Facebook-side problem that recovers on its own.",
+        ),
+        SyncAlertKind::Recovered => (
+            gate.lock().unwrap().on_recovered(),
+            "Messenger sync recovered.",
+        ),
+    };
+    if !show {
+        return;
+    }
+    log::warn!("sync alert notification shown ({kind:?})");
+
+    // A fresh id no message notification uses: clicking just surfaces the
+    // window (`on_notification_click` finds no route for it).
+    let id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1);
+    let title = "Carrier";
+    let body = body.to_string();
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        deliver_notification_macos(title, &body, id, None, false);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let app_id = app.config().identifier.clone();
+        std::thread::spawn(move || {
+            if show_native_notification(title, &body, None, false, &app_id) {
+                on_notification_click(app, id);
+            }
+        });
+    }
+}
+
 /// A notification was clicked: surface Carrier's window and ask the page to open
 /// the conversation (it invokes Facebook's own `onclick` for that notification,
 /// keyed by `id`). Hops to the main thread for the window + webview calls.
@@ -597,6 +694,24 @@ pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_alert_gate_limits_degraded_notices_and_pairs_recovery() {
+        let mut gate = SyncAlertGate::default();
+        let t0 = Instant::now();
+
+        assert!(gate.on_degraded(t0));
+        assert!(gate.on_recovered());
+        assert!(!gate.on_recovered());
+
+        // A flap inside the gap stays silent in both directions.
+        assert!(!gate.on_degraded(t0 + Duration::from_secs(60)));
+        assert!(!gate.on_recovered());
+
+        // The suppressed flap did not extend the gap.
+        assert!(gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP));
+        assert!(gate.on_recovered());
+    }
 
     #[test]
     fn avatar_data_url_is_decoded_to_a_temp_png() {

@@ -3281,6 +3281,11 @@
       }
       return false;
     };
+    const emitSyncAlert = (kind) => invoke("plugin:event|emit", {
+      event: "carrier:sync-alert",
+      payload: { kind }
+    })?.catch?.(() => {
+    });
     let degraded = false;
     let announcePending = false;
     let announced = false;
@@ -3297,12 +3302,14 @@
         announced = false;
         const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
+        emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {
         degraded = false;
         announcePending = false;
         if (announced) toast("Messenger sync recovered.");
         announced = false;
         diag("sync.stalled", "messenger sync recovered");
+        emitSyncAlert("recovered");
       }
       if (degraded && announcePending && !document.hidden && navigator.onLine) {
         announcePending = false;

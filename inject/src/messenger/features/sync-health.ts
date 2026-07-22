@@ -9,7 +9,7 @@
 //    in a rolling window;
 //  - symptom-level: a loading spinner that stays visible for minutes.
 
-import { diag, toast } from "../bridge";
+import { diag, invoke, toast } from "../bridge";
 import {
   isMessengerSyncRequest,
   SampledPersistence,
@@ -109,6 +109,15 @@ export function initSyncHealth() {
     return false;
   };
 
+  // The toast waits for a visible window; the native notification must not —
+  // a buried window is exactly when it matters. The Rust side applies mute
+  // and an episode gate, and renders its own fixed strings.
+  const emitSyncAlert = (kind: "degraded" | "recovered") =>
+    invoke("plugin:event|emit", {
+      event: "carrier:sync-alert",
+      payload: { kind },
+    })?.catch?.(() => {});
+
   let degraded = false;
   let announcePending = false;
   let announced = false;
@@ -129,12 +138,14 @@ export function initSyncHealth() {
         ? "loading UI stuck"
         : `requests failing (${tracker.summary(now)})`;
       diag("sync.stalled", `messenger sync degraded: ${reason}`);
+      emitSyncAlert("degraded");
     } else if (!degradedNow && degraded) {
       degraded = false;
       announcePending = false;
       if (announced) toast("Messenger sync recovered.");
       announced = false;
       diag("sync.stalled", "messenger sync recovered");
+      emitSyncAlert("recovered");
     }
     // Announce when the user can actually see it. While offline the realtime
     // recovery machinery owns the messaging — failed requests are expected.
