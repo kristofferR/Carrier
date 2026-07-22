@@ -286,6 +286,7 @@ impl WebviewWatchdog {
         let watchdog_id = self.id;
         let started_at = self.started_at;
         let heartbeat_state = Arc::clone(&self.state);
+        let listener_window = window.clone();
         let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
             let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
                 return;
@@ -295,6 +296,12 @@ impl WebviewWatchdog {
             }
             if payload.realtime == Some(RealtimeSignal::Ok) {
                 REALTIME_RECREATES.store(0, Ordering::Relaxed);
+                // Pairs a "recovered" notice with an exhaustion notice that
+                // was actually shown; the alert gate makes it a no-op else.
+                crate::notifications::show_sync_alert(
+                    listener_window.app_handle().clone(),
+                    crate::notifications::SyncAlertKind::Recovered,
+                );
             }
             heartbeat_state.lock().unwrap().heartbeat(
                 started_at.elapsed(),
@@ -448,6 +455,14 @@ impl WebviewWatchdog {
                                         state.lock().unwrap().realtime_recovery_exhausted();
                                         log::warn!(
                                             "Messenger webview {label} realtime transport still dead after rebuilding; giving up automated recovery until it reports healthy"
+                                        );
+                                        // The one silent spot left: a page with no
+                                        // spinners and no requests (Facebook's error
+                                        // page) that recovery could not fix. Say so
+                                        // natively; the alert gate dedupes.
+                                        crate::notifications::show_sync_alert(
+                                            watchdog_window.app_handle().clone(),
+                                            crate::notifications::SyncAlertKind::Degraded,
                                         );
                                         continue;
                                     }
