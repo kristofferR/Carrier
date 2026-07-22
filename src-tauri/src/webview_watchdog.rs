@@ -46,6 +46,11 @@ static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
 // Survives window recreation (which builds a fresh watchdog); reset to zero
 // whenever any heartbeat proves the realtime transport healthy.
 static REALTIME_RECREATES: AtomicU32 = AtomicU32::new(0);
+// Whether the give-up rung actually showed its native notice. Only then does
+// a healthy transport report earn a "recovered" notification — a healthy
+// transport must never clear a sync-degraded notice raised by the page (the
+// transport can be fine while sync is dead; that is that notice's whole point).
+static REALTIME_EXHAUSTION_NOTIFIED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Deserialize)]
 struct HeartbeatPayload {
@@ -296,12 +301,14 @@ impl WebviewWatchdog {
             }
             if payload.realtime == Some(RealtimeSignal::Ok) {
                 REALTIME_RECREATES.store(0, Ordering::Relaxed);
-                // Pairs a "recovered" notice with an exhaustion notice that
-                // was actually shown; the alert gate makes it a no-op else.
-                crate::notifications::show_sync_alert(
-                    listener_window.app_handle().clone(),
-                    crate::notifications::SyncAlertKind::Recovered,
-                );
+                // Pair a "recovered" notice only with a shown exhaustion
+                // notice — never with a sync-degraded notice from the page.
+                if REALTIME_EXHAUSTION_NOTIFIED.swap(false, Ordering::Relaxed) {
+                    crate::notifications::show_sync_alert(
+                        listener_window.app_handle().clone(),
+                        crate::notifications::SyncAlertKind::Recovered,
+                    );
+                }
             }
             heartbeat_state.lock().unwrap().heartbeat(
                 started_at.elapsed(),
@@ -460,10 +467,13 @@ impl WebviewWatchdog {
                                         // spinners and no requests (Facebook's error
                                         // page) that recovery could not fix. Say so
                                         // natively; the alert gate dedupes.
-                                        crate::notifications::show_sync_alert(
+                                        if crate::notifications::show_sync_alert(
                                             watchdog_window.app_handle().clone(),
                                             crate::notifications::SyncAlertKind::Degraded,
-                                        );
+                                        ) {
+                                            REALTIME_EXHAUSTION_NOTIFIED
+                                                .store(true, Ordering::Relaxed);
+                                        }
                                         continue;
                                     }
                                     log::warn!(

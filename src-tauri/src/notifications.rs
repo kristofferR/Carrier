@@ -604,8 +604,10 @@ impl SyncAlertGate {
             .is_some_and(|at| now.duration_since(at) < SYNC_ALERT_MIN_GAP);
         if allow {
             self.last_degraded_at = Some(now);
+            // A suppressed repeat must not clear the pairing of a notice
+            // that was actually shown.
+            self.degraded_notified = true;
         }
-        self.degraded_notified = allow;
         allow
     }
 
@@ -616,7 +618,9 @@ impl SyncAlertGate {
 
 static SYNC_ALERT_GATE: OnceLock<Mutex<SyncAlertGate>> = OnceLock::new();
 
-pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) {
+/// Returns whether a notification was actually shown, so a caller can pair a
+/// later recovery notice with it.
+pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) -> bool {
     let muted = {
         let state = app.state::<AppState>();
         let muted = state.settings.lock().unwrap().mute_notifications;
@@ -624,7 +628,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) {
     };
     if muted {
         log::info!("carrier:sync-alert suppressed by mute_notifications ({kind:?})");
-        return;
+        return false;
     }
     let gate = SYNC_ALERT_GATE.get_or_init(|| Mutex::new(SyncAlertGate::default()));
     let (show, body) = match kind {
@@ -639,7 +643,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) {
         ),
     };
     if !show {
-        return;
+        return false;
     }
     log::warn!("sync alert notification shown ({kind:?})");
 
@@ -667,6 +671,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, kind: SyncAlertKind) {
             }
         });
     }
+    true
 }
 
 /// A notification was clicked: surface Carrier's window and ask the page to open
@@ -710,6 +715,11 @@ mod tests {
 
         // The suppressed flap did not extend the gap.
         assert!(gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP));
+        assert!(gate.on_recovered());
+
+        // A suppressed repeat does not clear the pairing of a shown notice.
+        assert!(gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP * 2));
+        assert!(!gate.on_degraded(t0 + SYNC_ALERT_MIN_GAP * 2 + Duration::from_secs(60)));
         assert!(gate.on_recovered());
     }
 

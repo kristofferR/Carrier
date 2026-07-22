@@ -405,7 +405,9 @@ pub fn run() {
                     kind: SyncAlertKind,
                 }
                 match serde_json::from_str::<SyncAlertMsg>(event.payload()) {
-                    Ok(msg) => show_sync_alert(sync_alert_handle.clone(), msg.kind),
+                    Ok(msg) => {
+                        show_sync_alert(sync_alert_handle.clone(), msg.kind);
+                    }
                     Err(e) => log::warn!("carrier:sync-alert payload did not parse: {e}"),
                 }
             });
