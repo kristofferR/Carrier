@@ -5,7 +5,8 @@ use std::sync::atomic::Ordering;
 
 /// The NSMenu currently served as the Dock menu. AppKit re-queries
 /// `applicationDockMenu:` on every Dock right-click, so swapping this pointer
-/// (and the keepalive below) is all a rebuild takes. Null = no custom menu.
+/// (and the keepalive below) is all a rebuild takes. It is null only before the
+/// first menu rebuild publishes the always-present static actions.
 pub(crate) static DOCK_NS_MENU: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
