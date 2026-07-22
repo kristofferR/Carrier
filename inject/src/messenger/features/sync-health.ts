@@ -7,9 +7,11 @@
 // worker whose network traffic the page cannot see:
 //  - request-level: page-context GraphQL over fetch and XHR, failure-majority
 //    in a rolling window;
-//  - symptom-level: a loading spinner that stays visible for minutes.
+//  - symptom-level: a loading spinner stuck visible far past any normal load.
+// Degraded state shows a persistent in-window banner and raises a native
+// notification (via carrier:sync-alert); both clear on recovery.
 
-import { diag, invoke, toast } from "../bridge";
+import { diag, invoke } from "../bridge";
 import {
   isMessengerSyncRequest,
   SampledPersistence,
@@ -160,9 +162,9 @@ export function initSyncHealth() {
     } catch (_) {}
   };
 
-  // The toast waits for a visible window; the native notification must not —
-  // a buried window is exactly when it matters. The Rust side applies mute
-  // and an episode gate, and renders its own fixed strings.
+  // The banner is the in-window signal; the native notification reaches a
+  // buried window. The Rust side applies mute and an episode gate to the
+  // alerts, and renders its own fixed strings.
   const emitSyncAlert = (kind: "degraded" | "recovered") =>
     invoke("plugin:event|emit", {
       event: "carrier:sync-alert",
@@ -170,8 +172,6 @@ export function initSyncHealth() {
     })?.catch?.(() => {});
 
   let degraded = false;
-  let announcePending = false;
-  let announced = false;
   setInterval(() => {
     const now = Date.now();
     tracker.sweep(now);
@@ -183,8 +183,6 @@ export function initSyncHealth() {
     const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
     if (degradedNow && !degraded) {
       degraded = true;
-      announcePending = true;
-      announced = false;
       const reason = stuckLoading.persistent()
         ? "loading UI stuck"
         : `requests failing (${tracker.summary(now)})`;
@@ -192,20 +190,8 @@ export function initSyncHealth() {
       emitSyncAlert("degraded");
     } else if (!degradedNow && degraded) {
       degraded = false;
-      announcePending = false;
-      if (announced) toast("Messenger sync recovered.");
-      announced = false;
       diag("sync.stalled", "messenger sync recovered");
       emitSyncAlert("recovered");
-    }
-    // Announce when the user can actually see it. While offline the realtime
-    // recovery machinery owns the messaging — failed requests are expected.
-    if (degraded && announcePending && !document.hidden && navigator.onLine) {
-      announcePending = false;
-      announced = true;
-      toast(
-        "Messenger is struggling to sync — chats may be out of date. This is usually a Facebook-side problem that recovers on its own.",
-      );
     }
     if (degraded) showSyncBanner();
     else hideSyncBanner();

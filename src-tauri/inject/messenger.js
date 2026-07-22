@@ -3331,8 +3331,6 @@
     })?.catch?.(() => {
     });
     let degraded = false;
-    let announcePending = false;
-    let announced = false;
     setInterval(() => {
       const now = Date.now();
       tracker.sweep(now);
@@ -3342,25 +3340,13 @@
       const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
       if (degradedNow && !degraded) {
         degraded = true;
-        announcePending = true;
-        announced = false;
         const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
         emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {
         degraded = false;
-        announcePending = false;
-        if (announced) toast("Messenger sync recovered.");
-        announced = false;
         diag("sync.stalled", "messenger sync recovered");
         emitSyncAlert("recovered");
-      }
-      if (degraded && announcePending && !document.hidden && navigator.onLine) {
-        announcePending = false;
-        announced = true;
-        toast(
-          "Messenger is struggling to sync — chats may be out of date. This is usually a Facebook-side problem that recovers on its own."
-        );
       }
       if (degraded) showSyncBanner();
       else hideSyncBanner();
