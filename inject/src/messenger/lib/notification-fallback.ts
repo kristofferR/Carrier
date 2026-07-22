@@ -485,6 +485,50 @@ export class PageNotificationReceiptStore {
     }
     return null;
   }
+
+  /**
+   * Consume receipts that match exactly one of the given rows, keyed by that
+   * row's conversation key. A receipt is only title/body identity, so when
+   * several visible threads share the same display text, guessing would route
+   * the native click to the wrong conversation and mark it delivered —
+   * ambiguous receipts stay queued instead (a later scan with only one
+   * matching row, or the TTL, settles them). Duplicate anchors for one
+   * thread count as a single row.
+   */
+  consumeUniquelyMatching(
+    rows: Iterable<NotificationText & { key: string }>,
+    now = Date.now(),
+  ): Map<string, { nativeId: number }> {
+    this.prune(now);
+    const consumed = new Map<string, { nativeId: number }>();
+    if (!this.receipts.length) return consumed;
+    const identities = new Map<string, OpaqueNotificationIdentity>();
+    for (const row of rows) {
+      if (!identities.has(row.key)) {
+        identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
+      }
+    }
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const receipt = this.receipts[index]!;
+      let match: string | null = null;
+      let ambiguous = false;
+      for (const [key, identity] of identities) {
+        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (match !== null && match !== key) {
+          ambiguous = true;
+          break;
+        }
+        match = key;
+      }
+      if (match === null || ambiguous || consumed.has(match)) continue;
+      this.receipts.splice(index, 1);
+      changed = true;
+      consumed.set(match, { nativeId: receipt.nativeId });
+    }
+    if (changed) this.persist();
+    return consumed;
+  }
 }
 
 /** Keeps concurrent page signals until their matching row update arrives. */
@@ -537,21 +581,31 @@ export class UnreadArrivalTracker {
     for (const key of keys) this.changedAt.set(key, at);
   }
 
-  observeUnreadCount(count: number, at: number, maxMutationAgeMs: number): string[] {
+  /**
+   * `zeroCorroborated` — the caller observed a fully hydrated conversation
+   * list containing no unread rows, so a zero count is the inbox's real
+   * state rather than a still-unstamped title. A corroborated zero baselines
+   * immediately, letting a first arrival inside the settle window report
+   * instead of being absorbed as priming.
+   */
+  observeUnreadCount(
+    count: number,
+    at: number,
+    maxMutationAgeMs: number,
+    zeroCorroborated = false,
+  ): string[] {
     for (const [key, changedAt] of this.changedAt) {
       if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
     }
 
     // After a reload the title reads no "(N)" until Facebook hydrates it, so
-    // a zero this early would baseline at 0 and the hydrated count would
-    // masquerade as N fresh arrivals attributed to every hydrating row. The
-    // first non-zero count within the window (or a zero that outlives it)
-    // primes silently instead. Trade-off: a message arriving into a
-    // zero-unread state within the window is absorbed as baseline — the
-    // page-Notification path still covers it.
+    // an uncorroborated zero this early would baseline at 0 and the hydrated
+    // count would masquerade as N fresh arrivals attributed to every
+    // hydrating row. The first non-zero count within the window (or a zero
+    // that outlives it) primes silently instead.
     if (this.firstObservedAt === null) this.firstObservedAt = at;
     const settled = at - this.firstObservedAt >= this.settleMs;
-    if (this.unreadCount === null && count === 0 && !settled) {
+    if (this.unreadCount === null && count === 0 && !settled && !zeroCorroborated) {
       this.sawDeferredZero = true;
       return [];
     }

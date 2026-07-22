@@ -2288,6 +2288,46 @@
       }
       return null;
     }
+    /**
+     * Consume receipts that match exactly one of the given rows, keyed by that
+     * row's conversation key. A receipt is only title/body identity, so when
+     * several visible threads share the same display text, guessing would route
+     * the native click to the wrong conversation and mark it delivered —
+     * ambiguous receipts stay queued instead (a later scan with only one
+     * matching row, or the TTL, settles them). Duplicate anchors for one
+     * thread count as a single row.
+     */
+    consumeUniquelyMatching(rows, now = Date.now()) {
+      this.prune(now);
+      const consumed = /* @__PURE__ */ new Map();
+      if (!this.receipts.length) return consumed;
+      const identities = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!identities.has(row.key)) {
+          identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
+        }
+      }
+      let changed = false;
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const receipt = this.receipts[index];
+        let match = null;
+        let ambiguous = false;
+        for (const [key, identity] of identities) {
+          if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+          if (match !== null && match !== key) {
+            ambiguous = true;
+            break;
+          }
+          match = key;
+        }
+        if (match === null || ambiguous || consumed.has(match)) continue;
+        this.receipts.splice(index, 1);
+        changed = true;
+        consumed.set(match, { nativeId: receipt.nativeId });
+      }
+      if (changed) this.persist();
+      return consumed;
+    }
   };
   var PageNotificationQueue = class {
     constructor() {
@@ -2331,13 +2371,20 @@
     markRowsChanged(keys, at) {
       for (const key of keys) this.changedAt.set(key, at);
     }
-    observeUnreadCount(count, at, maxMutationAgeMs) {
+    /**
+     * `zeroCorroborated` — the caller observed a fully hydrated conversation
+     * list containing no unread rows, so a zero count is the inbox's real
+     * state rather than a still-unstamped title. A corroborated zero baselines
+     * immediately, letting a first arrival inside the settle window report
+     * instead of being absorbed as priming.
+     */
+    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false) {
       for (const [key, changedAt] of this.changedAt) {
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
       }
       if (this.firstObservedAt === null) this.firstObservedAt = at;
       const settled = at - this.firstObservedAt >= this.settleMs;
-      if (this.unreadCount === null && count === 0 && !settled) {
+      if (this.unreadCount === null && count === 0 && !settled && !zeroCorroborated) {
         this.sawDeferredZero = true;
         return [];
       }
@@ -2812,10 +2859,16 @@
         for (const key of unreadArrivals.observeUnreadCount(
           unreadCountFromTitle(document.title || ""),
           detectedAt,
-          ROW_MUTATION_MATCH_MS
+          ROW_MUTATION_MATCH_MS,
+          // A fully hydrated list with no unread rows corroborates a zero
+          // title: it is the inbox's real state, not a still-unstamped title,
+          // so a first arrival inside the settle window can still report.
+          observed.length > 0 && conversations.length === 0 && observed.every(({ body }) => body.length > 0)
         )) {
           changed.add(key);
         }
+        const hydrated = conversations.filter(({ body }) => body.length > 0);
+        const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
         const unhydrated = /* @__PURE__ */ new Set();
@@ -2825,7 +2878,7 @@
             continue;
           }
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
-          const pageReceipt = pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+          const pageReceipt = pageReceipts.get(conversation.key);
           if (pageReceipt) {
             notifiedStore.markNotified(conversation.key, fingerprint);
             unmatchedPageNotifications.consumeMatching(

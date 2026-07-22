@@ -282,6 +282,38 @@ describe("PageNotificationReceiptStore", () => {
     expect(reloaded.consumeMatching({ title, body }, 1_500)).toBeNull();
   });
 
+  test("consumes a receipt only for a uniquely matching visible row", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "OK", 42, 1_000);
+    // Two different threads share the display text — guessing would route
+    // the click to the wrong one, so the receipt must stay queued.
+    const ambiguous = store.consumeUniquelyMatching(
+      [
+        { key: "1", title: "Jane", body: "OK" },
+        { key: "2", title: "Jane", body: "OK" },
+      ],
+      1_100,
+    );
+    expect(ambiguous.size).toBe(0);
+    // Once only one candidate remains rendered, the receipt settles onto it.
+    const unique = store.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_200);
+    expect(unique.get("1")).toEqual({ nativeId: 42 });
+    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_300)).toBeNull();
+  });
+
+  test("duplicate anchors for one thread do not count as ambiguity", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "OK", 42, 1_000);
+    const consumed = store.consumeUniquelyMatching(
+      [
+        { key: "1", title: "Jane", body: "OK" },
+        { key: "1", title: "Jane", body: "OK" },
+      ],
+      1_100,
+    );
+    expect(consumed.get("1")).toEqual({ nativeId: 42 });
+  });
+
   test("expires old and future-dated receipts across reloads", () => {
     const storage = memoryStorage();
     const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
@@ -414,6 +446,16 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual([]);
     tracker.markRowsChanged(["d"], 1_400);
     expect(tracker.observeUnreadCount(5, 1_500, 2_000)).toEqual(["d"]);
+  });
+
+  test("a corroborated zero baselines immediately for in-window arrivals", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // The scan saw a fully hydrated list with no unread rows — the zero is
+    // the inbox's real state, not a still-unstamped title.
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000, true)).toEqual([]);
+    tracker.markRowsChanged(["a"], 5_000);
+    // A message arriving inside the settle window must still notify.
+    expect(tracker.observeUnreadCount(1, 5_100, 2_000)).toEqual(["a"]);
   });
 
   test("a deferred zero becomes the baseline for a late first arrival", () => {

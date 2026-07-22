@@ -440,12 +440,23 @@ export function initNotificationBridge() {
         unreadCountFromTitle(document.title || ""),
         detectedAt,
         ROW_MUTATION_MATCH_MS,
+        // A fully hydrated list with no unread rows corroborates a zero
+        // title: it is the inbox's real state, not a still-unstamped title,
+        // so a first arrival inside the settle window can still report.
+        observed.length > 0 &&
+          conversations.length === 0 &&
+          observed.every(({ body }) => body.length > 0),
       )) {
         changed.add(key);
       }
       // Reconcile every hydrated row before honoring any changed verdict. This
       // is the single gate for exact replays, legacy placeholder migration,
       // reload-persistent page receipts, and stable delivered mismatches.
+      // Receipts are matched against all hydrated rows at once: only an
+      // identity with exactly one visible candidate may consume one, so two
+      // threads sharing display text cannot steal each other's receipt.
+      const hydrated = conversations.filter(({ body }) => body.length > 0);
+      const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
       const unhydrated = new Set<string>();
@@ -456,7 +467,7 @@ export function initNotificationBridge() {
         }
         const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
 
-        const pageReceipt = pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+        const pageReceipt = pageReceipts.get(conversation.key);
         if (pageReceipt) {
           notifiedStore.markNotified(conversation.key, fingerprint);
           // Remove the same-document raw signal too; otherwise it could linger
