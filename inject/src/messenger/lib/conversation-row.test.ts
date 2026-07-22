@@ -37,7 +37,7 @@ describe("conversationTextParts", () => {
   test("uses safe defaults and caps scraped text", () => {
     expect(conversationTextParts([])).toEqual({
       title: "Messenger",
-      body: "New message",
+      body: "",
     });
     const parts = conversationTextParts([
       candidate("T".repeat(100)),

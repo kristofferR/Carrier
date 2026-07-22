@@ -147,6 +147,11 @@ export class NotifiedSignatureStore {
     return this.entries.get(conversationKey) === fingerprint;
   }
 
+  /** The fingerprint last delivered for this conversation, if any. */
+  notifiedFingerprint(conversationKey: string): string | undefined {
+    return this.entries.get(conversationKey);
+  }
+
   markNotified(conversationKey: string, fingerprint: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readSince.delete(conversationKey);
@@ -247,10 +252,24 @@ export class PageNotificationQueue {
   }
 }
 
-/** Correlates unread-count increases with the rows most recently mutated. */
+/**
+ * Correlates unread-count increases with the rows most recently mutated.
+ *
+ * After a reload the page title reads no "(N)" until Facebook hydrates it, so
+ * the first observation would baseline at zero and the hydrated count would
+ * masquerade as N fresh arrivals — replaying every pre-existing unread thread.
+ * `settleMs` refuses to baseline a zero count that close to the first
+ * observation; the first non-zero count (or a zero that outlives the window)
+ * primes silently instead. Trade-off: a message arriving into a zero-unread
+ * state within the window is absorbed as baseline — the page-Notification
+ * path still covers it.
+ */
 export class UnreadArrivalTracker {
   private readonly changedAt = new Map<string, number>();
   private unreadCount: number | null = null;
+  private firstObservedAt: number | null = null;
+
+  constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
     for (const key of keys) this.changedAt.set(key, at);
@@ -261,6 +280,10 @@ export class UnreadArrivalTracker {
       if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
     }
 
+    if (this.firstObservedAt === null) this.firstObservedAt = at;
+    if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+      return [];
+    }
     const previous = this.unreadCount;
     this.unreadCount = count;
     if (previous === null || count <= previous) return [];
@@ -271,6 +294,48 @@ export class UnreadArrivalTracker {
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);
     return candidates;
+  }
+}
+
+/**
+ * Reports a conversation whose current preview fingerprint has stably diverged
+ * from the one [[NotifiedSignatureStore]] last delivered — meaning new content
+ * arrived since that delivery (typically while a reload was in flight, when
+ * every in-memory tracker primes silently and would otherwise stay quiet).
+ * Requiring the same fingerprint across consecutive scans keeps a single
+ * mid-hydration mis-scrape from firing it; reporting each streak exactly once
+ * keeps it from endlessly re-arming pending fallback timers.
+ */
+export class StableMismatchTracker {
+  private readonly streaks = new Map<string, { fingerprint: string; count: number }>();
+
+  constructor(private readonly stableScans: number) {}
+
+  observe(mismatches: Iterable<readonly [string, string]>): string[] {
+    const seen = new Set<string>();
+    const reported: string[] = [];
+    for (const [key, fingerprint] of mismatches) {
+      // The DOM can briefly render two anchors for one thread; a key counts
+      // as at most one observation per scan or a duplicate could reach the
+      // stability threshold in a single scan.
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const streak = this.streaks.get(key);
+      if (streak?.fingerprint === fingerprint) {
+        streak.count += 1;
+        if (streak.count === this.stableScans) reported.push(key);
+        continue;
+      }
+      const count = 1;
+      this.streaks.set(key, { fingerprint, count });
+      if (count === this.stableScans) reported.push(key);
+    }
+    // A key no longer mismatching (delivered, read, or re-hydrated to match)
+    // restarts from scratch if it ever diverges again.
+    for (const key of this.streaks.keys()) {
+      if (!seen.has(key)) this.streaks.delete(key);
+    }
+    return reported;
   }
 }
 

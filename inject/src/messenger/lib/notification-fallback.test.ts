@@ -8,6 +8,7 @@ import {
   PageNotificationQueue,
   READ_TRANSITION_CONFIRM_MS,
   STABLE_READ_MS,
+  StableMismatchTracker,
   UnreadArrivalTracker,
 } from "./notification-fallback";
 
@@ -69,6 +70,13 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
     expect(store.alreadyNotified("1", "bbbb")).toBe(false);
     expect(store.alreadyNotified("2", "aaaa")).toBe(false);
+  });
+
+  test("exposes the delivered fingerprint for mismatch detection", () => {
+    const store = new NotifiedSignatureStore();
+    expect(store.notifiedFingerprint("1")).toBeUndefined();
+    store.markNotified("1", "aaaa");
+    expect(store.notifiedFingerprint("1")).toBe("aaaa");
   });
 
   test("survives a page reload via the backing storage", () => {
@@ -238,6 +246,75 @@ describe("UnreadArrivalTracker", () => {
     tracker.markRowsChanged(["stale"], 1_100);
     expect(tracker.observeUnreadCount(1, 1_200, 2_000)).toEqual([]);
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
+  });
+
+  test("absorbs the title hydrating from zero as the baseline", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    // Post-reload: the title has no "(N)" yet, rows mutate while hydrating.
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["a"], 1_100);
+    // The hydrated count primes silently instead of replaying row "a".
+    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
+  });
+
+  test("still reports a real arrival right after the baseline settles", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    tracker.observeUnreadCount(0, 1_000, 2_000);
+    tracker.observeUnreadCount(3, 1_200, 2_000);
+    tracker.markRowsChanged(["b"], 1_300);
+    expect(tracker.observeUnreadCount(4, 1_400, 2_000)).toEqual(["b"]);
+  });
+
+  test("a zero count that outlives the settle window is a real baseline", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(0, 12_000, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["a"], 12_100);
+    expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
+  });
+
+  test("a count already present at first observation primes silently", () => {
+    const tracker = new UnreadArrivalTracker(10_000);
+    expect(tracker.observeUnreadCount(5, 1_000, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["a"], 1_100);
+    expect(tracker.observeUnreadCount(6, 1_200, 2_000)).toEqual(["a"]);
+  });
+});
+
+describe("StableMismatchTracker", () => {
+  test("reports a stable mismatch exactly once at the threshold", () => {
+    const tracker = new StableMismatchTracker(2);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
+  });
+
+  test("restarts the streak when a key stops mismatching", () => {
+    const tracker = new StableMismatchTracker(2);
+    tracker.observe([["1", "bbbb"]]);
+    tracker.observe([]);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
+  });
+
+  test("restarts the streak when the fingerprint keeps shifting", () => {
+    const tracker = new StableMismatchTracker(2);
+    tracker.observe([["1", "bbbb"]]);
+    expect(tracker.observe([["1", "cccc"]])).toEqual([]);
+    expect(tracker.observe([["1", "cccc"]])).toEqual(["1"]);
+  });
+
+  test("counts a duplicated key once per scan", () => {
+    const tracker = new StableMismatchTracker(2);
+    // The DOM can briefly render two anchors for one thread — a single scan
+    // must not reach the stability threshold on its own.
+    expect(
+      tracker.observe([
+        ["1", "bbbb"],
+        ["1", "bbbb"],
+      ]),
+    ).toEqual([]);
+    expect(tracker.observe([["1", "bbbb"]])).toEqual(["1"]);
   });
 });
 

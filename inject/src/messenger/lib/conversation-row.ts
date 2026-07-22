@@ -29,9 +29,11 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
     const text = candidate.text.replace(/\s+/g, " ").trim();
     if (text && values[values.length - 1] !== text) values.push(text);
   }
+  // An empty body means the row's preview has not hydrated yet — callers use
+  // that to defer notification decisions instead of acting on placeholder text.
   return {
     title: (values[0] || "Messenger").slice(0, 80),
-    body: (values[1] || "New message").slice(0, 240),
+    body: (values[1] || "").slice(0, 240),
   };
 }
 

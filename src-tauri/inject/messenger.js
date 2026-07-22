@@ -1991,7 +1991,7 @@
     }
     return {
       title: (values[0] || "Messenger").slice(0, 80),
-      body: (values[1] || "New message").slice(0, 240)
+      body: (values[1] || "").slice(0, 240)
     };
   }
   function isUnreadConversationText(fontWeight, text) {
@@ -2084,6 +2084,10 @@
     alreadyNotified(conversationKey, fingerprint) {
       return this.entries.get(conversationKey) === fingerprint;
     }
+    /** The fingerprint last delivered for this conversation, if any. */
+    notifiedFingerprint(conversationKey) {
+      return this.entries.get(conversationKey);
+    }
     markNotified(conversationKey, fingerprint) {
       this.readSince.delete(conversationKey);
       if (this.entries.get(conversationKey) === fingerprint) return;
@@ -2167,9 +2171,11 @@
     }
   };
   var UnreadArrivalTracker = class {
-    constructor() {
+    constructor(settleMs = 0) {
+      __publicField(this, "settleMs", settleMs);
       __publicField(this, "changedAt", /* @__PURE__ */ new Map());
       __publicField(this, "unreadCount", null);
+      __publicField(this, "firstObservedAt", null);
     }
     markRowsChanged(keys, at) {
       for (const key of keys) this.changedAt.set(key, at);
@@ -2178,12 +2184,43 @@
       for (const [key, changedAt] of this.changedAt) {
         if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
       }
+      if (this.firstObservedAt === null) this.firstObservedAt = at;
+      if (this.unreadCount === null && count === 0 && at - this.firstObservedAt < this.settleMs) {
+        return [];
+      }
       const previous = this.unreadCount;
       this.unreadCount = count;
       if (previous === null || count <= previous) return [];
       const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
+    }
+  };
+  var StableMismatchTracker = class {
+    constructor(stableScans) {
+      __publicField(this, "stableScans", stableScans);
+      __publicField(this, "streaks", /* @__PURE__ */ new Map());
+    }
+    observe(mismatches) {
+      const seen = /* @__PURE__ */ new Set();
+      const reported = [];
+      for (const [key, fingerprint] of mismatches) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const streak = this.streaks.get(key);
+        if (streak?.fingerprint === fingerprint) {
+          streak.count += 1;
+          if (streak.count === this.stableScans) reported.push(key);
+          continue;
+        }
+        const count = 1;
+        this.streaks.set(key, { fingerprint, count });
+        if (count === this.stableScans) reported.push(key);
+      }
+      for (const key of this.streaks.keys()) {
+        if (!seen.has(key)) this.streaks.delete(key);
+      }
+      return reported;
     }
   };
   function isOwnMessagePreview(value) {
@@ -2329,6 +2366,8 @@
   var FALLBACK_POLL_VISIBLE_MS = 1e4;
   var FALLBACK_POLL_HIDDEN_MS = 6e4;
   var ROW_MUTATION_MATCH_MS = 2e3;
+  var HYDRATION_SETTLE_MS = 1e4;
+  var MISMATCH_STABLE_SCANS = 2;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
@@ -2553,7 +2592,8 @@
     };
     let scanRunning = false;
     let scanPending = false;
-    const unreadArrivals = new UnreadArrivalTracker();
+    const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
+    const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_SCANS);
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -2586,26 +2626,44 @@
         )) {
           changed.add(key);
         }
+        const fingerprints = /* @__PURE__ */ new Map();
+        const mismatches = [];
+        for (const conversation of conversations) {
+          if (!conversation.body) continue;
+          const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+          fingerprints.set(conversation.key, fingerprint);
+          const delivered = notifiedStore.notifiedFingerprint(conversation.key);
+          if (delivered !== void 0 && delivered !== fingerprint) {
+            mismatches.push([conversation.key, fingerprint]);
+          }
+        }
+        const recovered = mismatchTracker.observe(mismatches);
+        if (recovered.length) {
+          diag("notify.recovered", "unread preview diverged from its delivered fingerprint");
+          for (const key of recovered) changed.add(key);
+        }
         if (!changed.size) return;
         const stale = /* @__PURE__ */ new Set();
+        const unhydrated = /* @__PURE__ */ new Set();
         for (const conversation of conversations) {
-          if (changed.has(conversation.key) && notifiedStore.alreadyNotified(
-            conversation.key,
-            notificationDedupeKey(conversation.title, conversation.body)
-          )) {
+          if (!changed.has(conversation.key)) continue;
+          const fingerprint = fingerprints.get(conversation.key);
+          if (fingerprint === void 0) {
+            unhydrated.add(conversation.key);
+          } else if (notifiedStore.alreadyNotified(conversation.key, fingerprint)) {
             stale.add(conversation.key);
           }
         }
         if (stale.size) {
           diag("notify.stale", "suppressed replay of an already-delivered preview");
         }
-        if ([...changed].every((key) => stale.has(key))) return;
+        if ([...changed].every((key) => stale.has(key) || unhydrated.has(key))) return;
         try {
           window.__carrierOnNotification?.();
         } catch (_) {
         }
         for (const conversation of conversations) {
-          if (changed.has(conversation.key) && !stale.has(conversation.key)) {
+          if (changed.has(conversation.key) && !stale.has(conversation.key) && !unhydrated.has(conversation.key)) {
             scheduleFallback(conversation, detectedAt);
           }
         }
