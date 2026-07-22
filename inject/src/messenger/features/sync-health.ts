@@ -121,6 +121,45 @@ export function initSyncHealth() {
     return false;
   };
 
+  // Constant in-window indicator: a warning pill pinned to the top of the
+  // window for as long as sync is degraded. Reconciled every tick so a page
+  // re-render that drops it just brings it back. No CSS animation and no
+  // status role, so it can never trip the spinner detector above.
+  const SYNC_BANNER_ID = "carrier-sync-banner";
+  const showSyncBanner = () => {
+    try {
+      if (document.getElementById(SYNC_BANNER_ID)) return;
+      const banner = document.createElement("div");
+      banner.id = SYNC_BANNER_ID;
+      banner.setAttribute("role", "alert");
+      banner.textContent = "⚠ Messenger sync is broken — chats may be out of date";
+      Object.assign(banner.style, {
+        position: "fixed",
+        top: "10px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: "2147483646",
+        background: "#ffba00",
+        color: "#1c1e21",
+        padding: "6px 14px",
+        borderRadius: "999px",
+        boxShadow: "0 4px 16px rgba(0,0,0,.35)",
+        font: "600 12px -apple-system, system-ui, sans-serif",
+        pointerEvents: "none",
+        maxWidth: "90vw",
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+      });
+      (document.body || document.documentElement).appendChild(banner);
+    } catch (_) {}
+  };
+  const hideSyncBanner = () => {
+    try {
+      document.getElementById(SYNC_BANNER_ID)?.remove();
+    } catch (_) {}
+  };
+
   // The toast waits for a visible window; the native notification must not —
   // a buried window is exactly when it matters. The Rust side applies mute
   // and an episode gate, and renders its own fixed strings.
@@ -168,5 +207,7 @@ export function initSyncHealth() {
         "Messenger is struggling to sync — chats may be out of date. This is usually a Facebook-side problem that recovers on its own.",
       );
     }
+    if (degraded) showSyncBanner();
+    else hideSyncBanner();
   }, SYNC_CHECK_INTERVAL_MS);
 }
