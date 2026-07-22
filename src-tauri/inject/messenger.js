@@ -2019,11 +2019,14 @@
       ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
     ).sort((left, right) => left.y - right.y || left.x - right.x)) {
       const text = candidate.text.replace(/\s+/g, " ").trim();
-      if (text && values[values.length - 1] !== text) values.push(text);
+      if (!text) continue;
+      const last = values[values.length - 1];
+      if (last && last.text === text && Math.abs(last.y - candidate.y) < 1) continue;
+      values.push({ text, y: candidate.y });
     }
     return {
-      title: (values[0] || "Messenger").slice(0, 80),
-      body: (values[1] || "").slice(0, 240)
+      title: (values[0]?.text || "Messenger").slice(0, 80),
+      body: (values[1]?.text || "").slice(0, 240)
     };
   }
   function isUnreadConversationText(fontWeight, text) {
@@ -2101,7 +2104,11 @@
         const persistedEntries = legacy ? parsed : parsed && typeof parsed === "object" && "version" in parsed && parsed.version === NOTIFIED_STORE_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
         for (const entry of persistedEntries) {
           if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
-            this.entries.set(entry[0], { fingerprint: entry[1], legacy: legacy || entry[2] });
+            this.entries.set(entry[0], {
+              fingerprint: entry[1],
+              legacy: legacy || entry[2],
+              bodyHash: typeof entry[3] === "string" ? entry[3] : void 0
+            });
           }
         }
       } catch (_) {
@@ -2119,7 +2126,9 @@
           this.storageKey,
           JSON.stringify({
             version: NOTIFIED_STORE_VERSION,
-            entries: [...this.entries].map(([key, entry]) => [key, entry.fingerprint, entry.legacy])
+            entries: [...this.entries].map(
+              ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
+            )
           })
         );
       } catch (_) {
@@ -2138,29 +2147,43 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    reconcileFingerprint(conversationKey, title, fingerprint) {
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash) {
       const entry = this.entries.get(conversationKey);
       if (!entry) return "missing";
       if (entry.fingerprint === fingerprint) {
-        if (entry.legacy) {
+        if (entry.legacy || bodyHash !== void 0 && entry.bodyHash === void 0) {
           entry.legacy = false;
+          if (bodyHash !== void 0) entry.bodyHash = bodyHash;
           this.persist();
         }
+        return "matched";
+      }
+      if (bodyHash !== void 0 && entry.bodyHash !== void 0 && entry.bodyHash === bodyHash) {
+        entry.fingerprint = fingerprint;
+        entry.legacy = false;
+        this.persist();
         return "matched";
       }
       const legacyPlaceholder = entry.legacy && (entry.fingerprint === notificationDedupeKey(title, LEGACY_PLACEHOLDER_BODY) || entry.fingerprint === notificationDedupeKey("Messenger", LEGACY_PLACEHOLDER_BODY));
       if (!legacyPlaceholder) return "mismatched";
       entry.fingerprint = fingerprint;
       entry.legacy = false;
+      entry.bodyHash = bodyHash;
       this.persist();
       return "migrated";
     }
-    markNotified(conversationKey, fingerprint) {
+    markNotified(conversationKey, fingerprint, bodyHash) {
       this.readSince.delete(conversationKey);
       const current = this.entries.get(conversationKey);
-      if (current?.fingerprint === fingerprint && !current.legacy) return;
+      if (current?.fingerprint === fingerprint && !current.legacy) {
+        if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
+          current.bodyHash = bodyHash;
+          this.persist();
+        }
+        return;
+      }
       this.entries.delete(conversationKey);
-      this.entries.set(conversationKey, { fingerprint, legacy: false });
+      this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash });
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);
@@ -2324,10 +2347,11 @@
      * Consume receipts that match exactly one of the given rows, keyed by that
      * row's conversation key. A receipt is only title/body identity, so when
      * several visible threads share the same display text, guessing would route
-     * the native click to the wrong conversation and mark it delivered —
-     * ambiguous receipts stay queued instead (a later scan with only one
-     * matching row, or the TTL, settles them). Duplicate anchors for one
-     * thread count as a single row.
+     * the native click to the wrong conversation and mark it delivered — an
+     * ambiguous receipt is DROPPED instead: Messenger virtualizes the list, so
+     * waiting for a unique match could just as well settle it onto the wrong
+     * twin once the other scrolls away. Duplicate anchors for one thread count
+     * as a single row.
      */
     consumeUniquelyMatching(rows, now = Date.now()) {
       this.prune(now);
@@ -2352,13 +2376,40 @@
           }
           match = key;
         }
-        if (match === null || ambiguous || consumed.has(match)) continue;
+        if (match === null) continue;
         this.receipts.splice(index, 1);
         changed = true;
+        if (ambiguous || consumed.has(match)) continue;
         consumed.set(match, { nativeId: receipt.nativeId });
       }
       if (changed) this.persist();
       return consumed;
+    }
+    /**
+     * Drop receipts whose notification was evidently read: the receipt matches
+     * a read rendered row while matching no unread one. Left in place, it
+     * would survive up to its TTL and later swallow the pairing for a NEW
+     * identical-text message, suppressing that message's only notification.
+     */
+    discardReadMatches(readRows, unreadRows, now = Date.now()) {
+      this.prune(now);
+      if (!this.receipts.length) return;
+      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      if (!read.length) return;
+      const unread = [...unreadRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      let changed = false;
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const receipt = this.receipts[index];
+        if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+          continue;
+        }
+        if (unread.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+          continue;
+        }
+        this.receipts.splice(index, 1);
+        changed = true;
+      }
+      if (changed) this.persist();
     }
   };
   var PageNotificationQueue = class {
@@ -2696,7 +2747,14 @@
         if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
-        return { threadPath: pending.threadPath, deliver: { key, fingerprint: pending.fingerprint } };
+        return {
+          threadPath: pending.threadPath,
+          deliver: {
+            key,
+            fingerprint: pending.fingerprint,
+            bodyHash: notificationDedupeKey("", pending.body)
+          }
+        };
       }
       return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
     };
@@ -2730,12 +2788,17 @@
             pageMatch.threadPath
           );
           if (pageMatch.deliver) {
-            notifiedStore.markNotified(pageMatch.deliver.key, pageMatch.deliver.fingerprint);
+            notifiedStore.markNotified(
+              pageMatch.deliver.key,
+              pageMatch.deliver.fingerprint,
+              pageMatch.deliver.bodyHash
+            );
           }
           if (pageMatch.signal) {
             pageMatch.signal.emitted = true;
             const delivery = pageMatch.signal.pendingDelivery;
-            if (delivery) notifiedStore.markNotified(delivery.key, delivery.fingerprint);
+            if (delivery)
+              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
           }
         });
       }
@@ -2800,6 +2863,7 @@
     };
     const scheduleFallback = (conversation, detectedAt) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = pendingFallbacks.get(conversation.key);
       if (previous) clearTimeout(previous.timer);
       const pageSignal = unmatchedPageNotifications.consumeMatching(
@@ -2812,9 +2876,9 @@
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
-          notifiedStore.markNotified(conversation.key, fingerprint);
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
         } else {
-          pageSignal.pendingDelivery = { key: conversation.key, fingerprint };
+          pageSignal.pendingDelivery = { key: conversation.key, fingerprint, bodyHash };
         }
         pageNotificationReceipts.consumeMatching(conversation, detectedAt);
         pendingFallbacks.delete(conversation.key);
@@ -2833,7 +2897,7 @@
         const icon = hidePreview ? "" : await avatar;
         if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
         pendingFallbacks.delete(conversation.key);
-        notifiedStore.markNotified(conversation.key, fingerprint);
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
         diag(
           "notify.fallback",
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
@@ -2910,6 +2974,11 @@
             pendingArrivalKeys.delete(key);
           }
         }
+        pageNotificationReceipts.discardReadMatches(
+          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          observed.filter(({ unread, body }) => unread && body.length > 0),
+          detectedAt
+        );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
@@ -2926,12 +2995,13 @@
             continue;
           }
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+          const bodyHash = notificationDedupeKey("", conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
           if (pageReceipt) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);
             pendingFallbacks.delete(conversation.key);
-            notifiedStore.markNotified(conversation.key, fingerprint);
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
             unmatchedPageNotifications.consumeMatching(
               conversation,
               detectedAt,
@@ -2942,7 +3012,8 @@
           const reconciliation = notifiedStore.reconcileFingerprint(
             conversation.key,
             conversation.title,
-            fingerprint
+            fingerprint,
+            bodyHash
           );
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);

@@ -164,14 +164,21 @@ export function initNotificationBridge() {
     body: string,
   ): {
     threadPath?: string;
-    deliver?: { key: string; fingerprint: string };
+    deliver?: { key: string; fingerprint: string; bodyHash?: string };
     signal?: PageNotificationSignal;
   } => {
     for (const [key, pending] of pendingFallbacks) {
       if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
-      return { threadPath: pending.threadPath, deliver: { key, fingerprint: pending.fingerprint } };
+      return {
+        threadPath: pending.threadPath,
+        deliver: {
+          key,
+          fingerprint: pending.fingerprint,
+          bodyHash: notificationDedupeKey("", pending.body),
+        },
+      };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
@@ -245,12 +252,17 @@ export function initNotificationBridge() {
         // before construction (deliver) or during the conversion
         // (pendingDelivery, parked by scheduleFallback).
         if (pageMatch.deliver) {
-          notifiedStore.markNotified(pageMatch.deliver.key, pageMatch.deliver.fingerprint);
+          notifiedStore.markNotified(
+            pageMatch.deliver.key,
+            pageMatch.deliver.fingerprint,
+            pageMatch.deliver.bodyHash,
+          );
         }
         if (pageMatch.signal) {
           pageMatch.signal.emitted = true;
           const delivery = pageMatch.signal.pendingDelivery;
-          if (delivery) notifiedStore.markNotified(delivery.key, delivery.fingerprint);
+          if (delivery)
+            notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
         }
       });
     }
@@ -324,6 +336,7 @@ export function initNotificationBridge() {
 
   const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    const bodyHash = notificationDedupeKey("", conversation.body);
     // Clear an older pending preview for this thread before checking the page
     // queue. Otherwise a page Notification can consume the new row while the
     // stale timer remains armed and later produces a duplicate.
@@ -342,12 +355,12 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (pageSignal.emitted) {
-        notifiedStore.markNotified(conversation.key, fingerprint);
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
       } else {
         // The signal's native emit is still waiting on the avatar conversion.
         // A reload before it queues would leave no banner, so the delivered
         // state must ride the emitter, not this pairing.
-        pageSignal.pendingDelivery = { key: conversation.key, fingerprint };
+        pageSignal.pendingDelivery = { key: conversation.key, fingerprint, bodyHash };
       }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
@@ -373,7 +386,7 @@ export function initNotificationBridge() {
       pendingFallbacks.delete(conversation.key);
       // Mark only at the actual delivery boundary. A reload before this point
       // must not persist a false "already delivered" state.
-      notifiedStore.markNotified(conversation.key, fingerprint);
+      notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
       diag(
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
@@ -478,6 +491,13 @@ export function initNotificationBridge() {
       // Receipts are matched against all hydrated rows at once: only an
       // identity with exactly one visible candidate may consume one, so two
       // threads sharing display text cannot steal each other's receipt.
+      // A receipt matching only read rows was evidently read — retire it so
+      // it cannot swallow the pairing for a later identical-text message.
+      pageNotificationReceipts.discardReadMatches(
+        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        observed.filter(({ unread, body }) => unread && body.length > 0),
+        detectedAt,
+      );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
@@ -496,6 +516,7 @@ export function initNotificationBridge() {
           continue;
         }
         const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+        const bodyHash = notificationDedupeKey("", conversation.body);
 
         const pageReceipt = pageReceipts.get(conversation.key);
         if (pageReceipt) {
@@ -505,7 +526,7 @@ export function initNotificationBridge() {
           const pending = pendingFallbacks.get(conversation.key);
           if (pending) clearTimeout(pending.timer);
           pendingFallbacks.delete(conversation.key);
-          notifiedStore.markNotified(conversation.key, fingerprint);
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
           // Remove the same-document raw signal too; otherwise it could linger
           // briefly and pair with a different but text-identical row.
           unmatchedPageNotifications.consumeMatching(
@@ -520,6 +541,7 @@ export function initNotificationBridge() {
           conversation.key,
           conversation.title,
           fingerprint,
+          bodyHash,
         );
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);

@@ -133,6 +133,30 @@ describe("NotifiedSignatureStore", () => {
     expect(store.reconcileFingerprint("1", "Jane", next)).toBe("mismatched");
   });
 
+  test("title-only drift rekeys the delivered entry instead of mismatching", () => {
+    const storage = memoryStorage();
+    const bodyHash = notificationDedupeKey("", "Hello there");
+    new NotifiedSignatureStore(storage).markNotified(
+      "1",
+      notificationDedupeKey("Old name", "Hello there"),
+      bodyHash,
+    );
+    // Reload after a rename: same delivered content under a new title.
+    const store = new NotifiedSignatureStore(storage);
+    const renamed = notificationDedupeKey("New name", "Hello there");
+    expect(store.reconcileFingerprint("1", "New name", renamed, bodyHash)).toBe("matched");
+    expect(store.alreadyNotified("1", renamed)).toBe(true);
+    // A real body change still reports as new content.
+    expect(
+      store.reconcileFingerprint(
+        "1",
+        "New name",
+        notificationDedupeKey("New name", "Something new"),
+        notificationDedupeKey("", "Something new"),
+      ),
+    ).toBe("mismatched");
+  });
+
   test("forgets a conversation after a continuously stable read interval", () => {
     const storage = memoryStorage();
     new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
@@ -282,11 +306,12 @@ describe("PageNotificationReceiptStore", () => {
     expect(reloaded.consumeMatching({ title, body }, 1_500)).toBeNull();
   });
 
-  test("consumes a receipt only for a uniquely matching visible row", () => {
+  test("drops a receipt matched by several visible rows", () => {
     const store = new PageNotificationReceiptStore(memoryStorage());
     store.add("Jane", "OK", 42, 1_000);
     // Two different threads share the display text — guessing would route
-    // the click to the wrong one, so the receipt must stay queued.
+    // the click to the wrong one, and virtualization could later make the
+    // wrong twin look unique, so the receipt is dropped outright.
     const ambiguous = store.consumeUniquelyMatching(
       [
         { key: "1", title: "Jane", body: "OK" },
@@ -295,10 +320,37 @@ describe("PageNotificationReceiptStore", () => {
       1_100,
     );
     expect(ambiguous.size).toBe(0);
-    // Once only one candidate remains rendered, the receipt settles onto it.
-    const unique = store.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_200);
+    expect(
+      store.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_200).size,
+    ).toBe(0);
+  });
+
+  test("consumes a receipt for a uniquely matching visible row", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "OK", 42, 1_000);
+    const unique = store.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_100);
     expect(unique.get("1")).toEqual({ nativeId: 42 });
-    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_300)).toBeNull();
+    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
+  });
+
+  test("retires a receipt matching only read rows", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "OK", 42, 1_000);
+    // The thread was read before its unread row ever paired — the receipt
+    // must not linger and swallow a later identical message's pairing.
+    store.discardReadMatches([{ title: "Jane", body: "OK" }], [], 1_100);
+    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toBeNull();
+  });
+
+  test("keeps a receipt when an unread row still matches it", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "OK", 42, 1_000);
+    store.discardReadMatches(
+      [{ title: "Jane", body: "OK" }],
+      [{ title: "Jane", body: "OK" }],
+      1_100,
+    );
+    expect(store.consumeMatching({ title: "Jane", body: "OK" }, 1_200)).toEqual({ nativeId: 42 });
   });
 
   test("duplicate anchors for one thread do not count as ambiguity", () => {

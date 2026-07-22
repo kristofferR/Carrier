@@ -34,6 +34,13 @@ describe("conversationTextParts", () => {
     ).toEqual({ title: "Jane", body: "Preview" });
   });
 
+  test("keeps a preview identical to the title on its own line", () => {
+    expect(conversationTextParts([candidate("OK", { y: 0 }), candidate("OK", { y: 20 })])).toEqual({
+      title: "OK",
+      body: "OK",
+    });
+  });
+
   test("uses safe defaults and caps scraped text", () => {
     expect(conversationTextParts([])).toEqual({
       title: "Messenger",

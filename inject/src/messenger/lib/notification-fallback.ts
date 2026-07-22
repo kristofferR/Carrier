@@ -60,7 +60,7 @@ export interface PageNotificationSignal extends NotificationText {
    * their delivery here instead and the emitter persists it after emitting.
    */
   emitted?: boolean;
-  pendingDelivery?: { key: string; fingerprint: string };
+  pendingDelivery?: { key: string; fingerprint: string; bodyHash?: string };
 }
 
 const normalizeNotificationText = (value: string) =>
@@ -121,6 +121,14 @@ interface NotifiedEntry {
   fingerprint: string;
   /** Loaded from the unversioned schema that could persist placeholder text. */
   legacy: boolean;
+  /**
+   * Hash of the delivered preview body alone. Thread titles drift without new
+   * content (renames, hydration variants), which shifts the combined
+   * fingerprint — this lets reconciliation recognize title-only drift and
+   * rekey instead of treating it as a new message. Absent on entries
+   * persisted before the field existed.
+   */
+  bodyHash?: string;
 }
 
 export type FingerprintReconciliation = "missing" | "matched" | "migrated" | "mismatched";
@@ -168,7 +176,11 @@ export class NotifiedSignatureStore {
           typeof entry[1] === "string" &&
           (legacy || typeof entry[2] === "boolean")
         ) {
-          this.entries.set(entry[0], { fingerprint: entry[1], legacy: legacy || entry[2] });
+          this.entries.set(entry[0], {
+            fingerprint: entry[1],
+            legacy: legacy || entry[2],
+            bodyHash: typeof entry[3] === "string" ? entry[3] : undefined,
+          });
         }
       }
     } catch (_) {}
@@ -189,7 +201,11 @@ export class NotifiedSignatureStore {
         this.storageKey,
         JSON.stringify({
           version: NOTIFIED_STORE_VERSION,
-          entries: [...this.entries].map(([key, entry]) => [key, entry.fingerprint, entry.legacy]),
+          entries: [...this.entries].map(([key, entry]) =>
+            entry.bodyHash === undefined
+              ? [key, entry.fingerprint, entry.legacy]
+              : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
+          ),
         }),
       );
     } catch (_) {}
@@ -214,14 +230,26 @@ export class NotifiedSignatureStore {
     conversationKey: string,
     title: string,
     fingerprint: string,
+    bodyHash?: string,
   ): FingerprintReconciliation {
     const entry = this.entries.get(conversationKey);
     if (!entry) return "missing";
     if (entry.fingerprint === fingerprint) {
-      if (entry.legacy) {
+      if (entry.legacy || (bodyHash !== undefined && entry.bodyHash === undefined)) {
         entry.legacy = false;
+        // Backfill the body hash so future title drift is recognized.
+        if (bodyHash !== undefined) entry.bodyHash = bodyHash;
         this.persist();
       }
+      return "matched";
+    }
+    if (bodyHash !== undefined && entry.bodyHash !== undefined && entry.bodyHash === bodyHash) {
+      // Title-only drift: the delivered content is unchanged but the thread
+      // was renamed or its title hydrated differently. Rekey so exact
+      // matching resumes — this is not a new message.
+      entry.fingerprint = fingerprint;
+      entry.legacy = false;
+      this.persist();
       return "matched";
     }
     const legacyPlaceholder =
@@ -231,18 +259,25 @@ export class NotifiedSignatureStore {
     if (!legacyPlaceholder) return "mismatched";
     entry.fingerprint = fingerprint;
     entry.legacy = false;
+    entry.bodyHash = bodyHash;
     this.persist();
     return "migrated";
   }
 
-  markNotified(conversationKey: string, fingerprint: string): void {
+  markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readSince.delete(conversationKey);
     const current = this.entries.get(conversationKey);
-    if (current?.fingerprint === fingerprint && !current.legacy) return;
+    if (current?.fingerprint === fingerprint && !current.legacy) {
+      if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
+        current.bodyHash = bodyHash;
+        this.persist();
+      }
+      return;
+    }
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
-    this.entries.set(conversationKey, { fingerprint, legacy: false });
+    this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash });
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);
@@ -490,10 +525,11 @@ export class PageNotificationReceiptStore {
    * Consume receipts that match exactly one of the given rows, keyed by that
    * row's conversation key. A receipt is only title/body identity, so when
    * several visible threads share the same display text, guessing would route
-   * the native click to the wrong conversation and mark it delivered —
-   * ambiguous receipts stay queued instead (a later scan with only one
-   * matching row, or the TTL, settles them). Duplicate anchors for one
-   * thread count as a single row.
+   * the native click to the wrong conversation and mark it delivered — an
+   * ambiguous receipt is DROPPED instead: Messenger virtualizes the list, so
+   * waiting for a unique match could just as well settle it onto the wrong
+   * twin once the other scrolls away. Duplicate anchors for one thread count
+   * as a single row.
    */
   consumeUniquelyMatching(
     rows: Iterable<NotificationText & { key: string }>,
@@ -521,13 +557,48 @@ export class PageNotificationReceiptStore {
         }
         match = key;
       }
-      if (match === null || ambiguous || consumed.has(match)) continue;
+      if (match === null) continue;
       this.receipts.splice(index, 1);
       changed = true;
+      // Ambiguous, or a second receipt for an already-consumed row: dropped,
+      // not consumed — the fallback path takes over and the native 30s
+      // dedupe absorbs a same-text duplicate.
+      if (ambiguous || consumed.has(match)) continue;
       consumed.set(match, { nativeId: receipt.nativeId });
     }
     if (changed) this.persist();
     return consumed;
+  }
+
+  /**
+   * Drop receipts whose notification was evidently read: the receipt matches
+   * a read rendered row while matching no unread one. Left in place, it
+   * would survive up to its TTL and later swallow the pairing for a NEW
+   * identical-text message, suppressing that message's only notification.
+   */
+  discardReadMatches(
+    readRows: Iterable<NotificationText>,
+    unreadRows: Iterable<NotificationText>,
+    now = Date.now(),
+  ): void {
+    this.prune(now);
+    if (!this.receipts.length) return;
+    const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    if (!read.length) return;
+    const unread = [...unreadRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const receipt = this.receipts[index]!;
+      if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+        continue;
+      }
+      if (unread.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+        continue;
+      }
+      this.receipts.splice(index, 1);
+      changed = true;
+    }
+    if (changed) this.persist();
   }
 }
 
