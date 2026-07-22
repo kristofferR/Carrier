@@ -3123,7 +3123,8 @@
 
   // inject/src/messenger/lib/sync-health.ts
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
-  var SYNC_FAILURE_LIMIT = 5;
+  var SYNC_WINDOW_MS = 18e4;
+  var SYNC_FAILURE_FLOOR = 5;
   function isMessengerSyncRequest(raw, base) {
     let url;
     try {
@@ -3142,36 +3143,50 @@
   var SyncHealthTracker = class {
     constructor() {
       __publicField(this, "outstanding", /* @__PURE__ */ new Map());
+      __publicField(this, "outcomes", []);
       __publicField(this, "nextId", 1);
-      __publicField(this, "failureStreak", 0);
     }
     started(now) {
       const id = this.nextId++;
       this.outstanding.set(id, now);
       return id;
     }
-    succeeded(id) {
+    succeeded(id, now) {
       this.outstanding.delete(id);
-      this.failureStreak = 0;
+      this.outcomes.push({ at: now, ok: true });
     }
-    failed(id) {
+    failed(id, now) {
       this.outstanding.delete(id);
-      this.failureStreak += 1;
+      this.outcomes.push({ at: now, ok: false });
     }
     /** Count requests hung past the deadline as failures, each once. */
     sweep(now) {
       for (const [id, startedAt] of this.outstanding) {
         if (now - startedAt >= SYNC_REQUEST_TIMEOUT_MS) {
           this.outstanding.delete(id);
-          this.failureStreak += 1;
+          this.outcomes.push({ at: now, ok: false });
         }
       }
+      this.outcomes = this.outcomes.filter((outcome) => now - outcome.at < SYNC_WINDOW_MS);
     }
-    failing() {
-      return this.failureStreak >= SYNC_FAILURE_LIMIT;
+    counts(now) {
+      let ok = 0;
+      let bad = 0;
+      for (const outcome of this.outcomes) {
+        if (now - outcome.at >= SYNC_WINDOW_MS) continue;
+        if (outcome.ok) ok += 1;
+        else bad += 1;
+      }
+      return { ok, bad };
     }
-    streak() {
-      return this.failureStreak;
+    degraded(now) {
+      const { ok, bad } = this.counts(now);
+      return bad >= SYNC_FAILURE_FLOOR && bad > ok;
+    }
+    /** Content-free description of the current window for diagnostics. */
+    summary(now) {
+      const { ok, bad } = this.counts(now);
+      return `${bad} failed / ${ok} ok in window`;
     }
   };
 
@@ -3197,10 +3212,10 @@
             const id = tracked;
             result.then(
               (response) => {
-                if (syncResponseSucceeded(response.status)) tracker.succeeded(id);
-                else tracker.failed(id);
+                if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
+                else tracker.failed(id, Date.now());
               },
-              () => tracker.failed(id)
+              () => tracker.failed(id, Date.now())
             );
           }
           return result;
@@ -3214,29 +3229,30 @@
     } catch (_) {
       diag("sync.requests", "could not observe Messenger sync requests");
     }
-    let stalled = false;
+    let degraded = false;
     let announcePending = false;
     let announced = false;
     setInterval(() => {
-      tracker.sweep(Date.now());
-      const failingNow = tracker.failing();
-      if (failingNow && !stalled) {
-        stalled = true;
+      const now = Date.now();
+      tracker.sweep(now);
+      const degradedNow = tracker.degraded(now);
+      if (degradedNow && !degraded) {
+        degraded = true;
         announcePending = true;
         announced = false;
-        diag("sync.stalled", `messenger sync requests failing (streak ${tracker.streak()})`);
-      } else if (!failingNow && stalled) {
-        stalled = false;
+        diag("sync.stalled", `messenger sync degraded (${tracker.summary(now)})`);
+      } else if (!degradedNow && degraded) {
+        degraded = false;
         announcePending = false;
         if (announced) toast("Messenger sync recovered.");
         announced = false;
         diag("sync.stalled", "messenger sync recovered");
       }
-      if (stalled && announcePending && !document.hidden && navigator.onLine) {
+      if (degraded && announcePending && !document.hidden && navigator.onLine) {
         announcePending = false;
         announced = true;
         toast(
-          "Messenger sync is stalled — Facebook is not answering sync requests. Chats may be out of date until it recovers."
+          "Messenger is struggling to sync — chats may be out of date. This is usually a Facebook-side problem that recovers on its own."
         );
       }
     }, SYNC_CHECK_INTERVAL_MS);

@@ -40,10 +40,10 @@ export function initSyncHealth() {
           // Observe the outcome without altering the promise Messenger gets.
           result.then(
             (response) => {
-              if (syncResponseSucceeded(response.status)) tracker.succeeded(id);
-              else tracker.failed(id);
+              if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
+              else tracker.failed(id, Date.now());
             },
-            () => tracker.failed(id),
+            () => tracker.failed(id, Date.now()),
           );
         }
         return result;
@@ -58,19 +58,20 @@ export function initSyncHealth() {
     diag("sync.requests", "could not observe Messenger sync requests");
   }
 
-  let stalled = false;
+  let degraded = false;
   let announcePending = false;
   let announced = false;
   setInterval(() => {
-    tracker.sweep(Date.now());
-    const failingNow = tracker.failing();
-    if (failingNow && !stalled) {
-      stalled = true;
+    const now = Date.now();
+    tracker.sweep(now);
+    const degradedNow = tracker.degraded(now);
+    if (degradedNow && !degraded) {
+      degraded = true;
       announcePending = true;
       announced = false;
-      diag("sync.stalled", `messenger sync requests failing (streak ${tracker.streak()})`);
-    } else if (!failingNow && stalled) {
-      stalled = false;
+      diag("sync.stalled", `messenger sync degraded (${tracker.summary(now)})`);
+    } else if (!degradedNow && degraded) {
+      degraded = false;
       announcePending = false;
       if (announced) toast("Messenger sync recovered.");
       announced = false;
@@ -78,11 +79,11 @@ export function initSyncHealth() {
     }
     // Announce when the user can actually see it. While offline the realtime
     // recovery machinery owns the messaging — failed fetches are expected.
-    if (stalled && announcePending && !document.hidden && navigator.onLine) {
+    if (degraded && announcePending && !document.hidden && navigator.onLine) {
       announcePending = false;
       announced = true;
       toast(
-        "Messenger sync is stalled — Facebook is not answering sync requests. Chats may be out of date until it recovers.",
+        "Messenger is struggling to sync — chats may be out of date. This is usually a Facebook-side problem that recovers on its own.",
       );
     }
   }, SYNC_CHECK_INTERVAL_MS);

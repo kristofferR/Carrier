@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   isMessengerSyncRequest,
-  SYNC_FAILURE_LIMIT,
+  SYNC_FAILURE_FLOOR,
   SYNC_REQUEST_TIMEOUT_MS,
+  SYNC_WINDOW_MS,
   SyncHealthTracker,
   syncResponseSucceeded,
 } from "./sync-health";
@@ -44,24 +45,36 @@ describe("syncResponseSucceeded", () => {
 });
 
 describe("SyncHealthTracker", () => {
-  test("flags failing sync only after consecutive failures", () => {
+  test("flags a blackout once enough requests fail in the window", () => {
     const tracker = new SyncHealthTracker();
-    for (let i = 0; i < SYNC_FAILURE_LIMIT - 1; i++) {
-      tracker.failed(tracker.started(0));
-      expect(tracker.failing()).toBe(false);
+    for (let i = 0; i < SYNC_FAILURE_FLOOR - 1; i++) {
+      tracker.failed(tracker.started(0), 0);
+      expect(tracker.degraded(0)).toBe(false);
     }
-    tracker.failed(tracker.started(0));
-    expect(tracker.failing()).toBe(true);
+    tracker.failed(tracker.started(0), 0);
+    expect(tracker.degraded(0)).toBe(true);
   });
 
-  test("a single success resets the streak", () => {
+  test("flags a brownout where failures outnumber the successes", () => {
     const tracker = new SyncHealthTracker();
-    for (let i = 0; i < SYNC_FAILURE_LIMIT; i++) tracker.failed(tracker.started(0));
-    expect(tracker.failing()).toBe(true);
+    for (let i = 0; i < 4; i++) tracker.succeeded(tracker.started(0), 0);
+    for (let i = 0; i < 5; i++) tracker.failed(tracker.started(0), 0);
+    expect(tracker.degraded(0)).toBe(true);
+  });
 
-    tracker.succeeded(tracker.started(0));
-    expect(tracker.failing()).toBe(false);
-    expect(tracker.streak()).toBe(0);
+  test("stays healthy while successes keep pace with failures", () => {
+    const tracker = new SyncHealthTracker();
+    for (let i = 0; i < 5; i++) tracker.succeeded(tracker.started(0), 0);
+    for (let i = 0; i < 5; i++) tracker.failed(tracker.started(0), 0);
+    expect(tracker.degraded(0)).toBe(false);
+  });
+
+  test("old outcomes fall out of the rolling window", () => {
+    const tracker = new SyncHealthTracker();
+    for (let i = 0; i < SYNC_FAILURE_FLOOR; i++) tracker.failed(tracker.started(0), 0);
+    expect(tracker.degraded(0)).toBe(true);
+
+    expect(tracker.degraded(SYNC_WINDOW_MS)).toBe(false);
   });
 
   test("counts a hung request as one failure via sweep", () => {
@@ -69,22 +82,21 @@ describe("SyncHealthTracker", () => {
     tracker.started(0);
 
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS - 1);
-    expect(tracker.streak()).toBe(0);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS - 1)).toBe("0 failed / 0 ok in window");
 
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
-    expect(tracker.streak()).toBe(1);
-    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS * 2);
-    expect(tracker.streak()).toBe(1);
+    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS + 1);
+    expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS + 1)).toBe("1 failed / 0 ok in window");
   });
 
-  test("a late success after being swept still resets the streak", () => {
+  test("recovery needs fresh successes, not just time passing failures out", () => {
     const tracker = new SyncHealthTracker();
-    const slow = tracker.started(0);
-    for (let i = 0; i < SYNC_FAILURE_LIMIT; i++) tracker.failed(tracker.started(0));
-    tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
-    expect(tracker.failing()).toBe(true);
+    for (let i = 0; i < SYNC_FAILURE_FLOOR + 1; i++) tracker.failed(tracker.started(0), 0);
+    expect(tracker.degraded(1_000)).toBe(true);
 
-    tracker.succeeded(slow);
-    expect(tracker.failing()).toBe(false);
+    for (let i = 0; i < SYNC_FAILURE_FLOOR + 2; i++) {
+      tracker.succeeded(tracker.started(2_000), 2_000);
+    }
+    expect(tracker.degraded(2_000)).toBe(false);
   });
 });
