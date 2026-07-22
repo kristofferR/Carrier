@@ -404,6 +404,11 @@ export function initNotificationBridge() {
   let mismatchConfirmationTimer: number | undefined;
   const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
   const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
+  // Arrivals attributed while their row preview was still empty. The
+  // signature tracker only observes hydrated rows, so without carrying these
+  // keys the later hydration would prime silently and the arrival would
+  // never notify. Delivered once the row hydrates; dropped if it turns read.
+  const pendingArrivalKeys = new Set<string>();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -456,6 +461,17 @@ export function initNotificationBridge() {
       )) {
         changed.add(key);
       }
+      // Carry earlier attributed arrivals whose row has hydrated since, and
+      // drop the ones whose row was read before ever hydrating.
+      for (const conversation of hydrated) {
+        if (pendingArrivalKeys.delete(conversation.key)) changed.add(conversation.key);
+      }
+      for (const key of pendingArrivalKeys) {
+        const row = observed.find((conversation) => conversation.key === key);
+        if (row && !conversations.some((conversation) => conversation.key === key)) {
+          pendingArrivalKeys.delete(key);
+        }
+      }
       // Reconcile every hydrated row before honoring any changed verdict. This
       // is the single gate for exact replays, legacy placeholder migration,
       // reload-persistent page receipts, and stable delivered mismatches.
@@ -468,7 +484,15 @@ export function initNotificationBridge() {
       const unhydrated = new Set<string>();
       for (const conversation of conversations) {
         if (!conversation.body) {
-          if (changed.has(conversation.key)) unhydrated.add(conversation.key);
+          if (changed.has(conversation.key)) {
+            unhydrated.add(conversation.key);
+            // Park the arrival until a scan sees the hydrated preview —
+            // nothing else will re-report it once the count has moved on.
+            pendingArrivalKeys.add(conversation.key);
+            if (pendingArrivalKeys.size > 50) {
+              pendingArrivalKeys.delete(pendingArrivalKeys.keys().next().value!);
+            }
+          }
           continue;
         }
         const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
@@ -499,11 +523,27 @@ export function initNotificationBridge() {
         );
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
+          // The current content is already delivered — an armed fallback for
+          // this thread (e.g. from a mismatch the hydration then corrected)
+          // would only replay it or emit an outdated preview.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) {
+            clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+          }
         } else if (reconciliation === "mismatched") {
           // A raw row/title change cannot bypass the hydration-stability guard.
           // Only StableMismatchTracker may put this key back into `changed`.
           changed.delete(conversation.key);
           mismatches.push([conversation.key, fingerprint]);
+          // If the preview moved on while a fallback for the old text was
+          // armed, that timer would deliver a stale preview — cancel it; the
+          // mismatch tracker re-arms once the new fingerprint stabilizes.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending && pending.fingerprint !== fingerprint) {
+            clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+          }
         }
       }
       // A stably diverged fingerprint means new content since the last
