@@ -107,7 +107,7 @@
         });
         button.addEventListener("click", (event) => {
           event.stopPropagation();
-          action.onClick();
+          action.onClick(event);
         });
         el.append(button);
       }

@@ -50,8 +50,14 @@ interface CarrierSettings {
 
 interface CarrierToastAction {
   label: string;
-  onClick: () => void;
+  onClick: (event: MouseEvent) => void;
 }
+
+/**
+ * Closure-scoped bridge supplied by the Rust initialization wrapper. It holds
+ * the native reveal authorization and is deliberately not a Window property.
+ */
+declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */

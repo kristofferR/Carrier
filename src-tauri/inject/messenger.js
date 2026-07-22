@@ -34,6 +34,7 @@
     return name;
   };
   var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+  var canRevealDownload = (eventIsTrusted, userActivationIsActive) => eventIsTrusted && userActivationIsActive;
 
   // inject/src/messenger/lib/links.ts
   var INTERNAL_HOSTS = [
@@ -161,13 +162,15 @@
   var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
-  var revealDownload = (url) => invoke("plugin:event|emit", {
-    event: "carrier:reveal-download",
-    payload: { url }
-  })?.catch?.(() => diag("ipc.reveal-download", "reveal event failed"));
+  var revealDownload = (url, event) => {
+    if (!canRevealDownload(event.isTrusted, navigator.userActivation?.isActive === true)) return;
+    carrierRevealDownload(url)?.catch?.(
+      () => diag("ipc.reveal-download", "authorized reveal event failed")
+    );
+  };
   var toastDownloadSaved = (url) => toast("Saved to Downloads", {
     label: downloadRevealLabel(navigator.userAgent),
-    onClick: () => revealDownload(url)
+    onClick: (event) => revealDownload(url, event)
   });
 
   // inject/src/messenger/lib/auto-refresh.ts

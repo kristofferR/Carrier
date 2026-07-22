@@ -189,6 +189,10 @@ pub(crate) struct AppState {
     /// The page-scraped recent-conversations list backing the Dock/tray menus.
     /// In memory only — never persisted (see `carrier:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,
+    /// Per-window secrets that authenticate reveal-download requests from
+    /// Carrier's injected click handler. Remote page scripts can emit events,
+    /// but cannot read these closure-scoped tokens.
+    pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";

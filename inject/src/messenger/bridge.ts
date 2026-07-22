@@ -1,5 +1,5 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
-import { downloadRevealLabel } from "./lib/downloads";
+import { canRevealDownload, downloadRevealLabel } from "./lib/downloads";
 import { stripFacebookTracking } from "./lib/links";
 
 // Use the always-present internal bridge directly instead of the global
@@ -52,14 +52,15 @@ export const openUrl = (url: string) =>
     diag("ipc.open-url", "opener invoke failed"),
   );
 
-export const revealDownload = (url: string) =>
-  invoke("plugin:event|emit", {
-    event: "carrier:reveal-download",
-    payload: { url },
-  })?.catch?.(() => diag("ipc.reveal-download", "reveal event failed"));
+export const revealDownload = (url: string, event: MouseEvent) => {
+  if (!canRevealDownload(event.isTrusted, navigator.userActivation?.isActive === true)) return;
+  carrierRevealDownload(url)?.catch?.(() =>
+    diag("ipc.reveal-download", "authorized reveal event failed"),
+  );
+};
 
 export const toastDownloadSaved = (url: string) =>
   toast("Saved to Downloads", {
     label: downloadRevealLabel(navigator.userAgent),
-    onClick: () => revealDownload(url),
+    onClick: (event) => revealDownload(url, event),
   });

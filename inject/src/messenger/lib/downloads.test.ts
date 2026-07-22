@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  canRevealDownload,
   downloadRevealLabel,
   filenameFromUrl,
   friendlyDownloadName,
@@ -59,5 +60,14 @@ describe("downloadRevealLabel", () => {
     );
     expect(downloadRevealLabel("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("Show in folder");
     expect(downloadRevealLabel("Mozilla/5.0 (X11; Linux x86_64)")).toBe("Show in folder");
+  });
+});
+
+describe("canRevealDownload", () => {
+  test("requires both a trusted event and an active user gesture", () => {
+    expect(canRevealDownload(true, true)).toBe(true);
+    expect(canRevealDownload(false, true)).toBe(false);
+    expect(canRevealDownload(true, false)).toBe(false);
+    expect(canRevealDownload(false, false)).toBe(false);
   });
 });
