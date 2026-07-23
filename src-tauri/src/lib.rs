@@ -142,7 +142,11 @@ pub fn run() {
 
     // Single-instance enforcement (unless the experimental multi-instance flag
     // is set). Must be registered first so it runs before any window is created.
-    if !initial.multi_instance {
+    // MCP builds must be able to run beside the installed release so a live,
+    // authenticated Messenger session can be inspected without closing the
+    // user's normal Carrier window. The mcp feature cannot compile in release
+    // builds, so this does not weaken production single-instance enforcement.
+    if !initial.multi_instance && !cfg!(all(feature = "mcp", debug_assertions)) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }));
@@ -152,12 +156,15 @@ pub fn run() {
     // DOM/JS inspection. Keep it after single-instance enforcement: otherwise a
     // second debug launch can lose the MCP socket race and exit before notifying
     // the existing instance to reveal its window.
-    #[cfg(feature = "mcp")]
+    #[cfg(all(feature = "mcp", debug_assertions))]
     {
+        let socket_path = std::env::var_os("CARRIER_MCP_SOCKET_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "/tmp/tauri-mcp.sock".into());
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new(APP_TITLE.to_string())
                 .start_socket_server(true)
-                .socket_path("/tmp/tauri-mcp.sock".into()),
+                .socket_path(socket_path),
         ));
     }
 
