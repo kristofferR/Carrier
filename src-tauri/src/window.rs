@@ -81,7 +81,7 @@ pub(crate) fn build_app_window(
     let watchdog = WebviewWatchdog::new();
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
-    let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
+    let webview_authorization = uuid::Uuid::new_v4().simple().to_string();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -89,7 +89,7 @@ pub(crate) fn build_app_window(
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
         .user_agent(user_agent())
-        .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
+        .initialization_script(init_script(settings, watchdog_id, &webview_authorization))
         .on_page_load(move |window, payload| match payload.event() {
             tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
             tauri::webview::PageLoadEvent::Finished => {
@@ -179,11 +179,27 @@ pub(crate) fn build_app_window(
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
         })?;
+    let authorization_for_cleanup = webview_authorization.clone();
     app.state::<AppState>()
-        .download_reveal_tokens
+        .webview_authorizations
         .lock()
         .unwrap()
-        .insert(label.to_string(), download_reveal_token);
+        .insert(label.to_string(), webview_authorization);
+    let cleanup_app = app.clone();
+    let cleanup_label = label.to_string();
+    window.on_window_event(move |event| {
+        if !matches!(event, WindowEvent::Destroyed) {
+            return;
+        }
+        let state = cleanup_app.state::<AppState>();
+        let mut authorizations = state.webview_authorizations.lock().unwrap();
+        // A replacement window may already have claimed the same label. Its
+        // new credential must survive a late Destroyed callback from the old
+        // generation.
+        if authorizations.get(&cleanup_label) == Some(&authorization_for_cleanup) {
+            authorizations.remove(&cleanup_label);
+        }
+    });
     install_app_window_runtime_handler(app, &window);
     watchdog.install(&window);
     Ok(window)
@@ -592,11 +608,30 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     }
 }
 
-fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &str) -> String {
+fn init_script(settings: &Settings, watchdog_id: u64, webview_authorization: &str) -> String {
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
-    let reveal_token_literal =
-        serde_json::to_string(download_reveal_token).expect("reveal token serialises");
+    let authorization_literal =
+        serde_json::to_string(webview_authorization).expect("webview authorization serialises");
+    #[cfg(target_os = "macos")]
+    let inactive_refresh_bridge = format!(
+        r#"var carrierRefreshInactiveMessenger = (function (invoke, authorization) {{
+    return function () {{
+      if (!invoke) return;
+      return invoke('plugin:event|emit', {{
+        event: 'carrier:refresh-inactive-messenger',
+        payload: {{ authorization: authorization }}
+      }});
+    }};
+  }})(
+    window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
+      ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
+      : undefined,
+    {authorization_literal}
+  );"#
+    );
+    #[cfg(not(target_os = "macos"))]
+    let inactive_refresh_bridge = "var carrierRefreshInactiveMessenger;";
     format!(
         r#"(function () {{
   var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
@@ -617,9 +652,9 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
 
-  // Keep the per-window reveal credential and the original IPC function in
-  // this initialization script's lexical scope. Facebook can emit the same
-  // event name, inspect the DOM, and replace window.__TAURI_INTERNALS__, but it
+  // Keep the per-window credential and original IPC functions in this
+  // initialization script's lexical scope. Facebook can emit the same event
+  // names, inspect the DOM, and replace window.__TAURI_INTERNALS__, but it
   // cannot read this closure or forge the native authorization it carries.
   var carrierRevealDownload = (function (invoke, authorization) {{
     return function (url) {{
@@ -633,8 +668,9 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
       ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
       : undefined,
-    {reveal_token_literal}
+    {authorization_literal}
   );
+  {inactive_refresh_bridge}
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change

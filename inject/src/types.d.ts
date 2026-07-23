@@ -60,6 +60,12 @@ interface CarrierToastAction {
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
+/**
+ * macOS-only authenticated bridge for Carrier's scheduled inactive refresh.
+ * Undefined elsewhere, where the page keeps using an ordinary reload.
+ */
+declare const carrierRefreshInactiveMessenger: (() => Promise<unknown> | undefined) | undefined;
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {

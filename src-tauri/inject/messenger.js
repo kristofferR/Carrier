@@ -514,7 +514,7 @@
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
-    const maybeReload = () => {
+    const maybeReload = (useNativeInactiveRefresh = true) => {
       timer = void 0;
       if (!pending) return;
       if (pageIsActive() && !reloadWhileActive) {
@@ -539,6 +539,19 @@
         }
       }
       pending = false;
+      if (useNativeInactiveRefresh && pendingReason === "background" && typeof carrierRefreshInactiveMessenger === "function") {
+        try {
+          const refresh = carrierRefreshInactiveMessenger();
+          if (refresh) {
+            refresh.catch(() => {
+              pending = true;
+              maybeReload(false);
+            });
+            return;
+          }
+        } catch (_) {
+        }
+      }
       location.reload();
     };
     const schedule = (delay, reason, allowWhileActive = false) => {

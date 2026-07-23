@@ -128,7 +128,7 @@ export function initAutoRefresh() {
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("carrier:protection-change", emitProtectionChange);
   emitHeartbeat();
-  const maybeReload = () => {
+  const maybeReload = (useNativeInactiveRefresh = true) => {
     timer = undefined;
     if (!pending) return;
     if (pageIsActive() && !reloadWhileActive) {
@@ -153,6 +153,26 @@ export function initAutoRefresh() {
       } catch (_) {}
     }
     pending = false;
+    // On macOS, let native code turn this already-scheduled background reload
+    // into a renderer restart only when the renderer is oversized.
+    // The native event is authenticated by a closure-scoped per-window token;
+    // fall back to the existing reload if queueing it fails.
+    if (
+      useNativeInactiveRefresh &&
+      pendingReason === "background" &&
+      typeof carrierRefreshInactiveMessenger === "function"
+    ) {
+      try {
+        const refresh = carrierRefreshInactiveMessenger();
+        if (refresh) {
+          refresh.catch(() => {
+            pending = true;
+            maybeReload(false);
+          });
+          return;
+        }
+      } catch (_) {}
+    }
     location.reload();
   };
   const schedule = (delay: number, reason: RefreshReason | "online", allowWhileActive = false) => {

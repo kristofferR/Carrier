@@ -56,8 +56,16 @@ use tray::show_main;
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{build_app_window, install_main_close_handler, show_settings_window};
 
-fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
-    !candidate.is_empty() && tokens.values().any(|token| token == candidate)
+fn authorized_webview_label<'a>(
+    authorizations: &'a HashMap<String, String>,
+    candidate: &str,
+) -> Option<&'a str> {
+    if candidate.is_empty() {
+        return None;
+    }
+    authorizations
+        .iter()
+        .find_map(|(label, token)| (token == candidate).then_some(label.as_str()))
 }
 
 /// The page we wrap.
@@ -218,7 +226,7 @@ pub fn run() {
             zoom_generation: AtomicUsize::new(0),
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
-            download_reveal_tokens: Mutex::new(HashMap::new()),
+            webview_authorizations: Mutex::new(HashMap::new()),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -299,8 +307,8 @@ pub fn run() {
                 };
                 let authorized = {
                     let state = reveal_handle.state::<AppState>();
-                    let tokens = state.download_reveal_tokens.lock().unwrap();
-                    valid_download_reveal_token(&tokens, &msg.authorization)
+                    let authorizations = state.webview_authorizations.lock().unwrap();
+                    authorized_webview_label(&authorizations, &msg.authorization).is_some()
                 };
                 if !authorized {
                     log::warn!("carrier:reveal-download was not authorized by a trusted click");
@@ -317,6 +325,40 @@ pub fn run() {
                     }
                 });
             });
+
+            // A same-process reload retains WKWebView's high-water allocator.
+            // The macOS page asks native code to inspect its own renderer during
+            // Carrier's existing inactive refresh; only an oversized renderer is
+            // restarted. The closure-scoped per-window token prevents arbitrary
+            // Facebook script from turning this into a rebuild loop.
+            #[cfg(target_os = "macos")]
+            {
+                let refresh_handle = app.handle().clone();
+                app.listen_any("carrier:refresh-inactive-messenger", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct RefreshMsg {
+                        authorization: String,
+                    }
+
+                    let Ok(msg) = serde_json::from_str::<RefreshMsg>(event.payload()) else {
+                        log::warn!("carrier:refresh-inactive-messenger payload did not parse");
+                        return;
+                    };
+                    let label = {
+                        let state = refresh_handle.state::<AppState>();
+                        let authorizations = state.webview_authorizations.lock().unwrap();
+                        authorized_webview_label(&authorizations, &msg.authorization)
+                            .map(str::to_string)
+                    };
+                    let Some(label) = label else {
+                        log::warn!(
+                            "carrier:refresh-inactive-messenger was not authorized by Carrier code"
+                        );
+                        return;
+                    };
+                    crate::macos::memory::refresh_inactive_messenger(&refresh_handle, &label);
+                });
+            }
 
             // Unread count from the page → tray tooltip (the Dock badge is set
             // page-side; this keeps the tray useful in menu-bar-only mode).
@@ -547,15 +589,24 @@ mod tests {
     }
 
     #[test]
-    fn download_reveal_tokens_must_match_a_registered_window() {
-        let tokens = HashMap::from([
+    fn webview_authorizations_resolve_only_registered_windows() {
+        let authorizations = HashMap::from([
             ("main".to_string(), "main-secret".to_string()),
             ("win-2".to_string(), "second-secret".to_string()),
         ]);
 
-        assert!(valid_download_reveal_token(&tokens, "main-secret"));
-        assert!(valid_download_reveal_token(&tokens, "second-secret"));
-        assert!(!valid_download_reveal_token(&tokens, ""));
-        assert!(!valid_download_reveal_token(&tokens, "page-supplied"));
+        assert_eq!(
+            authorized_webview_label(&authorizations, "main-secret"),
+            Some("main")
+        );
+        assert_eq!(
+            authorized_webview_label(&authorizations, "second-secret"),
+            Some("win-2")
+        );
+        assert_eq!(authorized_webview_label(&authorizations, ""), None);
+        assert_eq!(
+            authorized_webview_label(&authorizations, "page-supplied"),
+            None
+        );
     }
 }
