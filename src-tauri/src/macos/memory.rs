@@ -13,7 +13,9 @@ use tauri::Manager;
 
 /// Above this footprint, prefer a fresh renderer to another same-process load.
 /// This is deliberately a soft background limit, not a foreground kill limit.
-const WEB_CONTENT_SOFT_LIMIT: u64 = 512 * 1024 * 1024;
+/// It leaves headroom above the observed ~600 MiB steady renderer while still
+/// intervening below its observed ~944 MiB high-water mark.
+const WEB_CONTENT_SOFT_LIMIT: u64 = 768 * 1024 * 1024;
 
 fn should_recycle(physical_footprint: u64) -> bool {
     physical_footprint >= WEB_CONTENT_SOFT_LIMIT

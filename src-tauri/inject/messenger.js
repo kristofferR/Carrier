@@ -598,7 +598,7 @@
     window.addEventListener("online", () => schedule(1e3, "online", true));
     window.__carrierOnNotification = () => {
       if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
-        schedule(4e3, "background");
+        schedule(4e3, "notification");
       }
     };
     setInterval(() => {

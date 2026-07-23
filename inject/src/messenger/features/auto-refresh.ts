@@ -9,6 +9,8 @@ import { looksLikeFacebookErrorPage, RealtimeRecoveryTracker } from "../lib/real
 import { isMessengerContentPath } from "../lib/threads";
 import { monitorRealtimeHealth } from "./realtime-health";
 
+type ScheduledRefreshReason = RefreshReason | "online" | "notification";
+
 export function initAutoRefresh() {
   // A full reload re-boots the whole Facebook SPA, so only do it after a
   // lifecycle signal that makes its live connection suspect. Drafts and calls
@@ -17,7 +19,7 @@ export function initAutoRefresh() {
   const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive());
   let pending = false;
   let reloadWhileActive = false;
-  let pendingReason: RefreshReason | "online" = "background";
+  let pendingReason: ScheduledRefreshReason = "background";
   let timer: number | undefined;
   const RECOVERY_MIN_GAP_MS = 60_000;
   const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
@@ -175,7 +177,7 @@ export function initAutoRefresh() {
     }
     location.reload();
   };
-  const schedule = (delay: number, reason: RefreshReason | "online", allowWhileActive = false) => {
+  const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
     if (pageIsActive() && !allowWhileActive) {
       return;
     }
@@ -226,7 +228,10 @@ export function initAutoRefresh() {
   // the gap floor keeps a chatty thread from reloading every few minutes.)
   window.__carrierOnNotification = () => {
     if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
-      schedule(4000, "background");
+      // Keep notification catch-up on the ordinary reload path. Renderer
+      // recycling is intentionally reserved for the 15-minute inactivity
+      // refresh so bursts of messages cannot create process churn.
+      schedule(4000, "notification");
     }
   };
 
