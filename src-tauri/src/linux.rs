@@ -3,8 +3,26 @@
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
 use tauri::Manager;
+use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
+
+/// Keep Messenger's HTTP cache while avoiding WebKitGTK's largest in-memory
+/// cache policy and its back/forward page snapshots. The WebContext is shared,
+/// so configure it as soon as the first Messenger webview is constructed.
+pub(crate) fn configure_messenger_webview_memory(window: &tauri::WebviewWindow) {
+    if let Err(error) = window.with_webview(|platform_webview| {
+        let webview = platform_webview.inner();
+        if let Some(context) = webview.context() {
+            context.set_cache_model(CacheModel::DocumentBrowser);
+        }
+        if let Some(settings) = webview.settings() {
+            settings.set_enable_page_cache(false);
+        }
+    }) {
+        log::warn!("failed to configure Messenger WebKit memory policy: {error}");
+    }
+}
 
 fn theme_for_color_scheme(scheme: ColorScheme) -> Option<tauri::Theme> {
     match scheme {
