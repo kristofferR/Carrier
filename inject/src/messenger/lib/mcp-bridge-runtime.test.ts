@@ -402,6 +402,17 @@ describe("runtime MCP page-map bounds", () => {
 
     expect(harness.execute("__carrier_mcp_static_bundle_test_probe__")).toEqual([
       "static.xx.fbcdn.net/bundle.js",
+      "static.xx.fbcdn.net/bundle-02.js",
+      "static.xx.fbcdn.net/bundle-03.js",
+      "static.xx.fbcdn.net/bundle-04.js",
+      "static.xx.fbcdn.net/bundle-05.js",
+      "static.xx.fbcdn.net/bundle-06.js",
+      "static.xx.fbcdn.net/bundle-07.js",
+      "static.xx.fbcdn.net/bundle-08.js",
+      "static.xx.fbcdn.net/bundle-09.js",
+      "static.xx.fbcdn.net/bundle-10.js",
+      "static.xx.fbcdn.net/bundle-11.js",
+      "static.xx.fbcdn.net/bundle-12.js",
     ]);
   });
 

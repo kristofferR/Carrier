@@ -65,6 +65,7 @@ const HOME_URL: &str = "https://www.facebook.com/messages";
 const HOME_HOST: &str = "www.facebook.com";
 const HOME_PORT: u16 = 443;
 const MESSENGER_DNS_TIMEOUT: Duration = Duration::from_millis(1500);
+const DEFAULT_MCP_SOCKET: &str = "/tmp/tauri-mcp.sock";
 
 /// Window/app title. Debug builds are marked so a dev build (e.g. the
 /// tauri-mcp one) isn't mistaken for a release install.
@@ -144,7 +145,7 @@ fn should_enforce_single_instance(
 }
 
 #[cfg(any(all(feature = "mcp", debug_assertions), test))]
-fn select_isolated_mcp_socket(
+fn select_mcp_socket_override(
     primary: Option<std::ffi::OsString>,
     fallback: Option<std::ffi::OsString>,
 ) -> Option<std::path::PathBuf> {
@@ -152,6 +153,10 @@ fn select_isolated_mcp_socket(
         .filter(|path| !path.is_empty())
         .or_else(|| fallback.filter(|path| !path.is_empty()))
         .map(std::path::PathBuf::from)
+}
+
+fn is_isolated_mcp_socket(path: Option<&std::path::Path>) -> bool {
+    path.is_some_and(|path| path != std::path::Path::new(DEFAULT_MCP_SOCKET))
 }
 
 pub fn run() {
@@ -166,16 +171,16 @@ pub fn run() {
     // single-instance enforcement. Two default-socket builds would otherwise
     // contend for /tmp/tauri-mcp.sock.
     #[cfg(all(feature = "mcp", debug_assertions))]
-    let isolated_mcp_socket = select_isolated_mcp_socket(
+    let mcp_socket_override = select_mcp_socket_override(
         std::env::var_os("CARRIER_MCP_SOCKET_PATH"),
         std::env::var_os("TAURI_MCP_IPC_PATH"),
     );
     #[cfg(not(all(feature = "mcp", debug_assertions)))]
-    let isolated_mcp_socket: Option<std::path::PathBuf> = None;
+    let mcp_socket_override: Option<std::path::PathBuf> = None;
     if should_enforce_single_instance(
         initial.multi_instance,
         cfg!(all(feature = "mcp", debug_assertions)),
-        isolated_mcp_socket.is_some(),
+        is_isolated_mcp_socket(mcp_socket_override.as_deref()),
     ) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
@@ -187,9 +192,9 @@ pub fn run() {
     // is accidentally enabled for a release build.
     #[cfg(all(feature = "mcp", debug_assertions))]
     {
-        let socket_path = isolated_mcp_socket
+        let socket_path = mcp_socket_override
             .clone()
-            .unwrap_or_else(|| "/tmp/tauri-mcp.sock".into());
+            .unwrap_or_else(|| DEFAULT_MCP_SOCKET.into());
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new(APP_TITLE.to_string())
                 .start_socket_server(true)
@@ -597,23 +602,34 @@ mod tests {
         use std::ffi::OsString;
 
         assert_eq!(
-            select_isolated_mcp_socket(
+            select_mcp_socket_override(
                 Some(OsString::new()),
                 Some(OsString::from("/tmp/fallback.sock")),
             ),
             Some(std::path::PathBuf::from("/tmp/fallback.sock"))
         );
         assert_eq!(
-            select_isolated_mcp_socket(Some(OsString::new()), Some(OsString::new())),
+            select_mcp_socket_override(Some(OsString::new()), Some(OsString::new())),
             None
         );
         assert_eq!(
-            select_isolated_mcp_socket(
+            select_mcp_socket_override(
                 Some(OsString::from("/tmp/primary.sock")),
                 Some(OsString::from("/tmp/fallback.sock")),
             ),
             Some(std::path::PathBuf::from("/tmp/primary.sock"))
         );
+    }
+
+    #[test]
+    fn only_non_default_mcp_socket_paths_are_isolated() {
+        assert!(!is_isolated_mcp_socket(None));
+        assert!(!is_isolated_mcp_socket(Some(std::path::Path::new(
+            DEFAULT_MCP_SOCKET
+        ))));
+        assert!(is_isolated_mcp_socket(Some(std::path::Path::new(
+            "/tmp/carrier-isolated.sock"
+        ))));
     }
 
     #[test]
