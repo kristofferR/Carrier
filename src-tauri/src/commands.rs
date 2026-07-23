@@ -536,8 +536,14 @@ async fn run_update_install(app: &tauri::AppHandle) -> Result<String, String> {
                 .download(|_, _| {}, || {})
                 .await
                 .map_err(|e| e.to_string())?;
-            install_macos_dmg_update(&bytes)?;
-            app.restart();
+            let installed_app = install_macos_dmg_update(&bytes)?;
+            schedule_macos_relaunch(&installed_app)?;
+            // `app.restart()` resolves the running executable after its bundle
+            // has been moved aside and removed, so it exits without reopening
+            // Carrier. The detached helper above waits for this process to
+            // disappear before asking LaunchServices to open the new bundle.
+            app.exit(0);
+            Ok("installed".into())
         }
         Ok(None) => Ok("up-to-date".into()),
         Err(e) => Err(e),
@@ -561,7 +567,7 @@ pub(crate) async fn install_update(
 }
 
 #[cfg(target_os = "macos")]
-fn install_macos_dmg_update(bytes: &[u8]) -> Result<(), String> {
+fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> {
     use std::{
         fs,
         time::{SystemTime, UNIX_EPOCH},
@@ -596,11 +602,40 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<(), String> {
         let source_app = find_app_bundle(&mountpoint)?;
         let destination_app = current_app_bundle()?;
         replace_app_bundle(&source_app, &destination_app, &work_dir)?;
-        Ok(())
+        Ok(destination_app)
     })();
 
     let _ = fs::remove_dir_all(&work_dir);
     result
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_RELAUNCH_SCRIPT: &str =
+    "while kill -0 \"$1\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$2\"";
+
+#[cfg(target_os = "macos")]
+fn macos_relaunch_command(pid: u32, installed_app: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(MACOS_RELAUNCH_SCRIPT)
+        .arg("carrier-update-relaunch")
+        .arg(pid.to_string())
+        .arg(installed_app);
+    command
+}
+
+#[cfg(target_os = "macos")]
+fn schedule_macos_relaunch(installed_app: &std::path::Path) -> Result<(), String> {
+    use std::process::Stdio;
+
+    macos_relaunch_command(std::process::id(), installed_app)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not schedule Carrier to reopen after the update: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -935,6 +970,9 @@ mod tests {
     use std::io::ErrorKind;
     use std::sync::atomic::AtomicBool;
 
+    #[cfg(target_os = "macos")]
+    use super::{macos_relaunch_command, MACOS_RELAUNCH_SCRIPT};
+
     #[test]
     fn update_install_guard_is_single_flight_and_releases_on_drop() {
         let flag = AtomicBool::new(false);
@@ -957,6 +995,25 @@ mod tests {
         assert!(!should_surface_update(Some("1.4.0"), Some("1.4.0")));
         assert!(should_surface_update(Some("1.4.0"), Some("1.5.0")));
         assert!(!should_surface_update(Some("1.4.0"), None));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_relauncher_waits_for_exit_and_opens_the_installed_bundle() {
+        use std::{ffi::OsStr, path::Path};
+
+        let command = macos_relaunch_command(42, Path::new("/Applications/Carrier Beta.app"));
+        assert_eq!(command.get_program(), OsStr::new("/bin/sh"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![
+                OsStr::new("-c"),
+                OsStr::new(MACOS_RELAUNCH_SCRIPT),
+                OsStr::new("carrier-update-relaunch"),
+                OsStr::new("42"),
+                OsStr::new("/Applications/Carrier Beta.app"),
+            ]
+        );
     }
 
     #[test]
