@@ -48,13 +48,6 @@ const NULL_COMPONENT_MODULES = new Set([
   "CometCastingMiniplayerRoot.react",
 ]);
 
-const PASSTHROUGH_COMPONENT_MODULES = new Set([
-  // These wrappers only measure component/message visibility and mount spans.
-  // Returning their children avoids one logging boundary per visible message.
-  "MWPMessageLoggingWrapper.react",
-  "ComponentMountUnmountSubspanLogger.react",
-]);
-
 const TELEMETRY_MODULES = new Set([
   "Banzai",
   "FalcoLoggerInternal",
@@ -76,15 +69,7 @@ Object.defineProperty(nullComponent, "displayName", {
   value: "CarrierNullFacebookComponent",
 });
 
-function passthroughComponent(props: { children?: unknown } | null | undefined) {
-  return props?.children ?? null;
-}
-
-Object.defineProperty(passthroughComponent, "displayName", {
-  value: "CarrierPassthroughFacebookComponent",
-});
-
-type ComponentReplacement = typeof nullComponent | typeof passthroughComponent;
+type ComponentReplacement = typeof nullComponent;
 
 function replaceFunctionExport(value: unknown, replacement: ComponentReplacement): unknown {
   if (typeof value === "function") return replacement;
@@ -310,9 +295,6 @@ function wrapFactory(
     if (NULL_COMPONENT_MODULES.has(moduleName)) {
       return replaceComponentExports(result, factoryArgs, nullComponent);
     }
-    if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
-      return replaceComponentExports(result, factoryArgs, passthroughComponent);
-    }
     if (BACKGROUND_SERVICE_MODULES.has(moduleName)) {
       captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync);
       return result;
@@ -345,7 +327,6 @@ export function createFacebookModuleDefineInterceptor(
         typeof moduleName === "string" &&
         typeof factory === "function" &&
         (NULL_COMPONENT_MODULES.has(moduleName) ||
-          PASSTHROUGH_COMPONENT_MODULES.has(moduleName) ||
           TELEMETRY_MODULES.has(moduleName) ||
           BACKGROUND_SERVICE_MODULES.has(moduleName))
       ) {

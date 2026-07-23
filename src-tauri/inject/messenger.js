@@ -1270,12 +1270,6 @@
     // Casting is Facebook-wide video chrome, not Messenger media playback.
     "CometCastingMiniplayerRoot.react"
   ]);
-  var PASSTHROUGH_COMPONENT_MODULES = /* @__PURE__ */ new Set([
-    // These wrappers only measure component/message visibility and mount spans.
-    // Returning their children avoids one logging boundary per visible message.
-    "MWPMessageLoggingWrapper.react",
-    "ComponentMountUnmountSubspanLogger.react"
-  ]);
   var TELEMETRY_MODULES = /* @__PURE__ */ new Set([
     "Banzai",
     "FalcoLoggerInternal",
@@ -1293,12 +1287,6 @@
   }
   Object.defineProperty(nullComponent, "displayName", {
     value: "CarrierNullFacebookComponent"
-  });
-  function passthroughComponent(props) {
-    return props?.children ?? null;
-  }
-  Object.defineProperty(passthroughComponent, "displayName", {
-    value: "CarrierPassthroughFacebookComponent"
   });
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
@@ -1465,9 +1453,6 @@
       if (NULL_COMPONENT_MODULES.has(moduleName)) {
         return replaceComponentExports(result, factoryArgs, nullComponent);
       }
-      if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
-        return replaceComponentExports(result, factoryArgs, passthroughComponent);
-      }
       if (BACKGROUND_SERVICE_MODULES.has(moduleName)) {
         captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync);
         return result;
@@ -1486,7 +1471,7 @@
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || PASSTHROUGH_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,

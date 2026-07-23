@@ -118,17 +118,6 @@ describe("Facebook module interception", () => {
     expect((exports.default as () => unknown)()).toBeNull();
   });
 
-  test("turns per-message logging wrappers into child passthroughs", () => {
-    const { define, definitions } = definitionHarness();
-    const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
-    defineDefaultExport(intercepted, "MWPMessageLoggingWrapper.react", () => "logged");
-
-    const { exports } = execute(definitions.get("MWPMessageLoggingWrapper.react")!.factory);
-    const wrapper = exports.default as (props: { children?: unknown }) => unknown;
-    expect(wrapper({ children: "message" })).toBe("message");
-    expect(wrapper({})).toBeNull();
-  });
-
   test("preserves factory arity because Haste uses it to choose an ABI", () => {
     const { define, definitions } = definitionHarness();
     const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
