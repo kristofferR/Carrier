@@ -8,10 +8,13 @@ import {
 type ModuleFactory = (...args: unknown[]) => unknown;
 
 function definitionHarness() {
-  const definitions = new Map<string, ModuleFactory>();
-  const define: FacebookModuleDefine = (name, _dependencies, factory) => {
+  const definitions = new Map<string, { dependencies: unknown[]; factory: ModuleFactory }>();
+  const define: FacebookModuleDefine = (name, dependencies, factory) => {
     if (typeof name === "string" && typeof factory === "function") {
-      definitions.set(name, factory as ModuleFactory);
+      definitions.set(name, {
+        dependencies: Array.isArray(dependencies) ? dependencies : [],
+        factory: factory as ModuleFactory,
+      });
     }
   };
   return { define, definitions };
@@ -40,7 +43,7 @@ describe("Facebook module interception", () => {
     const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
     defineDefaultExport(intercepted, "CometBaseAppNavigation.react", () => "facebook chrome");
 
-    const { exports } = execute(definitions.get("CometBaseAppNavigation.react")!);
+    const { exports } = execute(definitions.get("CometBaseAppNavigation.react")!.factory);
     expect(exports.default).toBeFunction();
     expect((exports.default as () => unknown)()).toBeNull();
   });
@@ -50,7 +53,7 @@ describe("Facebook module interception", () => {
     const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
     defineDefaultExport(intercepted, "MWInboxQuickPromotionWrapper.react", () => "promotion");
 
-    const { exports } = execute(definitions.get("MWInboxQuickPromotionWrapper.react")!);
+    const { exports } = execute(definitions.get("MWInboxQuickPromotionWrapper.react")!.factory);
     expect((exports.default as () => unknown)()).toBeNull();
   });
 
@@ -59,7 +62,7 @@ describe("Facebook module interception", () => {
     const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
     defineDefaultExport(intercepted, "MWPMessageLoggingWrapper.react", () => "logged");
 
-    const { exports } = execute(definitions.get("MWPMessageLoggingWrapper.react")!);
+    const { exports } = execute(definitions.get("MWPMessageLoggingWrapper.react")!.factory);
     const wrapper = exports.default as (props: { children?: unknown }) => unknown;
     expect(wrapper({ children: "message" })).toBe("message");
     expect(wrapper({})).toBeNull();
@@ -80,7 +83,65 @@ describe("Facebook module interception", () => {
 
     intercepted("CometBaseAppNavigation.react", [], factory);
 
-    expect(definitions.get("CometBaseAppNavigation.react")?.length).toBe(7);
+    expect(definitions.get("CometBaseAppNavigation.react")?.factory.length).toBe(7);
+  });
+
+  test.each([
+    "MWInboxQuickPromotionWrapperImportUnconditionally.react",
+    "MAWSecureThreadQuickPromotion.react",
+    "MWThreadListQP.react",
+    "MWMessageSearchEBRestoreUpsell.react",
+    "CometBrowserPushRoot.react",
+    "CometCastingMiniplayerRoot.react",
+  ])("removes the optional feature component %s", (moduleName) => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
+
+    defineDefaultExport(intercepted, moduleName, () => "optional feature");
+
+    const { exports } = execute(definitions.get(moduleName)!.factory);
+    expect((exports.default as () => unknown)()).toBeNull();
+  });
+
+  test("only replaces the terminal Haste module and exports arguments", () => {
+    for (let arity = 6; arity <= 10; arity++) {
+      const { define, definitions } = definitionHarness();
+      const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
+      const originalFactory = (...args: unknown[]) => {
+        (args[arity - 1] as Record<string, unknown>).default = () => "optional feature";
+      };
+      Object.defineProperty(originalFactory, "length", { value: arity });
+
+      intercepted("CometBrowserPushRoot.react", [], originalFactory);
+
+      const unrelatedDefault = () => "unrelated";
+      const unrelated = { default: unrelatedDefault };
+      const exports: Record<string, unknown> = {};
+      const module = { exports };
+      const factoryArgs = Array.from({ length: arity }, () => undefined as unknown);
+      if (arity > 6) factoryArgs[4] = unrelated;
+      factoryArgs[arity - 2] = module;
+      factoryArgs[arity - 1] = exports;
+      definitions.get("CometBrowserPushRoot.react")!.factory(...factoryArgs);
+
+      expect((exports.default as () => unknown)()).toBeNull();
+      expect((module.exports as { default: () => unknown }).default()).toBeNull();
+      if (arity > 6) expect(unrelated.default).toBe(unrelatedDefault);
+    }
+  });
+
+  test("preserves declared dependencies and replaces a CommonJS function export", () => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
+
+    intercepted("CometCastingMiniplayerRoot.react", ["VideoDependency"], (...args: unknown[]) => {
+      (args[5] as { exports: unknown }).exports = () => "casting";
+    });
+
+    const definition = definitions.get("CometCastingMiniplayerRoot.react")!;
+    expect(definition.dependencies).toEqual(["VideoDependency"]);
+    const { module } = execute(definition.factory);
+    expect((module.exports as unknown as () => unknown)()).toBeNull();
   });
 
   test("leaves unrelated Facebook modules untouched", () => {
@@ -90,7 +151,7 @@ describe("Facebook module interception", () => {
 
     intercepted("MAWMessagingCore", [], factory);
 
-    const registered = definitions.get("MAWMessagingCore")!;
+    const registered = definitions.get("MAWMessagingCore")!.factory;
     expect(registered).toBe(factory);
     expect(registered()).toBe("messaging result");
   });
@@ -105,7 +166,7 @@ describe("Facebook module interception", () => {
       (args[6] as Record<string, unknown>).post = post;
     });
 
-    const { exports } = execute(definitions.get("Banzai")!);
+    const { exports } = execute(definitions.get("Banzai")!.factory);
     expect((exports.post as () => unknown)()).toBeUndefined();
     expect(post).not.toHaveBeenCalled();
 
@@ -128,7 +189,7 @@ describe("Facebook module interception", () => {
       Object.assign(args[6] as Record<string, unknown>, producers);
     });
 
-    const { exports } = execute(definitions.get("ODS")!);
+    const { exports } = execute(definitions.get("ODS")!.factory);
     for (const method of Object.keys(producers)) {
       expect((exports[method] as () => unknown)()).toBeUndefined();
     }
@@ -146,7 +207,7 @@ describe("Facebook module interception", () => {
       (args[6] as Record<string, unknown>).create = create;
     });
 
-    const { exports } = execute(definitions.get("FalcoLoggerInternal")!);
+    const { exports } = execute(definitions.get("FalcoLoggerInternal")!.factory);
     const logger = (exports.create as () => { log: () => unknown })();
     expect(logger.log()).toBeUndefined();
     expect(log).not.toHaveBeenCalled();
@@ -165,7 +226,9 @@ describe("Facebook module interception", () => {
       (args[6] as Record<string, unknown>).maybeReportActiveSecond = report;
     });
 
-    const { exports } = execute(definitions.get("TimeSpentImmediateActiveSecondsLoggerComet")!);
+    const { exports } = execute(
+      definitions.get("TimeSpentImmediateActiveSecondsLoggerComet")!.factory,
+    );
     expect((exports.maybeReportActiveSecond as () => unknown)()).toBeUndefined();
     expect(report).not.toHaveBeenCalled();
   });
@@ -190,7 +253,7 @@ describe("Facebook module interception", () => {
     intercepted("MAWFTSRestoreSync", [], (...args: unknown[]) => {
       (args[6] as Record<string, unknown>).getFTSRestoreSync = () => restore;
     });
-    execute(definitions.get("MAWFTSRestoreSync")!);
+    execute(definitions.get("MAWFTSRestoreSync")!.factory);
 
     expect(keepRunning).toHaveBeenLastCalledWith(false);
     expect(startSyncingLoop).not.toHaveBeenCalled();

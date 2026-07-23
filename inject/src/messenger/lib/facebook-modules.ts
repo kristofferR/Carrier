@@ -14,6 +14,15 @@ const NULL_COMPONENT_MODULES = new Set([
   "CometBaseAppNavigation.react",
   // Messenger's server-driven promotion banner is not part of messaging.
   "MWInboxQuickPromotionWrapper.react",
+  "MWInboxQuickPromotionWrapperImportUnconditionally.react",
+  "MAWSecureThreadQuickPromotion.react",
+  "MWThreadListQP.react",
+  "MWMessageSearchEBRestoreUpsell.react",
+  // Carrier owns desktop notification delivery; Facebook's browser-push root
+  // is redundant inside the native WebView.
+  "CometBrowserPushRoot.react",
+  // Casting is Facebook-wide video chrome, not Messenger media playback.
+  "CometCastingMiniplayerRoot.react",
 ]);
 
 const PASSTHROUGH_COMPONENT_MODULES = new Set([
@@ -72,10 +81,11 @@ function replaceComponentExports(
   factoryArgs: unknown[],
   replacement: ComponentReplacement,
 ): unknown {
-  // Facebook's Haste factory ABI exposes module/exports objects near the end
-  // of the argument list. Cover both CommonJS and default-export shapes; every
-  // mutation is fail-open so a loader change leaves Facebook's module intact.
-  for (let index = 4; index < factoryArgs.length; index++) {
+  // Facebook's Haste factory ABI exposes module and exports in the final two
+  // positions. Do not inspect dependency arguments: some are objects with
+  // unrelated default exports that must remain untouched.
+  const firstExportIndex = Math.max(0, factoryArgs.length - 2);
+  for (let index = firstExportIndex; index < factoryArgs.length; index++) {
     const candidate = factoryArgs[index];
     if (!candidate || typeof candidate !== "object") continue;
     const record = candidate as Record<string, unknown>;

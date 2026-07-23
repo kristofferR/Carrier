@@ -85,6 +85,9 @@ interface Window {
   __carrierOpenThread?: (href: string) => boolean;
   /** Temporarily resume encrypted-history indexing for conversation search. */
   __carrierWakeSearchIndex?: () => void;
+  __CARRIER_WORKER_OPTIMIZATION__?: {
+    responsivenessWorkersStopped: number;
+  };
   __carrierNotifyClick?: (id: number) => boolean;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;

@@ -1242,7 +1242,16 @@
     // the React root prevents its search, notification, account, and portal work.
     "CometBaseAppNavigation.react",
     // Messenger's server-driven promotion banner is not part of messaging.
-    "MWInboxQuickPromotionWrapper.react"
+    "MWInboxQuickPromotionWrapper.react",
+    "MWInboxQuickPromotionWrapperImportUnconditionally.react",
+    "MAWSecureThreadQuickPromotion.react",
+    "MWThreadListQP.react",
+    "MWMessageSearchEBRestoreUpsell.react",
+    // Carrier owns desktop notification delivery; Facebook's browser-push root
+    // is redundant inside the native WebView.
+    "CometBrowserPushRoot.react",
+    // Casting is Facebook-wide video chrome, not Messenger media playback.
+    "CometCastingMiniplayerRoot.react"
   ]);
   var PASSTHROUGH_COMPONENT_MODULES = /* @__PURE__ */ new Set([
     // These wrappers only measure component/message visibility and mount spans.
@@ -1287,7 +1296,8 @@
     return value;
   }
   function replaceComponentExports(result, factoryArgs, replacement) {
-    for (let index = 4; index < factoryArgs.length; index++) {
+    const firstExportIndex = Math.max(0, factoryArgs.length - 2);
+    for (let index = firstExportIndex; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
       const record = candidate;
@@ -1534,6 +1544,51 @@
       });
     } catch (_) {
     }
+  }
+
+  // inject/src/messenger/lib/facebook-workers.ts
+  function isResponsivenessWorkerMessage(message) {
+    if (!message || typeof message !== "object") return false;
+    return message.type === "responsiveness";
+  }
+  function optimizeFacebookWorker(worker, shouldBlockTelemetry, onStopped = () => {
+  }) {
+    const nativePostMessage = worker.postMessage;
+    let stopped = false;
+    worker.postMessage = function(...args) {
+      if (stopped) return;
+      if (shouldBlockTelemetry() && isResponsivenessWorkerMessage(args[0])) {
+        stopped = true;
+        try {
+          worker.terminate();
+        } catch (_) {
+        }
+        onStopped();
+        return;
+      }
+      Reflect.apply(nativePostMessage, this, args);
+    };
+    return worker;
+  }
+
+  // inject/src/messenger/features/facebook-workers.ts
+  function initFacebookWorkerOptimization() {
+    if (typeof window.Worker !== "function" || typeof Proxy !== "function") return;
+    const state = { responsivenessWorkersStopped: 0 };
+    window.__CARRIER_WORKER_OPTIMIZATION__ = state;
+    const NativeWorker = window.Worker;
+    window.Worker = new Proxy(NativeWorker, {
+      construct(Target, args, NewTarget) {
+        const worker = Reflect.construct(Target, args, NewTarget);
+        return optimizeFacebookWorker(
+          worker,
+          () => window.__CARRIER_SETTINGS__?.block_telemetry === true,
+          () => {
+            state.responsivenessWorkersStopped++;
+          }
+        );
+      }
+    });
   }
 
   // inject/src/messenger/features/force-theme.ts
@@ -4779,6 +4834,7 @@
     }
   }
   function main() {
+    initFeature("facebook-workers", initFacebookWorkerOptimization);
     initFeature("facebook-modules", initFacebookModuleInterception);
     initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);

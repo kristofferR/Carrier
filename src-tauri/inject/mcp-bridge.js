@@ -39,6 +39,9 @@
   }
 
   var DEBUG_PROFILE_KEY = "__carrier_mcp_network_profile__";
+  var COMPONENT_NULL_KEY = "__carrier_mcp_component_null__";
+  var COMPONENT_PASSTHROUGH_KEY = "__carrier_mcp_component_passthrough__";
+  var REACT_PROFILE_KEY = "__carrier_mcp_react_profile__";
   function installModuleRuntimeInstrumentation() {
     if (window.__CARRIER_MCP_MODULE_RUNTIME__) return;
     var families = [
@@ -77,6 +80,31 @@
       targetDefinitions: {},
       stubbedExports: 0,
       replacedDefinitions: 0,
+      reactRegistered: 0,
+      reactExecuted: 0,
+      reactModules: {},
+      componentDependencies: {},
+      reactProfile: (function () {
+        try {
+          return sessionStorage.getItem(REACT_PROFILE_KEY) === "on";
+        } catch (_) {
+          return false;
+        }
+      })(),
+      componentNull: (function () {
+        try {
+          return sessionStorage.getItem(COMPONENT_NULL_KEY) || "";
+        } catch (_) {
+          return "";
+        }
+      })(),
+      componentPassthrough: (function () {
+        try {
+          return sessionStorage.getItem(COMPONENT_PASSTHROUGH_KEY) || "";
+        } catch (_) {
+          return "";
+        }
+      })(),
     };
     window.__CARRIER_MCP_MODULE_RUNTIME__ = state;
 
@@ -95,6 +123,8 @@
         var safeName =
           typeof name === "string" && /^[A-Za-z0-9_$.:/-]{1,160}$/.test(name) ? name : "other";
         var matches = matchedFamilies(safeName);
+        var isReactModule = state.reactProfile && /\.react$/.test(safeName);
+        if (isReactModule) state.reactRegistered++;
         if (
           /^(?:CometNotifications|SearchCometGlobalTypeahead|CometSearch|setupNotifications)/.test(
             safeName,
@@ -131,6 +161,64 @@
           (state.profile === "replace-global-chrome" &&
             (safeName === "SearchCometGlobalTypeahead.react" ||
               safeName === "CometSearchKeyCommandWrapper.react"));
+        var componentReplacement =
+          state.componentNull === safeName
+            ? function () {
+                return null;
+              }
+            : state.componentPassthrough === safeName
+              ? function (props) {
+                  return props && props.children != null ? props.children : null;
+                }
+              : null;
+        if (componentReplacement && typeof factory === "function") {
+          state.componentDependencies[safeName] = Array.isArray(dependencies)
+            ? dependencies
+                .filter(function (dependency) {
+                  return (
+                    typeof dependency === "string" &&
+                    /^[A-Za-z0-9_$.:/-]{1,160}$/.test(dependency)
+                  );
+                })
+                .slice(0, 160)
+            : [];
+          args[1] = [];
+          var replacementRecorded = false;
+          var replacementFactory = function () {
+            var replaced = false;
+            var exportsCandidate = arguments[arguments.length - 1];
+            if (
+              exportsCandidate &&
+              (typeof exportsCandidate === "object" || typeof exportsCandidate === "function")
+            ) {
+              try {
+                exportsCandidate.default = componentReplacement;
+                replaced = exportsCandidate.default === componentReplacement;
+              } catch (_) {}
+            }
+            var moduleCandidate = arguments[arguments.length - 2];
+            if (
+              moduleCandidate &&
+              (typeof moduleCandidate === "object" || typeof moduleCandidate === "function") &&
+              Object.prototype.hasOwnProperty.call(moduleCandidate, "exports")
+            ) {
+              try {
+                moduleCandidate.exports = componentReplacement;
+                replaced = moduleCandidate.exports === componentReplacement || replaced;
+              } catch (_) {}
+            }
+            if (replaced && !replacementRecorded) {
+              replacementRecorded = true;
+              state.replacedDefinitions++;
+            }
+            return componentReplacement;
+          };
+          try {
+            Object.defineProperty(replacementFactory, "length", { value: factory.length });
+          } catch (_) {}
+          args[2] = replacementFactory;
+          return nativeDefine.apply(this, args);
+        }
         if (replaceNavigationModule) {
           args[1] = [];
           args[2] = function (a, b, c, d, e, f, g) {
@@ -146,8 +234,8 @@
           state.replacedDefinitions++;
           return nativeDefine.apply(this, args);
         }
-        if (matches.length && typeof factory === "function") {
-          state.candidateRegistered++;
+        if ((matches.length || isReactModule) && typeof factory === "function") {
+          if (matches.length) state.candidateRegistered++;
           function invokeFactory(context, invocationArguments) {
             var started = performance.now();
             try {
@@ -225,6 +313,13 @@
                 (state.modules[safeName] = { executions: 0, durationMs: 0, families: matches });
               module.executions++;
               module.durationMs += duration;
+              if (isReactModule) {
+                state.reactExecuted++;
+                var reactModule = state.reactModules[safeName] ||
+                  (state.reactModules[safeName] = { executions: 0, durationMs: 0 });
+                reactModule.executions++;
+                reactModule.durationMs += duration;
+              }
               for (var familyIndex = 0; familyIndex < matches.length; familyIndex++) {
                 var family = matches[familyIndex];
                 state.familyExecuted[family] = (state.familyExecuted[family] || 0) + 1;
@@ -233,30 +328,15 @@
               }
             }
           }
-          // The Haste loader inspects factory.length to decide which injected
-          // arguments to provide. Current bundles use arities 6–10, so keep the
-          // exact value instead of funneling them through a zero-arity wrapper.
-          if (factory.length === 6) {
-            args[2] = function (a, b, c, d, e, f) {
-              return invokeFactory(this, arguments);
-            };
-          } else if (factory.length === 7) {
-            args[2] = function (a, b, c, d, e, f, g) {
-              return invokeFactory(this, arguments);
-            };
-          } else if (factory.length === 8) {
-            args[2] = function (a, b, c, d, e, f, g, h) {
-              return invokeFactory(this, arguments);
-            };
-          } else if (factory.length === 9) {
-            args[2] = function (a, b, c, d, e, f, g, h, i) {
-              return invokeFactory(this, arguments);
-            };
-          } else if (factory.length === 10) {
-            args[2] = function (a, b, c, d, e, f, g, h, i, j) {
-              return invokeFactory(this, arguments);
-            };
-          }
+          // The Haste loader inspects factory.length to select its invocation
+          // ABI. Preserve any arity rather than assuming a fixed known range.
+          var instrumentedFactory = function () {
+            return invokeFactory(this, arguments);
+          };
+          try {
+            Object.defineProperty(instrumentedFactory, "length", { value: factory.length });
+          } catch (_) {}
+          args[2] = instrumentedFactory;
         }
         return nativeDefine.apply(this, args);
       }
@@ -430,6 +510,18 @@
       emit(cid ? baseEvent + "-" + cid : baseEvent, data);
     }
 
+    function setSessionExperiment(value, storageKey, responseField) {
+      try {
+        if (value === "clear") sessionStorage.removeItem(storageKey);
+        else sessionStorage.setItem(storageKey, value);
+        var result = { applied: true, reloadRequired: true };
+        result[responseField] = value;
+        return result;
+      } catch (error) {
+        return { applied: false, reason: String(error) };
+      }
+    }
+
     // --- execute-js : the universal escape hatch -----------------------------
     listen("execute-js", function (ev) {
       var p = ev && ev.payload;
@@ -498,6 +590,35 @@
         }
         if (code === "__carrier_mcp_module_runtime_probe__") {
           reply(moduleRuntimeProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_component_experiment_probe__") {
+          reply(componentExperimentProbe());
+          return;
+        }
+        var reactProfile = /^__carrier_mcp_react_profile__:(on|clear)$/.exec(code);
+        if (reactProfile) {
+          reply(setSessionExperiment(reactProfile[1], REACT_PROFILE_KEY, "reactProfile"));
+          return;
+        }
+        var componentNull =
+          /^__carrier_mcp_component_null__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(code);
+        if (componentNull) {
+          reply(setSessionExperiment(componentNull[1], COMPONENT_NULL_KEY, "component"));
+          return;
+        }
+        var componentPassthrough =
+          /^__carrier_mcp_component_passthrough__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(
+            code,
+          );
+        if (componentPassthrough) {
+          reply(
+            setSessionExperiment(
+              componentPassthrough[1],
+              COMPONENT_PASSTHROUGH_KEY,
+              "component",
+            ),
+          );
           return;
         }
         var debugProfile = /^__carrier_mcp_profile__:(block-route-definitions|stub-top-nav|replace-top-nav|replace-global-nav|replace-global-nav-stop-fts|disable-hyperion|replace-global-nav-disable-hyperion|replace-notification-badge|replace-global-nav-notifications|replace-global-nav-badge|replace-global-chrome|clear)$/.exec(code);
@@ -1571,6 +1692,18 @@
           if (samples.length < 50) samples.push(module.name);
         });
       });
+      var reactModules = Object.keys(state.reactModules || {})
+        .map(function (name) {
+          var module = state.reactModules[name];
+          return {
+            name: name,
+            executions: module.executions,
+            durationMs: Math.round(module.durationMs * 100) / 100,
+          };
+        })
+        .sort(function (a, b) {
+          return b.durationMs - a.durationMs || a.name.localeCompare(b.name);
+        });
       return {
         profile: state.profile || "none",
         registered: state.registered || 0,
@@ -1582,8 +1715,58 @@
         targetDefinitions: state.targetDefinitions || {},
         stubbedExports: state.stubbedExports || 0,
         replacedDefinitions: state.replacedDefinitions || 0,
+        reactRegistered: state.reactRegistered || 0,
+        reactExecuted: state.reactExecuted || 0,
+        reactProfile: !!state.reactProfile,
+        componentNull: state.componentNull || "",
+        componentPassthrough: state.componentPassthrough || "",
+        reactModules: reactModules.slice(0, 2000),
         samplesByFamily: samplesByFamily,
         topModules: modules.slice(0, 80),
+      };
+    }
+
+    function componentExperimentProbe() {
+      var state = window.__CARRIER_MCP_MODULE_RUNTIME__ || {};
+      var performanceSummary = performanceProbe();
+      var counters = performanceSummary.instrumentation || {};
+      return {
+        uptimeMs: performanceSummary.uptimeMs,
+        replacement: {
+          null: state.componentNull || "",
+          passthrough: state.componentPassthrough || "",
+          definitions: state.replacedDefinitions || 0,
+          dependencies: state.componentDependencies || {},
+        },
+        modules: {
+          registered: state.registered || 0,
+          executed: state.executed || 0,
+          reactRegistered: state.reactRegistered || 0,
+          reactExecuted: state.reactExecuted || 0,
+        },
+        dom: {
+          nodes: performanceSummary.dom.nodes,
+          images: performanceSummary.images.total,
+          svg: performanceSummary.graphics.svg,
+          frames: performanceSummary.frames.total,
+        },
+        resources: performanceSummary.resources,
+        instrumentation: {
+          observers: (counters.mutation && counters.mutation.observers) || 0,
+          mutationCallbacks: (counters.mutation && counters.mutation.callbacks) || 0,
+          timeoutsScheduled: (counters.timers && counters.timers.timeoutsScheduled) || 0,
+          timeoutsFired: (counters.timers && counters.timers.timeoutsFired) || 0,
+          animationFrames: (counters.animationFrames && counters.animationFrames.fired) || 0,
+          workers:
+            counters.workers && Array.isArray(counters.workers.details)
+              ? counters.workers.details.length
+              : 0,
+          socketsCreated: (counters.sockets && counters.sockets.created) || 0,
+          responsivenessWorkersStopped:
+            (window.__CARRIER_WORKER_OPTIMIZATION__ &&
+              window.__CARRIER_WORKER_OPTIMIZATION__.responsivenessWorkersStopped) ||
+            0,
+        },
       };
     }
 
