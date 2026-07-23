@@ -2,6 +2,12 @@ export type FacebookModuleDefine = (this: unknown, ...args: unknown[]) => unknow
 
 type FacebookModuleFactory = (this: unknown, ...args: unknown[]) => unknown;
 
+export interface FacebookFTSRestoreSync {
+  setKeepWhileLoop_FOR_TESTING_ONLY(keepRunning: boolean): void;
+  setIsStarted(started: boolean): void;
+  startSyncingLoop(): unknown;
+}
+
 const NULL_COMPONENT_MODULES = new Set([
   // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
   // the React root prevents its search, notification, account, and portal work.
@@ -24,6 +30,7 @@ const TELEMETRY_MODULES = new Set([
   "TimeSpentImmediateActiveSecondsLogger",
   "TimeSpentImmediateActiveSecondsLoggerComet",
 ]);
+const BACKGROUND_SERVICE_MODULES = new Set(["MAWFTSRestoreSync"]);
 const ODS_METHODS = ["bumpEntityKey", "bumpFraction", "flush", "setEntitySample"] as const;
 const FALCO_METHODS = ["log", "logAsync", "logCritical", "logImmediately"] as const;
 const wrappedTelemetryMethods = new WeakSet<object>();
@@ -80,6 +87,96 @@ function replaceComponentExports(
     replaceFunctionExport(record, replacement);
   }
   return replaceFunctionExport(result, replacement);
+}
+
+function findFTSRestoreSync(
+  value: unknown,
+  seen: WeakSet<object>,
+): FacebookFTSRestoreSync | undefined {
+  if (!value || typeof value !== "object" || seen.has(value)) return undefined;
+  seen.add(value);
+  const record = value as Record<string, unknown>;
+  const getter = record.getFTSRestoreSync;
+  if (typeof getter === "function") {
+    try {
+      const restore = Reflect.apply(getter, value, []) as
+        | Partial<FacebookFTSRestoreSync>
+        | undefined;
+      if (
+        restore &&
+        typeof restore.setKeepWhileLoop_FOR_TESTING_ONLY === "function" &&
+        typeof restore.setIsStarted === "function" &&
+        typeof restore.startSyncingLoop === "function"
+      ) {
+        return restore as FacebookFTSRestoreSync;
+      }
+    } catch (_) {}
+  }
+  return findFTSRestoreSync(record.default, seen);
+}
+
+function captureFTSRestoreSync(
+  result: unknown,
+  factoryArgs: unknown[],
+  onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void,
+) {
+  const seen = new WeakSet<object>();
+  const inspect = (value: unknown) => {
+    const restore = findFTSRestoreSync(value, seen);
+    if (restore) onFTSRestoreSync(restore);
+  };
+  inspect(result);
+  for (let index = 4; index < factoryArgs.length; index++) {
+    const candidate = factoryArgs[index];
+    inspect(candidate);
+    if (candidate && typeof candidate === "object") {
+      inspect((candidate as Record<string, unknown>).exports);
+    }
+  }
+}
+
+/**
+ * Keeps Messenger's expensive encrypted-history index restoration asleep until
+ * the user explicitly opens conversation search.
+ */
+export class FacebookFTSIdleCoordinator {
+  private active = false;
+  private readonly restores = new Set<FacebookFTSRestoreSync>();
+
+  register(restore: FacebookFTSRestoreSync) {
+    if (this.restores.has(restore)) return;
+    this.restores.add(restore);
+    if (this.active) this.start(restore);
+    else this.stop(restore);
+  }
+
+  wake() {
+    if (this.active) return;
+    this.active = true;
+    for (const restore of this.restores) this.start(restore);
+  }
+
+  pause() {
+    this.active = false;
+    for (const restore of this.restores) this.stop(restore);
+  }
+
+  private start(restore: FacebookFTSRestoreSync) {
+    try {
+      restore.setKeepWhileLoop_FOR_TESTING_ONLY(true);
+      restore.setIsStarted(false);
+      const result = restore.startSyncingLoop();
+      if (result && typeof (result as PromiseLike<unknown>).then === "function") {
+        Promise.resolve(result).catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  private stop(restore: FacebookFTSRestoreSync) {
+    try {
+      restore.setKeepWhileLoop_FOR_TESTING_ONLY(false);
+    } catch (_) {}
+  }
 }
 
 function wrapTelemetryMethod(
@@ -172,6 +269,7 @@ function wrapFactory(
   moduleName: string,
   factory: FacebookModuleFactory,
   shouldBlockTelemetry: () => boolean,
+  onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void,
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
@@ -180,6 +278,10 @@ function wrapFactory(
     }
     if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
       return replaceComponentExports(result, factoryArgs, passthroughComponent);
+    }
+    if (BACKGROUND_SERVICE_MODULES.has(moduleName)) {
+      captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync);
+      return result;
     }
     return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
   };
@@ -199,6 +301,7 @@ function wrapFactory(
 export function createFacebookModuleDefineInterceptor(
   define: FacebookModuleDefine,
   shouldBlockTelemetry: () => boolean,
+  onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void = () => {},
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -209,9 +312,15 @@ export function createFacebookModuleDefineInterceptor(
         typeof factory === "function" &&
         (NULL_COMPONENT_MODULES.has(moduleName) ||
           PASSTHROUGH_COMPONENT_MODULES.has(moduleName) ||
-          TELEMETRY_MODULES.has(moduleName))
+          TELEMETRY_MODULES.has(moduleName) ||
+          BACKGROUND_SERVICE_MODULES.has(moduleName))
       ) {
-        args[2] = wrapFactory(moduleName, factory as FacebookModuleFactory, shouldBlockTelemetry);
+        args[2] = wrapFactory(
+          moduleName,
+          factory as FacebookModuleFactory,
+          shouldBlockTelemetry,
+          onFTSRestoreSync,
+        );
       }
       return Reflect.apply(target, thisArg, args);
     },

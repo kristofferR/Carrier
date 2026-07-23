@@ -1257,6 +1257,7 @@
     "TimeSpentImmediateActiveSecondsLogger",
     "TimeSpentImmediateActiveSecondsLoggerComet"
   ]);
+  var BACKGROUND_SERVICE_MODULES = /* @__PURE__ */ new Set(["MAWFTSRestoreSync"]);
   var ODS_METHODS = ["bumpEntityKey", "bumpFraction", "flush", "setEntitySample"];
   var FALCO_METHODS = ["log", "logAsync", "logCritical", "logImmediately"];
   var wrappedTelemetryMethods = /* @__PURE__ */ new WeakSet();
@@ -1300,6 +1301,76 @@
     }
     return replaceFunctionExport(result, replacement);
   }
+  function findFTSRestoreSync(value, seen) {
+    if (!value || typeof value !== "object" || seen.has(value)) return void 0;
+    seen.add(value);
+    const record = value;
+    const getter = record.getFTSRestoreSync;
+    if (typeof getter === "function") {
+      try {
+        const restore = Reflect.apply(getter, value, []);
+        if (restore && typeof restore.setKeepWhileLoop_FOR_TESTING_ONLY === "function" && typeof restore.setIsStarted === "function" && typeof restore.startSyncingLoop === "function") {
+          return restore;
+        }
+      } catch (_) {
+      }
+    }
+    return findFTSRestoreSync(record.default, seen);
+  }
+  function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
+    const seen = /* @__PURE__ */ new WeakSet();
+    const inspect = (value) => {
+      const restore = findFTSRestoreSync(value, seen);
+      if (restore) onFTSRestoreSync(restore);
+    };
+    inspect(result);
+    for (let index = 4; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      inspect(candidate);
+      if (candidate && typeof candidate === "object") {
+        inspect(candidate.exports);
+      }
+    }
+  }
+  var FacebookFTSIdleCoordinator = class {
+    constructor() {
+      __publicField(this, "active", false);
+      __publicField(this, "restores", /* @__PURE__ */ new Set());
+    }
+    register(restore) {
+      if (this.restores.has(restore)) return;
+      this.restores.add(restore);
+      if (this.active) this.start(restore);
+      else this.stop(restore);
+    }
+    wake() {
+      if (this.active) return;
+      this.active = true;
+      for (const restore of this.restores) this.start(restore);
+    }
+    pause() {
+      this.active = false;
+      for (const restore of this.restores) this.stop(restore);
+    }
+    start(restore) {
+      try {
+        restore.setKeepWhileLoop_FOR_TESTING_ONLY(true);
+        restore.setIsStarted(false);
+        const result = restore.startSyncingLoop();
+        if (result && typeof result.then === "function") {
+          Promise.resolve(result).catch(() => {
+          });
+        }
+      } catch (_) {
+      }
+    }
+    stop(restore) {
+      try {
+        restore.setKeepWhileLoop_FOR_TESTING_ONLY(false);
+      } catch (_) {
+      }
+    }
+  };
   function wrapTelemetryMethod(record, key, shouldBlockTelemetry) {
     const original = record[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
@@ -1361,7 +1432,7 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
       if (NULL_COMPONENT_MODULES.has(moduleName)) {
@@ -1369,6 +1440,10 @@
       }
       if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
         return replaceComponentExports(result, factoryArgs, passthroughComponent);
+      }
+      if (BACKGROUND_SERVICE_MODULES.has(moduleName)) {
+        captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync);
+        return result;
       }
       return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
     };
@@ -1378,13 +1453,19 @@
     }
     return wrapped;
   }
-  function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry) {
+  function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
+  }) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || PASSTHROUGH_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName))) {
-          args[2] = wrapFactory(moduleName, factory, shouldBlockTelemetry);
+        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || PASSTHROUGH_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+          args[2] = wrapFactory(
+            moduleName,
+            factory,
+            shouldBlockTelemetry,
+            onFTSRestoreSync
+          );
         }
         return Reflect.apply(target, thisArg, args);
       }
@@ -1392,20 +1473,56 @@
   }
 
   // inject/src/messenger/features/facebook-modules.ts
+  var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
   function initFacebookModuleInterception() {
     const page = window;
     const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const searchIndex = new FacebookFTSIdleCoordinator();
+    let pauseTimer;
+    const wakeSearchIndex = () => {
+      searchIndex.wake();
+      if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
+      pauseTimer = window.setTimeout(() => {
+        pauseTimer = void 0;
+        searchIndex.pause();
+      }, SEARCH_INDEX_WAKE_MS);
+    };
+    window.__carrierWakeSearchIndex = wakeSearchIndex;
+    document.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest(
+          '[role="button"][aria-label], button[aria-label]'
+        );
+        if (!button?.closest('[role="main"]')) return;
+        const label = (button.getAttribute("aria-label") || "").trim().toLowerCase();
+        if (label === "search" || label === "search in conversation") wakeSearchIndex();
+      },
+      true
+    );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
       const wrapped = createFacebookModuleDefineInterceptor(
         value,
-        shouldBlockTelemetry
+        shouldBlockTelemetry,
+        (restore) => searchIndex.register(restore)
       );
       wrappedDefines.add(wrapped);
       return wrapped;
     };
     try {
+      const inherited = Object.getOwnPropertyDescriptor(window, "__d");
+      if (typeof inherited?.get === "function" && typeof inherited.set === "function") {
+        Object.defineProperty(window, "__d", {
+          configurable: inherited.configurable,
+          enumerable: inherited.enumerable,
+          get: () => inherited.get?.call(window),
+          set: (value) => inherited.set?.call(window, wrap(value))
+        });
+        return;
+      }
       let current = wrap(page.__d);
       Object.defineProperty(window, "__d", {
         configurable: true,
@@ -2942,6 +3059,7 @@
     return null;
   }
   function searchInConversation() {
+    window.__carrierWakeSearchIndex?.();
     const btn = searchInConvoButton();
     if (btn) {
       btn.click();

@@ -95,6 +95,7 @@ function searchInConvoButton(): HTMLElement | null {
 }
 
 export function searchInConversation(): boolean {
+  window.__carrierWakeSearchIndex?.();
   const btn = searchInConvoButton();
   if (btn) {
     btn.click();

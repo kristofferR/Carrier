@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
   createFacebookModuleDefineInterceptor,
+  FacebookFTSIdleCoordinator,
   type FacebookModuleDefine,
 } from "./facebook-modules";
 
@@ -167,5 +168,42 @@ describe("Facebook module interception", () => {
     const { exports } = execute(definitions.get("TimeSpentImmediateActiveSecondsLoggerComet")!);
     expect((exports.maybeReportActiveSecond as () => unknown)()).toBeUndefined();
     expect(report).not.toHaveBeenCalled();
+  });
+
+  test("pauses history indexing until conversation search wakes it", () => {
+    const { define, definitions } = definitionHarness();
+    const searchIndex = new FacebookFTSIdleCoordinator();
+    const keepRunning = mock((_keep: boolean) => {});
+    const setIsStarted = mock((_started: boolean) => {});
+    const startSyncingLoop = mock(() => Promise.resolve());
+    const restore = {
+      setKeepWhileLoop_FOR_TESTING_ONLY: keepRunning,
+      setIsStarted,
+      startSyncingLoop,
+    };
+    const intercepted = createFacebookModuleDefineInterceptor(
+      define,
+      () => true,
+      (value) => searchIndex.register(value),
+    );
+
+    intercepted("MAWFTSRestoreSync", [], (...args: unknown[]) => {
+      (args[6] as Record<string, unknown>).getFTSRestoreSync = () => restore;
+    });
+    execute(definitions.get("MAWFTSRestoreSync")!);
+
+    expect(keepRunning).toHaveBeenLastCalledWith(false);
+    expect(startSyncingLoop).not.toHaveBeenCalled();
+
+    searchIndex.wake();
+    expect(keepRunning).toHaveBeenLastCalledWith(true);
+    expect(setIsStarted).toHaveBeenLastCalledWith(false);
+    expect(startSyncingLoop).toHaveBeenCalledTimes(1);
+
+    searchIndex.wake();
+    expect(startSyncingLoop).toHaveBeenCalledTimes(1);
+
+    searchIndex.pause();
+    expect(keepRunning).toHaveBeenLastCalledWith(false);
   });
 });

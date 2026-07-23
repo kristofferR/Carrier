@@ -83,6 +83,8 @@ interface Window {
   __carrierShortcuts?: Record<string, () => unknown>;
   __carrierToggleInfo?: () => boolean;
   __carrierOpenThread?: (href: string) => boolean;
+  /** Temporarily resume encrypted-history indexing for conversation search. */
+  __carrierWakeSearchIndex?: () => void;
   __carrierNotifyClick?: (id: number) => boolean;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;

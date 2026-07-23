@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, mock, test } from "bun:test";
 
 const bridgePath = new URL("../../../../src-tauri/inject/mcp-bridge.js", import.meta.url);
 
@@ -64,6 +64,7 @@ interface BridgeHarness {
     documentElement: FakeElement;
     querySelectorAll(selector: string): FakeElement[];
   };
+  window: Record<string, unknown>;
   map(payload: Record<string, unknown>): PageMapResult;
 }
 
@@ -73,7 +74,10 @@ beforeAll(async () => {
   bridgeSource = await Bun.file(bridgePath).text();
 });
 
-function createHarness(root: FakeElement): BridgeHarness {
+function createHarness(
+  root: FakeElement,
+  configureWindow?: (window: Record<string, unknown>) => void,
+): BridgeHarness {
   const listeners = new Map<string, BridgeListener>();
   const callbacks = new Map<number, BridgeListener>();
   const emissions: Array<{ event: string; payload: unknown }> = [];
@@ -110,6 +114,7 @@ function createHarness(root: FakeElement): BridgeHarness {
     },
   };
   const window = { __TAURI_INTERNALS__: internals } as Record<string, unknown>;
+  configureWindow?.(window);
   const location = { href: "https://www.facebook.com/messages" };
   const quietConsole = { log() {} };
 
@@ -139,6 +144,7 @@ function createHarness(root: FakeElement): BridgeHarness {
 
   return {
     document,
+    window,
     map(payload) {
       emissions.length = 0;
       const handler = listeners.get("get-page-map");
@@ -156,6 +162,34 @@ function createHarness(root: FakeElement): BridgeHarness {
 }
 
 describe("runtime MCP page-map bounds", () => {
+  test("composes its Haste instrumentation with an existing define accessor", () => {
+    let assigned: unknown;
+    const inheritedAssignments: unknown[] = [];
+    const root = new FakeElement("div");
+    const harness = createHarness(root, (window) => {
+      Object.defineProperty(window, "__d", {
+        configurable: true,
+        get: () => assigned,
+        set: (value) => {
+          inheritedAssignments.push(value);
+          assigned = value;
+        },
+      });
+    });
+    const nativeDefine = mock(() => undefined);
+
+    harness.window.__d = nativeDefine;
+    expect(inheritedAssignments).toHaveLength(1);
+    expect(inheritedAssignments[0]).not.toBe(nativeDefine);
+
+    (harness.window.__d as (...args: unknown[]) => unknown)(
+      "CometNavigationTracing",
+      [],
+      () => undefined,
+    );
+    expect(nativeDefine).toHaveBeenCalledTimes(1);
+  });
+
   test("clamps depth against a synthetic deep tree", () => {
     const root = new FakeElement("section");
     let parent = root;

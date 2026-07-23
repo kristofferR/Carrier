@@ -270,6 +270,24 @@
         window.__d = wrapDefine(current);
         return;
       }
+      var inherited = Object.getOwnPropertyDescriptor(window, "__d");
+      if (
+        inherited &&
+        typeof inherited.get === "function" &&
+        typeof inherited.set === "function"
+      ) {
+        Object.defineProperty(window, "__d", {
+          configurable: inherited.configurable,
+          enumerable: inherited.enumerable,
+          get: function () {
+            return inherited.get.call(window);
+          },
+          set: function (value) {
+            inherited.set.call(window, wrapDefine(value));
+          },
+        });
+        return;
+      }
       var assigned;
       Object.defineProperty(window, "__d", {
         configurable: true,
@@ -507,7 +525,9 @@
           return;
         }
         var shortcutAction =
-          /^__carrier_mcp_shortcut_action__:(next|previous|focus-composer|focus-search)$/.exec(code);
+          /^__carrier_mcp_shortcut_action__:(next|previous|focus-composer|focus-search|conversation-search)$/.exec(
+            code,
+          );
         if (shortcutAction) {
           var shortcutRegistry = window.__carrierShortcuts || {};
           var shortcutMethods = {
@@ -515,6 +535,7 @@
             previous: "prevConversation",
             "focus-composer": "focusComposer",
             "focus-search": "focusChatSearch",
+            "conversation-search": "searchInConversation",
           };
           var shortcutMethod = shortcutMethods[shortcutAction[1]];
           if (typeof shortcutRegistry[shortcutMethod] === "function") {
