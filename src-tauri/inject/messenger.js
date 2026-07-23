@@ -1116,6 +1116,309 @@
     );
   }
 
+  // inject/src/messenger/lib/emoji-images.ts
+  var FACEBOOK_EMOJI_PATH = "/images/emoji.php/";
+  var isFacebookEmojiImage = (value) => typeof value === "string" && value.includes(FACEBOOK_EMOJI_PATH);
+  function intersectsImageClip(rect, clip) {
+    return !(rect.bottom < clip.top || rect.top > clip.bottom || rect.right < clip.left || rect.left > clip.right);
+  }
+  function intersectImageClips(left, right) {
+    return {
+      top: Math.max(left.top, right.top),
+      right: Math.min(left.right, right.right),
+      bottom: Math.min(left.bottom, right.bottom),
+      left: Math.max(left.left, right.left)
+    };
+  }
+  function expandedImageClip(rect, margin) {
+    return {
+      top: rect.top - margin,
+      right: rect.right + margin,
+      bottom: rect.bottom + margin,
+      left: rect.left - margin
+    };
+  }
+
+  // inject/src/messenger/features/emoji-images.ts
+  var PREFETCH_MARGIN = 80;
+  var SCAN_DELAY_MS = 50;
+  function rectOf(element) {
+    const rect = element.getBoundingClientRect();
+    return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+  }
+  function visibleClipFor(image) {
+    let clip = {
+      top: -PREFETCH_MARGIN,
+      right: innerWidth + PREFETCH_MARGIN,
+      bottom: innerHeight + PREFETCH_MARGIN,
+      left: -PREFETCH_MARGIN
+    };
+    const dialog = image.closest('[role="dialog"]');
+    if (!dialog) return clip;
+    clip = intersectImageClips(clip, expandedImageClip(rectOf(dialog), PREFETCH_MARGIN));
+    let ancestor = image.parentElement;
+    while (ancestor && ancestor !== dialog) {
+      if (ancestor.scrollHeight > ancestor.clientHeight + 2) {
+        clip = intersectImageClips(clip, expandedImageClip(rectOf(ancestor), PREFETCH_MARGIN));
+        break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return clip;
+  }
+  function initEmojiImageLoading() {
+    const sourceDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    const nativeSetAttribute = HTMLImageElement.prototype.setAttribute;
+    if (!sourceDescriptor?.set) return;
+    const pending = /* @__PURE__ */ new Set();
+    let scanTimer;
+    const promote = (image) => {
+      image.loading = "eager";
+      const source = image.currentSrc || image.getAttribute("src") || image.src;
+      if (source) sourceDescriptor.set?.call(image, source);
+      pending.delete(image);
+    };
+    const scan = () => {
+      scanTimer = void 0;
+      for (const image of pending) {
+        if (!image.isConnected) {
+          pending.delete(image);
+          continue;
+        }
+        if (intersectsImageClip(rectOf(image), visibleClipFor(image))) promote(image);
+      }
+    };
+    const scheduleScan = () => {
+      if (scanTimer !== void 0) return;
+      scanTimer = window.setTimeout(scan, SCAN_DELAY_MS);
+    };
+    const defer = (image) => {
+      image.loading = "lazy";
+      pending.add(image);
+      scheduleScan();
+    };
+    try {
+      Object.defineProperty(HTMLImageElement.prototype, "src", {
+        configurable: sourceDescriptor.configurable,
+        enumerable: sourceDescriptor.enumerable,
+        get: sourceDescriptor.get,
+        set(value) {
+          if (isFacebookEmojiImage(value)) defer(this);
+          return sourceDescriptor.set?.call(this, value);
+        }
+      });
+      HTMLImageElement.prototype.setAttribute = function(name, value) {
+        const emoji = name.toLowerCase() === "src" && isFacebookEmojiImage(value);
+        if (emoji) defer(this);
+        const result = nativeSetAttribute.call(this, name, value);
+        if (emoji) scheduleScan();
+        return result;
+      };
+    } catch (_) {
+      return;
+    }
+    document.addEventListener("scroll", scheduleScan, true);
+    window.addEventListener("resize", scheduleScan);
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const removed of record.removedNodes) {
+          if (removed instanceof HTMLImageElement) {
+            pending.delete(removed);
+          } else if (removed instanceof Element) {
+            for (const image of removed.querySelectorAll(
+              `img[src*="${FACEBOOK_EMOJI_PATH}"]`
+            )) {
+              pending.delete(image);
+            }
+          }
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // inject/src/messenger/lib/facebook-modules.ts
+  var NULL_COMPONENT_MODULES = /* @__PURE__ */ new Set([
+    // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
+    // the React root prevents its search, notification, account, and portal work.
+    "CometBaseAppNavigation.react",
+    // Messenger's server-driven promotion banner is not part of messaging.
+    "MWInboxQuickPromotionWrapper.react"
+  ]);
+  var PASSTHROUGH_COMPONENT_MODULES = /* @__PURE__ */ new Set([
+    // These wrappers only measure component/message visibility and mount spans.
+    // Returning their children avoids one logging boundary per visible message.
+    "MWPMessageLoggingWrapper.react",
+    "ComponentMountUnmountSubspanLogger.react"
+  ]);
+  var TELEMETRY_MODULES = /* @__PURE__ */ new Set([
+    "Banzai",
+    "FalcoLoggerInternal",
+    "ODS",
+    "TimeSpentImmediateActiveSecondsLogger",
+    "TimeSpentImmediateActiveSecondsLoggerComet"
+  ]);
+  var ODS_METHODS = ["bumpEntityKey", "bumpFraction", "flush", "setEntitySample"];
+  var FALCO_METHODS = ["log", "logAsync", "logCritical", "logImmediately"];
+  var wrappedTelemetryMethods = /* @__PURE__ */ new WeakSet();
+  var wrappedFalcoFactories = /* @__PURE__ */ new WeakSet();
+  function nullComponent() {
+    return null;
+  }
+  Object.defineProperty(nullComponent, "displayName", {
+    value: "CarrierNullFacebookComponent"
+  });
+  function passthroughComponent(props) {
+    return props?.children ?? null;
+  }
+  Object.defineProperty(passthroughComponent, "displayName", {
+    value: "CarrierPassthroughFacebookComponent"
+  });
+  function replaceFunctionExport(value, replacement) {
+    if (typeof value === "function") return replacement;
+    if (!value || typeof value !== "object") return value;
+    const record = value;
+    if (typeof record.default === "function") {
+      try {
+        record.default = replacement;
+      } catch (_) {
+      }
+    }
+    return value;
+  }
+  function replaceComponentExports(result, factoryArgs, replacement) {
+    for (let index = 4; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      if (!candidate || typeof candidate !== "object") continue;
+      const record = candidate;
+      if (Object.hasOwn(record, "exports")) {
+        try {
+          record.exports = replaceFunctionExport(record.exports, replacement);
+        } catch (_) {
+        }
+      }
+      replaceFunctionExport(record, replacement);
+    }
+    return replaceFunctionExport(result, replacement);
+  }
+  function wrapTelemetryMethod(record, key, shouldBlockTelemetry) {
+    const original = record[key];
+    if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
+    const wrapped = function(...args) {
+      if (shouldBlockTelemetry()) return void 0;
+      return Reflect.apply(original, this, args);
+    };
+    wrappedTelemetryMethods.add(wrapped);
+    try {
+      record[key] = wrapped;
+    } catch (_) {
+    }
+  }
+  function patchFalcoLogger(value, shouldBlockTelemetry) {
+    if (!value || typeof value !== "object") return;
+    const logger = value;
+    for (const method of FALCO_METHODS) {
+      wrapTelemetryMethod(logger, method, shouldBlockTelemetry);
+    }
+  }
+  function wrapFalcoFactory(record, shouldBlockTelemetry) {
+    const original = record.create;
+    if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
+    const wrapped = function(...args) {
+      const logger = Reflect.apply(original, this, args);
+      patchFalcoLogger(logger, shouldBlockTelemetry);
+      return logger;
+    };
+    wrappedFalcoFactories.add(wrapped);
+    try {
+      record.create = wrapped;
+    } catch (_) {
+    }
+  }
+  function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
+    if (!value || typeof value !== "object") return;
+    const record = value;
+    if (moduleName === "FalcoLoggerInternal") {
+      wrapFalcoFactory(record, shouldBlockTelemetry);
+    } else {
+      const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
+      for (const method of methods) wrapTelemetryMethod(record, method, shouldBlockTelemetry);
+    }
+    if (record.default && record.default !== value && typeof record.default === "object") {
+      patchTelemetryValue(moduleName, record.default, shouldBlockTelemetry);
+    }
+  }
+  function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
+    patchTelemetryValue(moduleName, result, shouldBlockTelemetry);
+    for (let index = 4; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      patchTelemetryValue(moduleName, candidate, shouldBlockTelemetry);
+      if (!candidate || typeof candidate !== "object") continue;
+      patchTelemetryValue(
+        moduleName,
+        candidate.exports,
+        shouldBlockTelemetry
+      );
+    }
+    return result;
+  }
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry) {
+    const wrapped = function(...factoryArgs) {
+      const result = Reflect.apply(factory, this, factoryArgs);
+      if (NULL_COMPONENT_MODULES.has(moduleName)) {
+        return replaceComponentExports(result, factoryArgs, nullComponent);
+      }
+      if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
+        return replaceComponentExports(result, factoryArgs, passthroughComponent);
+      }
+      return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
+    };
+    try {
+      Object.defineProperty(wrapped, "length", { value: factory.length });
+    } catch (_) {
+    }
+    return wrapped;
+  }
+  function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const moduleName = args[0];
+        const factory = args[2];
+        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || PASSTHROUGH_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName))) {
+          args[2] = wrapFactory(moduleName, factory, shouldBlockTelemetry);
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
+  // inject/src/messenger/features/facebook-modules.ts
+  function initFacebookModuleInterception() {
+    const page = window;
+    const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const wrap = (value) => {
+      if (typeof value !== "function" || wrappedDefines.has(value)) return value;
+      const wrapped = createFacebookModuleDefineInterceptor(
+        value,
+        shouldBlockTelemetry
+      );
+      wrappedDefines.add(wrapped);
+      return wrapped;
+    };
+    try {
+      let current = wrap(page.__d);
+      Object.defineProperty(window, "__d", {
+        configurable: true,
+        enumerable: true,
+        get: () => current,
+        set: (value) => {
+          current = wrap(value);
+        }
+      });
+    } catch (_) {
+    }
+  }
+
   // inject/src/messenger/features/force-theme.ts
   function initForceTheme() {
     const html = document.documentElement;
@@ -4358,6 +4661,8 @@
     }
   }
   function main() {
+    initFeature("facebook-modules", initFacebookModuleInterception);
+    initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);
     initFeature("shortcuts", initShortcuts);
     initFeature("zoom", initZoom);

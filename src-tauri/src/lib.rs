@@ -141,23 +141,26 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     // Single-instance enforcement (unless the experimental multi-instance flag
-    // is set). Must be registered first so it runs before any window is created.
-    if !initial.multi_instance {
+    // or the isolated MCP diagnostic build is active). Must be registered first
+    // so it runs before any window is created.
+    if !initial.multi_instance && !cfg!(feature = "mcp") {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }));
     }
 
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
-    // DOM/JS inspection. Keep it after single-instance enforcement: otherwise a
-    // second debug launch can lose the MCP socket race and exit before notifying
-    // the existing instance to reveal its window.
+    // DOM/JS inspection. MCP builds skip single-instance enforcement above and
+    // accept an isolated socket path so diagnostics cannot disturb another run.
     #[cfg(feature = "mcp")]
     {
+        let socket_path = std::env::var_os("TAURI_MCP_IPC_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "/tmp/tauri-mcp.sock".into());
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new(APP_TITLE.to_string())
                 .start_socket_server(true)
-                .socket_path("/tmp/tauri-mcp.sock".into()),
+                .socket_path(socket_path),
         ));
     }
 
