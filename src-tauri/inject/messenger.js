@@ -1116,6 +1116,508 @@
     );
   }
 
+  // inject/src/messenger/lib/emoji-images.ts
+  var FACEBOOK_EMOJI_PATH = "/images/emoji.php/";
+  var isFacebookEmojiImage = (value) => typeof value === "string" && value.includes(FACEBOOK_EMOJI_PATH);
+  function hasImageArea(rect) {
+    return rect.right > rect.left && rect.bottom > rect.top;
+  }
+  function intersectsImageClip(rect, clip) {
+    return !(rect.bottom < clip.top || rect.top > clip.bottom || rect.right < clip.left || rect.left > clip.right);
+  }
+  function intersectImageClips(left, right) {
+    return {
+      top: Math.max(left.top, right.top),
+      right: Math.min(left.right, right.right),
+      bottom: Math.min(left.bottom, right.bottom),
+      left: Math.max(left.left, right.left)
+    };
+  }
+  function expandedImageClip(rect, margin) {
+    return {
+      top: rect.top - margin,
+      right: rect.right + margin,
+      bottom: rect.bottom + margin,
+      left: rect.left - margin
+    };
+  }
+
+  // inject/src/messenger/features/emoji-images.ts
+  var PREFETCH_MARGIN = 80;
+  var SCAN_DELAY_MS = 50;
+  function rectOf(element) {
+    const rect = element.getBoundingClientRect();
+    return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+  }
+  function visibleClipFor(image) {
+    let clip = {
+      top: -PREFETCH_MARGIN,
+      right: innerWidth + PREFETCH_MARGIN,
+      bottom: innerHeight + PREFETCH_MARGIN,
+      left: -PREFETCH_MARGIN
+    };
+    const dialog = image.closest('[role="dialog"]');
+    if (!dialog) return clip;
+    clip = intersectImageClips(clip, expandedImageClip(rectOf(dialog), PREFETCH_MARGIN));
+    let ancestor = image.parentElement;
+    while (ancestor && ancestor !== dialog) {
+      if (ancestor.scrollHeight > ancestor.clientHeight + 2) {
+        clip = intersectImageClips(clip, expandedImageClip(rectOf(ancestor), PREFETCH_MARGIN));
+        break;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return clip;
+  }
+  function initEmojiImageLoading() {
+    const sourceDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    const nativeSetAttribute = HTMLImageElement.prototype.setAttribute;
+    if (!sourceDescriptor?.set) return;
+    const pending = /* @__PURE__ */ new Set();
+    let scanTimer;
+    const promote = (image) => {
+      image.loading = "eager";
+      const source = image.currentSrc || image.getAttribute("src") || image.src;
+      if (source) sourceDescriptor.set?.call(image, source);
+      pending.delete(image);
+    };
+    const scan = () => {
+      scanTimer = void 0;
+      for (const image of pending) {
+        if (!image.isConnected) {
+          pending.delete(image);
+          continue;
+        }
+        const imageRect = rectOf(image);
+        if (hasImageArea(imageRect) && intersectsImageClip(imageRect, visibleClipFor(image))) {
+          promote(image);
+        }
+      }
+    };
+    const scheduleScan = () => {
+      if (scanTimer !== void 0) return;
+      scanTimer = window.setTimeout(scan, SCAN_DELAY_MS);
+    };
+    const defer = (image) => {
+      image.loading = "lazy";
+      pending.add(image);
+      scheduleScan();
+    };
+    try {
+      Object.defineProperty(HTMLImageElement.prototype, "src", {
+        configurable: sourceDescriptor.configurable,
+        enumerable: sourceDescriptor.enumerable,
+        get: sourceDescriptor.get,
+        set(value) {
+          if (isFacebookEmojiImage(value)) defer(this);
+          return sourceDescriptor.set?.call(this, value);
+        }
+      });
+      HTMLImageElement.prototype.setAttribute = function(name, value) {
+        const emoji = name.toLowerCase() === "src" && isFacebookEmojiImage(value);
+        if (emoji) defer(this);
+        const result = nativeSetAttribute.call(this, name, value);
+        if (emoji) scheduleScan();
+        return result;
+      };
+    } catch (_) {
+      return;
+    }
+    document.addEventListener("scroll", scheduleScan, true);
+    window.addEventListener("resize", scheduleScan);
+    new MutationObserver((records) => {
+      if (pending.size === 0) return;
+      for (const record of records) {
+        for (const removed of record.removedNodes) {
+          if (removed instanceof HTMLImageElement) {
+            pending.delete(removed);
+          } else if (removed instanceof Element) {
+            for (const image of removed.querySelectorAll(
+              `img[src*="${FACEBOOK_EMOJI_PATH}"]`
+            )) {
+              pending.delete(image);
+            }
+          }
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+  }
+
+  // inject/src/messenger/lib/facebook-modules.ts
+  function isConversationSearchInput({
+    hasAccessibleName,
+    insideForm,
+    insideMain,
+    role,
+    type
+  }) {
+    if (!insideMain || insideForm) return false;
+    return type === "search" || role === "searchbox" || type === "text" && role === null && hasAccessibleName;
+  }
+  var NULL_COMPONENT_MODULES = /* @__PURE__ */ new Set([
+    // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
+    // the React root prevents its search, notification, account, and portal work.
+    "CometBaseAppNavigation.react",
+    // Messenger's server-driven promotion banner is not part of messaging.
+    "MWInboxQuickPromotionWrapper.react",
+    "MWInboxQuickPromotionWrapperImportUnconditionally.react",
+    "MAWSecureThreadQuickPromotion.react",
+    "MWThreadListQP.react",
+    "MWMessageSearchEBRestoreUpsell.react",
+    // Carrier owns desktop notification delivery; Facebook's browser-push root
+    // is redundant inside the native WebView.
+    "CometBrowserPushRoot.react",
+    // Casting is Facebook-wide video chrome, not Messenger media playback.
+    "CometCastingMiniplayerRoot.react"
+  ]);
+  var PASSTHROUGH_COMPONENT_MODULES = /* @__PURE__ */ new Set([
+    // These wrappers only measure component/message visibility and mount spans.
+    // Returning their children avoids one logging boundary per visible message.
+    "MWPMessageLoggingWrapper.react",
+    "ComponentMountUnmountSubspanLogger.react"
+  ]);
+  var TELEMETRY_MODULES = /* @__PURE__ */ new Set([
+    "Banzai",
+    "FalcoLoggerInternal",
+    "ODS",
+    "TimeSpentImmediateActiveSecondsLogger",
+    "TimeSpentImmediateActiveSecondsLoggerComet"
+  ]);
+  var BACKGROUND_SERVICE_MODULES = /* @__PURE__ */ new Set(["MAWFTSRestoreSync"]);
+  var ODS_METHODS = ["bumpEntityKey", "bumpFraction", "flush", "setEntitySample"];
+  var FALCO_METHODS = ["log", "logAsync", "logCritical", "logImmediately"];
+  var wrappedTelemetryMethods = /* @__PURE__ */ new WeakSet();
+  var wrappedFalcoFactories = /* @__PURE__ */ new WeakSet();
+  function nullComponent() {
+    return null;
+  }
+  Object.defineProperty(nullComponent, "displayName", {
+    value: "CarrierNullFacebookComponent"
+  });
+  function passthroughComponent(props) {
+    return props?.children ?? null;
+  }
+  Object.defineProperty(passthroughComponent, "displayName", {
+    value: "CarrierPassthroughFacebookComponent"
+  });
+  function replaceFunctionExport(value, replacement) {
+    if (typeof value === "function") return replacement;
+    if (!value || typeof value !== "object") return value;
+    const record = value;
+    if (typeof record.default === "function") {
+      try {
+        record.default = replacement;
+      } catch (_) {
+      }
+    }
+    return value;
+  }
+  function replaceComponentExports(result, factoryArgs, replacement) {
+    const firstExportIndex = Math.max(0, factoryArgs.length - 2);
+    for (let index = firstExportIndex; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      if (!candidate || typeof candidate !== "object") continue;
+      const record = candidate;
+      if (Object.prototype.hasOwnProperty.call(record, "exports")) {
+        try {
+          record.exports = replaceFunctionExport(record.exports, replacement);
+        } catch (_) {
+        }
+      }
+      replaceFunctionExport(record, replacement);
+    }
+    return replaceFunctionExport(result, replacement);
+  }
+  function findFTSRestoreSync(value, seen) {
+    if (!value || typeof value !== "object" || seen.has(value)) return void 0;
+    seen.add(value);
+    const record = value;
+    const getter = record.getFTSRestoreSync;
+    if (typeof getter === "function") {
+      try {
+        const restore = Reflect.apply(getter, value, []);
+        if (restore && typeof restore.setKeepWhileLoop_FOR_TESTING_ONLY === "function" && typeof restore.setIsStarted === "function" && typeof restore.startSyncingLoop === "function") {
+          return restore;
+        }
+      } catch (_) {
+      }
+    }
+    return findFTSRestoreSync(record.default, seen);
+  }
+  function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
+    const seen = /* @__PURE__ */ new WeakSet();
+    const inspect = (value) => {
+      const restore = findFTSRestoreSync(value, seen);
+      if (restore) onFTSRestoreSync(restore);
+    };
+    inspect(result);
+    for (let index = 4; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      inspect(candidate);
+      if (candidate && typeof candidate === "object") {
+        inspect(candidate.exports);
+      }
+    }
+  }
+  var FacebookFTSIdleCoordinator = class {
+    constructor() {
+      __publicField(this, "active", false);
+      __publicField(this, "restores", /* @__PURE__ */ new Set());
+    }
+    register(restore) {
+      if (this.restores.has(restore)) return;
+      this.restores.add(restore);
+      if (this.active) this.start(restore);
+      else this.stop(restore);
+    }
+    wake() {
+      if (this.active) return;
+      this.active = true;
+      for (const restore of this.restores) this.start(restore);
+    }
+    pause() {
+      this.active = false;
+      for (const restore of this.restores) this.stop(restore);
+    }
+    start(restore) {
+      try {
+        restore.setKeepWhileLoop_FOR_TESTING_ONLY(true);
+        restore.setIsStarted(false);
+        const result = restore.startSyncingLoop();
+        if (result && typeof result.then === "function") {
+          Promise.resolve(result).catch(() => {
+          });
+        }
+      } catch (_) {
+      }
+    }
+    stop(restore) {
+      try {
+        restore.setKeepWhileLoop_FOR_TESTING_ONLY(false);
+      } catch (_) {
+      }
+    }
+  };
+  function wrapTelemetryMethod(record, key, shouldBlockTelemetry) {
+    const original = record[key];
+    if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
+    const wrapped = function(...args) {
+      if (shouldBlockTelemetry()) return void 0;
+      return Reflect.apply(original, this, args);
+    };
+    wrappedTelemetryMethods.add(wrapped);
+    try {
+      record[key] = wrapped;
+    } catch (_) {
+    }
+  }
+  function patchFalcoLogger(value, shouldBlockTelemetry) {
+    if (!value || typeof value !== "object") return;
+    const logger = value;
+    for (const method of FALCO_METHODS) {
+      wrapTelemetryMethod(logger, method, shouldBlockTelemetry);
+    }
+  }
+  function wrapFalcoFactory(record, shouldBlockTelemetry) {
+    const original = record.create;
+    if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
+    const wrapped = function(...args) {
+      const logger = Reflect.apply(original, this, args);
+      patchFalcoLogger(logger, shouldBlockTelemetry);
+      return logger;
+    };
+    wrappedFalcoFactories.add(wrapped);
+    try {
+      record.create = wrapped;
+    } catch (_) {
+    }
+  }
+  function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
+    if (!value || typeof value !== "object") return;
+    const record = value;
+    if (moduleName === "FalcoLoggerInternal") {
+      wrapFalcoFactory(record, shouldBlockTelemetry);
+    } else {
+      const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
+      for (const method of methods) wrapTelemetryMethod(record, method, shouldBlockTelemetry);
+    }
+    if (record.default && record.default !== value && typeof record.default === "object") {
+      patchTelemetryValue(moduleName, record.default, shouldBlockTelemetry);
+    }
+  }
+  function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
+    patchTelemetryValue(moduleName, result, shouldBlockTelemetry);
+    for (let index = 4; index < factoryArgs.length; index++) {
+      const candidate = factoryArgs[index];
+      patchTelemetryValue(moduleName, candidate, shouldBlockTelemetry);
+      if (!candidate || typeof candidate !== "object") continue;
+      patchTelemetryValue(
+        moduleName,
+        candidate.exports,
+        shouldBlockTelemetry
+      );
+    }
+    return result;
+  }
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync) {
+    const wrapped = function(...factoryArgs) {
+      const result = Reflect.apply(factory, this, factoryArgs);
+      if (NULL_COMPONENT_MODULES.has(moduleName)) {
+        return replaceComponentExports(result, factoryArgs, nullComponent);
+      }
+      if (PASSTHROUGH_COMPONENT_MODULES.has(moduleName)) {
+        return replaceComponentExports(result, factoryArgs, passthroughComponent);
+      }
+      if (BACKGROUND_SERVICE_MODULES.has(moduleName)) {
+        captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync);
+        return result;
+      }
+      return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
+    };
+    try {
+      Object.defineProperty(wrapped, "length", { value: factory.length });
+    } catch (_) {
+    }
+    return wrapped;
+  }
+  function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
+  }) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const moduleName = args[0];
+        const factory = args[2];
+        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || PASSTHROUGH_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+          args[2] = wrapFactory(
+            moduleName,
+            factory,
+            shouldBlockTelemetry,
+            onFTSRestoreSync
+          );
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
+  // inject/src/messenger/features/facebook-modules.ts
+  var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
+  function initFacebookModuleInterception() {
+    const page = window;
+    const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const wrappedDefines = /* @__PURE__ */ new WeakSet();
+    const searchIndex = new FacebookFTSIdleCoordinator();
+    let pauseTimer;
+    const wakeSearchIndex = () => {
+      searchIndex.wake();
+      if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
+      pauseTimer = window.setTimeout(() => {
+        pauseTimer = void 0;
+        searchIndex.pause();
+      }, SEARCH_INDEX_WAKE_MS);
+    };
+    window.__carrierWakeSearchIndex = wakeSearchIndex;
+    document.addEventListener(
+      "focusin",
+      (event) => {
+        const input = event.target instanceof HTMLInputElement ? event.target : null;
+        if (input && isConversationSearchInput({
+          hasAccessibleName: input.hasAttribute("aria-label"),
+          insideForm: input.closest("form") !== null,
+          insideMain: input.closest('[role="main"]') !== null,
+          role: input.getAttribute("role"),
+          type: input.type
+        })) {
+          wakeSearchIndex();
+        }
+      },
+      true
+    );
+    const wrap = (value) => {
+      if (typeof value !== "function" || wrappedDefines.has(value)) return value;
+      const wrapped = createFacebookModuleDefineInterceptor(
+        value,
+        shouldBlockTelemetry,
+        (restore) => searchIndex.register(restore)
+      );
+      wrappedDefines.add(wrapped);
+      return wrapped;
+    };
+    try {
+      const inherited = Object.getOwnPropertyDescriptor(window, "__d");
+      if (typeof inherited?.get === "function" && typeof inherited.set === "function") {
+        Object.defineProperty(window, "__d", {
+          configurable: inherited.configurable,
+          enumerable: inherited.enumerable,
+          get: () => inherited.get?.call(window),
+          set: (value) => inherited.set?.call(window, wrap(value))
+        });
+        return;
+      }
+      let current = wrap(page.__d);
+      Object.defineProperty(window, "__d", {
+        configurable: true,
+        enumerable: true,
+        get: () => current,
+        set: (value) => {
+          current = wrap(value);
+        }
+      });
+    } catch (_) {
+    }
+  }
+
+  // inject/src/messenger/lib/facebook-workers.ts
+  function isResponsivenessWorkerMessage(message) {
+    if (!message || typeof message !== "object") return false;
+    return message.type === "responsiveness";
+  }
+  function isResponsivenessProfilerHandshake(message) {
+    if (!message || typeof message !== "object") return false;
+    return message.type === "endpoint_started";
+  }
+  function optimizeFacebookWorker(worker, shouldBlockTelemetry, onStopped = () => {
+  }) {
+    const nativePostMessage = worker.postMessage;
+    let profilerHandshakeSeen = false;
+    let stopped = false;
+    worker.postMessage = function(...args) {
+      if (stopped) return;
+      const message = args[0];
+      if (isResponsivenessProfilerHandshake(message)) profilerHandshakeSeen = true;
+      if (profilerHandshakeSeen && shouldBlockTelemetry() && isResponsivenessWorkerMessage(message)) {
+        stopped = true;
+        try {
+          worker.terminate();
+        } catch (_) {
+        }
+        onStopped();
+        return;
+      }
+      Reflect.apply(nativePostMessage, this, args);
+    };
+    return worker;
+  }
+
+  // inject/src/messenger/features/facebook-workers.ts
+  function initFacebookWorkerOptimization() {
+    if (typeof window.Worker !== "function" || typeof Proxy !== "function") return;
+    const state = { responsivenessWorkersStopped: 0 };
+    window.__CARRIER_WORKER_OPTIMIZATION__ = state;
+    const NativeWorker = window.Worker;
+    window.Worker = new Proxy(NativeWorker, {
+      construct(Target, args, NewTarget) {
+        const worker = Reflect.construct(Target, args, NewTarget);
+        return optimizeFacebookWorker(
+          worker,
+          () => window.__CARRIER_SETTINGS__?.block_telemetry === true,
+          () => {
+            state.responsivenessWorkersStopped++;
+          }
+        );
+      }
+    });
+  }
+
   // inject/src/messenger/features/force-theme.ts
   function initForceTheme() {
     const html = document.documentElement;
@@ -2639,6 +3141,7 @@
     return null;
   }
   function searchInConversation() {
+    window.__carrierWakeSearchIndex?.();
     const btn = searchInConvoButton();
     if (btn) {
       btn.click();
@@ -4358,6 +4861,9 @@
     }
   }
   function main() {
+    initFeature("facebook-workers", initFacebookWorkerOptimization);
+    initFeature("facebook-modules", initFacebookModuleInterception);
+    initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);
     initFeature("shortcuts", initShortcuts);
     initFeature("zoom", initZoom);

@@ -16,6 +16,9 @@ import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
 import { initCookieAutoDecline } from "./features/cookie-consent";
 import { initDownloadAnchors } from "./features/download-anchors";
+import { initEmojiImageLoading } from "./features/emoji-images";
+import { initFacebookModuleInterception } from "./features/facebook-modules";
+import { initFacebookWorkerOptimization } from "./features/facebook-workers";
 import { initForceTheme } from "./features/force-theme";
 import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
@@ -48,6 +51,12 @@ function initFeature(name: string, init: () => void) {
 }
 
 function main() {
+  // Must wrap Worker before Facebook starts its background profiler.
+  initFeature("facebook-workers", initFacebookWorkerOptimization);
+  // Must run before any Facebook module definitions execute.
+  initFeature("facebook-modules", initFacebookModuleInterception);
+  // Must run before Facebook assigns eager sources to its emoji images.
+  initFeature("emoji-images", initEmojiImageLoading);
   initFeature("composer-keys", initComposerKeys);
   initFeature("shortcuts", initShortcuts);
   initFeature("zoom", initZoom);
