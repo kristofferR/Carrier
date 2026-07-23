@@ -31,6 +31,17 @@ describe("hand-maintained injected assets", () => {
     expect(source).not.toContain('((document.body && document.body.innerText) || "")');
   });
 
+  test("the MCP worker probe records only static JavaScript bundles", async () => {
+    const source = await repoAsset("src-tauri/inject/mcp-bridge.js");
+
+    expect(source).toContain('url.protocol !== "https:"');
+    expect(source).toContain('url.hostname !== "static.xx.fbcdn.net"');
+    expect(source).toContain("url.port");
+    expect(source).toContain("url.username");
+    expect(source).toContain("url.password");
+    expect(source).toContain("recordStaticBundle(detail, candidates[i])");
+  });
+
   test("release capabilities cannot listen for app events", async () => {
     const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
       permissions: unknown[];

@@ -8,6 +8,29 @@ export interface FacebookFTSRestoreSync {
   startSyncingLoop(): unknown;
 }
 
+export interface FacebookSearchInputDescriptor {
+  hasAccessibleName: boolean;
+  insideForm: boolean;
+  insideMain: boolean;
+  role: string | null;
+  type: string;
+}
+
+export function isConversationSearchInput({
+  hasAccessibleName,
+  insideForm,
+  insideMain,
+  role,
+  type,
+}: FacebookSearchInputDescriptor): boolean {
+  if (!insideMain || insideForm) return false;
+  return (
+    type === "search" ||
+    role === "searchbox" ||
+    (type === "text" && role === null && hasAccessibleName)
+  );
+}
+
 const NULL_COMPONENT_MODULES = new Set([
   // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
   // the React root prevents its search, notification, account, and portal work.
@@ -89,7 +112,8 @@ function replaceComponentExports(
     const candidate = factoryArgs[index];
     if (!candidate || typeof candidate !== "object") continue;
     const record = candidate as Record<string, unknown>;
-    if (Object.hasOwn(record, "exports")) {
+    // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is ES2022; the inject target is ES2020.
+    if (Object.prototype.hasOwnProperty.call(record, "exports")) {
       try {
         record.exports = replaceFunctionExport(record.exports, replacement);
       } catch (_) {}

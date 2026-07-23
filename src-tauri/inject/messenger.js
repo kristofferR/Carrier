@@ -1119,6 +1119,9 @@
   // inject/src/messenger/lib/emoji-images.ts
   var FACEBOOK_EMOJI_PATH = "/images/emoji.php/";
   var isFacebookEmojiImage = (value) => typeof value === "string" && value.includes(FACEBOOK_EMOJI_PATH);
+  function hasImageArea(rect) {
+    return rect.right > rect.left && rect.bottom > rect.top;
+  }
   function intersectsImageClip(rect, clip) {
     return !(rect.bottom < clip.top || rect.top > clip.bottom || rect.right < clip.left || rect.left > clip.right);
   }
@@ -1185,7 +1188,10 @@
           pending.delete(image);
           continue;
         }
-        if (intersectsImageClip(rectOf(image), visibleClipFor(image))) promote(image);
+        const imageRect = rectOf(image);
+        if (hasImageArea(imageRect) && intersectsImageClip(imageRect, visibleClipFor(image))) {
+          promote(image);
+        }
       }
     };
     const scheduleScan = () => {
@@ -1220,6 +1226,7 @@
     document.addEventListener("scroll", scheduleScan, true);
     window.addEventListener("resize", scheduleScan);
     new MutationObserver((records) => {
+      if (pending.size === 0) return;
       for (const record of records) {
         for (const removed of record.removedNodes) {
           if (removed instanceof HTMLImageElement) {
@@ -1237,6 +1244,16 @@
   }
 
   // inject/src/messenger/lib/facebook-modules.ts
+  function isConversationSearchInput({
+    hasAccessibleName,
+    insideForm,
+    insideMain,
+    role,
+    type
+  }) {
+    if (!insideMain || insideForm) return false;
+    return type === "search" || role === "searchbox" || type === "text" && role === null && hasAccessibleName;
+  }
   var NULL_COMPONENT_MODULES = /* @__PURE__ */ new Set([
     // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
     // the React root prevents its search, notification, account, and portal work.
@@ -1301,7 +1318,7 @@
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
       const record = candidate;
-      if (Object.hasOwn(record, "exports")) {
+      if (Object.prototype.hasOwnProperty.call(record, "exports")) {
         try {
           record.exports = replaceFunctionExport(record.exports, replacement);
         } catch (_) {
@@ -1500,15 +1517,18 @@
     };
     window.__carrierWakeSearchIndex = wakeSearchIndex;
     document.addEventListener(
-      "click",
+      "focusin",
       (event) => {
-        const target = event.target instanceof Element ? event.target : null;
-        const button = target?.closest(
-          '[role="button"][aria-label], button[aria-label]'
-        );
-        if (!button?.closest('[role="main"]')) return;
-        const label = (button.getAttribute("aria-label") || "").trim().toLowerCase();
-        if (label === "search" || label === "search in conversation") wakeSearchIndex();
+        const input = event.target instanceof HTMLInputElement ? event.target : null;
+        if (input && isConversationSearchInput({
+          hasAccessibleName: input.hasAttribute("aria-label"),
+          insideForm: input.closest("form") !== null,
+          insideMain: input.closest('[role="main"]') !== null,
+          role: input.getAttribute("role"),
+          type: input.type
+        })) {
+          wakeSearchIndex();
+        }
       },
       true
     );
@@ -1551,13 +1571,20 @@
     if (!message || typeof message !== "object") return false;
     return message.type === "responsiveness";
   }
+  function isResponsivenessProfilerHandshake(message) {
+    if (!message || typeof message !== "object") return false;
+    return message.type === "endpoint_started";
+  }
   function optimizeFacebookWorker(worker, shouldBlockTelemetry, onStopped = () => {
   }) {
     const nativePostMessage = worker.postMessage;
+    let profilerHandshakeSeen = false;
     let stopped = false;
     worker.postMessage = function(...args) {
       if (stopped) return;
-      if (shouldBlockTelemetry() && isResponsivenessWorkerMessage(args[0])) {
+      const message = args[0];
+      if (isResponsivenessProfilerHandshake(message)) profilerHandshakeSeen = true;
+      if (profilerHandshakeSeen && shouldBlockTelemetry() && isResponsivenessWorkerMessage(message)) {
         stopped = true;
         try {
           worker.terminate();

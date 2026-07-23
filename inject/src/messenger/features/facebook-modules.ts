@@ -2,6 +2,7 @@ import {
   createFacebookModuleDefineInterceptor,
   FacebookFTSIdleCoordinator,
   type FacebookModuleDefine,
+  isConversationSearchInput,
 } from "../lib/facebook-modules";
 
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
@@ -28,17 +29,24 @@ export function initFacebookModuleInterception() {
   };
   window.__carrierWakeSearchIndex = wakeSearchIndex;
 
-  // Direct clicks do not pass through Carrier's shortcut helpers.
+  // Messenger focuses a real input when conversation search opens. Unlike its
+  // translated button label, this control shape is locale-independent.
   document.addEventListener(
-    "click",
+    "focusin",
     (event) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const button = target?.closest<HTMLElement>(
-        '[role="button"][aria-label], button[aria-label]',
-      );
-      if (!button?.closest('[role="main"]')) return;
-      const label = (button.getAttribute("aria-label") || "").trim().toLowerCase();
-      if (label === "search" || label === "search in conversation") wakeSearchIndex();
+      const input = event.target instanceof HTMLInputElement ? event.target : null;
+      if (
+        input &&
+        isConversationSearchInput({
+          hasAccessibleName: input.hasAttribute("aria-label"),
+          insideForm: input.closest("form") !== null,
+          insideMain: input.closest('[role="main"]') !== null,
+          role: input.getAttribute("role"),
+          type: input.type,
+        })
+      ) {
+        wakeSearchIndex();
+      }
     },
     true,
   );

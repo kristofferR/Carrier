@@ -10,6 +10,10 @@ export const FACEBOOK_EMOJI_PATH = "/images/emoji.php/";
 export const isFacebookEmojiImage = (value: unknown): value is string =>
   typeof value === "string" && value.includes(FACEBOOK_EMOJI_PATH);
 
+export function hasImageArea(rect: ImageRect): boolean {
+  return rect.right > rect.left && rect.bottom > rect.top;
+}
+
 export function intersectsImageClip(rect: ImageRect, clip: ImageRect): boolean {
   return !(
     rect.bottom < clip.top ||

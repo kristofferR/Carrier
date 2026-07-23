@@ -1,6 +1,7 @@
 import {
   expandedImageClip,
   FACEBOOK_EMOJI_PATH,
+  hasImageArea,
   type ImageRect,
   intersectImageClips,
   intersectsImageClip,
@@ -64,7 +65,10 @@ export function initEmojiImageLoading() {
         pending.delete(image);
         continue;
       }
-      if (intersectsImageClip(rectOf(image), visibleClipFor(image))) promote(image);
+      const imageRect = rectOf(image);
+      if (hasImageArea(imageRect) && intersectsImageClip(imageRect, visibleClipFor(image))) {
+        promote(image);
+      }
     }
   };
 
@@ -107,6 +111,7 @@ export function initEmojiImageLoading() {
   // Intersection/loading primitives can retain observed images. Carrier uses
   // an explicit set instead and drops detached picker trees immediately.
   new MutationObserver((records) => {
+    if (pending.size === 0) return;
     for (const record of records) {
       for (const removed of record.removedNodes) {
         if (removed instanceof HTMLImageElement) {

@@ -82,17 +82,16 @@ const INJECT_PANEL: &str = include_str!("../inject/panel.js");
 // The `mcp` feature wires a JS-eval responder into the remote Facebook page and
 // opens a local control socket — strictly a dev tool. Enabling it in a release
 // build is always a mistake, so fail the build loudly rather than risk shipping
-// it. (This guards every `#[cfg(feature = "mcp")]` path below, including the
-// plugin registration, since the feature can then only compile in debug.)
+// it.
 #[cfg(all(feature = "mcp", not(debug_assertions)))]
 compile_error!("the `mcp` feature is dev-only and must not be enabled in release builds");
 
 // Dev-only (`mcp` feature): the tauri-plugin-mcp guest responder, injected into
 // the remote Facebook page so execute_js / get_dom round-trips work. Empty in
 // release builds, so the JS-eval responder never ships.
-#[cfg(feature = "mcp")]
+#[cfg(all(feature = "mcp", debug_assertions))]
 const INJECT_MCP_BRIDGE: &str = include_str!("../inject/mcp-bridge.js");
-#[cfg(not(feature = "mcp"))]
+#[cfg(not(all(feature = "mcp", debug_assertions)))]
 const INJECT_MCP_BRIDGE: &str = "";
 
 /// A modern browser UA so Facebook serves the full Messenger web app.
@@ -132,6 +131,29 @@ fn configure_linux_webkit_renderer() {
     }
 }
 
+fn should_enforce_single_instance(
+    multi_instance: bool,
+    mcp_debug_build: bool,
+    has_isolated_mcp_socket: bool,
+) -> bool {
+    if mcp_debug_build {
+        !has_isolated_mcp_socket
+    } else {
+        !multi_instance
+    }
+}
+
+#[cfg(any(all(feature = "mcp", debug_assertions), test))]
+fn select_isolated_mcp_socket(
+    primary: Option<std::ffi::OsString>,
+    fallback: Option<std::ffi::OsString>,
+) -> Option<std::path::PathBuf> {
+    primary
+        .filter(|path| !path.is_empty())
+        .or_else(|| fallback.filter(|path| !path.is_empty()))
+        .map(std::path::PathBuf::from)
+}
+
 pub fn run() {
     #[cfg(target_os = "linux")]
     configure_linux_webkit_renderer();
@@ -140,10 +162,21 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default();
 
-    // Single-instance enforcement (unless the experimental multi-instance flag
-    // or an isolated MCP debug build is active). MCP diagnostics must run beside
-    // an installed release without weakening production single-instance behavior.
-    if !initial.multi_instance && !cfg!(all(feature = "mcp", debug_assertions)) {
+    // Only an explicitly isolated MCP socket opts a debug build out of
+    // single-instance enforcement. Two default-socket builds would otherwise
+    // contend for /tmp/tauri-mcp.sock.
+    #[cfg(all(feature = "mcp", debug_assertions))]
+    let isolated_mcp_socket = select_isolated_mcp_socket(
+        std::env::var_os("CARRIER_MCP_SOCKET_PATH"),
+        std::env::var_os("TAURI_MCP_IPC_PATH"),
+    );
+    #[cfg(not(all(feature = "mcp", debug_assertions)))]
+    let isolated_mcp_socket: Option<std::path::PathBuf> = None;
+    if should_enforce_single_instance(
+        initial.multi_instance,
+        cfg!(all(feature = "mcp", debug_assertions)),
+        isolated_mcp_socket.is_some(),
+    ) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }));
@@ -154,9 +187,8 @@ pub fn run() {
     // is accidentally enabled for a release build.
     #[cfg(all(feature = "mcp", debug_assertions))]
     {
-        let socket_path = std::env::var_os("CARRIER_MCP_SOCKET_PATH")
-            .or_else(|| std::env::var_os("TAURI_MCP_IPC_PATH"))
-            .map(std::path::PathBuf::from)
+        let socket_path = isolated_mcp_socket
+            .clone()
             .unwrap_or_else(|| "/tmp/tauri-mcp.sock".into());
         builder = builder.plugin(tauri_plugin_mcp::init_with_config(
             tauri_plugin_mcp::PluginConfig::new(APP_TITLE.to_string())
@@ -244,7 +276,7 @@ pub fn run() {
             // Event listening is needed only by the development MCP responder.
             // Add it dynamically so release builds never grant remote Facebook
             // scripts access to app events.
-            #[cfg(feature = "mcp")]
+            #[cfg(all(feature = "mcp", debug_assertions))]
             app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
 
             clear_pending_webview_data(app.handle());
@@ -548,6 +580,40 @@ mod tests {
         assert!(!should_disable_webkit_dmabuf_renderer(false, false));
         assert!(!should_disable_webkit_dmabuf_renderer(true, true));
         assert!(!should_disable_webkit_dmabuf_renderer(false, true));
+    }
+
+    #[test]
+    fn mcp_default_socket_always_keeps_single_instance_enforcement() {
+        assert!(should_enforce_single_instance(false, true, false));
+        assert!(should_enforce_single_instance(true, true, false));
+        assert!(!should_enforce_single_instance(false, true, true));
+        assert!(!should_enforce_single_instance(true, true, true));
+        assert!(should_enforce_single_instance(false, false, false));
+        assert!(!should_enforce_single_instance(true, false, false));
+    }
+
+    #[test]
+    fn mcp_socket_selection_skips_empty_overrides() {
+        use std::ffi::OsString;
+
+        assert_eq!(
+            select_isolated_mcp_socket(
+                Some(OsString::new()),
+                Some(OsString::from("/tmp/fallback.sock")),
+            ),
+            Some(std::path::PathBuf::from("/tmp/fallback.sock"))
+        );
+        assert_eq!(
+            select_isolated_mcp_socket(Some(OsString::new()), Some(OsString::new())),
+            None
+        );
+        assert_eq!(
+            select_isolated_mcp_socket(
+                Some(OsString::from("/tmp/primary.sock")),
+                Some(OsString::from("/tmp/fallback.sock")),
+            ),
+            Some(std::path::PathBuf::from("/tmp/primary.sock"))
+        );
     }
 
     #[test]

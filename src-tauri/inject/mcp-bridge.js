@@ -596,6 +596,23 @@
           reply(componentExperimentProbe());
           return;
         }
+        if (code === "__carrier_mcp_static_bundle_test_probe__") {
+          var perfState = window.__CARRIER_MCP_PERF__ || {};
+          reply(
+            typeof perfState.staticBundleProbe === "function"
+              ? perfState.staticBundleProbe([
+                  "https://static.xx.fbcdn.net/rsrc.php/v4/bundle.js",
+                  "http://static.xx.fbcdn.net/rsrc.php/v4/insecure.js",
+                  "https://static.xx.fbcdn.net:8443/rsrc.php/v4/port.js",
+                  "https://user:password@static.xx.fbcdn.net/rsrc.php/v4/credentials.js",
+                  "https://example.com/rsrc.php/v4/wrong-host.js",
+                  "https://static.xx.fbcdn.net/images/media.jpg",
+                  "",
+                ])
+              : [],
+          );
+          return;
+        }
         var reactProfile = /^__carrier_mcp_react_profile__:(on|clear)$/.exec(code);
         if (reactProfile) {
           reply(setSessionExperiment(reactProfile[1], REACT_PROFILE_KEY, "reactProfile"));
@@ -933,6 +950,38 @@
         }
       }
 
+      function sanitizedStaticBundle(raw) {
+        try {
+          var url = new URL(String(raw), location.href);
+          if (
+            url.protocol !== "https:" ||
+            url.hostname !== "static.xx.fbcdn.net" ||
+            url.port ||
+            url.username ||
+            url.password ||
+            !/\.js$/i.test(url.pathname)
+          ) {
+            return "";
+          }
+          return sanitizedEndpoint(url.href);
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function recordStaticBundle(detail, raw) {
+        var bundle = sanitizedStaticBundle(raw);
+        if (!bundle || detail.bundles.indexOf(bundle) !== -1 || detail.bundles.length >= 12) {
+          return;
+        }
+        detail.bundles.push(bundle);
+      }
+      state.staticBundleProbe = function (candidates) {
+        var detail = { bundles: [] };
+        for (var i = 0; i < candidates.length; i++) recordStaticBundle(detail, candidates[i]);
+        return detail.bundles;
+      };
+
       function schedulingSource() {
         try {
           var stack = String(new Error().stack || "");
@@ -1129,11 +1178,7 @@
                     message.args && message.args[0] && message.args[0].url,
                   ];
                   for (var i = 0; i < candidates.length; i++) {
-                    if (!candidates[i]) continue;
-                    var bundle = sanitizedEndpoint(candidates[i]);
-                    if (detail.bundles.indexOf(bundle) === -1 && detail.bundles.length < 12) {
-                      detail.bundles.push(bundle);
-                    }
+                    recordStaticBundle(detail, candidates[i]);
                   }
                 } catch (_) {}
               }

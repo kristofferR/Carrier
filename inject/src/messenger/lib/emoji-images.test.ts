@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   expandedImageClip,
+  hasImageArea,
   intersectImageClips,
   intersectsImageClip,
   isFacebookEmojiImage,
@@ -28,6 +29,13 @@ describe("emoji image loading", () => {
     expect(
       intersectsImageClip({ top: 900, right: 360, bottom: 930, left: 330 }, scroller),
     ).toBeFalse();
+  });
+
+  test("rejects zero-area image rectangles", () => {
+    expect(hasImageArea({ top: 0, right: 0, bottom: 0, left: 0 })).toBeFalse();
+    expect(hasImageArea({ top: 20, right: 30, bottom: 20, left: 10 })).toBeFalse();
+    expect(hasImageArea({ top: 20, right: 10, bottom: 40, left: 10 })).toBeFalse();
+    expect(hasImageArea({ top: 20, right: 30, bottom: 40, left: 10 })).toBeTrue();
   });
 
   test("expands a clip by its prefetch margin", () => {

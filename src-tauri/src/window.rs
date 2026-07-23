@@ -839,7 +839,7 @@ mod tests {
         assert!(messenger < fallback);
     }
 
-    #[cfg(feature = "mcp")]
+    #[cfg(all(feature = "mcp", debug_assertions))]
     #[test]
     fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
@@ -848,7 +848,7 @@ mod tests {
             .unwrap();
         let first_bridge = script.find("tauri-mcp guest bridge").unwrap();
         let injectable_return = script
-            .find("    return;\n  }\n\n  // Prefer settings")
+            .find("    return;\n  }\n\n  window.__CARRIER_HEARTBEAT_ID__")
             .unwrap();
 
         assert!(local_branch < first_bridge);

@@ -3,6 +3,7 @@ import {
   createFacebookModuleDefineInterceptor,
   FacebookFTSIdleCoordinator,
   type FacebookModuleDefine,
+  isConversationSearchInput,
 } from "./facebook-modules";
 
 type ModuleFactory = (...args: unknown[]) => unknown;
@@ -38,6 +39,66 @@ function defineDefaultExport(
 }
 
 describe("Facebook module interception", () => {
+  test("recognizes conversation search inputs without localized labels", () => {
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: false,
+        insideForm: false,
+        insideMain: true,
+        role: null,
+        type: "search",
+      }),
+    ).toBeTrue();
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: false,
+        insideForm: false,
+        insideMain: true,
+        role: "searchbox",
+        type: "text",
+      }),
+    ).toBeTrue();
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: true,
+        insideForm: false,
+        insideMain: true,
+        role: null,
+        type: "text",
+      }),
+    ).toBeTrue();
+  });
+
+  test("rejects composer and unrelated form fields", () => {
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: true,
+        insideForm: false,
+        insideMain: true,
+        role: "textbox",
+        type: "text",
+      }),
+    ).toBeFalse();
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: true,
+        insideForm: true,
+        insideMain: true,
+        role: null,
+        type: "text",
+      }),
+    ).toBeFalse();
+    expect(
+      isConversationSearchInput({
+        hasAccessibleName: true,
+        insideForm: false,
+        insideMain: false,
+        role: null,
+        type: "search",
+      }),
+    ).toBeFalse();
+  });
+
   test("replaces only the already-hidden Facebook navigation root", () => {
     const { define, definitions } = definitionHarness();
     const intercepted = createFacebookModuleDefineInterceptor(define, () => true);

@@ -396,6 +396,15 @@ describe("runtime MCP page-map bounds", () => {
     expect(harness.sessionStorage.getItem("__carrier_mcp_react_profile__")).toBe("on");
   });
 
+  test("records only credential-free HTTPS JavaScript bundles from Facebook's CDN", () => {
+    const root = new FakeElement("div");
+    const harness = createHarness(root);
+
+    expect(harness.execute("__carrier_mcp_static_bundle_test_probe__")).toEqual([
+      "static.xx.fbcdn.net/bundle.js",
+    ]);
+  });
+
   test("clamps depth against a synthetic deep tree", () => {
     const root = new FakeElement("section");
     let parent = root;
