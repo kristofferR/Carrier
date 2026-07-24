@@ -7,7 +7,7 @@
 //! Anything that isn't Messenger is handed to the user's default browser.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -29,6 +29,8 @@ mod notifications;
 mod preflight;
 mod settings;
 mod tray;
+#[cfg(any(target_os = "linux", test))]
+mod tray_badge;
 mod url_rules;
 mod webview_watchdog;
 mod window;
@@ -59,6 +61,38 @@ use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{build_app_window, install_main_close_handler, show_settings_window};
+
+pub(crate) fn refresh_unread_indicators(
+    app: &tauri::AppHandle,
+    settings: &settings::Settings,
+    raw_count: i64,
+) {
+    let unread = if settings.unread_badge {
+        raw_count.max(0)
+    } else {
+        0
+    };
+    let state = app.state::<AppState>();
+    let tray = state.tray.lock().unwrap();
+    if let Some(tray) = tray.as_ref() {
+        let tooltip = if unread > 0 {
+            format!("{APP_TITLE} — {unread} unread")
+        } else {
+            APP_TITLE.to_string()
+        };
+        let _ = tray.set_tooltip(Some(&tooltip));
+        #[cfg(target_os = "linux")]
+        let _ = tray.set_unread(unread);
+        #[cfg(target_os = "macos")]
+        let _ = tray.set_title(tray_unread_title(settings, unread));
+    }
+    drop(tray);
+
+    // LauncherEntry works independently of the tray and is honored by KDE's
+    // task manager plus Ubuntu Dock/Dash-to-Dock.
+    #[cfg(target_os = "linux")]
+    tray_badge::update_unity_launcher_count(unread);
+}
 
 fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
     !candidate.is_empty() && tokens.values().any(|token| token == candidate)
@@ -258,6 +292,7 @@ pub fn run() {
             update_available: Mutex::new(None),
             update_check_wake: tokio::sync::Notify::new(),
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
+            unread_count: AtomicI64::new(0),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
             zoom_generation: AtomicUsize::new(0),
@@ -375,27 +410,14 @@ pub fn run() {
                 });
             });
 
-            // Unread count from the page → tray tooltip (the Dock badge is set
-            // page-side; this keeps the tray useful in menu-bar-only mode).
+            // Unread count from the page → every native platform indicator.
             let h = app.handle().clone();
             app.listen_any("carrier:unread", move |event| {
-                let n: i64 = event.payload().trim().parse().unwrap_or(0);
+                let n: i64 = event.payload().trim().parse().unwrap_or(0).max(0);
                 let state = h.state::<AppState>();
+                state.unread_count.store(n, Ordering::Release);
                 let settings = state.settings.lock().unwrap().clone();
-                let tray_n = if settings.unread_badge { n } else { 0 };
-                let tray = state.tray.lock().unwrap();
-                if let Some(tray) = tray.as_ref() {
-                    let tip = if tray_n > 0 {
-                        format!("{APP_TITLE} — {tray_n} unread")
-                    } else {
-                        APP_TITLE.to_string()
-                    };
-                    let _ = tray.set_tooltip(Some(&tip));
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = tray.set_title(tray_unread_title(&settings, tray_n));
-                    }
-                }
+                refresh_unread_indicators(&h, &settings, n);
             });
 
             // Keyboard/menu zoom from the page → persist it in settings so the
@@ -573,6 +595,11 @@ pub fn run() {
                     // launched (tao installs its NSApplication delegate by now).
                     install_dock_menu_provider();
                 }
+            }
+
+            #[cfg(target_os = "linux")]
+            if let tauri::RunEvent::Exit = event {
+                tray_badge::clear_unity_launcher_count();
             }
 
             #[cfg(target_os = "macos")]

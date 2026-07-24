@@ -18,6 +18,8 @@ use crate::menu::recent_threads_for_menu;
 #[cfg(target_os = "macos")]
 use crate::menu::target_window;
 use crate::settings::{AppState, Settings};
+#[cfg(target_os = "linux")]
+use crate::tray_badge::{draw_unread_badge, UnreadBucket};
 use crate::window::{build_app_window, install_main_close_handler};
 use crate::APP_TITLE;
 
@@ -48,6 +50,28 @@ impl PlatformTrayIcon {
         // notify the desktop shell.
         self.handle.update(|_| ()).ok_or_else(tray_service_closed)
     }
+
+    pub(crate) fn set_unread(&self, count: i64) -> tauri::Result<()> {
+        let bucket = UnreadBucket::from_count(count);
+        self.handle
+            .update(move |tray| {
+                if tray.unread == bucket {
+                    return;
+                }
+                tray.unread = bucket;
+                tray.badged_icon = (bucket != UnreadBucket::None).then(|| ksni::Icon {
+                    width: tray.icon.width,
+                    height: tray.icon.height,
+                    data: rgba_to_argb(draw_unread_badge(
+                        &tray.base_rgba,
+                        tray.icon.width as u32,
+                        tray.icon.height as u32,
+                        bucket,
+                    )),
+                });
+            })
+            .ok_or_else(tray_service_closed)
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -69,6 +93,9 @@ fn tray_service_closed() -> tauri::Error {
 struct LinuxTray {
     app: tauri::AppHandle,
     icon: ksni::Icon,
+    base_rgba: Vec<u8>,
+    badged_icon: Option<ksni::Icon>,
+    unread: UnreadBucket,
     tooltip: String,
 }
 
@@ -86,8 +113,20 @@ impl ksni::Tray for LinuxTray {
         APP_TITLE.into()
     }
 
+    fn status(&self) -> ksni::Status {
+        if self.unread == UnreadBucket::None {
+            ksni::Status::Active
+        } else {
+            ksni::Status::NeedsAttention
+        }
+    }
+
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        vec![self.icon.clone()]
+        vec![self.badged_icon.as_ref().unwrap_or(&self.icon).clone()]
+    }
+
+    fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -155,6 +194,21 @@ fn linux_tray_icon(image: &tauri::image::Image<'_>) -> ksni::Icon {
         height: i32::try_from(image.height()).expect("bundled icon height fits i32"),
         data: rgba_to_argb(image.rgba().to_vec()),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_base_image(app: &tauri::AppHandle) -> tauri::Result<(ksni::Icon, Vec<u8>)> {
+    let default = app.default_window_icon().expect("bundled icon");
+    if default.width() >= 128 && default.height() >= 128 {
+        return Ok((linux_tray_icon(default), default.rgba().to_vec()));
+    }
+
+    // Tauri commonly selects the first (32 px) configured window icon. KSNI
+    // panels can request a much larger pixmap, so keep a high-resolution source
+    // for both the normal icon and its unread badge.
+    let image = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))?;
+    let rgba = image.rgba().to_vec();
+    Ok((linux_tray_icon(&image), rgba))
 }
 
 fn clear_reveal_guard_if_current(
@@ -389,10 +443,13 @@ pub(crate) fn build_tray_with_menu(
 ) -> tauri::Result<PlatformTrayIcon> {
     use ksni::blocking::TrayMethods;
 
-    let image = app.default_window_icon().expect("bundled icon");
+    let (icon, base_rgba) = linux_tray_base_image(app)?;
     let tray = LinuxTray {
         app: app.clone(),
-        icon: linux_tray_icon(image),
+        icon,
+        base_rgba,
+        badged_icon: None,
+        unread: UnreadBucket::None,
         tooltip: APP_TITLE.into(),
     };
     // Autostart can run before the desktop's StatusNotifierWatcher exists.

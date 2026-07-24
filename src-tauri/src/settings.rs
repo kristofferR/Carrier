@@ -172,6 +172,9 @@ pub(crate) struct AppState {
     /// Prevents a successfully delivered first tray notice from repeating in
     /// the current process even while its settings write is being merged.
     pub(crate) tray_notice_delivered: AtomicBool,
+    /// Last page-reported unread count, retained so settings and tray creation
+    /// can immediately refresh every native unread surface.
+    pub(crate) unread_count: std::sync::atomic::AtomicI64,
     /// Non-zero generation token while the main window is deliberately being
     /// restored. A token (rather than a bool) lets overlapping reveals renew
     /// the guard without an older reset timer clearing the newer reveal.
@@ -589,6 +592,14 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let tray_available = tray.is_some();
     drop(tray);
+
+    crate::refresh_unread_indicators(
+        app,
+        s,
+        state
+            .unread_count
+            .load(std::sync::atomic::Ordering::Acquire),
+    );
 
     // macOS: hide/show the Dock icon (menu-bar-only mode). Only go Dock-less when
     // a tray exists to reach the app from — otherwise the app would have neither a
