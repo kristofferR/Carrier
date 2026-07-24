@@ -493,6 +493,37 @@ enum LinuxNotificationResponse {
 }
 
 #[cfg(target_os = "linux")]
+const LINUX_NOTIFICATION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+#[cfg(target_os = "linux")]
+const REPLY_SIGNAL_GRACE: Duration = Duration::from_secs(2);
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxWaitTimeout {
+    Reply,
+    Terminal,
+}
+
+#[cfg(target_os = "linux")]
+fn next_linux_wait_deadline(
+    reply_deadline: Option<Instant>,
+    terminal_deadline: Instant,
+) -> (Instant, LinuxWaitTimeout) {
+    match reply_deadline {
+        Some(deadline) if deadline < terminal_deadline => (deadline, LinuxWaitTimeout::Reply),
+        _ => (terminal_deadline, LinuxWaitTimeout::Terminal),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_timeout_response(timeout: LinuxWaitTimeout) -> LinuxNotificationResponse {
+    match timeout {
+        LinuxWaitTimeout::Reply => LinuxNotificationResponse::OpenComposer,
+        LinuxWaitTimeout::Terminal => LinuxNotificationResponse::Closed,
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn linux_notification_sender_matches(actual: Option<&str>, expected: &str) -> bool {
     actual == Some(expected)
 }
@@ -533,25 +564,22 @@ async fn wait_for_linux_notification_response(
     notification_id: u32,
     notification_sender: &str,
 ) -> Result<LinuxNotificationResponse, zbus::Error> {
-    const REPLY_SIGNAL_GRACE: Duration = Duration::from_secs(2);
+    let terminal_deadline = Instant::now() + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
     let mut reply_deadline: Option<Instant> = None;
 
     loop {
         let next_message = messages.next();
         pin_mut!(next_message);
-        let next = if let Some(deadline) = reply_deadline {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Ok(LinuxNotificationResponse::OpenComposer);
-            }
-            let timeout = async_io::Timer::after(remaining);
-            pin_mut!(timeout);
-            match select(next_message, timeout).await {
-                Either::Left((message, _)) => message,
-                Either::Right((_, _)) => return Ok(LinuxNotificationResponse::OpenComposer),
-            }
-        } else {
-            next_message.await
+        let (deadline, timeout_kind) = next_linux_wait_deadline(reply_deadline, terminal_deadline);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(linux_timeout_response(timeout_kind));
+        }
+        let timeout = async_io::Timer::after(remaining);
+        pin_mut!(timeout);
+        let next = match select(next_message, timeout).await {
+            Either::Left((message, _)) => message,
+            Either::Right((_, _)) => return Ok(linux_timeout_response(timeout_kind)),
         };
 
         let Some(message) = next else {
@@ -1580,6 +1608,27 @@ mod tests {
         assert!(linux_notification_sender_matches(Some(":1.42"), ":1.42"));
         assert!(!linux_notification_sender_matches(Some(":1.99"), ":1.42"));
         assert!(!linux_notification_sender_matches(None, ":1.42"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_wait_uses_the_first_terminal_deadline() {
+        let now = Instant::now();
+        let terminal = now + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
+        let reply = now + REPLY_SIGNAL_GRACE;
+
+        assert_eq!(
+            next_linux_wait_deadline(None, terminal),
+            (terminal, LinuxWaitTimeout::Terminal)
+        );
+        assert_eq!(
+            next_linux_wait_deadline(Some(reply), terminal),
+            (reply, LinuxWaitTimeout::Reply)
+        );
+        assert_eq!(
+            next_linux_wait_deadline(Some(terminal + Duration::from_secs(1)), terminal),
+            (terminal, LinuxWaitTimeout::Terminal)
+        );
     }
 
     #[cfg(target_os = "linux")]
