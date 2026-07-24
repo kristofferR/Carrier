@@ -56,7 +56,15 @@ jobs:
       - name: Validate Linux desktop metadata
         run: |
           set -euo pipefail
-          appstreamcli validate --no-net --strict \
+          appstream_args=(--no-net)
+          if appstreamcli validate --help | grep -q -- '--strict'; then
+            appstream_args+=(--strict)
+          else
+            # Older Ubuntu validators predate --strict. Pedantic still exposes
+            # every hint while the normal exit status rejects metadata errors.
+            appstream_args+=(--pedantic)
+          fi
+          appstreamcli validate "${appstream_args[@]}" \
             src-tauri/linux/io.github.kristofferr.carrier.metainfo.xml
 
           rendered=$(mktemp --suffix=.desktop)
