@@ -44,6 +44,8 @@ use macos::{
     theme::observe_system_theme_changes,
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
+#[cfg(target_os = "linux")]
+use notifications::handle_reply_result;
 use notifications::{
     clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
     NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
@@ -523,6 +525,13 @@ pub fn run() {
                     Err(e) => log::warn!("carrier:notify-route payload did not parse: {e}"),
                 },
             );
+
+            // KDE inline replies are delivered page-side through the same
+            // content-free id/ok acknowledgement used by the native waiter.
+            #[cfg(target_os = "linux")]
+            app.listen_any("carrier:reply-result", move |event| {
+                handle_reply_result(event.payload());
+            });
 
             // Page diagnostics (`diag()` in messenger.js): selector-health and
             // IPC failures from the injected script, routed into the log file

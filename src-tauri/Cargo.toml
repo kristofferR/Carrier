@@ -83,6 +83,10 @@ webkit2gtk = "2.0.2"
 # Tauri's AppIndicator tray backend cannot emit click events or expose a real
 # tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
+# KDE targets its non-standard NotificationReplied signal to the exact D-Bus
+# connection that sent Notify. Keep that connection so Linux inline replies can
+# be received and routed back to Messenger.
+zbus = "5"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window
