@@ -73,8 +73,11 @@ pub(crate) fn sync_global_hotkey(app: &tauri::AppHandle, want: bool) -> Result<(
                     }
                     Ok(())
                 }
-                Err(portal_error) => plugin_sync(app, true)
-                    .map_err(|plugin_error| combined_enable_error(&portal_error, &plugin_error)),
+                Err(portal_error) if portal_error.allows_fallback() => plugin_sync(app, true)
+                    .map_err(|plugin_error| {
+                        combined_enable_error(&portal_error.to_string(), &plugin_error)
+                    }),
+                Err(portal_error) => Err(portal_error.to_string()),
             }
         } else {
             let portal_result = crate::hotkey_portal::disable();

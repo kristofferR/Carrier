@@ -493,11 +493,24 @@ enum LinuxNotificationResponse {
 }
 
 #[cfg(target_os = "linux")]
+fn linux_notification_sender_matches(actual: Option<&str>, expected: &str) -> bool {
+    actual == Some(expected)
+}
+
+#[cfg(target_os = "linux")]
 fn decode_linux_notification_signal(
     message: &zbus::Message,
     expected_id: u32,
+    expected_sender: &str,
 ) -> Option<LinuxNotificationSignal> {
-    match message.header().member()?.as_str() {
+    let header = message.header();
+    if !linux_notification_sender_matches(
+        header.sender().map(|sender| sender.as_str()),
+        expected_sender,
+    ) {
+        return None;
+    }
+    match header.member()?.as_str() {
         "ActionInvoked" => {
             let (id, action) = message.body().deserialize::<(u32, String)>().ok()?;
             (id == expected_id).then_some(LinuxNotificationSignal::Action(action))
@@ -518,6 +531,7 @@ fn decode_linux_notification_signal(
 async fn wait_for_linux_notification_response(
     mut messages: zbus::MessageStream,
     notification_id: u32,
+    notification_sender: &str,
 ) -> Result<LinuxNotificationResponse, zbus::Error> {
     const REPLY_SIGNAL_GRACE: Duration = Duration::from_secs(2);
     let mut reply_deadline: Option<Instant> = None;
@@ -544,7 +558,9 @@ async fn wait_for_linux_notification_response(
             return Ok(LinuxNotificationResponse::Closed);
         };
         let message = message?;
-        let Some(signal) = decode_linux_notification_signal(&message, notification_id) else {
+        let Some(signal) =
+            decode_linux_notification_signal(&message, notification_id, notification_sender)
+        else {
             continue;
         };
         match classify_linux_signal(signal, reply_deadline.is_some()) {
@@ -612,8 +628,21 @@ fn show_linux_notification(
     let result = (|| -> Result<LinuxNotificationResponse, String> {
         let connection =
             zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
+        let dbus =
+            zbus::blocking::fdo::DBusProxy::new(&connection).map_err(|error| error.to_string())?;
+        let notification_name =
+            zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
+        // The daemon may be D-Bus activated and have no owner until its first
+        // use. Start it before pinning the unique owner used by our match rule.
+        dbus.start_service_by_name(notification_name.clone(), 0)
+            .map_err(|error| error.to_string())?;
+        let notification_owner = dbus
+            .get_name_owner(notification_name.into())
+            .map_err(|error| error.to_string())?;
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
+            .sender(notification_owner.clone())
+            .map_err(|error| error.to_string())?
             .path("/org/freedesktop/Notifications")
             .map_err(|error| error.to_string())?
             .interface("org.freedesktop.Notifications")
@@ -652,6 +681,7 @@ fn show_linux_notification(
         async_io::block_on(wait_for_linux_notification_response(
             messages,
             notification_id,
+            notification_owner.as_str(),
         ))
         .map_err(|error| error.to_string())
     })();
@@ -1542,6 +1572,14 @@ mod tests {
             classify_linux_signal(LinuxNotificationSignal::Action("default".into()), false),
             LinuxSignalDecision::Open
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_signals_require_the_daemon_owner() {
+        assert!(linux_notification_sender_matches(Some(":1.42"), ":1.42"));
+        assert!(!linux_notification_sender_matches(Some(":1.99"), ":1.42"));
+        assert!(!linux_notification_sender_matches(None, ":1.42"));
     }
 
     #[cfg(target_os = "linux")]

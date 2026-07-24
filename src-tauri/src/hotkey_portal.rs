@@ -31,9 +31,21 @@ struct Keeper {
     stop: tokio::sync::oneshot::Sender<CloseResultSender>,
 }
 
+#[derive(Default)]
+struct HostRegistration {
+    registered: bool,
+    connection: Option<zbus::Connection>,
+    portal_owner: Option<zbus::names::OwnedUniqueName>,
+}
+
 fn keeper_state() -> &'static Mutex<Option<Keeper>> {
     static KEEPER: OnceLock<Mutex<Option<Keeper>>> = OnceLock::new();
     KEEPER.get_or_init(|| Mutex::new(None))
+}
+
+fn host_registration_state() -> &'static Mutex<HostRegistration> {
+    static REGISTRATION: OnceLock<Mutex<HostRegistration>> = OnceLock::new();
+    REGISTRATION.get_or_init(|| Mutex::new(HostRegistration::default()))
 }
 
 fn next_generation() -> u64 {
@@ -55,6 +67,26 @@ fn clear_keeper(generation: u64) {
 struct BindFailure {
     message: String,
     denied: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum EnableError {
+    Denied(String),
+    Unavailable(String),
+}
+
+impl EnableError {
+    pub(crate) fn allows_fallback(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
+}
+
+impl std::fmt::Display for EnableError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Denied(message) | Self::Unavailable(message) => formatter.write_str(message),
+        }
+    }
 }
 
 impl BindFailure {
@@ -133,6 +165,83 @@ async fn create_session(
         .map_err(bind_failure)
 }
 
+async fn register_host_app(app: &tauri::AppHandle) -> Result<(), BindFailure> {
+    // The registry accepts exactly one registration from each D-Bus peer.
+    // Reuse it while the portal keeps the same owner, but register again after
+    // a service restart (which loses the portal's peer-to-app association).
+    let previous_portal = {
+        let state = host_registration_state().lock().unwrap();
+        if state.registered {
+            match (&state.connection, &state.portal_owner) {
+                (Some(connection), Some(owner)) => Some((connection.clone(), owner.clone())),
+                _ => return Ok(()),
+            }
+        } else {
+            None
+        }
+    };
+    let current_owner = if let Some((connection, previous_owner)) = previous_portal {
+        let dbus = zbus::fdo::DBusProxy::new(&connection)
+            .await
+            .map_err(|error| {
+                BindFailure::ordinary(format!("portal owner lookup failed: {error}"))
+            })?;
+        let current_owner = dbus
+            .get_name_owner(
+                zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").unwrap(),
+            )
+            .await
+            .map_err(|error| {
+                BindFailure::ordinary(format!("portal owner lookup failed: {error}"))
+            })?;
+        if current_owner == previous_owner {
+            return Ok(());
+        }
+        Some(current_owner)
+    } else {
+        None
+    };
+
+    let app_id = ashpd::AppID::try_from(app.config().identifier.as_str()).map_err(|error| {
+        BindFailure::ordinary(format!("invalid portal application ID: {error}"))
+    })?;
+    let registration = tokio::time::timeout(CREATE_TIMEOUT, ashpd::register_host_app(app_id))
+        .await
+        .map_err(|_| BindFailure::ordinary("host portal registration timed out"))?;
+    match registration {
+        Ok(()) | Err(ashpd::Error::PortalNotFound(_)) => {}
+        // Older portal frontends predate the host registry and do not require
+        // it. Other registry errors are availability failures, not an explicit
+        // user denial of the shortcut request.
+        Err(error) => {
+            return Err(BindFailure::ordinary(format!(
+                "host portal registration failed: {error}"
+            )));
+        }
+    }
+    let mut state = host_registration_state().lock().unwrap();
+    state.registered = true;
+    if let Some(owner) = current_owner {
+        state.portal_owner = Some(owner);
+    }
+    Ok(())
+}
+
+async fn remember_portal_owner(portal: &GlobalShortcuts<'_>) -> Result<(), BindFailure> {
+    let connection = portal.connection().clone();
+    let dbus = zbus::fdo::DBusProxy::new(&connection)
+        .await
+        .map_err(|error| BindFailure::ordinary(format!("portal owner lookup failed: {error}")))?;
+    let owner = dbus
+        .get_name_owner(zbus::names::BusName::try_from("org.freedesktop.portal.Desktop").unwrap())
+        .await
+        .map_err(|error| BindFailure::ordinary(format!("portal owner lookup failed: {error}")))?;
+    let mut state = host_registration_state().lock().unwrap();
+    state.connection = Some(connection);
+    state.portal_owner = Some(owner);
+    Ok(())
+}
+
 async fn close_session(session: &Session<'_, GlobalShortcuts<'static>>) -> Result<(), String> {
     tokio::time::timeout(CLOSE_TIMEOUT, session.close())
         .await
@@ -197,6 +306,19 @@ async fn run_portal_session(
     ready: Option<&mpsc::SyncSender<Result<(), BindFailure>>>,
     ready_delivered: &mut bool,
 ) -> Result<(), BindFailure> {
+    // Recent portals require an unsandboxed app to register its application ID
+    // on the shared ashpd connection before using any desktop portal. In
+    // Flatpak, ashpd detects the sandbox and this is a no-op.
+    let register = register_host_app(app);
+    pin_mut!(register);
+    match select(&mut *stop, register).await {
+        Either::Left((close_sender, _)) => {
+            acknowledge_early_stop(close_sender, ready, Ok(()));
+            return Ok(());
+        }
+        Either::Right((result, _)) => result?,
+    }
+
     let connect = tokio::time::timeout(CREATE_TIMEOUT, GlobalShortcuts::new());
     pin_mut!(connect);
     let portal: GlobalShortcuts<'static> = match select(&mut *stop, connect).await {
@@ -208,6 +330,9 @@ async fn run_portal_session(
             .map_err(|_| BindFailure::ordinary("portal connection timed out"))?
             .map_err(bind_failure)?,
     };
+    if let Err(error) = remember_portal_owner(&portal).await {
+        log::warn!("couldn't track the desktop portal owner for restart recovery: {error:?}");
+    }
 
     let create = create_session(&portal);
     pin_mut!(create);
@@ -393,7 +518,7 @@ pub(crate) fn is_active() -> bool {
 }
 
 /// Bind the summon shortcut and keep its portal session alive.
-pub(crate) fn enable(app: &tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn enable(app: &tauri::AppHandle) -> Result<(), EnableError> {
     if is_active() {
         return Ok(());
     }
@@ -417,14 +542,18 @@ pub(crate) fn enable(app: &tauri::AppHandle) -> Result<(), String> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
             clear_keeper(generation);
-            Err(format!(
-                "Couldn't enable portal Global Hotkey: {}",
-                error.message
-            ))
+            let message = format!("Couldn't enable portal Global Hotkey: {}", error.message);
+            if error.denied {
+                Err(EnableError::Denied(message))
+            } else {
+                Err(EnableError::Unavailable(message))
+            }
         }
         Err(error) => {
             clear_keeper(generation);
-            Err(format!("Couldn't start portal Global Hotkey: {error}"))
+            Err(EnableError::Unavailable(format!(
+                "Couldn't start portal Global Hotkey: {error}"
+            )))
         }
     }
 }
@@ -519,5 +648,11 @@ mod tests {
             )))
             .denied
         );
+    }
+
+    #[test]
+    fn only_unavailable_portals_allow_the_native_fallback() {
+        assert!(EnableError::Unavailable("missing portal".into()).allows_fallback());
+        assert!(!EnableError::Denied("cancelled".into()).allows_fallback());
     }
 }
