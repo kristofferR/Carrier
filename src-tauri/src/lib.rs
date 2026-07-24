@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use tauri::{Listener, Manager};
 use tauri_plugin_opener::OpenerExt;
+mod cli;
 mod commands;
 mod custom_css;
 mod diag;
@@ -202,6 +203,10 @@ pub fn run() {
     configure_linux_webkit_renderer();
 
     let initial = load_settings_early();
+    let cold_cli_action = cli::parse_cli_action(std::env::args_os());
+    let pending_cold_new_conversation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        cold_cli_action == Some(cli::CliAction::NewConversation),
+    ));
 
     let mut builder = tauri::Builder::default();
 
@@ -220,10 +225,25 @@ pub fn run() {
         cfg!(all(feature = "mcp", debug_assertions)),
         is_isolated_mcp_socket(mcp_socket_override.as_deref()),
     ) {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app);
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(action) = cli::parse_cli_action(argv) {
+                cli::perform_cli_action(app, action);
+            } else {
+                show_main(app);
+            }
         }));
     }
+
+    let pending_action = pending_cold_new_conversation.clone();
+    builder = builder.on_page_load(move |webview, payload| {
+        if webview.label() == "main"
+            && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            && url_rules::is_messenger_web_url(payload.url())
+            && pending_action.swap(false, Ordering::AcqRel)
+        {
+            cli::perform_cli_action(webview.app_handle(), cli::CliAction::NewConversation);
+        }
+    });
 
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
     // DOM/JS inspection. Restrict it to debug builds even when the Cargo feature
@@ -364,6 +384,10 @@ pub fn run() {
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
             if settings.start_to_tray && has_tray {
                 let _ = window.hide();
+            }
+
+            if cold_cli_action == Some(cli::CliAction::Settings) {
+                cli::perform_cli_action(app.handle(), cli::CliAction::Settings);
             }
 
             // The Facebook page is a remote origin and can't call Carrier's own
