@@ -14,6 +14,8 @@
 interface CarrierSettings {
   always_on_top?: boolean;
   show_tray?: boolean;
+  /** Linux tray artwork: the full-color icon or a panel-tinted glyph. */
+  tray_icon_style?: "color" | "symbolic";
   start_to_tray?: boolean;
   autostart?: boolean;
   hide_on_close?: boolean;

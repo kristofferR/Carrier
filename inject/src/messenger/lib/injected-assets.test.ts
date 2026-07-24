@@ -64,6 +64,14 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain('key === "show_tray" && trayRequired');
   });
 
+  test("the symbolic tray setting is offered only on Linux", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
+    expect(settings).toContain('...(IS_LINUX ? ["tray_icon_style"] : [])');
+    expect(settings).toContain('[["color", "Color"], ["symbolic", "Symbolic"]]');
+  });
+
   test("custom CSS is presented as best-effort and reloadable", async () => {
     const settings = await repoAsset("dist/settings.html");
 

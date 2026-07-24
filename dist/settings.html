@@ -128,6 +128,7 @@
 
       const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
       const IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
+      const IS_LINUX = !IS_MAC && !IS_WINDOWS && /Linux/.test(navigator.userAgent);
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
@@ -137,6 +138,7 @@
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
+            ...(IS_LINUX ? ["tray_icon_style"] : []),
             ...(IS_MAC ? ["menu_bar_only"] : []),
             ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
           ] },
@@ -253,6 +255,16 @@
           [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
           "Badge counts", "Whether the badge shows unread messages or unread conversations.",
           !settings.unread_badge,
+        );
+      }
+
+      function trayIconStyleRow() {
+        return selectRow(
+          "tray_icon_style", "color",
+          [["color", "Color"], ["symbolic", "Symbolic"]],
+          "Tray icon style",
+          "Linux: use the full-color icon or a monochrome mark tinted for the desktop theme.",
+          false,
         );
       }
 
@@ -390,12 +402,13 @@
         return row;
       }
 
-      // Pseudo-fields ("theme", "zoom", "badge_mode") are <select> rows;
+      // Pseudo-fields are <select> rows;
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
         theme: themeRow,
         zoom: zoomRow,
         badge_mode: badgeModeRow,
+        tray_icon_style: trayIconStyleRow,
         custom_css: customCssRow,
         open_logs: openLogsRow,
       };

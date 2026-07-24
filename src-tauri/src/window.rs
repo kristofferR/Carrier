@@ -651,6 +651,9 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations') {{
         merged.badge_mode = baked.badge_mode;
       }}
+      if (merged.tray_icon_style !== 'color' && merged.tray_icon_style !== 'symbolic') {{
+        merged.tray_icon_style = baked.tray_icon_style;
+      }}
       var mz = Math.round(Number(merged.zoom));
       merged.zoom = isFinite(mz) ? Math.min({ZOOM_MAX}, Math.max({ZOOM_MIN}, mz)) : baked.zoom;
       window.__CARRIER_SETTINGS__ = merged;

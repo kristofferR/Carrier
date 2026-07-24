@@ -29,6 +29,8 @@ use crate::window::theme_for;
 pub(crate) struct Settings {
     pub(crate) always_on_top: bool,
     pub(crate) show_tray: bool,
+    /// Linux tray artwork: full-color app icon or a panel-tinted symbolic mark.
+    pub(crate) tray_icon_style: String,
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
     pub(crate) hide_on_close: bool,
@@ -103,6 +105,9 @@ impl Settings {
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(mut self) -> Self {
         self.zoom = clamp_zoom(self.zoom);
+        if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
+            self.tray_icon_style = "color".into();
+        }
         // Every Windows tray-oriented behavior can make the main window
         // disappear without closing it. Keep the escape hatch explicit and
         // persisted rather than relying only on a runtime fallback.
@@ -119,6 +124,7 @@ impl Default for Settings {
         Self {
             always_on_top: false,
             show_tray: true,
+            tray_icon_style: "color".into(),
             start_to_tray: false,
             autostart: false,
             hide_on_close: true,
@@ -175,6 +181,9 @@ pub(crate) struct AppState {
     /// Last page-reported unread count, retained so settings and tray creation
     /// can immediately refresh every native unread surface.
     pub(crate) unread_count: std::sync::atomic::AtomicI64,
+    /// Portal-derived panel tint heuristic for the opt-in Linux symbolic icon.
+    #[cfg(target_os = "linux")]
+    pub(crate) linux_panel_dark: AtomicBool,
     /// Non-zero generation token while the main window is deliberately being
     /// restored. A token (rather than a bool) lets overlapping reveals renew
     /// the guard without an older reset timer clearing the newer reveal.
@@ -586,6 +595,11 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         }
         _ => {}
     }
+    #[cfg(target_os = "linux")]
+    if let Some(tray) = tray.as_ref() {
+        let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
+        let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+    }
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
     // no tray to fall back on.
@@ -649,6 +663,7 @@ mod tests {
     fn settings_default_new_fields_have_correct_values() {
         let s = Settings::default();
         assert!(s.unread_badge, "unread_badge should default to true");
+        assert_eq!(s.tray_icon_style, "color");
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
@@ -717,6 +732,20 @@ mod tests {
         assert_eq!(s.sanitized().zoom, 30);
     }
 
+    #[test]
+    fn settings_sanitized_rejects_unknown_tray_icon_styles() {
+        let settings = Settings {
+            tray_icon_style: "theme-name".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().tray_icon_style, "color");
+        let settings = Settings {
+            tray_icon_style: "symbolic".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().tray_icon_style, "symbolic");
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn tray_oriented_windows_settings_force_the_tray_on() {
@@ -746,6 +775,12 @@ mod tests {
         // Pre-existing installs have no `zoom` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.zoom, 100);
+    }
+
+    #[test]
+    fn settings_json_missing_tray_icon_style_defaults_to_color() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.tray_icon_style, "color");
     }
 
     #[test]

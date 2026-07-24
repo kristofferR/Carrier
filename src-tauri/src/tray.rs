@@ -32,6 +32,25 @@ pub(crate) struct PlatformTrayIcon {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TrayIconStyle {
+    #[default]
+    Color,
+    Symbolic,
+}
+
+#[cfg(target_os = "linux")]
+impl TrayIconStyle {
+    fn from_setting(value: &str) -> Self {
+        if value == "symbolic" {
+            Self::Symbolic
+        } else {
+            Self::Color
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 impl PlatformTrayIcon {
     pub(crate) fn set_tooltip<S: AsRef<str>>(&self, tooltip: Option<S>) -> tauri::Result<()> {
         let tooltip = tooltip
@@ -59,16 +78,35 @@ impl PlatformTrayIcon {
                     return;
                 }
                 tray.unread = bucket;
-                tray.badged_icon = (bucket != UnreadBucket::None).then(|| ksni::Icon {
-                    width: tray.icon.width,
-                    height: tray.icon.height,
-                    data: rgba_to_argb(draw_unread_badge(
-                        &tray.base_rgba,
-                        tray.icon.width as u32,
-                        tray.icon.height as u32,
-                        bucket,
-                    )),
-                });
+                tray.rebuild_badge();
+            })
+            .ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_icon_style(&self, style: &str, dark_panel: bool) -> tauri::Result<()> {
+        let style = TrayIconStyle::from_setting(style);
+        self.handle
+            .update(move |tray| {
+                if tray.style == style && tray.symbolic_dark == dark_panel {
+                    return;
+                }
+                tray.style = style;
+                tray.symbolic_dark = dark_panel;
+                tray.rebuild_base();
+            })
+            .ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_symbolic_dark(&self, dark_panel: bool) -> tauri::Result<()> {
+        self.handle
+            .update(move |tray| {
+                if tray.symbolic_dark == dark_panel {
+                    return;
+                }
+                tray.symbolic_dark = dark_panel;
+                if tray.style == TrayIconStyle::Symbolic {
+                    tray.rebuild_base();
+                }
             })
             .ok_or_else(tray_service_closed)
     }
@@ -94,9 +132,46 @@ struct LinuxTray {
     app: tauri::AppHandle,
     icon: ksni::Icon,
     base_rgba: Vec<u8>,
+    color_icon: ksni::Icon,
+    color_rgba: Vec<u8>,
+    symbolic_alpha: Vec<u8>,
+    style: TrayIconStyle,
+    symbolic_dark: bool,
     badged_icon: Option<ksni::Icon>,
     unread: UnreadBucket,
     tooltip: String,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxTray {
+    fn rebuild_base(&mut self) {
+        match self.style {
+            TrayIconStyle::Color => {
+                self.icon = self.color_icon.clone();
+                self.base_rgba.clone_from(&self.color_rgba);
+            }
+            TrayIconStyle::Symbolic => {
+                self.base_rgba = tint_symbolic_rgba(&self.symbolic_alpha, self.symbolic_dark);
+                self.icon = linux_tray_icon_from_rgba(128, 128, self.base_rgba.clone());
+            }
+        }
+        self.rebuild_badge();
+    }
+
+    fn rebuild_badge(&mut self) {
+        self.badged_icon = (self.unread != UnreadBucket::None).then(|| {
+            linux_tray_icon_from_rgba(
+                self.icon.width as u32,
+                self.icon.height as u32,
+                draw_unread_badge(
+                    &self.base_rgba,
+                    self.icon.width as u32,
+                    self.icon.height as u32,
+                    self.unread,
+                ),
+            )
+        });
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -189,11 +264,31 @@ fn rgba_to_argb(mut pixels: Vec<u8>) -> Vec<u8> {
 
 #[cfg(target_os = "linux")]
 fn linux_tray_icon(image: &tauri::image::Image<'_>) -> ksni::Icon {
+    linux_tray_icon_from_rgba(image.width(), image.height(), image.rgba().to_vec())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_icon_from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> ksni::Icon {
     ksni::Icon {
-        width: i32::try_from(image.width()).expect("bundled icon width fits i32"),
-        height: i32::try_from(image.height()).expect("bundled icon height fits i32"),
-        data: rgba_to_argb(image.rgba().to_vec()),
+        width: i32::try_from(width).expect("bundled icon width fits i32"),
+        height: i32::try_from(height).expect("bundled icon height fits i32"),
+        data: rgba_to_argb(rgba),
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn tint_symbolic_rgba(source: &[u8], dark_panel: bool) -> Vec<u8> {
+    assert_eq!(source.len() % 4, 0);
+    let tint = if dark_panel {
+        [245, 245, 245]
+    } else {
+        [55, 58, 64]
+    };
+    let mut pixels = source.to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel[..3].copy_from_slice(&tint);
+    }
+    pixels
 }
 
 #[cfg(target_os = "linux")]
@@ -444,10 +539,19 @@ pub(crate) fn build_tray_with_menu(
     use ksni::blocking::TrayMethods;
 
     let (icon, base_rgba) = linux_tray_base_image(app)?;
+    let symbolic =
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?;
+    debug_assert_eq!((symbolic.width(), symbolic.height()), (128, 128));
+    let symbolic_alpha = symbolic.rgba().to_vec();
     let tray = LinuxTray {
         app: app.clone(),
-        icon,
-        base_rgba,
+        icon: icon.clone(),
+        base_rgba: base_rgba.clone(),
+        color_icon: icon,
+        color_rgba: base_rgba,
+        symbolic_alpha,
+        style: TrayIconStyle::Color,
+        symbolic_dark: false,
         badged_icon: None,
         unread: UnreadBucket::None,
         tooltip: APP_TITLE.into(),
@@ -481,6 +585,30 @@ mod tests {
             rgba_to_argb(vec![0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc, 0xdd]),
             vec![0x44, 0x11, 0x22, 0x33, 0xdd, 0xaa, 0xbb, 0xcc]
         );
+    }
+
+    #[test]
+    fn symbolic_tint_preserves_alpha_and_follows_panel_contrast() {
+        let source = vec![255, 255, 255, 0, 255, 255, 255, 128];
+        assert_eq!(
+            tint_symbolic_rgba(&source, true),
+            vec![245, 245, 245, 0, 245, 245, 245, 128]
+        );
+        assert_eq!(
+            tint_symbolic_rgba(&source, false),
+            vec![55, 58, 64, 0, 55, 58, 64, 128]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn symbolic_asset_is_a_high_resolution_rgba_pixmap() {
+        let image =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+                .unwrap();
+        assert_eq!((image.width(), image.height()), (128, 128));
+        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 255));
     }
 
     #[test]

@@ -293,6 +293,8 @@ pub fn run() {
             update_check_wake: tokio::sync::Notify::new(),
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
             unread_count: AtomicI64::new(0),
+            #[cfg(target_os = "linux")]
+            linux_panel_dark: std::sync::atomic::AtomicBool::new(false),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
             zoom_generation: AtomicUsize::new(0),

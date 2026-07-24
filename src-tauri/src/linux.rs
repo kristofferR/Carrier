@@ -45,7 +45,16 @@ fn should_log_portal_error(last_error: Option<&str>, message: &str) -> bool {
 }
 
 fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
-    let follows_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
+    let state = app.state::<AppState>();
+    let dark_panel = matches!(scheme, ColorScheme::PreferDark);
+    state
+        .linux_panel_dark
+        .store(dark_panel, std::sync::atomic::Ordering::Release);
+    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        let _ = tray.set_symbolic_dark(dark_panel);
+    }
+
+    let follows_system = state.settings.lock().unwrap().theme == "system";
     if !follows_system {
         return;
     }
