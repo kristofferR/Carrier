@@ -9,6 +9,7 @@ use tauri::{
 };
 use tauri_plugin_opener::OpenerExt;
 
+use crate::cli::NEW_CONVERSATION_JS;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 use crate::settings::{
@@ -19,9 +20,6 @@ use crate::tray::build_tray_menu;
 use crate::tray::show_main;
 use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
 use crate::APP_TITLE;
-
-const NEW_CONVERSATION_JS: &str =
-    "window.__carrierShortcuts && window.__carrierShortcuts.newConversation()";
 
 pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let mi = |id: &str, label: &str, accel: Option<&str>| -> tauri::Result<MenuItem<tauri::Wry>> {

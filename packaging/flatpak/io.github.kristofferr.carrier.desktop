@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Carrier
+Comment=Distraction-free Messenger desktop client
+Exec=carrier
+Icon=io.github.kristofferr.carrier
+Categories=Network;Chat;InstantMessaging;
+StartupWMClass=carrier
+Terminal=false
+Actions=new-conversation;settings;
+
+[Desktop Action new-conversation]
+Name=New Conversation
+Exec=carrier --new-conversation
+
+[Desktop Action settings]
+Name=Settings
+Exec=carrier --settings

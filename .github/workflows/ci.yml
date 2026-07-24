@@ -32,6 +32,8 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
+            appstream \
+            desktop-file-utils \
             build-essential
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -50,6 +52,53 @@ jobs:
 
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Validate Linux desktop metadata
+        run: |
+          set -euo pipefail
+          validation_tmp=$(mktemp -d)
+          trap 'rm -rf "$validation_tmp"' EXIT
+          metadata=src-tauri/linux/io.github.kristofferr.carrier.metainfo.xml
+          if [[ "$(appstreamcli validate --help)" == *"--strict"* ]]; then
+            appstreamcli validate --no-net --strict "$metadata"
+          else
+            # Older Ubuntu validators predate --strict and the current
+            # developer/vcs-browser fields. Validate the rest of the canonical
+            # document rather than weakening or downgrading its current fields.
+            legacy_metadata="$validation_tmp/legacy.metainfo.xml"
+            sed \
+              -e '/<url type="vcs-browser">/d' \
+              -e '/<developer /,/<\/developer>/d' \
+              "$metadata" > "$legacy_metadata"
+            appstreamcli validate --no-net "$legacy_metadata"
+          fi
+
+          rendered="$validation_tmp/Carrier.desktop"
+          sed \
+            -e '/{{#if comment}}/d' \
+            -e '/{{#if mime_type}}/,/{{\/if}}/d' \
+            -e '/{{\/if}}/d' \
+            -e 's/{{categories}}/Network;/' \
+            -e 's/{{comment}}/Distraction-free Messenger desktop client/' \
+            -e 's/{{exec}}/carrier/g' \
+            -e 's/{{icon}}/carrier/g' \
+            -e 's/{{name}}/Carrier/g' \
+            src-tauri/linux/carrier.desktop.hbs > "$rendered"
+          desktop-file-validate "$rendered"
+
+      - name: Reject private contact details in packaging
+        run: |
+          set -euo pipefail
+          contacts=$(grep -RIEho \
+            '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' \
+            packaging src-tauri/linux || true)
+          unexpected=$(printf '%s\n' "$contacts" \
+            | grep -Fvx '481270+kristofferR@users.noreply.github.com' || true)
+          if [ -n "$unexpected" ]; then
+            echo "Packaging contains a non-public email address:" >&2
+            printf '%s\n' "$unexpected" >&2
+            exit 1
+          fi
 
   # The injected-script toolchain (Ref #48): Biome lint/format, tsc
   # typecheck, bun test for the pure logic, and a freshness check that the

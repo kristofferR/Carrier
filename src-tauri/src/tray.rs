@@ -18,6 +18,8 @@ use crate::menu::recent_threads_for_menu;
 #[cfg(target_os = "macos")]
 use crate::menu::target_window;
 use crate::settings::{AppState, Settings};
+#[cfg(target_os = "linux")]
+use crate::tray_badge::{draw_unread_badge, UnreadBucket};
 use crate::window::{build_app_window, install_main_close_handler};
 use crate::APP_TITLE;
 
@@ -27,6 +29,25 @@ pub(crate) type PlatformTrayIcon = TrayIcon;
 #[cfg(target_os = "linux")]
 pub(crate) struct PlatformTrayIcon {
     handle: ksni::blocking::Handle<LinuxTray>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TrayIconStyle {
+    #[default]
+    Color,
+    Symbolic,
+}
+
+#[cfg(target_os = "linux")]
+impl TrayIconStyle {
+    fn from_setting(value: &str) -> Self {
+        if value == "symbolic" {
+            Self::Symbolic
+        } else {
+            Self::Color
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -47,6 +68,47 @@ impl PlatformTrayIcon {
         // fresh. An empty update asks KSNI to diff that newly built menu and
         // notify the desktop shell.
         self.handle.update(|_| ()).ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_unread(&self, count: i64) -> tauri::Result<()> {
+        let bucket = UnreadBucket::from_count(count);
+        self.handle
+            .update(move |tray| {
+                if tray.unread == bucket {
+                    return;
+                }
+                tray.unread = bucket;
+                tray.rebuild_badge();
+            })
+            .ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_icon_style(&self, style: &str, dark_panel: bool) -> tauri::Result<()> {
+        let style = TrayIconStyle::from_setting(style);
+        self.handle
+            .update(move |tray| {
+                if tray.style == style && tray.symbolic_dark == dark_panel {
+                    return;
+                }
+                tray.style = style;
+                tray.symbolic_dark = dark_panel;
+                tray.rebuild_base();
+            })
+            .ok_or_else(tray_service_closed)
+    }
+
+    pub(crate) fn set_symbolic_dark(&self, dark_panel: bool) -> tauri::Result<()> {
+        self.handle
+            .update(move |tray| {
+                if tray.symbolic_dark == dark_panel {
+                    return;
+                }
+                tray.symbolic_dark = dark_panel;
+                if tray.style == TrayIconStyle::Symbolic {
+                    tray.rebuild_base();
+                }
+            })
+            .ok_or_else(tray_service_closed)
     }
 }
 
@@ -69,7 +131,47 @@ fn tray_service_closed() -> tauri::Error {
 struct LinuxTray {
     app: tauri::AppHandle,
     icon: ksni::Icon,
+    base_rgba: Vec<u8>,
+    color_icon: ksni::Icon,
+    color_rgba: Vec<u8>,
+    symbolic_alpha: Vec<u8>,
+    style: TrayIconStyle,
+    symbolic_dark: bool,
+    badged_icon: Option<ksni::Icon>,
+    unread: UnreadBucket,
     tooltip: String,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxTray {
+    fn rebuild_base(&mut self) {
+        match self.style {
+            TrayIconStyle::Color => {
+                self.icon = self.color_icon.clone();
+                self.base_rgba.clone_from(&self.color_rgba);
+            }
+            TrayIconStyle::Symbolic => {
+                self.base_rgba = tint_symbolic_rgba(&self.symbolic_alpha, self.symbolic_dark);
+                self.icon = linux_tray_icon_from_rgba(128, 128, self.base_rgba.clone());
+            }
+        }
+        self.rebuild_badge();
+    }
+
+    fn rebuild_badge(&mut self) {
+        self.badged_icon = (self.unread != UnreadBucket::None).then(|| {
+            linux_tray_icon_from_rgba(
+                self.icon.width as u32,
+                self.icon.height as u32,
+                draw_unread_badge(
+                    &self.base_rgba,
+                    self.icon.width as u32,
+                    self.icon.height as u32,
+                    self.unread,
+                ),
+            )
+        });
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -86,8 +188,20 @@ impl ksni::Tray for LinuxTray {
         APP_TITLE.into()
     }
 
+    fn status(&self) -> ksni::Status {
+        if self.unread == UnreadBucket::None {
+            ksni::Status::Active
+        } else {
+            ksni::Status::NeedsAttention
+        }
+    }
+
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        vec![self.icon.clone()]
+        vec![self.badged_icon.as_ref().unwrap_or(&self.icon).clone()]
+    }
+
+    fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
+        self.icon_pixmap()
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
@@ -150,11 +264,46 @@ fn rgba_to_argb(mut pixels: Vec<u8>) -> Vec<u8> {
 
 #[cfg(target_os = "linux")]
 fn linux_tray_icon(image: &tauri::image::Image<'_>) -> ksni::Icon {
+    linux_tray_icon_from_rgba(image.width(), image.height(), image.rgba().to_vec())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_icon_from_rgba(width: u32, height: u32, rgba: Vec<u8>) -> ksni::Icon {
     ksni::Icon {
-        width: i32::try_from(image.width()).expect("bundled icon width fits i32"),
-        height: i32::try_from(image.height()).expect("bundled icon height fits i32"),
-        data: rgba_to_argb(image.rgba().to_vec()),
+        width: i32::try_from(width).expect("bundled icon width fits i32"),
+        height: i32::try_from(height).expect("bundled icon height fits i32"),
+        data: rgba_to_argb(rgba),
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn tint_symbolic_rgba(source: &[u8], dark_panel: bool) -> Vec<u8> {
+    assert_eq!(source.len() % 4, 0);
+    let tint = if dark_panel {
+        [245, 245, 245]
+    } else {
+        [55, 58, 64]
+    };
+    let mut pixels = source.to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel[..3].copy_from_slice(&tint);
+    }
+    pixels
+}
+
+#[cfg(target_os = "linux")]
+fn linux_tray_base_image(app: &tauri::AppHandle) -> tauri::Result<(ksni::Icon, Vec<u8>)> {
+    let default = app.default_window_icon().expect("bundled icon");
+    if default.width() >= 128 && default.height() >= 128 {
+        return Ok((linux_tray_icon(default), default.rgba().to_vec()));
+    }
+
+    // Tauri commonly selects the first (32 px) configured window icon. KSNI
+    // panels can request a much larger pixmap, so keep a high-resolution source
+    // for both the normal icon and its unread badge.
+    let image = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))?;
+    let rgba = image.rgba().to_vec();
+    Ok((linux_tray_icon(&image), rgba))
 }
 
 fn clear_reveal_guard_if_current(
@@ -171,7 +320,14 @@ fn clear_reveal_guard_if_current(
         .is_ok()
 }
 
-fn reveal_window(window: &WebviewWindow) {
+fn reveal_window(window: &WebviewWindow, activation_token: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    if let Some(token) = activation_token {
+        crate::linux::apply_activation_token(window, token);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = activation_token;
+
     let is_main = window.label() == "main";
     let reveal_generation = is_main.then(|| {
         let state = window.app_handle().state::<AppState>();
@@ -207,9 +363,9 @@ fn reveal_window(window: &WebviewWindow) {
     }
 }
 
-pub(crate) fn show_main(app: &tauri::AppHandle) {
+fn show_main_with_activation_token(app: &tauri::AppHandle, activation_token: Option<&str>) {
     if let Some(window) = app.get_webview_window("main") {
-        reveal_window(&window);
+        reveal_window(&window, activation_token);
         return;
     }
 
@@ -224,8 +380,12 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     if let Ok(window) = build_app_window(app, "main", &settings) {
         install_main_close_handler(app, &window);
-        reveal_window(&window);
+        reveal_window(&window, activation_token);
     }
+}
+
+pub(crate) fn show_main(app: &tauri::AppHandle) {
+    show_main_with_activation_token(app, None);
 }
 
 #[cfg(target_os = "macos")]
@@ -243,7 +403,7 @@ fn should_hide_main(visible: bool, minimized: bool, _focused: bool) -> bool {
 
 /// Show the main window if it's hidden/minimized, or hide it if the current
 /// platform considers it already shown — so a tray click toggles the app.
-pub(crate) fn toggle_main(app: &tauri::AppHandle) {
+fn toggle_main_with_token(app: &tauri::AppHandle, activation_token: Option<&str>) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         let minimized = window.is_minimized().unwrap_or(false);
@@ -251,11 +411,22 @@ pub(crate) fn toggle_main(app: &tauri::AppHandle) {
         if should_hide_main(visible, minimized, focused) {
             let _ = window.hide();
         } else {
-            reveal_window(&window);
+            reveal_window(&window, activation_token);
         }
     } else {
-        show_main(app);
+        show_main_with_activation_token(app, activation_token);
     }
+}
+
+pub(crate) fn toggle_main(app: &tauri::AppHandle) {
+    toggle_main_with_token(app, None);
+}
+
+/// Toggle Carrier from an XDG portal activation. This must run on GTK's main
+/// thread; the portal worker dispatches it there before calling this function.
+#[cfg(target_os = "linux")]
+pub(crate) fn toggle_main_with_activation_token(app: &tauri::AppHandle, token: Option<&str>) {
+    toggle_main_with_token(app, token);
 }
 
 #[cfg(target_os = "macos")]
@@ -389,15 +560,30 @@ pub(crate) fn build_tray_with_menu(
 ) -> tauri::Result<PlatformTrayIcon> {
     use ksni::blocking::TrayMethods;
 
-    let image = app.default_window_icon().expect("bundled icon");
+    let (icon, base_rgba) = linux_tray_base_image(app)?;
+    let symbolic =
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?;
+    debug_assert_eq!((symbolic.width(), symbolic.height()), (128, 128));
+    let symbolic_alpha = symbolic.rgba().to_vec();
     let tray = LinuxTray {
         app: app.clone(),
-        icon: linux_tray_icon(image),
+        icon: icon.clone(),
+        base_rgba: base_rgba.clone(),
+        color_icon: icon,
+        color_rgba: base_rgba,
+        symbolic_alpha,
+        style: TrayIconStyle::Color,
+        symbolic_dark: false,
+        badged_icon: None,
+        unread: UnreadBucket::None,
         tooltip: APP_TITLE.into(),
     };
     // Autostart can run before the desktop's StatusNotifierWatcher exists.
     // Keep the service alive so KSNI registers the icon when the watcher appears.
+    // Flatpak cannot safely whitelist KSNI's PID-derived well-known name, so
+    // register the sandbox's unique connection name with the watcher instead.
     let handle = tray
+        .disable_dbus_name(crate::install_environment::is_flatpak())
         .assume_sni_available(true)
         .spawn()
         .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;
@@ -424,6 +610,30 @@ mod tests {
             rgba_to_argb(vec![0x11, 0x22, 0x33, 0x44, 0xaa, 0xbb, 0xcc, 0xdd]),
             vec![0x44, 0x11, 0x22, 0x33, 0xdd, 0xaa, 0xbb, 0xcc]
         );
+    }
+
+    #[test]
+    fn symbolic_tint_preserves_alpha_and_follows_panel_contrast() {
+        let source = vec![255, 255, 255, 0, 255, 255, 255, 128];
+        assert_eq!(
+            tint_symbolic_rgba(&source, true),
+            vec![245, 245, 245, 0, 245, 245, 245, 128]
+        );
+        assert_eq!(
+            tint_symbolic_rgba(&source, false),
+            vec![55, 58, 64, 0, 55, 58, 64, 128]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn symbolic_asset_is_a_high_resolution_rgba_pixmap() {
+        let image =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+                .unwrap();
+        assert_eq!((image.width(), image.height()), (128, 128));
+        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 255));
     }
 
     #[test]

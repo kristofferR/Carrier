@@ -14,6 +14,7 @@ use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::hotkey::apply_global_hotkey;
+use crate::install_environment::is_flatpak;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
@@ -29,6 +30,8 @@ use crate::window::theme_for;
 pub(crate) struct Settings {
     pub(crate) always_on_top: bool,
     pub(crate) show_tray: bool,
+    /// Linux tray artwork: full-color app icon or a panel-tinted symbolic mark.
+    pub(crate) tray_icon_style: String,
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
     pub(crate) hide_on_close: bool,
@@ -101,8 +104,21 @@ pub(crate) fn clamp_zoom(zoom: i32) -> i32 {
 impl Settings {
     /// Clamp out-of-range values (settings.json is user-editable, and the zoom
     /// event payload comes from the remote-origin page).
-    pub(crate) fn sanitized(mut self) -> Self {
+    pub(crate) fn sanitized(self) -> Self {
+        self.sanitized_for_runtime(is_flatpak())
+    }
+
+    fn sanitized_for_runtime(mut self, flatpak: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
+        if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
+            self.tray_icon_style = "color".into();
+        }
+        // Flatpak owns updates, and autostart requires the Background portal
+        // rather than writing a host desktop file from the sandbox.
+        if flatpak {
+            self.autostart = false;
+            self.automatic_update_checks = false;
+        }
         // Every Windows tray-oriented behavior can make the main window
         // disappear without closing it. Keep the escape hatch explicit and
         // persisted rather than relying only on a runtime fallback.
@@ -119,6 +135,7 @@ impl Default for Settings {
         Self {
             always_on_top: false,
             show_tray: true,
+            tray_icon_style: "color".into(),
             start_to_tray: false,
             autostart: false,
             hide_on_close: true,
@@ -172,6 +189,12 @@ pub(crate) struct AppState {
     /// Prevents a successfully delivered first tray notice from repeating in
     /// the current process even while its settings write is being merged.
     pub(crate) tray_notice_delivered: AtomicBool,
+    /// Last page-reported unread count, retained so settings and tray creation
+    /// can immediately refresh every native unread surface.
+    pub(crate) unread_count: std::sync::atomic::AtomicI64,
+    /// Portal-derived panel tint heuristic for the opt-in Linux symbolic icon.
+    #[cfg(target_os = "linux")]
+    pub(crate) linux_panel_dark: AtomicBool,
     /// Non-zero generation token while the main window is deliberately being
     /// restored. A token (rather than a bool) lets overlapping reveals renew
     /// the guard without an older reset timer clearing the newer reveal.
@@ -214,7 +237,7 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     settings_file(app)
         .map(|path| load_settings_from_path(&path))
-        .unwrap_or_default()
+        .unwrap_or_else(|| Settings::default().sanitized())
 }
 
 /// Read persisted settings directly from disk before the Tauri app is built
@@ -223,7 +246,7 @@ pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
         .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
         .map(|path| load_settings_from_path(&path))
-        .unwrap_or_default()
+        .unwrap_or_else(|| Settings::default().sanitized())
 }
 
 fn load_settings_from_path(path: &Path) -> Settings {
@@ -235,16 +258,18 @@ fn load_settings_from_path(path: &Path) -> Settings {
                     "settings file {} is corrupt; using defaults: {error}",
                     path.display()
                 );
-                Settings::default()
+                Settings::default().sanitized()
             }
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Settings::default().sanitized()
+        }
         Err(error) => {
             log::warn!(
                 "could not read settings file {}; using defaults: {error}",
                 path.display()
             );
-            Settings::default()
+            Settings::default().sanitized()
         }
     }
 }
@@ -487,6 +512,12 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
 /// callers can sync it *before* persisting and avoid committing a preference the
 /// OS rejected.
 pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
+    if is_flatpak() {
+        return Err(
+            "Start on System Startup is unavailable in Flatpak until Carrier uses the Background portal."
+                .into(),
+        );
+    }
     let mgr = app.autolaunch();
     let res = if want { mgr.enable() } else { mgr.disable() };
     res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
@@ -496,7 +527,9 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// state, native menu visibility, the injected-prefs refresh, the global
 /// hotkey, and the tray).
 /// Autostart and store-time hotkey changes are handled separately so failures
-/// can be returned to Settings; everything else here is best-effort.
+/// can be returned to Settings; everything else here is best-effort. On Linux
+/// the hotkey helper coalesces already-matched or startup-pending state before
+/// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
@@ -581,12 +614,25 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         }
         _ => {}
     }
+    #[cfg(target_os = "linux")]
+    if let Some(tray) = tray.as_ref() {
+        let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
+        let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+    }
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
     // no tray to fall back on.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let tray_available = tray.is_some();
     drop(tray);
+
+    crate::refresh_unread_indicators(
+        app,
+        s,
+        state
+            .unread_count
+            .load(std::sync::atomic::Ordering::Acquire),
+    );
 
     // macOS: hide/show the Dock icon (menu-bar-only mode). Only go Dock-less when
     // a tray exists to reach the app from — otherwise the app would have neither a
@@ -636,6 +682,7 @@ mod tests {
     fn settings_default_new_fields_have_correct_values() {
         let s = Settings::default();
         assert!(s.unread_badge, "unread_badge should default to true");
+        assert_eq!(s.tray_icon_style, "color");
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
@@ -704,6 +751,33 @@ mod tests {
         assert_eq!(s.sanitized().zoom, 30);
     }
 
+    #[test]
+    fn settings_sanitized_rejects_unknown_tray_icon_styles() {
+        let settings = Settings {
+            tray_icon_style: "theme-name".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().tray_icon_style, "color");
+        let settings = Settings {
+            tray_icon_style: "symbolic".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().tray_icon_style, "symbolic");
+    }
+
+    #[test]
+    fn flatpak_runtime_disables_host_owned_settings() {
+        let settings = Settings {
+            autostart: true,
+            automatic_update_checks: true,
+            ..Default::default()
+        }
+        .sanitized_for_runtime(true);
+
+        assert!(!settings.autostart);
+        assert!(!settings.automatic_update_checks);
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn tray_oriented_windows_settings_force_the_tray_on() {
@@ -733,6 +807,12 @@ mod tests {
         // Pre-existing installs have no `zoom` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.zoom, 100);
+    }
+
+    #[test]
+    fn settings_json_missing_tray_icon_style_defaults_to_color() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.tray_icon_style, "color");
     }
 
     #[test]

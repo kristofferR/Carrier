@@ -1,18 +1,25 @@
 //! New-message notifications: the `carrier:notify` payload, the avatar
 //! temp-PNG cache, and the platform delivery paths (macOS goes through
-//! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux/Windows
-//! use notify-rust).
+//! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux uses
+//! the freedesktop D-Bus API with notify-rust's builder types; Windows uses
+//! notify-rust directly).
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+#[cfg(target_os = "linux")]
+use futures_util::future::{select, Either};
+#[cfg(target_os = "linux")]
+use futures_util::{pin_mut, StreamExt};
 use serde::Deserialize;
 use tauri::Manager;
 
@@ -305,6 +312,10 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+fn should_attach_path_avatar(hide_preview: bool, flatpak: bool) -> bool {
+    !hide_preview && !flatpak
+}
+
 /// Best-effort sweep of stale avatars from this process's own directory. On
 /// macOS a shown notification's file is deliberately left behind for the OS to
 /// read asynchronously (see [`show_message_notification`]) and would otherwise
@@ -403,6 +414,651 @@ pub(crate) fn clear_avatar_cache() {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LinuxNotificationCapabilities {
+    actions: bool,
+    inline_reply: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_capabilities() -> LinuxNotificationCapabilities {
+    static CAPABILITIES: OnceLock<LinuxNotificationCapabilities> = OnceLock::new();
+    *CAPABILITIES.get_or_init(|| {
+        let capabilities = notify_rust::get_capabilities().unwrap_or_default();
+        LinuxNotificationCapabilities {
+            actions: capabilities.iter().any(|value| value == "actions"),
+            inline_reply: capabilities.iter().any(|value| value == "inline-reply"),
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_reply_eligible(
+    hide_preview: bool,
+    notification_id: u64,
+    thread_path: Option<&str>,
+    capabilities: LinuxNotificationCapabilities,
+) -> bool {
+    !hide_preview
+        && notification_id != 0
+        && thread_path.is_some()
+        && capabilities.actions
+        && capabilities.inline_reply
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum LinuxNotificationSignal {
+    Action(String),
+    Reply(String),
+    Closed,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum LinuxSignalDecision {
+    Ignore,
+    Open,
+    Reply(String),
+    Closed,
+    AwaitReply,
+}
+
+#[cfg(target_os = "linux")]
+fn classify_linux_signal(
+    signal: LinuxNotificationSignal,
+    awaiting_reply: bool,
+) -> LinuxSignalDecision {
+    match signal {
+        LinuxNotificationSignal::Action(action) if action == "inline-reply" => {
+            LinuxSignalDecision::AwaitReply
+        }
+        LinuxNotificationSignal::Action(_) => LinuxSignalDecision::Open,
+        LinuxNotificationSignal::Reply(text) => LinuxSignalDecision::Reply(text),
+        // Some servers close the notification immediately after invoking its
+        // reply action. Keep the short reply grace period alive in that case.
+        LinuxNotificationSignal::Closed if awaiting_reply => LinuxSignalDecision::Ignore,
+        LinuxNotificationSignal::Closed => LinuxSignalDecision::Closed,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum LinuxNotificationResponse {
+    Open,
+    OpenComposer,
+    Reply(String),
+    Closed,
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_NOTIFICATION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+#[cfg(target_os = "linux")]
+const REPLY_SIGNAL_GRACE: Duration = Duration::from_secs(2);
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxWaitTimeout {
+    Reply,
+    Terminal,
+}
+
+#[cfg(target_os = "linux")]
+fn next_linux_wait_deadline(
+    reply_deadline: Option<Instant>,
+    terminal_deadline: Instant,
+) -> (Instant, LinuxWaitTimeout) {
+    match reply_deadline {
+        Some(deadline) if deadline < terminal_deadline => (deadline, LinuxWaitTimeout::Reply),
+        _ => (terminal_deadline, LinuxWaitTimeout::Terminal),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_timeout_response(timeout: LinuxWaitTimeout) -> LinuxNotificationResponse {
+    match timeout {
+        LinuxWaitTimeout::Reply => LinuxNotificationResponse::OpenComposer,
+        LinuxWaitTimeout::Terminal => LinuxNotificationResponse::Closed,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_sender_matches(actual: Option<&str>, expected: &str) -> bool {
+    actual == Some(expected)
+}
+
+#[cfg(target_os = "linux")]
+fn decode_linux_notification_signal(
+    message: &zbus::Message,
+    expected_id: u32,
+    expected_sender: &str,
+) -> Option<LinuxNotificationSignal> {
+    let header = message.header();
+    if !linux_notification_sender_matches(
+        header.sender().map(|sender| sender.as_str()),
+        expected_sender,
+    ) {
+        return None;
+    }
+    match header.member()?.as_str() {
+        "ActionInvoked" => {
+            let (id, action) = message.body().deserialize::<(u32, String)>().ok()?;
+            (id == expected_id).then_some(LinuxNotificationSignal::Action(action))
+        }
+        "NotificationReplied" => {
+            let (id, text) = message.body().deserialize::<(u32, String)>().ok()?;
+            (id == expected_id).then_some(LinuxNotificationSignal::Reply(text))
+        }
+        "NotificationClosed" => {
+            let (id, _reason) = message.body().deserialize::<(u32, u32)>().ok()?;
+            (id == expected_id).then_some(LinuxNotificationSignal::Closed)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_for_linux_notification_response(
+    mut messages: zbus::MessageStream,
+    notification_id: u32,
+    notification_sender: &str,
+) -> Result<LinuxNotificationResponse, zbus::Error> {
+    let terminal_deadline = Instant::now() + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
+    let mut reply_deadline: Option<Instant> = None;
+
+    loop {
+        let next_message = messages.next();
+        pin_mut!(next_message);
+        let (deadline, timeout_kind) = next_linux_wait_deadline(reply_deadline, terminal_deadline);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(linux_timeout_response(timeout_kind));
+        }
+        let timeout = async_io::Timer::after(remaining);
+        pin_mut!(timeout);
+        let next = match select(next_message, timeout).await {
+            Either::Left((message, _)) => message,
+            Either::Right((_, _)) => return Ok(linux_timeout_response(timeout_kind)),
+        };
+
+        let Some(message) = next else {
+            return Ok(LinuxNotificationResponse::Closed);
+        };
+        let message = message?;
+        let Some(signal) =
+            decode_linux_notification_signal(&message, notification_id, notification_sender)
+        else {
+            continue;
+        };
+        match classify_linux_signal(signal, reply_deadline.is_some()) {
+            LinuxSignalDecision::Ignore => {}
+            LinuxSignalDecision::Open => return Ok(LinuxNotificationResponse::Open),
+            LinuxSignalDecision::Reply(text) => {
+                return Ok(LinuxNotificationResponse::Reply(text));
+            }
+            LinuxSignalDecision::Closed => return Ok(LinuxNotificationResponse::Closed),
+            LinuxSignalDecision::AwaitReply => {
+                reply_deadline = Some(Instant::now() + REPLY_SIGNAL_GRACE);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_hints(
+    sound: bool,
+    allow_inline_reply: bool,
+) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
+    let mut hints = HashMap::new();
+    if sound {
+        hints.insert(
+            "sound-name",
+            zbus::zvariant::Value::from("message-new-instant"),
+        );
+    } else {
+        hints.insert("suppress-sound", zbus::zvariant::Value::from(true));
+    }
+    if allow_inline_reply {
+        hints.insert(
+            "x-kde-reply-placeholder-text",
+            zbus::zvariant::Value::from("Reply…"),
+        );
+    }
+    hints
+}
+
+/// Show a Linux notification and receive the response on the same connection.
+/// KDE targets `NotificationReplied` to the sender's unique D-Bus name, which
+/// is why notify-rust's private handle connection cannot be replaced by a
+/// second listener connection after `show()`.
+#[cfg(target_os = "linux")]
+fn show_linux_notification(
+    title: &str,
+    body: &str,
+    image: Option<&Path>,
+    sound: bool,
+    allow_inline_reply: bool,
+) -> LinuxNotificationResponse {
+    let mut notification = notify_rust::Notification::new();
+    notification.appname("Carrier").summary(title);
+    if !body.is_empty() {
+        notification.body(body);
+    }
+    if let Some(path) = image.and_then(Path::to_str) {
+        notification.icon(path);
+    }
+    notification.action("default", "Open");
+    if allow_inline_reply {
+        notification.action("inline-reply", "Reply");
+    }
+
+    let result = (|| -> Result<LinuxNotificationResponse, String> {
+        let connection =
+            zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
+        let dbus =
+            zbus::blocking::fdo::DBusProxy::new(&connection).map_err(|error| error.to_string())?;
+        let notification_name =
+            zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
+        // The daemon may be D-Bus activated and have no owner until its first
+        // use. Start it before pinning the unique owner used by our match rule.
+        dbus.start_service_by_name(notification_name.clone(), 0)
+            .map_err(|error| error.to_string())?;
+        let notification_owner = dbus
+            .get_name_owner(notification_name.into())
+            .map_err(|error| error.to_string())?;
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender(notification_owner.clone())
+            .map_err(|error| error.to_string())?
+            .path("/org/freedesktop/Notifications")
+            .map_err(|error| error.to_string())?
+            .interface("org.freedesktop.Notifications")
+            .map_err(|error| error.to_string())?
+            .build();
+        let messages = async_io::block_on(zbus::MessageStream::for_match_rule(
+            rule,
+            connection.inner(),
+            Some(16),
+        ))
+        .map_err(|error| error.to_string())?;
+        let hints = linux_notification_hints(sound, allow_inline_reply);
+        let timeout = i32::from(notification.timeout);
+        let reply = connection
+            .call_method(
+                Some("org.freedesktop.Notifications"),
+                "/org/freedesktop/Notifications",
+                Some("org.freedesktop.Notifications"),
+                "Notify",
+                &(
+                    &notification.appname,
+                    0_u32,
+                    &notification.icon,
+                    &notification.summary,
+                    &notification.body,
+                    &notification.actions,
+                    hints,
+                    timeout,
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+        let notification_id = reply
+            .body()
+            .deserialize::<u32>()
+            .map_err(|error| error.to_string())?;
+        async_io::block_on(wait_for_linux_notification_response(
+            messages,
+            notification_id,
+            notification_owner.as_str(),
+        ))
+        .map_err(|error| error.to_string())
+    })();
+
+    result.unwrap_or_else(|error| {
+        log::warn!("Linux notification response loop failed: {error}");
+        LinuxNotificationResponse::Closed
+    })
+}
+
+#[cfg(target_os = "linux")]
+const MAX_QUICK_REPLY_CHARS: usize = 2_000;
+#[cfg(target_os = "linux")]
+const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingReplyMode {
+    Send,
+    Draft,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct PendingPageReply {
+    id: u64,
+    attempt: u64,
+    thread_path: String,
+    text: String,
+    mode: PendingReplyMode,
+    expires_at: Instant,
+    resume_attempted: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct PendingPageReplies {
+    replies: HashMap<u64, PendingPageReply>,
+}
+
+#[cfg(target_os = "linux")]
+impl PendingPageReplies {
+    fn register(
+        &mut self,
+        id: u64,
+        attempt: u64,
+        thread_path: String,
+        text: String,
+        mode: PendingReplyMode,
+        expires_at: Instant,
+    ) {
+        self.replies.insert(
+            id,
+            PendingPageReply {
+                id,
+                attempt,
+                thread_path,
+                text,
+                mode,
+                expires_at,
+                resume_attempted: false,
+            },
+        );
+    }
+
+    fn complete(&mut self, id: u64, attempt: u64) {
+        if self
+            .replies
+            .get(&id)
+            .is_some_and(|reply| reply.attempt == attempt)
+        {
+            self.replies.remove(&id);
+        }
+    }
+
+    fn resumable(&mut self, now: Instant) -> Vec<PendingPageReply> {
+        self.replies.retain(|_, reply| reply.expires_at > now);
+        self.replies
+            .values_mut()
+            .filter(|reply| !reply.resume_attempted)
+            .map(|reply| {
+                reply.resume_attempted = true;
+                reply.clone()
+            })
+            .collect()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
+    static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
+    REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
+}
+
+#[cfg(target_os = "linux")]
+fn capped_reply_text(text: &str) -> String {
+    text.chars().take(MAX_QUICK_REPLY_CHARS).collect()
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct ReplyAckWaiters {
+    waiters: HashMap<u64, (u64, std::sync::mpsc::SyncSender<bool>)>,
+}
+
+#[cfg(target_os = "linux")]
+impl ReplyAckWaiters {
+    fn register(&mut self, id: u64, attempt: u64, sender: std::sync::mpsc::SyncSender<bool>) {
+        self.waiters.insert(id, (attempt, sender));
+    }
+
+    fn complete(&mut self, id: u64, attempt: u64, ok: bool) -> bool {
+        if !self
+            .waiters
+            .get(&id)
+            .is_some_and(|(expected, _)| *expected == attempt)
+        {
+            return false;
+        }
+        self.waiters
+            .remove(&id)
+            .is_some_and(|(_, sender)| sender.send(ok).is_ok())
+    }
+
+    fn remove(&mut self, id: u64) {
+        self.waiters.remove(&id);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
+    static WAITERS: OnceLock<Mutex<ReplyAckWaiters>> = OnceLock::new();
+    WAITERS.get_or_init(|| Mutex::new(ReplyAckWaiters::default()))
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Deserialize)]
+struct ReplyResultMsg {
+    id: u64,
+    attempt: u64,
+    ok: bool,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn handle_reply_result(payload: &str) {
+    let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
+        return;
+    };
+    pending_page_replies()
+        .lock()
+        .unwrap()
+        .complete(result.id, result.attempt);
+    reply_ack_waiters()
+        .lock()
+        .unwrap()
+        .complete(result.id, result.attempt, result.ok);
+}
+
+#[cfg(target_os = "linux")]
+fn next_reply_attempt() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
+}
+
+#[cfg(target_os = "linux")]
+fn quick_reply_script(
+    id: u64,
+    attempt: u64,
+    thread_path: &str,
+    text: &str,
+    mode: PendingReplyMode,
+) -> Result<String, String> {
+    let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string(text).map_err(|error| error.to_string())?;
+    let hook = match mode {
+        PendingReplyMode::Send => "__carrierQuickReply",
+        PendingReplyMode::Draft => "__carrierQuickReplyDraft",
+    };
+    Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
+}
+
+#[cfg(target_os = "linux")]
+fn register_pending_page_reply(
+    id: u64,
+    attempt: u64,
+    thread_path: &str,
+    text: &str,
+    mode: PendingReplyMode,
+) {
+    pending_page_replies().lock().unwrap().register(
+        id,
+        attempt,
+        thread_path.to_string(),
+        text.to_string(),
+        mode,
+        Instant::now() + QUICK_REPLY_ACK_TIMEOUT,
+    );
+}
+
+/// Re-dispatch an in-memory notification reply after a hard Messenger
+/// navigation replaces the page that received the first eval. Each action gets
+/// one resume attempt and expires with the native acknowledgement window.
+#[cfg(target_os = "linux")]
+pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
+    let replies = pending_page_replies()
+        .lock()
+        .unwrap()
+        .resumable(Instant::now());
+    for reply in replies {
+        match quick_reply_script(
+            reply.id,
+            reply.attempt,
+            &reply.thread_path,
+            &reply.text,
+            reply.mode,
+        ) {
+            Ok(script) => {
+                if let Err(error) = window.eval(script) {
+                    log::warn!(
+                        "failed to resume quick-reply page action (id {}): {error}",
+                        reply.id
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!(
+                    "failed to serialize resumed quick-reply page action (id {}): {error}",
+                    reply.id
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn eval_hidden_quick_reply(
+    app: &tauri::AppHandle,
+    id: u64,
+    attempt: u64,
+    thread_path: &str,
+    text: &str,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window is unavailable".to_string())?;
+    let script = quick_reply_script(id, attempt, thread_path, text, PendingReplyMode::Send)?;
+    let (sent, received) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let result = window.eval(script).map_err(|error| error.to_string());
+        let _ = sent.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    received
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("quick-reply eval dispatch failed: {error}"))?
+}
+
+#[cfg(target_os = "linux")]
+fn show_reply_failure_notification() {
+    let mut notification = notify_rust::Notification::new();
+    notification
+        .appname("Carrier")
+        .summary("Carrier")
+        .body("Reply not sent — opening the conversation")
+        .hint(notify_rust::Hint::SuppressSound(true));
+    if let Err(error) = notification.show() {
+        log::warn!("failed to show quick-reply failure notification: {error}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
+    let attempt = next_reply_attempt();
+    register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
+    let script =
+        quick_reply_script(id, attempt, &thread_path, &text, PendingReplyMode::Draft).unwrap();
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        show_main(&main_app);
+        if let Some(window) = main_app.get_webview_window("main") {
+            let _ = window.eval(script);
+        }
+    }) {
+        log::warn!("failed to open quick-reply fallback: {error}");
+    }
+    show_reply_failure_notification();
+}
+
+#[cfg(target_os = "linux")]
+fn open_notification_composer(app: tauri::AppHandle, id: u64) {
+    let Some(thread_path) = take_notification_route(id) else {
+        on_notification_click(app, id);
+        return;
+    };
+    let attempt = next_reply_attempt();
+    register_pending_page_reply(id, attempt, &thread_path, "", PendingReplyMode::Draft);
+    let script =
+        quick_reply_script(id, attempt, &thread_path, "", PendingReplyMode::Draft).unwrap();
+    let main_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        show_main(&main_app);
+        if let Some(window) = main_app.get_webview_window("main") {
+            let _ = window.eval(script);
+        }
+    }) {
+        log::warn!("failed to focus notification composer: {error}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
+    let Some(thread_path) = take_notification_route(id) else {
+        log::warn!("quick reply had no validated notification route (id {id})");
+        on_notification_click(app, id);
+        show_reply_failure_notification();
+        return;
+    };
+    let text = capped_reply_text(&raw_text);
+    if text.trim().is_empty() {
+        // Empty input is equivalent to activating the notification.
+        remember_notification_route(id, &thread_path);
+        on_notification_click(app, id);
+        return;
+    }
+
+    let attempt = next_reply_attempt();
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    reply_ack_waiters()
+        .lock()
+        .unwrap()
+        .register(id, attempt, result_tx);
+    register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Send);
+    let dispatched = eval_hidden_quick_reply(&app, id, attempt, &thread_path, &text);
+    let sent = dispatched.is_ok()
+        && result_rx
+            .recv_timeout(QUICK_REPLY_ACK_TIMEOUT)
+            .unwrap_or(false);
+    reply_ack_waiters().lock().unwrap().remove(id);
+    pending_page_replies().lock().unwrap().complete(id, attempt);
+    if !sent {
+        if let Err(error) = dispatched {
+            log::warn!("quick-reply delivery could not start (id {id}): {error}");
+        } else {
+            log::warn!("quick-reply delivery failed or timed out (id {id})");
+        }
+        open_reply_fallback(app, id, thread_path, text);
+    }
+}
+
 /// Show a native OS notification for a new message and, if it's clicked, bring
 /// Carrier forward and open the conversation. The avatar is attached where the
 /// platform allows (a thumbnail on macOS — the app icon always owns the main
@@ -411,10 +1067,9 @@ pub(crate) fn clear_avatar_cache() {
 /// macOS delivers through `UNUserNotificationCenter`: the request is added
 /// non-blocking and clicks arrive later through the
 /// [`NotifyDelegate`](crate::macos::notifications::NotifyDelegate) (set up at
-/// startup), so there's no per-notification thread. Linux/Windows keep the
-/// legacy notify-rust path: each notification gets its own thread that blocks
-/// until the user clicks or dismisses it (it only parks, doesn't spin), and on
-/// click it routes back to the page.
+/// startup), so there's no per-notification thread. Linux and Windows each
+/// park one thread per notification until the server reports a response;
+/// Linux additionally handles KDE's inline-reply signal.
 pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
     // Re-enforce the privacy settings here on the trusted side. The page-side
     // checks in messenger.js run in the remote facebook.com origin, so a page
@@ -476,11 +1131,21 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         msg.body
     };
     let id = msg.id;
+    #[cfg(target_os = "linux")]
+    let allow_inline_reply = linux_reply_eligible(
+        hide_preview,
+        id,
+        validated_thread_path(&msg.thread_path).as_deref(),
+        linux_notification_capabilities(),
+    );
     remember_notification_route(id, &msg.thread_path);
-    let image = if hide_preview {
-        None
-    } else {
+    // A Flatpak-private temp path is not readable by the host notification
+    // daemon. Skip the path attachment there instead of showing a broken icon.
+    let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
+    {
         avatar_to_temp_png(&msg.icon)
+    } else {
+        None
     };
 
     #[cfg(target_os = "macos")]
@@ -493,11 +1158,12 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         deliver_notification_macos(&title, &body, id, image.as_deref(), sound);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         let app_id = app.config().identifier.clone();
         std::thread::spawn(move || {
-            let clicked = show_native_notification(&title, &body, image.as_deref(), sound, &app_id);
+            let clicked =
+                show_windows_notification(&title, &body, image.as_deref(), sound, &app_id);
             // The notification has been shown and dismissed/clicked, so the OS is
             // done with the avatar file — delete it now rather than leaving it for
             // the next startup's clear_avatar_cache().
@@ -511,21 +1177,40 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
             }
         });
     }
+
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(move || {
+        let response =
+            show_linux_notification(&title, &body, image.as_deref(), sound, allow_inline_reply);
+        if let Some(path) = image.as_deref() {
+            let _ = std::fs::remove_file(path);
+        }
+        match response {
+            LinuxNotificationResponse::Open => on_notification_click(app, id),
+            LinuxNotificationResponse::OpenComposer => open_notification_composer(app, id),
+            LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
+                on_notification_click(app, id);
+            }
+            LinuxNotificationResponse::Reply(text) => deliver_quick_reply(app, id, text),
+            LinuxNotificationResponse::Closed => {
+                let _ = take_notification_route(id);
+            }
+        }
+    });
 }
 
 /// A response represents a click unless the platform explicitly reports that
 /// the notification closed. In particular, Windows reports a toast body click
 /// as `Default` rather than as a named action.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn notification_response_was_clicked(response: &notify_rust::NotificationResponse) -> bool {
     !matches!(response, notify_rust::NotificationResponse::Closed(_))
 }
 
-/// See the macOS variant. On Linux/Windows notify-rust blocks until the
-/// notification closes; a freedesktop notification needs an explicit `default`
-/// action for a body click to be reported (it shows no button).
-#[cfg(not(target_os = "macos"))]
-fn show_native_notification(
+/// See the macOS variant. On Windows notify-rust blocks until the notification
+/// closes.
+#[cfg(target_os = "windows")]
+fn show_windows_notification(
     title: &str,
     body: &str,
     image: Option<&std::path::Path>,
@@ -538,31 +1223,16 @@ fn show_native_notification(
         n.body(body);
     }
     if let Some(path) = image.and_then(|p| p.to_str()) {
-        #[cfg(windows)]
         n.image_path(path);
-        #[cfg(unix)]
-        n.icon(path);
     }
     // Windows toasts are silent unless a sound is named (notify-rust maps an
     // unset `sound_name` to a silent toast), so name the system default when
     // sound is on; when it's off, leaving `sound_name` unset already delivers
     // silently.
-    #[cfg(windows)]
-    {
-        n.app_id(app_id);
-        if sound {
-            n.sound_name("Default");
-        }
+    n.app_id(app_id);
+    if sound {
+        n.sound_name("Default");
     }
-    #[cfg(unix)]
-    let _ = app_id;
-    // XDG servers pick their own default sound, so ask them not to play it.
-    #[cfg(unix)]
-    if !sound {
-        n.hint(notify_rust::Hint::SuppressSound(true));
-    }
-    #[cfg(unix)]
-    n.action("default", "Open");
     let mut clicked = false;
     if let Ok(handle) = n.show() {
         let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
@@ -680,15 +1350,25 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         deliver_notification_macos(title, &body, id, None, false);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
         let app_id = app.config().identifier.clone();
         std::thread::spawn(move || {
-            if show_native_notification(title, &body, None, false, &app_id) {
+            if show_windows_notification(title, &body, None, false, &app_id) {
                 on_notification_click(app, id);
             }
         });
     }
+
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(move || {
+        if matches!(
+            show_linux_notification(title, &body, None, false, false),
+            LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
+        ) {
+            on_notification_click(app, id);
+        }
+    });
 }
 
 /// A notification was clicked: surface Carrier's window and ask the page to open
@@ -782,6 +1462,14 @@ mod tests {
     }
 
     #[test]
+    fn path_avatars_are_skipped_for_private_or_flatpak_notifications() {
+        assert!(should_attach_path_avatar(false, false));
+        assert!(!should_attach_path_avatar(true, false));
+        assert!(!should_attach_path_avatar(false, true));
+        assert!(!should_attach_path_avatar(true, true));
+    }
+
+    #[test]
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
@@ -846,7 +1534,7 @@ mod tests {
         assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     #[test]
     fn notification_responses_distinguish_activation_from_dismissal() {
         use notify_rust::{CloseReason, NotificationResponse};
@@ -866,6 +1554,154 @@ mod tests {
         assert!(!notification_response_was_clicked(
             &NotificationResponse::Closed(CloseReason::Expired)
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reply_requires_preview_route_id_and_capabilities() {
+        let supported = LinuxNotificationCapabilities {
+            actions: true,
+            inline_reply: true,
+        };
+        assert!(linux_reply_eligible(false, 7, Some("/t/123/"), supported));
+        assert!(!linux_reply_eligible(true, 7, Some("/t/123/"), supported));
+        assert!(!linux_reply_eligible(false, 0, Some("/t/123/"), supported));
+        assert!(!linux_reply_eligible(false, 7, None, supported));
+        assert!(!linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            LinuxNotificationCapabilities {
+                actions: true,
+                inline_reply: false,
+            }
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_response_classification_preserves_reply_grace() {
+        assert_eq!(
+            classify_linux_signal(
+                LinuxNotificationSignal::Action("inline-reply".into()),
+                false
+            ),
+            LinuxSignalDecision::AwaitReply
+        );
+        assert_eq!(
+            classify_linux_signal(LinuxNotificationSignal::Closed, true),
+            LinuxSignalDecision::Ignore
+        );
+        assert_eq!(
+            classify_linux_signal(LinuxNotificationSignal::Reply("hello".into()), true),
+            LinuxSignalDecision::Reply("hello".into())
+        );
+        assert_eq!(
+            classify_linux_signal(LinuxNotificationSignal::Action("default".into()), false),
+            LinuxSignalDecision::Open
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_signals_require_the_daemon_owner() {
+        assert!(linux_notification_sender_matches(Some(":1.42"), ":1.42"));
+        assert!(!linux_notification_sender_matches(Some(":1.99"), ":1.42"));
+        assert!(!linux_notification_sender_matches(None, ":1.42"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_wait_uses_the_first_terminal_deadline() {
+        let now = Instant::now();
+        let terminal = now + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
+        let reply = now + REPLY_SIGNAL_GRACE;
+
+        assert_eq!(
+            next_linux_wait_deadline(None, terminal),
+            (terminal, LinuxWaitTimeout::Terminal)
+        );
+        assert_eq!(
+            next_linux_wait_deadline(Some(reply), terminal),
+            (reply, LinuxWaitTimeout::Reply)
+        );
+        assert_eq!(
+            next_linux_wait_deadline(Some(terminal + Duration::from_secs(1)), terminal),
+            (terminal, LinuxWaitTimeout::Terminal)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_hints_follow_sound_and_reply_settings() {
+        let audible = linux_notification_hints(true, false);
+        assert!(audible.contains_key("sound-name"));
+        assert!(!audible.contains_key("suppress-sound"));
+        assert!(!audible.contains_key("x-kde-reply-placeholder-text"));
+
+        let silent_reply = linux_notification_hints(false, true);
+        assert!(!silent_reply.contains_key("sound-name"));
+        assert!(silent_reply.contains_key("suppress-sound"));
+        assert!(silent_reply.contains_key("x-kde-reply-placeholder-text"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reply_ack_waiters_route_concurrent_ids_independently() {
+        let mut waiters = ReplyAckWaiters::default();
+        let (first_tx, first_rx) = std::sync::mpsc::sync_channel(1);
+        let (second_tx, second_rx) = std::sync::mpsc::sync_channel(1);
+        waiters.register(1, 11, first_tx);
+        waiters.register(2, 22, second_tx);
+        assert!(!waiters.complete(2, 21, true));
+        assert!(waiters.complete(2, 22, true));
+        assert!(waiters.complete(1, 11, false));
+        assert!(!first_rx.recv().unwrap());
+        assert!(second_rx.recv().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pending_page_replies_resume_once_and_ignore_stale_results() {
+        let now = Instant::now();
+        let mut pending = PendingPageReplies::default();
+        pending.register(
+            7,
+            70,
+            "/t/123/".into(),
+            "reply".into(),
+            PendingReplyMode::Send,
+            now + Duration::from_secs(1),
+        );
+        pending.register(
+            8,
+            80,
+            "/t/456/".into(),
+            "expired".into(),
+            PendingReplyMode::Draft,
+            now,
+        );
+
+        let resumed = pending.resumable(now);
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].id, 7);
+        assert_eq!(resumed[0].attempt, 70);
+        assert!(matches!(resumed[0].mode, PendingReplyMode::Send));
+        assert!(pending.resumable(now).is_empty());
+
+        pending.complete(7, 69);
+        assert!(pending.replies.contains_key(&7));
+        pending.complete(7, 70);
+        assert!(pending.replies.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reply_text_cap_preserves_unicode_boundaries() {
+        let text = "å".repeat(MAX_QUICK_REPLY_CHARS + 1);
+        let capped = capped_reply_text(&text);
+        assert_eq!(capped.chars().count(), MAX_QUICK_REPLY_CHARS);
+        assert!(capped.is_char_boundary(capped.len()));
     }
 
     #[test]

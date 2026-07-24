@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.kristofferr.carrier</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Carrier</name>
+  <summary>A focused desktop client for Facebook Messenger</summary>
+  <description>
+    <p>
+      Carrier wraps Messenger in a small native desktop window and removes the
+      surrounding Facebook feed, Reels, Marketplace, and other distractions.
+    </p>
+    <p>
+      It provides native notifications, unread indicators, keyboard shortcuts,
+      system theme integration, privacy controls, and a system tray.
+    </p>
+  </description>
+  <launchable type="desktop-id">Carrier.desktop</launchable>
+  <provides>
+    <binary>carrier</binary>
+  </provides>
+  <url type="homepage">https://kristofferr.github.io/Carrier/</url>
+  <url type="bugtracker">https://github.com/kristofferR/Carrier/issues</url>
+  <url type="vcs-browser">https://github.com/kristofferR/Carrier</url>
+  <developer id="io.github.kristofferr">
+    <name>kristofferR</name>
+  </developer>
+  <update_contact>481270+kristofferR@users.noreply.github.com</update_contact>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-info">moderate</content_attribute>
+  </content_rating>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://kristofferr.github.io/Carrier/carrier-screenshot.png</image>
+      <caption>Messenger in Carrier's focused desktop window</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.6.0" date="2026-07-23">
+      <description>
+        <p>Improved Messenger reliability and reduced Linux WebKit memory use.</p>
+      </description>
+    </release>
+    <release version="1.5.1" date="2026-07-21">
+      <description>
+        <p>Fixed notification hydration and conversation routing.</p>
+      </description>
+    </release>
+    <release version="1.5.0" date="2026-07-20">
+      <description>
+        <p>Added stronger privacy, notification, and desktop integration controls.</p>
+      </description>
+    </release>
+    <release version="1.4.0" date="2026-07-18">
+      <description>
+        <p>Expanded native desktop behavior and Messenger page integration.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-06-27">
+      <description>
+        <p>First stable Carrier release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

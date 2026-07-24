@@ -76,6 +76,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 async-io = "2"
 futures-util = "0.3"
+# Apply the GlobalShortcuts portal activation token to GTK's native window
+# before revealing it, so Wayland compositors permit the focus transfer.
+gtk = "0.18"
 # Configure the WebKitGTK instance Tauri already embeds without adding another
 # WebKit build. Keep normal document caching, but use the smaller browser cache
 # model and opt out of the in-memory back/forward page cache.
@@ -83,6 +86,10 @@ webkit2gtk = "2.0.2"
 # Tauri's AppIndicator tray backend cannot emit click events or expose a real
 # tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
+# KDE targets its non-standard NotificationReplied signal to the exact D-Bus
+# connection that sent Notify. Keep that connection so Linux inline replies can
+# be received and routed back to Messenger.
+zbus = "5"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window
