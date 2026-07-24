@@ -496,7 +496,9 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// state, native menu visibility, the injected-prefs refresh, the global
 /// hotkey, and the tray).
 /// Autostart and store-time hotkey changes are handled separately so failures
-/// can be returned to Settings; everything else here is best-effort.
+/// can be returned to Settings; everything else here is best-effort. On Linux
+/// the hotkey helper coalesces already-matched or startup-pending state before
+/// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();

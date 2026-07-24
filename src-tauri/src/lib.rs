@@ -19,6 +19,8 @@ mod diag;
 mod download;
 mod hotkey;
 #[cfg(target_os = "linux")]
+mod hotkey_portal;
+#[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -286,6 +288,9 @@ pub fn run() {
 
             clear_pending_webview_data(app.handle());
 
+            #[cfg(target_os = "linux")]
+            let settings = load_settings(app.handle());
+            #[cfg(not(target_os = "linux"))]
             let mut settings = load_settings(app.handle());
             *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
 
@@ -303,8 +308,17 @@ pub fn run() {
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
+            #[cfg(target_os = "linux")]
+            reconcile_startup_global_hotkey(app.handle(), &settings);
+            #[cfg(not(target_os = "linux"))]
             reconcile_startup_global_hotkey(app.handle(), &mut settings);
-            *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
+            // Non-Linux reconciliation mutates the local snapshot
+            // synchronously. Linux reconciliation updates AppState itself from
+            // its worker, so overwriting it here could restore stale state.
+            #[cfg(not(target_os = "linux"))]
+            {
+                *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
+            }
             apply_settings(app.handle(), &settings);
 
             // Start hidden only when a tray was actually created to reopen from.
