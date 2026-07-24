@@ -1,11 +1,12 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.3/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
   // Scoped to the typed inject sources; the generated bundles in
   // src-tauri/inject/ and the dev-only mcp-bridge.js are not linted.
   "files": {
-    // Agent worktrees live under .worktrees/ and carry their own root
-    // configs; keep the scanner out so they cannot break the gate.
-    "includes": ["inject/**", "!!**/.worktrees"]
+    // The explicit inject scope already excludes project-local worktrees. A
+    // `.worktrees` path exclusion would also exclude this config when it is
+    // run from inside one of those worktrees.
+    "includes": ["inject/**"]
   },
   "formatter": {
     "enabled": true,

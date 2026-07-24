@@ -76,6 +76,10 @@ tauri = { version = "2", features = ["tray-icon"] }
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 async-io = "2"
 futures-util = "0.3"
+# Configure the WebKitGTK instance Tauri already embeds without adding another
+# WebKit build. Keep normal document caching, but use the smaller browser cache
+# model and opt out of the in-memory back/forward page cache.
+webkit2gtk = "2.0.2"
 # Tauri's AppIndicator tray backend cannot emit click events or expose a real
 # tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
