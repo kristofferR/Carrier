@@ -92,9 +92,9 @@ interface Window {
   };
   __carrierNotifyClick?: (id: number) => boolean;
   /** Deliver a KDE notification reply without raising the Carrier window. */
-  __carrierQuickReply?: (path: string, text: string, id: number) => void;
+  __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
   /** Preserve a failed notification reply as an unsent composer draft. */
-  __carrierQuickReplyDraft?: (path: string, text: string) => void;
+  __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */

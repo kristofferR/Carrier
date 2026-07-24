@@ -9,6 +9,8 @@ use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -666,6 +668,85 @@ const MAX_QUICK_REPLY_CHARS: usize = 2_000;
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingReplyMode {
+    Send,
+    Draft,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone)]
+struct PendingPageReply {
+    id: u64,
+    attempt: u64,
+    thread_path: String,
+    text: String,
+    mode: PendingReplyMode,
+    expires_at: Instant,
+    resume_attempted: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct PendingPageReplies {
+    replies: HashMap<u64, PendingPageReply>,
+}
+
+#[cfg(target_os = "linux")]
+impl PendingPageReplies {
+    fn register(
+        &mut self,
+        id: u64,
+        attempt: u64,
+        thread_path: String,
+        text: String,
+        mode: PendingReplyMode,
+        expires_at: Instant,
+    ) {
+        self.replies.insert(
+            id,
+            PendingPageReply {
+                id,
+                attempt,
+                thread_path,
+                text,
+                mode,
+                expires_at,
+                resume_attempted: false,
+            },
+        );
+    }
+
+    fn complete(&mut self, id: u64, attempt: u64) {
+        if self
+            .replies
+            .get(&id)
+            .is_some_and(|reply| reply.attempt == attempt)
+        {
+            self.replies.remove(&id);
+        }
+    }
+
+    fn resumable(&mut self, now: Instant) -> Vec<PendingPageReply> {
+        self.replies.retain(|_, reply| reply.expires_at > now);
+        self.replies
+            .values_mut()
+            .filter(|reply| !reply.resume_attempted)
+            .map(|reply| {
+                reply.resume_attempted = true;
+                reply.clone()
+            })
+            .collect()
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
+    static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
+    REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
+}
+
+#[cfg(target_os = "linux")]
 fn capped_reply_text(text: &str) -> String {
     text.chars().take(MAX_QUICK_REPLY_CHARS).collect()
 }
@@ -673,19 +754,26 @@ fn capped_reply_text(text: &str) -> String {
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ReplyAckWaiters {
-    waiters: HashMap<u64, std::sync::mpsc::SyncSender<bool>>,
+    waiters: HashMap<u64, (u64, std::sync::mpsc::SyncSender<bool>)>,
 }
 
 #[cfg(target_os = "linux")]
 impl ReplyAckWaiters {
-    fn register(&mut self, id: u64, sender: std::sync::mpsc::SyncSender<bool>) {
-        self.waiters.insert(id, sender);
+    fn register(&mut self, id: u64, attempt: u64, sender: std::sync::mpsc::SyncSender<bool>) {
+        self.waiters.insert(id, (attempt, sender));
     }
 
-    fn complete(&mut self, id: u64, ok: bool) -> bool {
+    fn complete(&mut self, id: u64, attempt: u64, ok: bool) -> bool {
+        if !self
+            .waiters
+            .get(&id)
+            .is_some_and(|(expected, _)| *expected == attempt)
+        {
+            return false;
+        }
         self.waiters
             .remove(&id)
-            .is_some_and(|sender| sender.send(ok).is_ok())
+            .is_some_and(|(_, sender)| sender.send(ok).is_ok())
     }
 
     fn remove(&mut self, id: u64) {
@@ -703,6 +791,7 @@ fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
 #[derive(Deserialize)]
 struct ReplyResultMsg {
     id: u64,
+    attempt: u64,
     ok: bool,
 }
 
@@ -711,25 +800,104 @@ pub(crate) fn handle_reply_result(payload: &str) {
     let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
         return;
     };
+    pending_page_replies()
+        .lock()
+        .unwrap()
+        .complete(result.id, result.attempt);
     reply_ack_waiters()
         .lock()
         .unwrap()
-        .complete(result.id, result.ok);
+        .complete(result.id, result.attempt, result.ok);
+}
+
+#[cfg(target_os = "linux")]
+fn next_reply_attempt() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
+}
+
+#[cfg(target_os = "linux")]
+fn quick_reply_script(
+    id: u64,
+    attempt: u64,
+    thread_path: &str,
+    text: &str,
+    mode: PendingReplyMode,
+) -> Result<String, String> {
+    let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string(text).map_err(|error| error.to_string())?;
+    let hook = match mode {
+        PendingReplyMode::Send => "__carrierQuickReply",
+        PendingReplyMode::Draft => "__carrierQuickReplyDraft",
+    };
+    Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
+}
+
+#[cfg(target_os = "linux")]
+fn register_pending_page_reply(
+    id: u64,
+    attempt: u64,
+    thread_path: &str,
+    text: &str,
+    mode: PendingReplyMode,
+) {
+    pending_page_replies().lock().unwrap().register(
+        id,
+        attempt,
+        thread_path.to_string(),
+        text.to_string(),
+        mode,
+        Instant::now() + QUICK_REPLY_ACK_TIMEOUT,
+    );
+}
+
+/// Re-dispatch an in-memory notification reply after a hard Messenger
+/// navigation replaces the page that received the first eval. Each action gets
+/// one resume attempt and expires with the native acknowledgement window.
+#[cfg(target_os = "linux")]
+pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
+    let replies = pending_page_replies()
+        .lock()
+        .unwrap()
+        .resumable(Instant::now());
+    for reply in replies {
+        match quick_reply_script(
+            reply.id,
+            reply.attempt,
+            &reply.thread_path,
+            &reply.text,
+            reply.mode,
+        ) {
+            Ok(script) => {
+                if let Err(error) = window.eval(script) {
+                    log::warn!(
+                        "failed to resume quick-reply page action (id {}): {error}",
+                        reply.id
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!(
+                    "failed to serialize resumed quick-reply page action (id {}): {error}",
+                    reply.id
+                );
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
 fn eval_hidden_quick_reply(
     app: &tauri::AppHandle,
     id: u64,
+    attempt: u64,
     thread_path: &str,
     text: &str,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
-    let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
-    let text = serde_json::to_string(text).map_err(|error| error.to_string())?;
-    let script = format!("window.__carrierQuickReply?.({path}, {text}, {id});");
+    let script = quick_reply_script(id, attempt, thread_path, text, PendingReplyMode::Send)?;
     let (sent, received) = std::sync::mpsc::sync_channel(1);
     app.run_on_main_thread(move || {
         let result = window.eval(script).map_err(|error| error.to_string());
@@ -755,13 +923,11 @@ fn show_reply_failure_notification() {
 }
 
 #[cfg(target_os = "linux")]
-fn open_reply_fallback(app: tauri::AppHandle, thread_path: String, text: String) {
-    let path = serde_json::to_string(&thread_path).unwrap();
-    let text = serde_json::to_string(&text).unwrap();
-    let script = format!(
-        "window.__carrierOpenThread?.({path}); \
-         window.__carrierQuickReplyDraft?.({path}, {text});"
-    );
+fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
+    let attempt = next_reply_attempt();
+    register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
+    let script =
+        quick_reply_script(id, attempt, &thread_path, &text, PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         show_main(&main_app);
@@ -780,11 +946,10 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64) {
         on_notification_click(app, id);
         return;
     };
-    let path = serde_json::to_string(&thread_path).unwrap();
-    let script = format!(
-        "window.__carrierOpenThread?.({path}); \
-         window.__carrierQuickReplyDraft?.({path}, \"\");"
-    );
+    let attempt = next_reply_attempt();
+    register_pending_page_reply(id, attempt, &thread_path, "", PendingReplyMode::Draft);
+    let script =
+        quick_reply_script(id, attempt, &thread_path, "", PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         show_main(&main_app);
@@ -812,21 +977,27 @@ fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
         return;
     }
 
+    let attempt = next_reply_attempt();
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
-    reply_ack_waiters().lock().unwrap().register(id, result_tx);
-    let dispatched = eval_hidden_quick_reply(&app, id, &thread_path, &text);
+    reply_ack_waiters()
+        .lock()
+        .unwrap()
+        .register(id, attempt, result_tx);
+    register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Send);
+    let dispatched = eval_hidden_quick_reply(&app, id, attempt, &thread_path, &text);
     let sent = dispatched.is_ok()
         && result_rx
             .recv_timeout(QUICK_REPLY_ACK_TIMEOUT)
             .unwrap_or(false);
     reply_ack_waiters().lock().unwrap().remove(id);
+    pending_page_replies().lock().unwrap().complete(id, attempt);
     if !sent {
         if let Err(error) = dispatched {
             log::warn!("quick-reply delivery could not start (id {id}): {error}");
         } else {
             log::warn!("quick-reply delivery failed or timed out (id {id})");
         }
-        open_reply_fallback(app, thread_path, text);
+        open_reply_fallback(app, id, thread_path, text);
     }
 }
 
@@ -1393,12 +1564,48 @@ mod tests {
         let mut waiters = ReplyAckWaiters::default();
         let (first_tx, first_rx) = std::sync::mpsc::sync_channel(1);
         let (second_tx, second_rx) = std::sync::mpsc::sync_channel(1);
-        waiters.register(1, first_tx);
-        waiters.register(2, second_tx);
-        assert!(waiters.complete(2, true));
-        assert!(waiters.complete(1, false));
+        waiters.register(1, 11, first_tx);
+        waiters.register(2, 22, second_tx);
+        assert!(!waiters.complete(2, 21, true));
+        assert!(waiters.complete(2, 22, true));
+        assert!(waiters.complete(1, 11, false));
         assert!(!first_rx.recv().unwrap());
         assert!(second_rx.recv().unwrap());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pending_page_replies_resume_once_and_ignore_stale_results() {
+        let now = Instant::now();
+        let mut pending = PendingPageReplies::default();
+        pending.register(
+            7,
+            70,
+            "/t/123/".into(),
+            "reply".into(),
+            PendingReplyMode::Send,
+            now + Duration::from_secs(1),
+        );
+        pending.register(
+            8,
+            80,
+            "/t/456/".into(),
+            "expired".into(),
+            PendingReplyMode::Draft,
+            now,
+        );
+
+        let resumed = pending.resumable(now);
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].id, 7);
+        assert_eq!(resumed[0].attempt, 70);
+        assert!(matches!(resumed[0].mode, PendingReplyMode::Send));
+        assert!(pending.resumable(now).is_empty());
+
+        pending.complete(7, 69);
+        assert!(pending.replies.contains_key(&7));
+        pending.complete(7, 70);
+        assert!(pending.replies.is_empty());
     }
 
     #[cfg(target_os = "linux")]

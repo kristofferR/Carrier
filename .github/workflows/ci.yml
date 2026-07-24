@@ -56,19 +56,24 @@ jobs:
       - name: Validate Linux desktop metadata
         run: |
           set -euo pipefail
-          appstream_args=(--no-net)
-          if appstreamcli validate --help | grep -q -- '--strict'; then
-            appstream_args+=(--strict)
+          validation_tmp=$(mktemp -d)
+          trap 'rm -rf "$validation_tmp"' EXIT
+          metadata=src-tauri/linux/io.github.kristofferr.carrier.metainfo.xml
+          if [[ "$(appstreamcli validate --help)" == *"--strict"* ]]; then
+            appstreamcli validate --no-net --strict "$metadata"
           else
-            # Older Ubuntu validators predate --strict. Pedantic still exposes
-            # every hint while the normal exit status rejects metadata errors.
-            appstream_args+=(--pedantic)
+            # Older Ubuntu validators predate --strict and the current
+            # developer/vcs-browser fields. Validate the rest of the canonical
+            # document rather than weakening or downgrading its current fields.
+            legacy_metadata="$validation_tmp/legacy.metainfo.xml"
+            sed \
+              -e '/<url type="vcs-browser">/d' \
+              -e '/<developer /,/<\/developer>/d' \
+              "$metadata" > "$legacy_metadata"
+            appstreamcli validate --no-net "$legacy_metadata"
           fi
-          appstreamcli validate "${appstream_args[@]}" \
-            src-tauri/linux/io.github.kristofferr.carrier.metainfo.xml
 
-          rendered=$(mktemp --suffix=.desktop)
-          trap 'rm -f "$rendered"' EXIT
+          rendered="$validation_tmp/Carrier.desktop"
           sed \
             -e '/{{#if comment}}/d' \
             -e '/{{#if mime_type}}/,/{{\/if}}/d' \
@@ -84,11 +89,11 @@ jobs:
       - name: Reject private contact details in packaging
         run: |
           set -euo pipefail
-          contacts=$(grep -RIEhn \
+          contacts=$(grep -RIEho \
             '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' \
             packaging src-tauri/linux || true)
           unexpected=$(printf '%s\n' "$contacts" \
-            | grep -Fv '481270+kristofferR@users.noreply.github.com' || true)
+            | grep -Fvx '481270+kristofferR@users.noreply.github.com' || true)
           if [ -n "$unexpected" ]; then
             echo "Packaging contains a non-public email address:" >&2
             printf '%s\n' "$unexpected" >&2

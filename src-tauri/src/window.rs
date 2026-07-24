@@ -96,6 +96,10 @@ pub(crate) fn build_app_window(
                 if !is_messenger_web_url(payload.url()) {
                     page_load_watchdog.disarm();
                 }
+                #[cfg(target_os = "linux")]
+                if window.label() == "main" && is_messenger_web_url(payload.url()) {
+                    crate::notifications::resume_pending_page_replies(&window);
+                }
                 apply_custom_css(&window, payload.url());
             }
         })

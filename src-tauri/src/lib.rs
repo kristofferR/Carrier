@@ -576,8 +576,8 @@ pub fn run() {
                 },
             );
 
-            // KDE inline replies are delivered page-side through the same
-            // content-free id/ok acknowledgement used by the native waiter.
+            // KDE inline replies are delivered page-side through a content-free
+            // id/attempt/ok acknowledgement used by the native waiter.
             #[cfg(target_os = "linux")]
             app.listen_any("carrier:reply-result", move |event| {
                 handle_reply_result(event.payload());

@@ -3717,16 +3717,16 @@
     if (!root) return null;
     return buttonByLabel(["press enter to send", "send message"], root);
   };
-  var emitReplyResult = (id, ok) => {
+  var emitReplyResult = (id, attempt, ok) => {
     invoke("plugin:event|emit", {
       event: "carrier:reply-result",
-      payload: { id, ok }
+      payload: { id, attempt, ok }
     })?.catch?.(() => diag("quick-reply.ack", "reply acknowledgement emit failed"));
   };
-  var validRequest = (path, text, id) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0;
+  var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
   async function deliver(path, text) {
     const wantedThread = threadPathId(path);
-    if (!wantedThread || window.__carrierOpenThread?.(path) !== true) {
+    if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
       return false;
     }
@@ -3771,43 +3771,53 @@
   }
   async function preserveDraft(path, text) {
     const wantedThread = threadPathId(path);
-    if (!wantedThread || window.__carrierOpenThread?.(path) !== true) return;
+    if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+      return false;
+    }
     const deadline = Date.now() + DELIVERY_BUDGET_MS;
     while (Date.now() < deadline) {
       const box = composer();
       if (currentThreadId() === wantedThread && box) {
         box.focus();
-        if (!text) return;
-        if (composerContainsReply(box.textContent, text)) return;
+        if (!text) return true;
+        if (composerContainsReply(box.textContent, text)) return true;
         if ((box.textContent || "").trim()) {
           diag("quick-reply.draft", "existing composer draft preserved");
-          return;
+          return true;
         }
         if (!document.execCommand("insertText", false, text)) {
           diag("quick-reply.draft", "fallback insertText failed");
+          return false;
         }
-        return;
+        return true;
       }
       await pause();
     }
     diag("quick-reply.draft", "fallback composer did not become ready");
+    return false;
   }
   function initQuickReply() {
-    window.__carrierQuickReply = (path, rawText, id) => {
+    window.__carrierQuickReply = (path, rawText, id, attempt) => {
       const text = String(rawText);
-      if (!validRequest(path, text, id)) {
-        emitReplyResult(id, false);
+      if (!validRequest(path, text, id, attempt)) {
+        emitReplyResult(id, attempt, false);
         return;
       }
-      void deliver(path, text).then((ok) => emitReplyResult(id, ok)).catch(() => {
+      void deliver(path, text).then((ok) => emitReplyResult(id, attempt, ok)).catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
-        emitReplyResult(id, false);
+        emitReplyResult(id, attempt, false);
       });
     };
-    window.__carrierQuickReplyDraft = (path, rawText) => {
-      void preserveDraft(path, String(rawText)).catch(
-        () => diag("quick-reply.draft", "fallback draft flow raised an exception")
-      );
+    window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
+      const text = String(rawText);
+      if (threadPathId(path) === null || [...text].length > MAX_REPLY_CHARS || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
+        emitReplyResult(id, attempt, false);
+        return;
+      }
+      void preserveDraft(path, text).then((ok) => emitReplyResult(id, attempt, ok)).catch(() => {
+        diag("quick-reply.draft", "fallback draft flow raised an exception");
+        emitReplyResult(id, attempt, false);
+      });
     };
   }
 

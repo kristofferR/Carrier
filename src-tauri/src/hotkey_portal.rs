@@ -140,6 +140,16 @@ async fn close_session(session: &Session<'_, GlobalShortcuts<'static>>) -> Resul
         .map_err(|error| format!("Couldn't disable portal Global Hotkey: {error}"))
 }
 
+async fn close_after_portal_failure(
+    session: &Session<'_, GlobalShortcuts<'static>>,
+    failure: BindFailure,
+) -> BindFailure {
+    if let Err(error) = close_session(session).await {
+        log::warn!("failed to close Global Hotkey portal session after an error: {error}");
+    }
+    failure
+}
+
 fn acknowledge_early_stop(
     close_sender: Result<CloseResultSender, tokio::sync::oneshot::error::RecvError>,
     ready: Option<&mpsc::SyncSender<Result<(), BindFailure>>>,
@@ -210,7 +220,10 @@ async fn run_portal_session(
         }
         Either::Right((result, _)) => result?,
     };
-    let session_path = serialized_session_path(&session)?;
+    let session_path = match serialized_session_path(&session) {
+        Ok(path) => path,
+        Err(failure) => return Err(close_after_portal_failure(&session, failure).await),
+    };
 
     // Subscribe before binding so an activation immediately after approval
     // cannot race past the listener.
@@ -222,7 +235,11 @@ async fn run_portal_session(
             acknowledge_early_stop(close_sender, ready, close_result);
             return Ok(());
         }
-        Either::Right((result, _)) => result.map_err(bind_failure)?,
+        Either::Right((Ok(activations), _)) => activations,
+        Either::Right((Err(error), _)) => {
+            let failure = bind_failure(error);
+            return Err(close_after_portal_failure(&session, failure).await);
+        }
     };
     let shortcut =
         NewShortcut::new(SHORTCUT_ID, "Show or hide Carrier").preferred_trigger(PREFERRED_TRIGGER);
@@ -238,15 +255,26 @@ async fn run_portal_session(
             acknowledge_early_stop(close_sender, ready, close_result);
             return Ok(());
         }
-        Either::Right((result, _)) => result
-            .map_err(|_| BindFailure::ordinary("portal shortcut approval timed out"))?
-            .map_err(bind_failure)?,
+        Either::Right((Ok(Ok(request)), _)) => request,
+        Either::Right((Ok(Err(error)), _)) => {
+            let failure = bind_failure(error);
+            return Err(close_after_portal_failure(&session, failure).await);
+        }
+        Either::Right((Err(_), _)) => {
+            let failure = BindFailure::ordinary("portal shortcut approval timed out");
+            return Err(close_after_portal_failure(&session, failure).await);
+        }
     };
-    let response = request.response().map_err(bind_failure)?;
+    let response = match request.response() {
+        Ok(response) => response,
+        Err(error) => {
+            let failure = bind_failure(error);
+            return Err(close_after_portal_failure(&session, failure).await);
+        }
+    };
     if !bind_response_contains(response.shortcuts(), SHORTCUT_ID) {
-        return Err(BindFailure::denied(
-            "portal response did not contain the summon shortcut",
-        ));
+        let failure = BindFailure::denied("portal response did not contain the summon shortcut");
+        return Err(close_after_portal_failure(&session, failure).await);
     }
     if let Some(sender) = ready {
         if sender.send(Ok(())).is_err() {
@@ -269,9 +297,9 @@ async fn run_portal_session(
             }
             Either::Right((activation, _)) => {
                 let Some(activation) = activation else {
-                    return Err(BindFailure::ordinary(
-                        "desktop GlobalShortcuts portal stream ended",
-                    ));
+                    let failure =
+                        BindFailure::ordinary("desktop GlobalShortcuts portal stream ended");
+                    return Err(close_after_portal_failure(&session, failure).await);
                 };
                 if activation_matches(
                     &session_path,
@@ -473,5 +501,23 @@ mod tests {
     fn generic_portal_failure_is_not_a_user_denial() {
         assert!(bind_failure(ashpd::Error::Response(ResponseError::Cancelled)).denied);
         assert!(!bind_failure(ashpd::Error::Response(ResponseError::Other)).denied);
+        assert!(
+            bind_failure(ashpd::Error::Portal(ashpd::PortalError::NotAllowed(
+                "denied".into()
+            )))
+            .denied
+        );
+        assert!(
+            bind_failure(ashpd::Error::Portal(ashpd::PortalError::Cancelled(
+                "cancelled".into()
+            )))
+            .denied
+        );
+        assert!(
+            !bind_failure(ashpd::Error::Portal(ashpd::PortalError::Failed(
+                "ordinary failure".into()
+            )))
+            .denied
+        );
     }
 }
