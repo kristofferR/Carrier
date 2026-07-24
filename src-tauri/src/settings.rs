@@ -14,6 +14,7 @@ use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::hotkey::apply_global_hotkey;
+use crate::install_environment::is_flatpak;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
@@ -103,10 +104,20 @@ pub(crate) fn clamp_zoom(zoom: i32) -> i32 {
 impl Settings {
     /// Clamp out-of-range values (settings.json is user-editable, and the zoom
     /// event payload comes from the remote-origin page).
-    pub(crate) fn sanitized(mut self) -> Self {
+    pub(crate) fn sanitized(self) -> Self {
+        self.sanitized_for_runtime(is_flatpak())
+    }
+
+    fn sanitized_for_runtime(mut self, flatpak: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
         if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
             self.tray_icon_style = "color".into();
+        }
+        // Flatpak owns updates, and autostart requires the Background portal
+        // rather than writing a host desktop file from the sandbox.
+        if flatpak {
+            self.autostart = false;
+            self.automatic_update_checks = false;
         }
         // Every Windows tray-oriented behavior can make the main window
         // disappear without closing it. Keep the escape hatch explicit and
@@ -226,7 +237,7 @@ fn settings_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 pub(crate) fn load_settings(app: &tauri::AppHandle) -> Settings {
     settings_file(app)
         .map(|path| load_settings_from_path(&path))
-        .unwrap_or_default()
+        .unwrap_or_else(|| Settings::default().sanitized())
 }
 
 /// Read persisted settings directly from disk before the Tauri app is built
@@ -235,7 +246,7 @@ pub(crate) fn load_settings_early() -> Settings {
     dirs_config_dir()
         .map(|b| b.join(APP_IDENTIFIER).join("settings.json"))
         .map(|path| load_settings_from_path(&path))
-        .unwrap_or_default()
+        .unwrap_or_else(|| Settings::default().sanitized())
 }
 
 fn load_settings_from_path(path: &Path) -> Settings {
@@ -247,16 +258,18 @@ fn load_settings_from_path(path: &Path) -> Settings {
                     "settings file {} is corrupt; using defaults: {error}",
                     path.display()
                 );
-                Settings::default()
+                Settings::default().sanitized()
             }
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Settings::default().sanitized()
+        }
         Err(error) => {
             log::warn!(
                 "could not read settings file {}; using defaults: {error}",
                 path.display()
             );
-            Settings::default()
+            Settings::default().sanitized()
         }
     }
 }
@@ -499,6 +512,12 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
 /// callers can sync it *before* persisting and avoid committing a preference the
 /// OS rejected.
 pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
+    if is_flatpak() {
+        return Err(
+            "Start on System Startup is unavailable in Flatpak until Carrier uses the Background portal."
+                .into(),
+        );
+    }
     let mgr = app.autolaunch();
     let res = if want { mgr.enable() } else { mgr.disable() };
     res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
@@ -744,6 +763,19 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(settings.sanitized().tray_icon_style, "symbolic");
+    }
+
+    #[test]
+    fn flatpak_runtime_disables_host_owned_settings() {
+        let settings = Settings {
+            autostart: true,
+            automatic_update_checks: true,
+            ..Default::default()
+        }
+        .sanitized_for_runtime(true);
+
+        assert!(!settings.autostart);
+        assert!(!settings.automatic_update_checks);
     }
 
     #[cfg(target_os = "windows")]

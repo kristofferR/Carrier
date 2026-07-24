@@ -21,6 +21,7 @@ mod download;
 mod hotkey;
 #[cfg(target_os = "linux")]
 mod hotkey_portal;
+mod install_environment;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -326,6 +327,7 @@ pub fn run() {
         .on_menu_event(menu::handle_menu_event)
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::runtime_capabilities,
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,

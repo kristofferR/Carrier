@@ -558,7 +558,10 @@ pub(crate) fn build_tray_with_menu(
     };
     // Autostart can run before the desktop's StatusNotifierWatcher exists.
     // Keep the service alive so KSNI registers the icon when the watcher appears.
+    // Flatpak cannot safely whitelist KSNI's PID-derived well-known name, so
+    // register the sandbox's unique connection name with the watcher instead.
     let handle = tray
+        .disable_dbus_name(crate::install_environment::is_flatpak())
         .assume_sni_available(true)
         .spawn()
         .map_err(|error| tauri::Error::Io(std::io::Error::other(error)))?;

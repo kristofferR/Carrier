@@ -129,6 +129,7 @@
       const IS_MAC = /Mac/.test(navigator.platform || navigator.userAgent);
       const IS_WINDOWS = /Win/.test(navigator.platform || navigator.userAgent);
       const IS_LINUX = !IS_MAC && !IS_WINDOWS && /Linux/.test(navigator.userAgent);
+      let runtimeCapabilities = null;
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
@@ -278,15 +279,31 @@
         const trayRequired =
           IS_WINDOWS &&
           (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
-        if (key === "show_tray" && trayRequired) {
+        const runtimeUnavailable =
+          (key === "autostart" &&
+            (!runtimeCapabilities || !runtimeCapabilities.autostart)) ||
+          (key === "automatic_update_checks" &&
+            (!runtimeCapabilities || !runtimeCapabilities.automaticUpdateChecks));
+        if ((key === "show_tray" && trayRequired) || runtimeUnavailable) {
           cb.disabled = true;
         }
         cb.onchange = () => persist(key, cb.checked);
         const text = document.createElement("div");
-        const hint =
-          key === "show_tray" && trayRequired
-            ? `${meta.hint} Required by an enabled Windows tray behavior.`
-            : meta.hint;
+        let hint = meta.hint;
+        if (key === "show_tray" && trayRequired) {
+          hint = `${hint} Required by an enabled Windows tray behavior.`;
+        } else if (runtimeUnavailable) {
+          if (!runtimeCapabilities) {
+            hint = "Unavailable because Carrier could not verify this runtime capability.";
+          } else if (runtimeCapabilities.flatpak) {
+            hint =
+              key === "autostart"
+                ? "Managed by Flatpak; Carrier needs Background portal support before it can request login startup."
+                : "Managed by Flatpak and your software center.";
+          } else {
+            hint = "Unavailable in this installation environment.";
+          }
+        }
         text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${hint}</div>`;
         row.append(cb, text);
         return row;
@@ -464,6 +481,11 @@
       };
 
       (async () => {
+        try {
+          runtimeCapabilities = await invoke("runtime_capabilities");
+        } catch (e) {
+          console.error(e);
+        }
         try {
           settings = await invoke("get_settings");
         } catch (e) {
