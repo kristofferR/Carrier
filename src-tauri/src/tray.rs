@@ -320,7 +320,14 @@ fn clear_reveal_guard_if_current(
         .is_ok()
 }
 
-fn reveal_window(window: &WebviewWindow) {
+fn reveal_window(window: &WebviewWindow, activation_token: Option<&str>) {
+    #[cfg(target_os = "linux")]
+    if let Some(token) = activation_token {
+        crate::linux::apply_activation_token(window, token);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = activation_token;
+
     let is_main = window.label() == "main";
     let reveal_generation = is_main.then(|| {
         let state = window.app_handle().state::<AppState>();
@@ -356,9 +363,9 @@ fn reveal_window(window: &WebviewWindow) {
     }
 }
 
-pub(crate) fn show_main(app: &tauri::AppHandle) {
+fn show_main_with_activation_token(app: &tauri::AppHandle, activation_token: Option<&str>) {
     if let Some(window) = app.get_webview_window("main") {
-        reveal_window(&window);
+        reveal_window(&window, activation_token);
         return;
     }
 
@@ -373,8 +380,12 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     if let Ok(window) = build_app_window(app, "main", &settings) {
         install_main_close_handler(app, &window);
-        reveal_window(&window);
+        reveal_window(&window, activation_token);
     }
+}
+
+pub(crate) fn show_main(app: &tauri::AppHandle) {
+    show_main_with_activation_token(app, None);
 }
 
 #[cfg(target_os = "macos")]
@@ -392,7 +403,7 @@ fn should_hide_main(visible: bool, minimized: bool, _focused: bool) -> bool {
 
 /// Show the main window if it's hidden/minimized, or hide it if the current
 /// platform considers it already shown — so a tray click toggles the app.
-pub(crate) fn toggle_main(app: &tauri::AppHandle) {
+fn toggle_main_with_token(app: &tauri::AppHandle, activation_token: Option<&str>) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         let minimized = window.is_minimized().unwrap_or(false);
@@ -400,11 +411,22 @@ pub(crate) fn toggle_main(app: &tauri::AppHandle) {
         if should_hide_main(visible, minimized, focused) {
             let _ = window.hide();
         } else {
-            reveal_window(&window);
+            reveal_window(&window, activation_token);
         }
     } else {
-        show_main(app);
+        show_main_with_activation_token(app, activation_token);
     }
+}
+
+pub(crate) fn toggle_main(app: &tauri::AppHandle) {
+    toggle_main_with_token(app, None);
+}
+
+/// Toggle Carrier from an XDG portal activation. This must run on GTK's main
+/// thread; the portal worker dispatches it there before calling this function.
+#[cfg(target_os = "linux")]
+pub(crate) fn toggle_main_with_activation_token(app: &tauri::AppHandle, token: Option<&str>) {
+    toggle_main_with_token(app, token);
 }
 
 #[cfg(target_os = "macos")]

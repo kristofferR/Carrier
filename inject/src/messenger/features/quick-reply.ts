@@ -5,7 +5,7 @@ import {
   type QuickReplyPhase,
   type QuickReplySnapshot,
 } from "../lib/quick-reply";
-import { threadPathId } from "../lib/threads";
+import { threadIdFromHref, threadPathId } from "../lib/threads";
 import { buttonByLabel, firstShown } from "./conversation-actions";
 
 const POLL_MS = 250;
@@ -16,7 +16,7 @@ const COMPOSER_SELECTOR =
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 
-const currentThreadId = () => threadPathId(location.pathname);
+const currentThreadId = () => threadIdFromHref(location.pathname);
 
 const composer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
 

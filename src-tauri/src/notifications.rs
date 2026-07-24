@@ -310,6 +310,10 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     Some(path)
 }
 
+fn should_attach_path_avatar(hide_preview: bool, flatpak: bool) -> bool {
+    !hide_preview && !flatpak
+}
+
 /// Best-effort sweep of stale avatars from this process's own directory. On
 /// macOS a shown notification's file is deliberately left behind for the OS to
 /// read asynchronously (see [`show_message_notification`]) and would otherwise
@@ -439,15 +443,6 @@ fn linux_reply_eligible(
         && thread_path.is_some()
         && capabilities.actions
         && capabilities.inline_reply
-}
-
-#[cfg(target_os = "linux")]
-fn linux_sound_hint(sound: bool) -> notify_rust::Hint {
-    if sound {
-        notify_rust::Hint::SoundName("message-new-instant".into())
-    } else {
-        notify_rust::Hint::SuppressSound(true)
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -607,15 +602,9 @@ fn show_linux_notification(
     if let Some(path) = image.and_then(Path::to_str) {
         notification.icon(path);
     }
-    notification.hint(linux_sound_hint(sound));
     notification.action("default", "Open");
     if allow_inline_reply {
-        notification
-            .action("inline-reply", "Reply")
-            .hint(notify_rust::Hint::Custom(
-                "x-kde-reply-placeholder-text".into(),
-                "Reply…".into(),
-            ));
+        notification.action("inline-reply", "Reply");
     }
 
     let result = (|| -> Result<LinuxNotificationResponse, String> {
@@ -921,10 +910,13 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         linux_notification_capabilities(),
     );
     remember_notification_route(id, &msg.thread_path);
-    let image = if hide_preview {
-        None
-    } else {
+    // A Flatpak-private temp path is not readable by the host notification
+    // daemon. Skip the path attachment there instead of showing a broken icon.
+    let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
+    {
         avatar_to_temp_png(&msg.icon)
+    } else {
+        None
     };
 
     #[cfg(target_os = "macos")]
@@ -1241,6 +1233,14 @@ mod tests {
     }
 
     #[test]
+    fn path_avatars_are_skipped_for_private_or_flatpak_notifications() {
+        assert!(should_attach_path_avatar(false, false));
+        assert!(!should_attach_path_avatar(true, false));
+        assert!(!should_attach_path_avatar(false, true));
+        assert!(!should_attach_path_avatar(true, true));
+    }
+
+    #[test]
     fn notify_msg_parses_the_page_payload() {
         // The shape the injected bridge emits on `carrier:notify`.
         let msg: NotifyMsg = serde_json::from_str(
@@ -1375,15 +1375,16 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_sound_hint_follows_the_setting() {
-        assert_eq!(
-            linux_sound_hint(true),
-            notify_rust::Hint::SoundName("message-new-instant".into())
-        );
-        assert_eq!(
-            linux_sound_hint(false),
-            notify_rust::Hint::SuppressSound(true)
-        );
+    fn linux_notification_hints_follow_sound_and_reply_settings() {
+        let audible = linux_notification_hints(true, false);
+        assert!(audible.contains_key("sound-name"));
+        assert!(!audible.contains_key("suppress-sound"));
+        assert!(!audible.contains_key("x-kde-reply-placeholder-text"));
+
+        let silent_reply = linux_notification_hints(false, true);
+        assert!(!silent_reply.contains_key("sound-name"));
+        assert!(silent_reply.contains_key("suppress-sound"));
+        assert!(silent_reply.contains_key("x-kde-reply-placeholder-text"));
     }
 
     #[cfg(target_os = "linux")]

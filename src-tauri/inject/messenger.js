@@ -3683,7 +3683,10 @@
   function decideQuickReply(phase, snapshot, expired) {
     if (phase === "waiting") {
       if (expired) return { action: "failure", phase };
-      if (!snapshot.threadMatches || !snapshot.composerReady) return { action: "wait", phase };
+      if (!snapshot.threadMatches || !snapshot.composerReady) {
+        return { action: "wait", phase };
+      }
+      if (!snapshot.composerEmpty) return { action: "failure", phase };
       return { action: "insert", phase: "inserted" };
     }
     if (!snapshot.threadMatches || !snapshot.composerReady) {
@@ -3707,7 +3710,7 @@
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
-  var currentThreadId = () => threadPathId(location.pathname);
+  var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR);
   var sendButton = () => {
     const root = document.querySelector('[role="main"]');

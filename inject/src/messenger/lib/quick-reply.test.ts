@@ -21,6 +21,14 @@ describe("decideQuickReply", () => {
     });
   });
 
+  test("fails immediately instead of merging into an existing draft", () => {
+    const existingDraft = { ...ready, composerEmpty: false };
+    expect(decideQuickReply("waiting", existingDraft, false)).toEqual({
+      action: "failure",
+      phase: "waiting",
+    });
+  });
+
   test("never sends after the page navigates to another recipient", () => {
     expect(
       decideQuickReply(

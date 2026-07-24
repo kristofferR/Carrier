@@ -76,6 +76,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
 async-io = "2"
 futures-util = "0.3"
+# Apply the GlobalShortcuts portal activation token to GTK's native window
+# before revealing it, so Wayland compositors permit the focus transfer.
+gtk = "0.18"
 # Configure the WebKitGTK instance Tauri already embeds without adding another
 # WebKit build. Keep normal document caching, but use the smaller browser cache
 # model and opt out of the in-memory back/forward page cache.

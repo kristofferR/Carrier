@@ -739,6 +739,7 @@ dependencies = [
  "block2 0.6.2",
  "dark-light",
  "futures-util",
+ "gtk",
  "ksni",
  "libc",
  "log",

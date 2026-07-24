@@ -26,7 +26,12 @@ export function decideQuickReply(
 ): QuickReplyDecision {
   if (phase === "waiting") {
     if (expired) return { action: "failure", phase };
-    if (!snapshot.threadMatches || !snapshot.composerReady) return { action: "wait", phase };
+    if (!snapshot.threadMatches || !snapshot.composerReady) {
+      return { action: "wait", phase };
+    }
+    // Never merge a notification reply into text the user already drafted.
+    // Fail immediately so the native fallback can open the correct composer.
+    if (!snapshot.composerEmpty) return { action: "failure", phase };
     return { action: "insert", phase: "inserted" };
   }
 

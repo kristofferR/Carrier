@@ -14,7 +14,7 @@ use futures_util::{pin_mut, StreamExt};
 use tauri::Manager;
 
 use crate::settings::{save_settings, AppState};
-use crate::tray::toggle_main;
+use crate::tray::toggle_main_with_activation_token;
 
 const SHORTCUT_ID: &str = "summon";
 const PREFERRED_TRIGGER: &str = "CTRL+SHIFT+m";
@@ -76,7 +76,7 @@ impl BindFailure {
 fn bind_failure(error: ashpd::Error) -> BindFailure {
     let denied = matches!(
         error,
-        ashpd::Error::Response(ResponseError::Cancelled | ResponseError::Other)
+        ashpd::Error::Response(ResponseError::Cancelled)
             | ashpd::Error::Portal(
                 ashpd::PortalError::NotAllowed(_) | ashpd::PortalError::Cancelled(_)
             )
@@ -102,6 +102,15 @@ fn activation_matches(
     actual_id: &str,
 ) -> bool {
     expected_session == actual_session && expected_id == actual_id
+}
+
+fn activation_token(
+    options: &std::collections::HashMap<String, ashpd::zvariant::OwnedValue>,
+) -> Option<&str> {
+    options
+        .get("activation_token")
+        .and_then(|value| <&str>::try_from(value).ok())
+        .filter(|token| !token.is_empty())
 }
 
 fn serialized_session_path<T>(session: &Session<'_, T>) -> Result<String, BindFailure>
@@ -176,6 +185,7 @@ async fn run_portal_session(
     app: &tauri::AppHandle,
     stop: &mut tokio::sync::oneshot::Receiver<CloseResultSender>,
     ready: Option<&mpsc::SyncSender<Result<(), BindFailure>>>,
+    ready_delivered: &mut bool,
 ) -> Result<(), BindFailure> {
     let connect = tokio::time::timeout(CREATE_TIMEOUT, GlobalShortcuts::new());
     pin_mut!(connect);
@@ -238,9 +248,12 @@ async fn run_portal_session(
             "portal response did not contain the summon shortcut",
         ));
     }
-    if ready.is_some_and(|sender| sender.send(Ok(())).is_err()) {
-        let _ = close_session(&session).await;
-        return Ok(());
+    if let Some(sender) = ready {
+        if sender.send(Ok(())).is_err() {
+            let _ = close_session(&session).await;
+            return Ok(());
+        }
+        *ready_delivered = true;
     }
 
     loop {
@@ -266,7 +279,13 @@ async fn run_portal_session(
                     activation.session_handle().as_str(),
                     activation.shortcut_id(),
                 ) {
-                    toggle_main(app);
+                    let token = activation_token(activation.options()).map(str::to_owned);
+                    let activation_app = app.clone();
+                    if let Err(error) = app.run_on_main_thread(move || {
+                        toggle_main_with_activation_token(&activation_app, token.as_deref());
+                    }) {
+                        log::warn!("failed to dispatch Global Hotkey activation: {error}");
+                    }
                 }
             }
         }
@@ -280,6 +299,7 @@ async fn keeper_task(
     ready: mpsc::SyncSender<Result<(), BindFailure>>,
 ) {
     let mut first = true;
+    let mut ready_delivered = false;
     let mut last_error = None;
     loop {
         let is_initial = first;
@@ -288,9 +308,10 @@ async fn keeper_task(
             &app,
             &mut stop,
             if is_initial { Some(&ready) } else { None },
+            &mut ready_delivered,
         )
         .await;
-        if is_initial && result.is_err() {
+        if is_initial && !ready_delivered && result.is_err() {
             if ready
                 .send(result.as_ref().map(|_| ()).map_err(Clone::clone))
                 .is_err()
@@ -425,5 +446,32 @@ mod tests {
     fn bind_response_requires_the_requested_id() {
         assert!(contains_shortcut_id(["other", SHORTCUT_ID], SHORTCUT_ID));
         assert!(!contains_shortcut_id(["other"], SHORTCUT_ID));
+    }
+
+    #[test]
+    fn activation_token_accepts_only_a_nonempty_string() {
+        let options = std::collections::HashMap::from([(
+            "activation_token".to_string(),
+            ashpd::zvariant::OwnedValue::from(ashpd::zvariant::Str::from("portal-token")),
+        )]);
+        assert_eq!(activation_token(&options), Some("portal-token"));
+
+        let empty = std::collections::HashMap::from([(
+            "activation_token".to_string(),
+            ashpd::zvariant::OwnedValue::from(ashpd::zvariant::Str::from("")),
+        )]);
+        assert_eq!(activation_token(&empty), None);
+
+        let wrong_type = std::collections::HashMap::from([(
+            "activation_token".to_string(),
+            ashpd::zvariant::OwnedValue::from(7_u32),
+        )]);
+        assert_eq!(activation_token(&wrong_type), None);
+    }
+
+    #[test]
+    fn generic_portal_failure_is_not_a_user_denial() {
+        assert!(bind_failure(ashpd::Error::Response(ResponseError::Cancelled)).denied);
+        assert!(!bind_failure(ashpd::Error::Response(ResponseError::Other)).denied);
     }
 }

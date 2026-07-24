@@ -2,10 +2,24 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
+use gtk::prelude::GtkWindowExt;
 use tauri::Manager;
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
+
+/// Transfer the compositor-granted GlobalShortcuts activation to GTK before
+/// showing the window. GTK 3.24 forwards a real startup ID to
+/// xdg-activation-v1 on Wayland and preserves its established X11 behavior.
+pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str) {
+    if token.is_empty() {
+        return;
+    }
+    match window.gtk_window() {
+        Ok(window) => window.set_startup_id(token),
+        Err(error) => log::warn!("failed to apply Global Hotkey activation token: {error}"),
+    }
+}
 
 /// Keep Messenger's HTTP cache while avoiding WebKitGTK's largest in-memory
 /// cache policy and its back/forward page snapshots. The WebContext is shared,

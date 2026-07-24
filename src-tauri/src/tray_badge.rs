@@ -116,7 +116,7 @@ pub(crate) fn draw_unread_badge(
                 blend_pixel(
                     &mut pixels[offset..offset + 4],
                     BADGE_RED,
-                    inside.saturating_mul(255) / 16,
+                    (u16::from(inside) * 255 / 16) as u8,
                 );
             }
         }
@@ -292,6 +292,14 @@ mod tests {
         let pixels = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Count(1));
         let visible = pixels.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
         assert!((2_600..3_200).contains(&visible));
+    }
+
+    #[test]
+    fn fully_covered_badge_pixels_are_opaque() {
+        let pixels = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Count(1));
+        assert!(pixels
+            .chunks_exact(4)
+            .any(|pixel| pixel == BADGE_RED.as_slice()));
     }
 
     #[test]
