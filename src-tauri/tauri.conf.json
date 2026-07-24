@@ -40,20 +40,31 @@
     },
     "linux": {
       "deb": {
+        "desktopTemplate": "linux/carrier.desktop.hbs",
         "depends": [
           "libwebkit2gtk-4.1-0",
           "libgtk-3-0"
         ],
+        "files": {
+          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+        },
         "section": "net"
       },
       "rpm": {
+        "desktopTemplate": "linux/carrier.desktop.hbs",
         "depends": [
           "webkit2gtk4.1",
           "gtk3"
-        ]
+        ],
+        "files": {
+          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+        }
       },
       "appimage": {
-        "bundleMediaFramework": true
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
+        }
       }
     }
   },

@@ -14,6 +14,8 @@
 interface CarrierSettings {
   always_on_top?: boolean;
   show_tray?: boolean;
+  /** Linux tray artwork: the full-color icon or a panel-tinted glyph. */
+  tray_icon_style?: "color" | "symbolic";
   start_to_tray?: boolean;
   autostart?: boolean;
   hide_on_close?: boolean;
@@ -89,6 +91,10 @@ interface Window {
     responsivenessWorkersStopped: number;
   };
   __carrierNotifyClick?: (id: number) => boolean;
+  /** Deliver a KDE notification reply without raising the Carrier window. */
+  __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
+  /** Preserve a failed notification reply as an unsent composer draft. */
+  __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */

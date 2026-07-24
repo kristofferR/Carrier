@@ -739,6 +739,7 @@ dependencies = [
  "block2 0.6.2",
  "dark-light",
  "futures-util",
+ "gtk",
  "ksni",
  "libc",
  "log",
@@ -767,6 +768,7 @@ dependencies = [
  "uuid",
  "webkit2gtk",
  "windows-sys 0.61.2",
+ "zbus",
 ]
 
 [[package]]

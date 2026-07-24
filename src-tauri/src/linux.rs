@@ -2,10 +2,24 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
+use gtk::prelude::GtkWindowExt;
 use tauri::Manager;
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
+
+/// Transfer the compositor-granted GlobalShortcuts activation to GTK before
+/// showing the window. GTK 3.24 forwards a real startup ID to
+/// xdg-activation-v1 on Wayland and preserves its established X11 behavior.
+pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str) {
+    if token.is_empty() {
+        return;
+    }
+    match window.gtk_window() {
+        Ok(window) => window.set_startup_id(token),
+        Err(error) => log::warn!("failed to apply Global Hotkey activation token: {error}"),
+    }
+}
 
 /// Keep Messenger's HTTP cache while avoiding WebKitGTK's largest in-memory
 /// cache policy and its back/forward page snapshots. The WebContext is shared,
@@ -45,7 +59,16 @@ fn should_log_portal_error(last_error: Option<&str>, message: &str) -> bool {
 }
 
 fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
-    let follows_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
+    let state = app.state::<AppState>();
+    let dark_panel = matches!(scheme, ColorScheme::PreferDark);
+    state
+        .linux_panel_dark
+        .store(dark_panel, std::sync::atomic::Ordering::Release);
+    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        let _ = tray.set_symbolic_dark(dark_panel);
+    }
+
+    let follows_system = state.settings.lock().unwrap().theme == "system";
     if !follows_system {
         return;
     }

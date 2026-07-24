@@ -28,6 +28,7 @@ import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
+import { initQuickReply } from "./features/quick-reply";
 import { initRecentThreads } from "./features/recent-threads";
 import { initSelectorHealth } from "./features/selector-health";
 import { initSettingsButton } from "./features/settings-button";
@@ -77,6 +78,7 @@ function main() {
   initFeature("unread-badge", initUnreadBadge);
   initFeature("recent-threads", initRecentThreads);
   initFeature("thread-nav", initThreadNav);
+  initFeature("quick-reply", initQuickReply);
   initFeature("hide-names", initHideNames);
   initFeature("system-emoji", initSystemEmoji);
   initFeature("media-permissions", initMediaPermissionWarning);

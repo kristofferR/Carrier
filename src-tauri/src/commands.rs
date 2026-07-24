@@ -7,6 +7,7 @@ use url::Url;
 
 use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
+use crate::install_environment::is_flatpak;
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
 use crate::settings::{
     apply_settings, save_settings, sync_autostart, AppState, SaveOutcome, Settings,
@@ -17,6 +18,8 @@ use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 #[cfg(target_os = "linux")]
 const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
+#[cfg(target_os = "linux")]
+const FLATPAK_UPDATE_URL: &str = "https://docs.flatpak.org/en/latest/using-flatpak.html#updating";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
 // existing recovery screen for persistent failures, but absorb that launch race.
 const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
@@ -122,6 +125,18 @@ impl UpdateInstallMode {
         }
     }
 
+    #[cfg(any(target_os = "linux", test))]
+    fn flatpak() -> Self {
+        Self {
+            kind: UpdateInstallKind::Manual,
+            button_label: Some("Open Flatpak update guide".into()),
+            instructions: Some(
+                "Update Carrier with your Flatpak software manager or run `flatpak update io.github.kristofferr.carrier`."
+                    .into(),
+            ),
+        }
+    }
+
     fn is_manual(&self) -> bool {
         self.kind == UpdateInstallKind::Manual
     }
@@ -155,11 +170,14 @@ fn pacman_owns_current_executable() -> bool {
 
 #[cfg(any(target_os = "linux", test))]
 fn linux_update_install_mode(
+    flatpak: bool,
     pacman_owned: bool,
     has_paru: bool,
     has_yay: bool,
 ) -> UpdateInstallMode {
-    if pacman_owned {
+    if flatpak {
+        UpdateInstallMode::flatpak()
+    } else if pacman_owned {
         UpdateInstallMode::aur(has_paru, has_yay)
     } else {
         UpdateInstallMode::built_in()
@@ -170,6 +188,7 @@ fn current_update_install_mode() -> UpdateInstallMode {
     #[cfg(target_os = "linux")]
     {
         linux_update_install_mode(
+            is_flatpak(),
             pacman_owns_current_executable(),
             command_available("paru"),
             command_available("yay"),
@@ -199,6 +218,26 @@ async fn current_update_install_mode_off_main() -> Result<UpdateInstallMode, Str
 #[tauri::command]
 pub(crate) fn get_settings(state: State<AppState>) -> Settings {
     state.settings.lock().unwrap().clone()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeCapabilities {
+    flatpak: bool,
+    autostart: bool,
+    automatic_update_checks: bool,
+}
+
+/// Tell the trusted Settings page which host-owned features the package can
+/// safely expose. Backend sanitization remains the enforcement boundary.
+#[tauri::command]
+pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
+    let flatpak = is_flatpak();
+    RuntimeCapabilities {
+        flatpak,
+        autostart: !flatpak,
+        automatic_update_checks: !flatpak,
+    }
 }
 
 /// Persist `new`, syncing OS-backed preferences first so a failed sync doesn't
@@ -373,7 +412,14 @@ pub(crate) async fn open_manual_update() -> Result<(), String> {
     }
 
     #[cfg(target_os = "linux")]
-    return open::that_detached(AUR_PACKAGE_URL).map_err(|error| error.to_string());
+    {
+        let package_url = if is_flatpak() {
+            FLATPAK_UPDATE_URL
+        } else {
+            AUR_PACKAGE_URL
+        };
+        open::that_detached(package_url).map_err(|error| error.to_string())
+    }
 
     #[cfg(not(target_os = "linux"))]
     Err("No manual update page is configured for this platform.".into())
@@ -1018,7 +1064,7 @@ mod tests {
 
     #[test]
     fn pacman_owned_install_uses_the_available_aur_helper() {
-        let paru = linux_update_install_mode(true, true, true);
+        let paru = linux_update_install_mode(false, true, true, true);
         assert_eq!(paru.kind, UpdateInstallKind::Manual);
         assert_eq!(
             paru.instructions.as_deref(),
@@ -1033,13 +1079,13 @@ mod tests {
             })
         );
 
-        let yay = linux_update_install_mode(true, false, true);
+        let yay = linux_update_install_mode(false, true, false, true);
         assert_eq!(
             yay.instructions.as_deref(),
             Some("Run yay -S carrier to update.")
         );
 
-        let generic = linux_update_install_mode(true, false, false);
+        let generic = linux_update_install_mode(false, true, false, false);
         assert_eq!(
             generic.instructions.as_deref(),
             Some("Update the carrier package with your AUR helper.")
@@ -1048,9 +1094,23 @@ mod tests {
 
     #[test]
     fn non_pacman_install_keeps_the_builtin_updater() {
-        let mode = linux_update_install_mode(false, true, true);
+        let mode = linux_update_install_mode(false, false, true, true);
         assert_eq!(mode.kind, UpdateInstallKind::BuiltIn);
         assert_eq!(mode.instructions, None);
+    }
+
+    #[test]
+    fn flatpak_install_uses_distribution_owned_updates() {
+        let mode = linux_update_install_mode(true, true, true, true);
+        assert_eq!(mode.kind, UpdateInstallKind::Manual);
+        assert_eq!(
+            mode.button_label.as_deref(),
+            Some("Open Flatpak update guide")
+        );
+        assert!(mode
+            .instructions
+            .as_deref()
+            .is_some_and(|instructions| instructions.contains("flatpak update")));
     }
 
     #[test]

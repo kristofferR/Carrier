@@ -7,17 +7,21 @@
 //! Anything that isn't Messenger is handed to the user's default browser.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{Listener, Manager};
 use tauri_plugin_opener::OpenerExt;
+mod cli;
 mod commands;
 mod custom_css;
 mod diag;
 mod download;
 mod hotkey;
+#[cfg(target_os = "linux")]
+mod hotkey_portal;
+mod install_environment;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -27,6 +31,8 @@ mod notifications;
 mod preflight;
 mod settings;
 mod tray;
+#[cfg(any(target_os = "linux", test))]
+mod tray_badge;
 mod url_rules;
 mod webview_watchdog;
 mod window;
@@ -42,6 +48,8 @@ use macos::{
     theme::observe_system_theme_changes,
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
+#[cfg(target_os = "linux")]
+use notifications::handle_reply_result;
 use notifications::{
     clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
     NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
@@ -55,6 +63,38 @@ use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{build_app_window, install_main_close_handler, show_settings_window};
+
+pub(crate) fn refresh_unread_indicators(
+    app: &tauri::AppHandle,
+    settings: &settings::Settings,
+    raw_count: i64,
+) {
+    let unread = if settings.unread_badge {
+        raw_count.max(0)
+    } else {
+        0
+    };
+    let state = app.state::<AppState>();
+    let tray = state.tray.lock().unwrap();
+    if let Some(tray) = tray.as_ref() {
+        let tooltip = if unread > 0 {
+            format!("{APP_TITLE} — {unread} unread")
+        } else {
+            APP_TITLE.to_string()
+        };
+        let _ = tray.set_tooltip(Some(&tooltip));
+        #[cfg(target_os = "linux")]
+        let _ = tray.set_unread(unread);
+        #[cfg(target_os = "macos")]
+        let _ = tray.set_title(tray_unread_title(settings, unread));
+    }
+    drop(tray);
+
+    // LauncherEntry works independently of the tray and is honored by KDE's
+    // task manager plus Ubuntu Dock/Dash-to-Dock.
+    #[cfg(target_os = "linux")]
+    tray_badge::update_unity_launcher_count(unread);
+}
 
 fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
     !candidate.is_empty() && tokens.values().any(|token| token == candidate)
@@ -164,6 +204,10 @@ pub fn run() {
     configure_linux_webkit_renderer();
 
     let initial = load_settings_early();
+    let cold_cli_action = cli::parse_cli_action(std::env::args_os());
+    let pending_cold_new_conversation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        cold_cli_action == Some(cli::CliAction::NewConversation),
+    ));
 
     let mut builder = tauri::Builder::default();
 
@@ -182,10 +226,25 @@ pub fn run() {
         cfg!(all(feature = "mcp", debug_assertions)),
         is_isolated_mcp_socket(mcp_socket_override.as_deref()),
     ) {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            show_main(app);
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(action) = cli::parse_cli_action(argv) {
+                cli::perform_cli_action(app, action);
+            } else {
+                show_main(app);
+            }
         }));
     }
+
+    let pending_action = pending_cold_new_conversation.clone();
+    builder = builder.on_page_load(move |webview, payload| {
+        if webview.label() == "main"
+            && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            && url_rules::is_messenger_web_url(payload.url())
+            && pending_action.swap(false, Ordering::AcqRel)
+        {
+            cli::perform_cli_action(webview.app_handle(), cli::CliAction::NewConversation);
+        }
+    });
 
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
     // DOM/JS inspection. Restrict it to debug builds even when the Cargo feature
@@ -254,6 +313,9 @@ pub fn run() {
             update_available: Mutex::new(None),
             update_check_wake: tokio::sync::Notify::new(),
             tray_notice_delivered: std::sync::atomic::AtomicBool::new(initial.tray_notice_shown),
+            unread_count: AtomicI64::new(0),
+            #[cfg(target_os = "linux")]
+            linux_panel_dark: std::sync::atomic::AtomicBool::new(false),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
             zoom_generation: AtomicUsize::new(0),
@@ -265,6 +327,7 @@ pub fn run() {
         .on_menu_event(menu::handle_menu_event)
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::runtime_capabilities,
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
@@ -286,6 +349,9 @@ pub fn run() {
 
             clear_pending_webview_data(app.handle());
 
+            #[cfg(target_os = "linux")]
+            let settings = load_settings(app.handle());
+            #[cfg(not(target_os = "linux"))]
             let mut settings = load_settings(app.handle());
             *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
 
@@ -303,14 +369,27 @@ pub fn run() {
 
             // Don't sync autostart at startup; the OS registration already
             // reflects the user's last explicit choice.
+            #[cfg(target_os = "linux")]
+            reconcile_startup_global_hotkey(app.handle(), &settings);
+            #[cfg(not(target_os = "linux"))]
             reconcile_startup_global_hotkey(app.handle(), &mut settings);
-            *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
+            // Non-Linux reconciliation mutates the local snapshot
+            // synchronously. Linux reconciliation updates AppState itself from
+            // its worker, so overwriting it here could restore stale state.
+            #[cfg(not(target_os = "linux"))]
+            {
+                *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
+            }
             apply_settings(app.handle(), &settings);
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();
             if settings.start_to_tray && has_tray {
                 let _ = window.hide();
+            }
+
+            if cold_cli_action == Some(cli::CliAction::Settings) {
+                cli::perform_cli_action(app.handle(), cli::CliAction::Settings);
             }
 
             // The Facebook page is a remote origin and can't call Carrier's own
@@ -359,27 +438,14 @@ pub fn run() {
                 });
             });
 
-            // Unread count from the page → tray tooltip (the Dock badge is set
-            // page-side; this keeps the tray useful in menu-bar-only mode).
+            // Unread count from the page → every native platform indicator.
             let h = app.handle().clone();
             app.listen_any("carrier:unread", move |event| {
-                let n: i64 = event.payload().trim().parse().unwrap_or(0);
+                let n: i64 = event.payload().trim().parse().unwrap_or(0).max(0);
                 let state = h.state::<AppState>();
+                state.unread_count.store(n, Ordering::Release);
                 let settings = state.settings.lock().unwrap().clone();
-                let tray_n = if settings.unread_badge { n } else { 0 };
-                let tray = state.tray.lock().unwrap();
-                if let Some(tray) = tray.as_ref() {
-                    let tip = if tray_n > 0 {
-                        format!("{APP_TITLE} — {tray_n} unread")
-                    } else {
-                        APP_TITLE.to_string()
-                    };
-                    let _ = tray.set_tooltip(Some(&tip));
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = tray.set_title(tray_unread_title(&settings, tray_n));
-                    }
-                }
+                refresh_unread_indicators(&h, &settings, n);
             });
 
             // Keyboard/menu zoom from the page → persist it in settings so the
@@ -510,6 +576,13 @@ pub fn run() {
                 },
             );
 
+            // KDE inline replies are delivered page-side through a content-free
+            // id/attempt/ok acknowledgement used by the native waiter.
+            #[cfg(target_os = "linux")]
+            app.listen_any("carrier:reply-result", move |event| {
+                handle_reply_result(event.payload());
+            });
+
             // Page diagnostics (`diag()` in messenger.js): selector-health and
             // IPC failures from the injected script, routed into the log file
             // so field breakage of the page features is visible in bug reports.
@@ -550,6 +623,11 @@ pub fn run() {
                     // launched (tao installs its NSApplication delegate by now).
                     install_dock_menu_provider();
                 }
+            }
+
+            #[cfg(target_os = "linux")]
+            if let tauri::RunEvent::Exit = event {
+                tray_badge::clear_unity_launcher_count();
             }
 
             #[cfg(target_os = "macos")]
