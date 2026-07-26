@@ -151,6 +151,29 @@ describe("SenderAvatarStore", () => {
     expect(store.lookup(OTHER_THREAD, "Kim")).toBe("https://cdn/kim.jpg");
   });
 
+  test("lets conflicting full names settle a short name they share", () => {
+    const store = new SenderAvatarStore();
+    store.remember(THREAD, "Kim", "https://cdn/kim-a.jpg", "Kim Andersen");
+    store.remember(THREAD, "Kim Andersen", "https://cdn/kim-a.jpg");
+    expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/kim-a.jpg");
+    // The member list then reveals a second Kim: the cached alias cannot
+    // decide between them any more.
+    store.remember(THREAD, "Kim Berg", "https://cdn/kim-b.jpg");
+    expect(store.lookup(THREAD, "Kim")).toBe("");
+    expect(store.describe(THREAD, "Kim")).toBe("ambiguous");
+  });
+
+  test("keeps a sighting fresh so a later namesake still collides", () => {
+    const store = new SenderAvatarStore();
+    store.remember(THREAD, "Kim", "https://cdn/kim-a.jpg", "Kim", 1_000);
+    // Re-seen unchanged well after the window, then a second face right after.
+    expect(store.remember(THREAD, "Kim", "https://cdn/kim-a.jpg", "Kim", 10 * 60_000)).toBe(false);
+    expect(store.remember(THREAD, "Kim", "https://cdn/kim-b.jpg", "Kim", 10 * 60_000 + 5_000)).toBe(
+      true,
+    );
+    expect(store.lookup(THREAD, "Kim")).toBe("");
+  });
+
   test("keeps a collision after its avatars are evicted", () => {
     const storage = memoryStorage();
     const store = new SenderAvatarStore(storage, 1);

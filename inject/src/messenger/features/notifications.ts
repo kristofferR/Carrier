@@ -332,6 +332,7 @@ export function initNotificationBridge() {
   const HARVEST_SEL = '[role="main"], [role="complementary"]';
   const HARVEST_THROTTLE_MS = 5_000;
   let lastHarvestAt = 0;
+  let harvestedRoute = "";
   const normalizedText = (value: string | null | undefined) =>
     (value || "").replace(/\s+/g, " ").trim();
   // Alt text on Messenger's avatars is the person's name; its photo and
@@ -359,6 +360,15 @@ export function initNotificationBridge() {
     // nothing that should spend the throttle a brief render then waits on.
     const openThread = threadIdFromHref(location.pathname);
     if (!openThread) return;
+    // Messenger routes before it re-renders, so for a moment after switching
+    // conversations the pane still shows the previous one's faces. Never
+    // attribute a pass to a route this scan is the first to see: the render
+    // that follows schedules the next pass, and that one describes the
+    // destination.
+    if (openThread !== harvestedRoute) {
+      harvestedRoute = openThread;
+      return;
+    }
     lastHarvestAt = now;
     for (const heading of document.querySelectorAll<HTMLElement>(
       '[role="main"] [role="article"] h3, [role="main"] [role="article"] h4',

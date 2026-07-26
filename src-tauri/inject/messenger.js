@@ -3288,7 +3288,12 @@
         if (existing.photo !== photo && at - existing.at < COLLISION_WINDOW_MS) {
           return this.markAmbiguous(threadId, name);
         }
-        if (existing.url === url) return false;
+        if (existing.url === url) {
+          const stale = at - existing.at >= COLLISION_WINDOW_MS;
+          existing.at = at;
+          if (stale) this.persist();
+          return false;
+        }
       }
       this.entries.delete(key);
       this.entries.set(key, { url, owner: ownerKey, photo, at });
@@ -3308,18 +3313,20 @@
       if (!threadId || !normalized) return "no-sender";
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return "ambiguous";
-      if (this.entries.has(key)) return "exact";
       const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-      return prefixed.length === 1 ? "full-name" : prefixed.length ? "ambiguous" : "miss";
+      if (prefixed.length > 1) return "ambiguous";
+      if (this.entries.has(key)) return "exact";
+      return prefixed.length === 1 ? "full-name" : "miss";
     }
     lookup(threadId, name) {
       const normalized = normalizeSenderName(name);
       if (!threadId || !normalized) return "";
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return "";
+      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
+      if (prefixed.length > 1) return "";
       const exact = this.entries.get(key);
       if (exact) return exact.url;
-      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
       return prefixed.length === 1 ? prefixed[0]?.[1].url ?? "" : "";
     }
     /**
@@ -3660,12 +3667,17 @@
     const HARVEST_SEL = '[role="main"], [role="complementary"]';
     const HARVEST_THROTTLE_MS = 5e3;
     let lastHarvestAt = 0;
+    let harvestedRoute = "";
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
       if (!openThread) return;
+      if (openThread !== harvestedRoute) {
+        harvestedRoute = openThread;
+        return;
+      }
       lastHarvestAt = now;
       for (const heading of document.querySelectorAll(
         '[role="main"] [role="article"] h3, [role="main"] [role="article"] h4'

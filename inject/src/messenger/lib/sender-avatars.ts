@@ -186,7 +186,15 @@ export class SenderAvatarStore {
       if (existing.photo !== photo && at - existing.at < COLLISION_WINDOW_MS) {
         return this.markAmbiguous(threadId, name);
       }
-      if (existing.url === url) return false;
+      if (existing.url === url) {
+        // Keep the sighting fresh so a namesake rendered minutes later still
+        // reads as a collision. Persist only when the stored time has aged
+        // past the window itself — re-seeing a face must not rewrite storage.
+        const stale = at - existing.at >= COLLISION_WINDOW_MS;
+        existing.at = at;
+        if (stale) this.persist();
+        return false;
+      }
     }
     // Re-insert so the most recently updated sender is the last one evicted.
     this.entries.delete(key);
@@ -208,9 +216,10 @@ export class SenderAvatarStore {
     if (!threadId || !normalized) return "no-sender";
     const key = entryKey(threadId, name);
     if (this.ambiguous.has(key)) return "ambiguous";
-    if (this.entries.has(key)) return "exact";
     const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-    return prefixed.length === 1 ? "full-name" : prefixed.length ? "ambiguous" : "miss";
+    if (prefixed.length > 1) return "ambiguous";
+    if (this.entries.has(key)) return "exact";
+    return prefixed.length === 1 ? "full-name" : "miss";
   }
 
   lookup(threadId: string, name: string): string {
@@ -218,9 +227,12 @@ export class SenderAvatarStore {
     if (!threadId || !normalized) return "";
     const key = entryKey(threadId, name);
     if (this.ambiguous.has(key)) return "";
+    // Full names sharing this short name settle it first: two of them mean the
+    // preview cannot say who wrote, even if one of them also cached the alias.
+    const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
+    if (prefixed.length > 1) return "";
     const exact = this.entries.get(key);
     if (exact) return exact.url;
-    const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
     return prefixed.length === 1 ? (prefixed[0]?.[1].url ?? "") : "";
   }
 
