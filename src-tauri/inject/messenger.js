@@ -212,6 +212,7 @@
   var REALTIME_SILENCE_MS = 9e4;
   var REALTIME_NEVER_CONNECTED_MS = 9e4;
   var REALTIME_CORROBORATION_MS = 3e4;
+  var REALTIME_UNOBSERVED_MS = 3e5;
   function looksLikeFacebookErrorPage(doc) {
     return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
   }
@@ -261,12 +262,27 @@
      * Messenger, not a fault.
      */
     needsRecovery(now = Date.now()) {
-      if (this.staleSources.size === 0) return false;
+      if (this.staleSources.size === 0) return this.unobserved(now);
       for (const [source, at] of this.lastHealthyAt) {
         if (this.staleSources.has(source)) continue;
         if (elapsed2(now, at) <= REALTIME_CORROBORATION_MS) return false;
       }
       return true;
+    }
+    /**
+     * A transport that was healthy but that no source has been able to confirm
+     * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
+     * so this still warrants recovery. A page that never connected at all is
+     * excluded — [[status]] already reports that as "never".
+     */
+    unobserved(now) {
+      if (!this.everHealthy) return false;
+      let lastConfirmedAt = null;
+      for (const at of this.lastHealthyAt.values()) {
+        if (lastConfirmedAt === null || at > lastConfirmedAt) lastConfirmedAt = at;
+      }
+      if (lastConfirmedAt === null) return false;
+      return elapsed2(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
     }
     // "pending" (fresh page, transport still unproven) deliberately differs from
     // "ok": the native side pauses its bad-transport timer on both, but only a
@@ -328,7 +344,9 @@
       if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
         return "recovering";
       }
-      return connecting.length ? "stale" : "starting";
+      if (connecting.length) return "stale";
+      this.recoveryStartedAt = null;
+      return "starting";
     }
   };
 
@@ -627,6 +645,9 @@
     };
     setInterval(() => {
       realtime.check();
+      if (realtimeRecovery.needsRecovery(Date.now())) {
+        schedule(realtimeRecoveryDelay(), "realtime", true);
+      }
       emitHeartbeat();
       const reason = watchdog.heartbeat(pageIsActive(), Date.now());
       if (reason) {

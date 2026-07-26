@@ -7,6 +7,7 @@ import {
   REALTIME_CORROBORATION_MS,
   REALTIME_NEVER_CONNECTED_MS,
   REALTIME_SILENCE_MS,
+  REALTIME_UNOBSERVED_MS,
   RealtimeHealthWatchdog,
   RealtimeRecoveryTracker,
 } from "./realtime-health";
@@ -98,6 +99,22 @@ describe("RealtimeHealthWatchdog", () => {
     expect(watchdog.health(100 + REALTIME_SILENCE_MS)).toBe("healthy");
   });
 
+  test("gives a socket created after the unobservable state a fresh grace period", () => {
+    const watchdog = new RealtimeHealthWatchdog<string>();
+    watchdog.created("first", 0);
+    watchdog.opened("first", 100);
+    watchdog.closed("first", 200);
+    // Settle into the no-socket state, closing out the recovery epoch.
+    expect(watchdog.health(200 + REALTIME_CONNECT_GRACE_MS)).toBe("starting");
+
+    // Messenger later falls back to a page-owned socket. It must get its own
+    // connection grace rather than be judged against the old socket's close.
+    const createdAt = 10 * REALTIME_CONNECT_GRACE_MS;
+    watchdog.created("replacement", createdAt);
+    expect(watchdog.health(createdAt + REALTIME_CONNECT_GRACE_MS - 1)).toBe("recovering");
+    expect(watchdog.health(createdAt + REALTIME_CONNECT_GRACE_MS)).toBe("stale");
+  });
+
   test("keeps the transport healthy while any open socket receives traffic", () => {
     const watchdog = new RealtimeHealthWatchdog<string>();
     watchdog.created("old", 0);
@@ -137,6 +154,39 @@ describe("realtime recovery signals", () => {
     tracker.withdraw("socket");
     expect(tracker.needsRecovery(0)).toBe(false);
     expect(tracker.status(REALTIME_NEVER_CONNECTED_MS)).toBe("never");
+  });
+
+  test("treats an unconfirmable transport as needing recovery, not as ok", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("socket", 0);
+    // The socket closes and is never replaced, and the worker bridge is
+    // unavailable, so no source reports anything either way.
+    tracker.withdraw("socket");
+
+    expect(tracker.needsRecovery(REALTIME_UNOBSERVED_MS - 1)).toBe(false);
+    expect(tracker.status(REALTIME_UNOBSERVED_MS - 1)).toBe("ok");
+    // Silence for this long is a fault of its own: leaving it "ok" disarmed
+    // both page-side and native recovery while the inbox sat frozen.
+    expect(tracker.needsRecovery(REALTIME_UNOBSERVED_MS)).toBe(true);
+    expect(tracker.status(REALTIME_UNOBSERVED_MS)).toBe("stale");
+  });
+
+  test("a live source keeps an unobserved sibling from forcing recovery", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("socket", 0);
+    tracker.withdraw("socket");
+    // The worker keeps answering its probe, so the transport is confirmed.
+    tracker.healthy("worker", REALTIME_UNOBSERVED_MS);
+
+    expect(tracker.needsRecovery(REALTIME_UNOBSERVED_MS)).toBe(false);
+    expect(tracker.status(REALTIME_UNOBSERVED_MS * 2 - 1)).toBe("ok");
+  });
+
+  test("a page that never connected is left to the never ladder", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+
+    expect(tracker.needsRecovery(REALTIME_UNOBSERVED_MS * 10)).toBe(false);
+    expect(tracker.status(REALTIME_UNOBSERVED_MS * 10)).toBe("never");
   });
 
   test("a withdrawn source vouches only as long as its last healthy report", () => {

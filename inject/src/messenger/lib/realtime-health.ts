@@ -8,6 +8,17 @@ export const REALTIME_NEVER_CONNECTED_MS = 90_000;
  * exploit.
  */
 export const REALTIME_CORROBORATION_MS = 30_000;
+/**
+ * How long a previously healthy transport may go with no source able to
+ * confirm it before that silence is treated as a fault in its own right.
+ *
+ * Reached when the worker bridge is unavailable *and* the page owns no socket:
+ * nobody reports stale, so without this the tracker would sit on its last
+ * "ok" forever and disarm both page-side and native recovery while the inbox
+ * quietly froze. Deliberately far longer than the recovery gap — this is the
+ * last resort for a case nothing else can see, not a routine trigger.
+ */
+export const REALTIME_UNOBSERVED_MS = 300_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
 export type RealtimeHealthSource = "socket" | "worker";
@@ -93,12 +104,28 @@ export class RealtimeRecoveryTracker {
    * Messenger, not a fault.
    */
   needsRecovery(now = Date.now()): boolean {
-    if (this.staleSources.size === 0) return false;
+    if (this.staleSources.size === 0) return this.unobserved(now);
     for (const [source, at] of this.lastHealthyAt) {
       if (this.staleSources.has(source)) continue;
       if (elapsed(now, at) <= REALTIME_CORROBORATION_MS) return false;
     }
     return true;
+  }
+
+  /**
+   * A transport that was healthy but that no source has been able to confirm
+   * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
+   * so this still warrants recovery. A page that never connected at all is
+   * excluded — [[status]] already reports that as "never".
+   */
+  private unobserved(now: number): boolean {
+    if (!this.everHealthy) return false;
+    let lastConfirmedAt: number | null = null;
+    for (const at of this.lastHealthyAt.values()) {
+      if (lastConfirmedAt === null || at > lastConfirmedAt) lastConfirmedAt = at;
+    }
+    if (lastConfirmedAt === null) return false;
+    return elapsed(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
   }
 
   // "pending" (fresh page, transport still unproven) deliberately differs from
@@ -192,6 +219,12 @@ export class RealtimeHealthWatchdog<T> {
     // drove a full page reload every recovery interval, forever, while
     // messages kept arriving over the worker. Report "starting" (unknown) and
     // let the worker probe speak for the transport instead.
-    return connecting.length ? "stale" : "starting";
+    if (connecting.length) return "stale";
+    // Entering the unobservable state closes out the recovery epoch. Left set,
+    // it would be held against a socket created much later — Messenger falling
+    // back from worker to page transport — so that replacement would be judged
+    // stale immediately instead of getting its documented connection grace.
+    this.recoveryStartedAt = null;
+    return "starting";
   }
 }

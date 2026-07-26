@@ -233,6 +233,12 @@ export function initAutoRefresh() {
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
     realtime.check();
+    // No source reports stale when none can observe the transport at all (the
+    // worker bridge is gone and the page socket was never replaced), so that
+    // state has to arm recovery here or nothing ever would.
+    if (realtimeRecovery.needsRecovery(Date.now())) {
+      schedule(realtimeRecoveryDelay(), "realtime", true);
+    }
     emitHeartbeat();
     const reason = watchdog.heartbeat(pageIsActive(), Date.now());
     if (reason) {
