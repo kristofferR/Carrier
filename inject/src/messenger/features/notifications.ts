@@ -398,18 +398,11 @@ export function initNotificationBridge() {
     const openThread = threadIdFromHref(location.pathname);
     if (!openThread) return;
     // Messenger routes before it re-renders, so for a moment after switching
-    // conversations the pane still shows the previous one's faces. Never
-    // attribute a pass to a route this scan is the first to see: the render
-    // that follows schedules the next pass, and that one describes the
-    // destination.
-    // Messenger routes before it re-renders, so for a moment after switching
     // conversations the pane still shows the previous one's faces. Wait for the
-    // pane to name the destination rather than for a timeout to expire; the
-    // render that changed the route was already coalesced into this pass, so
-    // nothing else would schedule the one that reads it.
-    // Without a title the pane can be checked against there is no evidence
-    // the render has caught up, and a repeated route is not evidence either:
-    // wait rather than file the previous conversation's faces here.
+    // pane to name the destination itself: a timeout only guesses, and a route
+    // this scan has seen before proves nothing about what is rendered under it.
+    // The render that changed the route was already coalesced into this pass,
+    // so the retry below is what reads the destination.
     const shown = paneShowsThread(
       rowTitles.get(openThread) || "",
       openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",

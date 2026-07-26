@@ -2316,13 +2316,12 @@
       // title, and how exactly: the harvest needs one it can trust as the
       // header rather than any label that happens to contain the name.
       function paneIdentity() {
+        var routed = /\/t\/(\d+)/.exec(location.pathname);
+        var routedId = routed ? routed[1] : "";
+        if (!routedId) return { routedRow: false, matches: [] };
         var row = null;
         document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (candidate) {
-          if (!row && threadIdOf(candidate) === threadIdOf({ getAttribute: function () {
-            return location.pathname;
-          } })) {
-            row = candidate;
-          }
+          if (!row && threadIdOf(candidate) === routedId) row = candidate;
         });
         if (!row) return { routedRow: false, matches: [] };
         var leaves = conversationRowLeaves(row.closest('[role="row"]') || row);
