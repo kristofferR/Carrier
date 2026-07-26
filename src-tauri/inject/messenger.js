@@ -651,7 +651,7 @@
     };
     setInterval(() => {
       realtime.check();
-      if (realtimeRecovery.needsRecovery(Date.now()) && !(pending && pendingReason === "realtime")) {
+      if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
         schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
       }
       emitHeartbeat();

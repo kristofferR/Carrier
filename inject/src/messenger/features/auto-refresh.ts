@@ -242,9 +242,16 @@ export function initAutoRefresh() {
     // state has to arm recovery here or nothing ever would. Give the probe
     // realtime.check() just started room to answer — a view resuming from
     // suspension looks unobserved synchronously while its worker heartbeat is
-    // still in flight. Re-arming every tick would also keep pushing the
-    // deadline out of reach, so only arm when nothing is pending.
-    if (realtimeRecovery.needsRecovery(Date.now()) && !(pending && pendingReason === "realtime")) {
+    // still in flight.
+    //
+    // Yield to any pending reload rather than replacing it. Re-arming each
+    // tick would keep pushing this deadline out of reach, and overwriting a
+    // lifecycle, online, or notification reload would be worse still: a
+    // worker probe that then succeeds clears the realtime request, and the
+    // catch-up reload it displaced would never run. Whatever is already
+    // pending reboots the page anyway, and a document that is still
+    // unobservable afterwards re-arms this on its own.
+    if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
       schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
     }
     emitHeartbeat();
