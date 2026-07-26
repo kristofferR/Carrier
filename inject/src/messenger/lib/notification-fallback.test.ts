@@ -8,7 +8,7 @@ import {
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
   PageNotificationReceiptStore,
-  READ_TRANSITION_CONFIRM_MS,
+  READ_DROP_CONFIRM_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
@@ -193,11 +193,56 @@ describe("NotifiedSignatureStore", () => {
     store.observeRead(new Set(), ["1"], 1_000);
     store.observeRead(new Set(), ["1"], 1_000 + STABLE_READ_MS - 1);
     store.observeRead(new Set(["1"]), ["1"], 1_000 + STABLE_READ_MS);
-    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS);
-    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS + READ_TRANSITION_CONFIRM_MS - 1);
+    const base = 2_000 + STABLE_READ_MS;
+    store.observeRead(new Set(), ["1"], base);
+    store.observeRead(new Set(), ["1"], base + READ_DROP_CONFIRM_MS - 1);
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
-    store.observeRead(new Set(), ["1"], 2_000 + STABLE_READ_MS + READ_TRANSITION_CONFIRM_MS);
+    store.observeRead(new Set(), ["1"], base + READ_DROP_CONFIRM_MS);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
+  test("a brief read flap does not forget a delivered notification", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    const store = new NotifiedSignatureStore(storage);
+    // The document establishes the row's unread styling, which used to lower
+    // the confirmation bound to a single second.
+    store.observeRead(new Set(["1"]), ["1"], 0);
+    // A re-render then renders the same still-unread row without its unread
+    // styling for a couple of seconds. This is the duplicate-banner bug: the
+    // delivered fingerprint must survive it.
+    for (let scan = 1; scan <= 20; scan++) {
+      store.observeRead(new Set(), ["1"], scan * 100);
+    }
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("requires several observations, not just elapsed time, to forget a row", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    const store = new NotifiedSignatureStore(storage);
+    store.observeRead(new Set(["1"]), ["1"], 0);
+    // A hidden window polls once a minute: two lone scans span the interval
+    // without proving the row stayed read in between.
+    store.observeRead(new Set(), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 1_000 + READ_DROP_CONFIRM_MS * 10);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
+    store.observeRead(new Set(), ["1"], 1_000 + READ_DROP_CONFIRM_MS * 20);
+    expect(store.alreadyNotified("1", "aaaa")).toBe(false);
+  });
+
+  test("a half-hydrated list is no evidence that a row was read", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
+    const store = new NotifiedSignatureStore(storage);
+    store.observeRead(new Set(["1"]), ["1"], 0);
+    // Rows whose text has hydrated ahead of their unread styling look read for
+    // as long as the list keeps rendering. That must never count.
+    for (let scan = 1; scan <= 50; scan++) {
+      store.observeRead(new Set(), ["1"], scan * READ_DROP_CONFIRM_MS, false);
+    }
+    expect(store.alreadyNotified("1", "aaaa")).toBe(true);
   });
 
   test("a missing row resets pending read confirmation", () => {
@@ -225,15 +270,15 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
   });
 
-  test("a confirmed unread-to-read transition uses the short guard", () => {
+  test("a confirmed unread-to-read transition uses the shorter guard", () => {
     const storage = memoryStorage();
     new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
     const store = new NotifiedSignatureStore(storage);
     store.observeRead(new Set(["1"]), ["1"], 1_000);
     store.observeRead(new Set(), ["1"], 2_000);
-    store.observeRead(new Set(), ["1"], 2_000 + READ_TRANSITION_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
-    store.observeRead(new Set(), ["1"], 2_000 + READ_TRANSITION_CONFIRM_MS);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
   });
 

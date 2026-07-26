@@ -1,6 +1,13 @@
 export const REALTIME_CONNECT_GRACE_MS = 15_000;
 export const REALTIME_SILENCE_MS = 90_000;
 export const REALTIME_NEVER_CONNECTED_MS = 90_000;
+/**
+ * How recently another source must have reported healthy for it to vouch for
+ * a source that reports stale. Comfortably longer than the five-second health
+ * tick, so an in-flight worker probe never leaves a gap a stale socket could
+ * exploit.
+ */
+export const REALTIME_CORROBORATION_MS = 30_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
 export type RealtimeHealthSource = "socket" | "worker";
@@ -53,12 +60,14 @@ export class ConsecutiveFailureThreshold {
 
 export class RealtimeRecoveryTracker {
   private readonly staleSources = new Set<RealtimeHealthSource>();
+  private readonly lastHealthyAt = new Map<RealtimeHealthSource, number>();
   private everHealthy = false;
 
   constructor(private readonly startedAt: number) {}
 
-  healthy(source: RealtimeHealthSource): void {
+  healthy(source: RealtimeHealthSource, at = Date.now()): void {
     this.everHealthy = true;
+    this.lastHealthyAt.set(source, at);
     this.staleSources.delete(source);
   }
 
@@ -66,15 +75,37 @@ export class RealtimeRecoveryTracker {
     this.staleSources.add(source);
   }
 
-  needsRecovery(): boolean {
-    return this.staleSources.size > 0;
+  /**
+   * Withdraw a source's verdict without claiming health — it can no longer
+   * observe the transport at all (e.g. the page owns no realtime socket). An
+   * unobservable source must not keep asserting the staleness it reported
+   * while it could still see something.
+   */
+  withdraw(source: RealtimeHealthSource): void {
+    this.staleSources.delete(source);
+  }
+
+  /**
+   * Recovery is only warranted when no source can still vouch for the
+   * transport. A recently healthy source proves messages are flowing, so a
+   * different source's staleness must not force a reload on its own — a dead
+   * page socket alongside a responsive worker is the normal shape of current
+   * Messenger, not a fault.
+   */
+  needsRecovery(now = Date.now()): boolean {
+    if (this.staleSources.size === 0) return false;
+    for (const [source, at] of this.lastHealthyAt) {
+      if (this.staleSources.has(source)) continue;
+      if (elapsed(now, at) <= REALTIME_CORROBORATION_MS) return false;
+    }
+    return true;
   }
 
   // "pending" (fresh page, transport still unproven) deliberately differs from
   // "ok": the native side pauses its bad-transport timer on both, but only a
   // proven-healthy "ok" resets its escalation counters.
   status(now: number): RealtimeStatus {
-    if (this.staleSources.size > 0) return "stale";
+    if (this.needsRecovery(now)) return "stale";
     if (this.everHealthy) return "ok";
     return elapsed(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
   }
@@ -154,6 +185,13 @@ export class RealtimeHealthWatchdog<T> {
       return "recovering";
     }
 
-    return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
+    // A socket still trying to connect past the grace period is a genuine
+    // failure. Owning no socket at all is not: current Messenger runs sync in
+    // a worker and simply stops replacing the page-owned socket, which this
+    // used to report as permanently stale — an unrecoverable verdict that
+    // drove a full page reload every recovery interval, forever, while
+    // messages kept arriving over the worker. Report "starting" (unknown) and
+    // let the worker probe speak for the transport instead.
+    return connecting.length ? "stale" : "starting";
   }
 }

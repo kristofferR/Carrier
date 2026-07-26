@@ -144,6 +144,13 @@ export function initAutoRefresh() {
       timer = setTimeout(maybeReload, 8000);
       return;
     }
+    // The recovery gap is long enough for the transport to prove itself in the
+    // meantime. Re-check at the moment of truth so a page that has gone quiet
+    // for a reason that resolved itself is never reloaded out from under you.
+    if (pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+      clearPending();
+      return;
+    }
     if (pendingReason !== "background") {
       diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
     }
@@ -173,16 +180,26 @@ export function initAutoRefresh() {
       return 1000;
     }
   };
+  const clearRealtimeRecoveryIfSettled = () => {
+    if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+      clearPending();
+    }
+  };
   const realtime = monitorRealtimeHealth({
     onHealthy: (source) => {
-      realtimeRecovery.healthy(source);
-      if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
-        clearPending();
-      }
+      realtimeRecovery.healthy(source, Date.now());
+      clearRealtimeRecoveryIfSettled();
     },
     onStale: (source) => {
       realtimeRecovery.stale(source);
+      // Another source vouching for the transport means messages are still
+      // flowing; reloading the page would churn it for nothing.
+      if (!realtimeRecovery.needsRecovery(Date.now())) return;
       schedule(realtimeRecoveryDelay(), "realtime", true);
+    },
+    onUnknown: (source) => {
+      realtimeRecovery.withdraw(source);
+      clearRealtimeRecoveryIfSettled();
     },
   });
 
