@@ -5,7 +5,11 @@
 
 import { diag, invoke } from "../bridge";
 import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
-import { looksLikeFacebookErrorPage, RealtimeRecoveryTracker } from "../lib/realtime-health";
+import {
+  looksLikeFacebookErrorPage,
+  REALTIME_UNOBSERVED_SETTLE_MS,
+  RealtimeRecoveryTracker,
+} from "../lib/realtime-health";
 import { isMessengerContentPath } from "../lib/threads";
 import { monitorRealtimeHealth } from "./realtime-health";
 
@@ -144,6 +148,13 @@ export function initAutoRefresh() {
       timer = setTimeout(maybeReload, 8000);
       return;
     }
+    // The recovery gap is long enough for the transport to prove itself in the
+    // meantime. Re-check at the moment of truth so a page that has gone quiet
+    // for a reason that resolved itself is never reloaded out from under you.
+    if (pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+      clearPending();
+      return;
+    }
     if (pendingReason !== "background") {
       diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
     }
@@ -173,16 +184,26 @@ export function initAutoRefresh() {
       return 1000;
     }
   };
+  const clearRealtimeRecoveryIfSettled = () => {
+    if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+      clearPending();
+    }
+  };
   const realtime = monitorRealtimeHealth({
     onHealthy: (source) => {
-      realtimeRecovery.healthy(source);
-      if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
-        clearPending();
-      }
+      realtimeRecovery.healthy(source, Date.now());
+      clearRealtimeRecoveryIfSettled();
     },
     onStale: (source) => {
       realtimeRecovery.stale(source);
+      // Another source vouching for the transport means messages are still
+      // flowing; reloading the page would churn it for nothing.
+      if (!realtimeRecovery.needsRecovery(Date.now())) return;
       schedule(realtimeRecoveryDelay(), "realtime", true);
+    },
+    onUnknown: (source) => {
+      realtimeRecovery.withdraw(source);
+      clearRealtimeRecoveryIfSettled();
     },
   });
 
@@ -216,6 +237,23 @@ export function initAutoRefresh() {
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
     realtime.check();
+    // No source reports stale when none can observe the transport at all (the
+    // worker bridge is gone and the page socket was never replaced), so that
+    // state has to arm recovery here or nothing ever would. Give the probe
+    // realtime.check() just started room to answer — a view resuming from
+    // suspension looks unobserved synchronously while its worker heartbeat is
+    // still in flight.
+    //
+    // Yield to any pending reload rather than replacing it. Re-arming each
+    // tick would keep pushing this deadline out of reach, and overwriting a
+    // lifecycle, online, or notification reload would be worse still: a
+    // worker probe that then succeeds clears the realtime request, and the
+    // catch-up reload it displaced would never run. Whatever is already
+    // pending reboots the page anyway, and a document that is still
+    // unobservable afterwards re-arms this on its own.
+    if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
+      schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
+    }
     emitHeartbeat();
     const reason = watchdog.heartbeat(pageIsActive(), Date.now());
     if (reason) {

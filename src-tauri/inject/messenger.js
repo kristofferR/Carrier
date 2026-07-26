@@ -211,6 +211,9 @@
   var REALTIME_CONNECT_GRACE_MS = 15e3;
   var REALTIME_SILENCE_MS = 9e4;
   var REALTIME_NEVER_CONNECTED_MS = 9e4;
+  var REALTIME_CORROBORATION_MS = 3e4;
+  var REALTIME_UNOBSERVED_MS = 6e4;
+  var REALTIME_UNOBSERVED_SETTLE_MS = 15e3;
   function looksLikeFacebookErrorPage(doc) {
     return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
   }
@@ -232,23 +235,66 @@
     constructor(startedAt) {
       __publicField(this, "startedAt", startedAt);
       __publicField(this, "staleSources", /* @__PURE__ */ new Set());
+      __publicField(this, "lastHealthyAt", /* @__PURE__ */ new Map());
       __publicField(this, "everHealthy", false);
     }
-    healthy(source) {
+    healthy(source, at = Date.now()) {
       this.everHealthy = true;
+      this.lastHealthyAt.set(source, at);
       this.staleSources.delete(source);
     }
     stale(source) {
       this.staleSources.add(source);
     }
-    needsRecovery() {
-      return this.staleSources.size > 0;
+    /**
+     * Withdraw a source's verdict without claiming health — it can no longer
+     * observe the transport at all (e.g. the page owns no realtime socket). An
+     * unobservable source must not keep asserting the staleness it reported
+     * while it could still see something.
+     */
+    withdraw(source) {
+      this.staleSources.delete(source);
+    }
+    /**
+     * Recovery is only warranted when no source can still vouch for the
+     * transport. A recently healthy source proves messages are flowing, so a
+     * different source's staleness must not force a reload on its own — a dead
+     * page socket alongside a responsive worker is the normal shape of current
+     * Messenger, not a fault.
+     */
+    needsRecovery(now = Date.now()) {
+      for (const [source, at] of this.lastHealthyAt) {
+        if (at > now) this.lastHealthyAt.set(source, now);
+      }
+      if (this.staleSources.size === 0) return this.unobserved(now);
+      for (const [source, at] of this.lastHealthyAt) {
+        if (this.staleSources.has(source)) continue;
+        if (elapsed2(now, at) <= REALTIME_CORROBORATION_MS) return false;
+      }
+      return true;
+    }
+    /**
+     * A transport that was healthy but that no source has been able to confirm
+     * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
+     * so this still warrants recovery. A page that never connected at all is
+     * excluded — [[status]] already reports that as "never".
+     *
+     * Callers must rebase future-dated reports first (see [[needsRecovery]]).
+     */
+    unobserved(now) {
+      if (!this.everHealthy) return false;
+      let lastConfirmedAt = null;
+      for (const at of this.lastHealthyAt.values()) {
+        if (lastConfirmedAt === null || at > lastConfirmedAt) lastConfirmedAt = at;
+      }
+      if (lastConfirmedAt === null) return false;
+      return elapsed2(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
     }
     // "pending" (fresh page, transport still unproven) deliberately differs from
     // "ok": the native side pauses its bad-transport timer on both, but only a
     // proven-healthy "ok" resets its escalation counters.
     status(now) {
-      if (this.staleSources.size > 0) return "stale";
+      if (this.needsRecovery(now)) return "stale";
       if (this.everHealthy) return "ok";
       return elapsed2(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
     }
@@ -304,7 +350,9 @@
       if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
         return "recovering";
       }
-      return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
+      if (connecting.length) return "stale";
+      this.recoveryStartedAt = null;
+      return "starting";
     }
   };
 
@@ -342,7 +390,8 @@
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
       if (health === "healthy") callbacks.onHealthy("socket");
-      if (health === "stale") callbacks.onStale("socket");
+      else if (health === "stale") callbacks.onStale("socket");
+      else if (health === "starting") callbacks.onUnknown("socket");
       return health;
     };
     const checkWorker = () => {
@@ -529,6 +578,10 @@
         timer = setTimeout(maybeReload, 8e3);
         return;
       }
+      if (pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+        clearPending();
+        return;
+      }
       if (pendingReason !== "background") {
         diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
       }
@@ -559,16 +612,24 @@
         return 1e3;
       }
     };
+    const clearRealtimeRecoveryIfSettled = () => {
+      if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
+        clearPending();
+      }
+    };
     const realtime = monitorRealtimeHealth({
       onHealthy: (source) => {
-        realtimeRecovery.healthy(source);
-        if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery()) {
-          clearPending();
-        }
+        realtimeRecovery.healthy(source, Date.now());
+        clearRealtimeRecoveryIfSettled();
       },
       onStale: (source) => {
         realtimeRecovery.stale(source);
+        if (!realtimeRecovery.needsRecovery(Date.now())) return;
         schedule(realtimeRecoveryDelay(), "realtime", true);
+      },
+      onUnknown: (source) => {
+        realtimeRecovery.withdraw(source);
+        clearRealtimeRecoveryIfSettled();
       }
     });
     const noteLifecycle = () => {
@@ -590,6 +651,9 @@
     };
     setInterval(() => {
       realtime.check();
+      if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
+        schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
+      }
       emitHeartbeat();
       const reason = watchdog.heartbeat(pageIsActive(), Date.now());
       if (reason) {
@@ -2580,13 +2644,18 @@
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
   var READ_TRANSITION_CONFIRM_MS = 1e3;
+  var READ_DROP_CONFIRM_MS = 2e4;
+  var READ_DROP_MIN_OBSERVATIONS = 3;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
-      /** In-memory only: when each continuously observed read state began. */
-      __publicField(this, "readSince", /* @__PURE__ */ new Map());
+      /**
+       * In-memory only: when each continuously observed read state began, and how
+       * many consecutive scans have seen it.
+       */
+      __publicField(this, "readStreaks", /* @__PURE__ */ new Map());
       /** Entries whose unread state has been established in this document. */
       __publicField(this, "observedUnread", /* @__PURE__ */ new Set());
       try {
@@ -2666,7 +2735,7 @@
       return "migrated";
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
-      this.readSince.delete(conversationKey);
+      this.readStreaks.delete(conversationKey);
       const current = this.entries.get(conversationKey);
       if (current?.fingerprint === fingerprint && !current.legacy) {
         if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
@@ -2680,7 +2749,7 @@
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);
-        this.readSince.delete(oldest);
+        this.readStreaks.delete(oldest);
         this.observedUnread.delete(oldest);
       }
       this.persist();
@@ -2690,33 +2759,43 @@
      * user has read them, so an identical future preview must notify again.
      * Persisted entries must remain continuously observed read for
      * [[STABLE_READ_MS]] until this document has first established their unread
-     * state. After that, [[READ_TRANSITION_CONFIRM_MS]] is enough to confirm a
-     * real unread-to-read transition. An unread or missing observation resets
-     * the timer so virtualized rows cannot accumulate read time off-screen.
+     * state. After that, [[READ_DROP_CONFIRM_MS]] and
+     * [[READ_DROP_MIN_OBSERVATIONS]] together confirm a real unread-to-read
+     * transition. An unread or missing observation resets the streak so
+     * virtualized rows cannot accumulate read time off-screen.
+     *
+     * `listHydrated` — every rendered row currently carries preview text. A
+     * partially hydrated list is precisely when a still-unread row renders its
+     * text before its unread styling, so such a scan is treated as no evidence
+     * either way: it neither advances nor is allowed to satisfy a streak.
      */
-    observeRead(unreadKeys, observedKeys, observedAt = Date.now()) {
+    observeRead(unreadKeys, observedKeys, observedAt = Date.now(), listHydrated = true) {
       let dropped = false;
       const observed = new Set(observedKeys);
-      for (const key of this.readSince.keys()) {
-        if (!observed.has(key)) this.readSince.delete(key);
+      for (const key of this.readStreaks.keys()) {
+        if (!observed.has(key)) this.readStreaks.delete(key);
       }
       for (const key of observed) {
+        if (!listHydrated) {
+          this.readStreaks.delete(key);
+          continue;
+        }
         if (unreadKeys.has(key)) {
-          this.readSince.delete(key);
+          this.readStreaks.delete(key);
           if (this.entries.has(key)) this.observedUnread.add(key);
           continue;
         }
         if (!this.entries.has(key)) continue;
-        const since = this.readSince.get(key);
-        if (since === void 0 || observedAt < since) {
-          this.readSince.set(key, observedAt);
+        const streak = this.readStreaks.get(key);
+        if (streak === void 0 || observedAt < streak.since) {
+          this.readStreaks.set(key, { since: observedAt, observations: 1 });
           continue;
         }
-        const confirmAfter = this.observedUnread.has(key) ? READ_TRANSITION_CONFIRM_MS : STABLE_READ_MS;
-        if (observedAt - since < confirmAfter) {
-          continue;
-        }
-        this.readSince.delete(key);
+        streak.observations += 1;
+        const confirmAfter = this.observedUnread.has(key) ? READ_DROP_CONFIRM_MS : STABLE_READ_MS;
+        if (observedAt - streak.since < confirmAfter) continue;
+        if (streak.observations < READ_DROP_MIN_OBSERVATIONS) continue;
+        this.readStreaks.delete(key);
         this.observedUnread.delete(key);
         this.entries.delete(key);
         dropped = true;
@@ -3458,10 +3537,12 @@
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
         const detectedAt = Date.now();
+        const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
           observed.map(({ key }) => key),
-          detectedAt
+          detectedAt,
+          listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
         const changed = new Set(
@@ -3500,7 +3581,7 @@
           // A fully hydrated list with no unread rows corroborates a zero
           // title: it is the inbox's real state, not a still-unstamped title,
           // so a first arrival inside the settle window can still report.
-          observed.length > 0 && conversations.length === 0 && observed.every(({ body }) => body.length > 0),
+          listHydrated && !observed.some(({ unread }) => unread),
           readObservedKeys
         )) {
           changed.add(key);

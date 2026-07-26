@@ -464,6 +464,11 @@ export function initNotificationBridge() {
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
       const detectedAt = Date.now();
+      // Every rendered row carries preview text, so unread styling has had its
+      // chance to apply. Both the read-state bookkeeping and the zero-unread
+      // corroboration below rely on this to tell a settled list apart from one
+      // that is still hydrating.
+      const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
       // "Read" means the row is no longer unread — not merely filtered from
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
@@ -471,6 +476,7 @@ export function initNotificationBridge() {
         new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
         observed.map(({ key }) => key),
         detectedAt,
+        listHydrated,
       );
       // Only hydrated rows feed the signature tracker — in both directions.
       // Priming an unhydrated row with its title would report a "change" the
@@ -515,9 +521,7 @@ export function initNotificationBridge() {
         // A fully hydrated list with no unread rows corroborates a zero
         // title: it is the inbox's real state, not a still-unstamped title,
         // so a first arrival inside the settle window can still report.
-        observed.length > 0 &&
-          conversations.length === 0 &&
-          observed.every(({ body }) => body.length > 0),
+        listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
       )) {
         changed.add(key);

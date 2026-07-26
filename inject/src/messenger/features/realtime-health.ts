@@ -9,6 +9,8 @@ import {
 type RealtimeHealthCallbacks = {
   onHealthy: (source: RealtimeHealthSource) => void;
   onStale: (source: RealtimeHealthSource) => void;
+  /** The source can no longer observe the transport either way. */
+  onUnknown: (source: RealtimeHealthSource) => void;
 };
 
 export type RealtimeHealthMonitor = {
@@ -51,7 +53,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const checkSockets = () => {
     const health = watchdog.health(Date.now());
     if (health === "healthy") callbacks.onHealthy("socket");
-    if (health === "stale") callbacks.onStale("socket");
+    else if (health === "stale") callbacks.onStale("socket");
+    // "starting" here means the page owns no realtime socket to judge — which
+    // is Messenger's steady state once sync moves into its worker. Withdraw
+    // any earlier verdict instead of leaving a stale one latched forever.
+    else if (health === "starting") callbacks.onUnknown("socket");
     return health;
   };
   const checkWorker = () => {

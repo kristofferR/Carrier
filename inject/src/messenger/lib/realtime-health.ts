@@ -1,6 +1,38 @@
 export const REALTIME_CONNECT_GRACE_MS = 15_000;
 export const REALTIME_SILENCE_MS = 90_000;
 export const REALTIME_NEVER_CONNECTED_MS = 90_000;
+/**
+ * How recently another source must have reported healthy for it to vouch for
+ * a source that reports stale. Comfortably longer than the five-second health
+ * tick, so an in-flight worker probe never leaves a gap a stale socket could
+ * exploit.
+ */
+export const REALTIME_CORROBORATION_MS = 30_000;
+/**
+ * How long a previously healthy transport may go with no source able to
+ * confirm it before that silence is treated as a fault in its own right.
+ *
+ * Reached when the worker bridge is unavailable *and* the page owns no socket:
+ * nobody reports stale, so without this the tracker would sit on its last
+ * "ok" forever and disarm both page-side and native recovery while the inbox
+ * quietly froze.
+ *
+ * Tuned for fast recovery. Note the trade: a source that can still see the
+ * transport refreshes this every heartbeat, so a healthy worker keeps it from
+ * ever tripping — but if nothing can observe the transport at all, reloads
+ * settle into a cadence of roughly this interval (floored by the recovery gap
+ * in realtimeRecoveryDelay). Raise it if that churn is ever worse than the
+ * staleness it is trying to clear.
+ */
+export const REALTIME_UNOBSERVED_MS = 60_000;
+/**
+ * Minimum delay before an unobserved-transport reload. A view resuming from
+ * suspension trips the unobserved check synchronously, while the worker probe
+ * that would clear it is asynchronous and allowed to take its full timeout —
+ * so recovery has to wait out that probe or it would reload a page whose
+ * transport was about to report healthy.
+ */
+export const REALTIME_UNOBSERVED_SETTLE_MS = 15_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
 export type RealtimeHealthSource = "socket" | "worker";
@@ -53,12 +85,14 @@ export class ConsecutiveFailureThreshold {
 
 export class RealtimeRecoveryTracker {
   private readonly staleSources = new Set<RealtimeHealthSource>();
+  private readonly lastHealthyAt = new Map<RealtimeHealthSource, number>();
   private everHealthy = false;
 
   constructor(private readonly startedAt: number) {}
 
-  healthy(source: RealtimeHealthSource): void {
+  healthy(source: RealtimeHealthSource, at = Date.now()): void {
     this.everHealthy = true;
+    this.lastHealthyAt.set(source, at);
     this.staleSources.delete(source);
   }
 
@@ -66,15 +100,62 @@ export class RealtimeRecoveryTracker {
     this.staleSources.add(source);
   }
 
-  needsRecovery(): boolean {
-    return this.staleSources.size > 0;
+  /**
+   * Withdraw a source's verdict without claiming health — it can no longer
+   * observe the transport at all (e.g. the page owns no realtime socket). An
+   * unobservable source must not keep asserting the staleness it reported
+   * while it could still see something.
+   */
+  withdraw(source: RealtimeHealthSource): void {
+    this.staleSources.delete(source);
+  }
+
+  /**
+   * Recovery is only warranted when no source can still vouch for the
+   * transport. A recently healthy source proves messages are flowing, so a
+   * different source's staleness must not force a reload on its own — a dead
+   * page socket alongside a responsive worker is the normal shape of current
+   * Messenger, not a fault.
+   */
+  needsRecovery(now = Date.now()): boolean {
+    // A backwards wall-clock adjustment would otherwise leave reports dated in
+    // the future: elapsed() clamps those to zero, so they would vouch for a
+    // stale source forever and the unobserved window could not elapse until
+    // real time caught up. Rebase them and restart from now.
+    for (const [source, at] of this.lastHealthyAt) {
+      if (at > now) this.lastHealthyAt.set(source, now);
+    }
+    if (this.staleSources.size === 0) return this.unobserved(now);
+    for (const [source, at] of this.lastHealthyAt) {
+      if (this.staleSources.has(source)) continue;
+      if (elapsed(now, at) <= REALTIME_CORROBORATION_MS) return false;
+    }
+    return true;
+  }
+
+  /**
+   * A transport that was healthy but that no source has been able to confirm
+   * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
+   * so this still warrants recovery. A page that never connected at all is
+   * excluded — [[status]] already reports that as "never".
+   *
+   * Callers must rebase future-dated reports first (see [[needsRecovery]]).
+   */
+  private unobserved(now: number): boolean {
+    if (!this.everHealthy) return false;
+    let lastConfirmedAt: number | null = null;
+    for (const at of this.lastHealthyAt.values()) {
+      if (lastConfirmedAt === null || at > lastConfirmedAt) lastConfirmedAt = at;
+    }
+    if (lastConfirmedAt === null) return false;
+    return elapsed(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
   }
 
   // "pending" (fresh page, transport still unproven) deliberately differs from
   // "ok": the native side pauses its bad-transport timer on both, but only a
   // proven-healthy "ok" resets its escalation counters.
   status(now: number): RealtimeStatus {
-    if (this.staleSources.size > 0) return "stale";
+    if (this.needsRecovery(now)) return "stale";
     if (this.everHealthy) return "ok";
     return elapsed(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
   }
@@ -154,6 +235,19 @@ export class RealtimeHealthWatchdog<T> {
       return "recovering";
     }
 
-    return connecting.length || this.recoveryStartedAt !== null ? "stale" : "starting";
+    // A socket still trying to connect past the grace period is a genuine
+    // failure. Owning no socket at all is not: current Messenger runs sync in
+    // a worker and simply stops replacing the page-owned socket, which this
+    // used to report as permanently stale — an unrecoverable verdict that
+    // drove a full page reload every recovery interval, forever, while
+    // messages kept arriving over the worker. Report "starting" (unknown) and
+    // let the worker probe speak for the transport instead.
+    if (connecting.length) return "stale";
+    // Entering the unobservable state closes out the recovery epoch. Left set,
+    // it would be held against a socket created much later — Messenger falling
+    // back from worker to page transport — so that replacement would be judged
+    // stale immediately instead of getting its documented connection grace.
+    this.recoveryStartedAt = null;
+    return "starting";
   }
 }
