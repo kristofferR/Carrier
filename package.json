@@ -10,8 +10,8 @@
     "tauri": "tauri",
     "icon": "tauri icon",
     "build:inject": "bun inject/build.ts",
-    "lint": "biome check .",
-    "format": "biome check --write .",
+    "lint": "biome check inject",
+    "format": "biome check --write inject",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "check": "bun run lint && bun run typecheck && bun test && bun run build:inject"
   },

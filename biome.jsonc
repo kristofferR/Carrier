@@ -3,9 +3,12 @@
   // Scoped to the typed inject sources; the generated bundles in
   // src-tauri/inject/ and the dev-only mcp-bridge.js are not linted.
   "files": {
-    // The explicit inject scope already excludes project-local worktrees. A
-    // `.worktrees` path exclusion would also exclude this config when it is
-    // run from inside one of those worktrees.
+    // A `.worktrees` path exclusion would also exclude this config when it is
+    // run from inside one of those worktrees, so the scripts pass `inject`
+    // explicitly instead: Biome discovers nested configurations by walking the
+    // path it is given, and a project-local worktree checks out this very file,
+    // which it then rejects as a second root configuration. Narrowing the
+    // argument keeps that walk inside the only tree we lint.
     "includes": ["inject/**"]
   },
   "formatter": {
