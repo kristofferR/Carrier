@@ -19,6 +19,14 @@ export const REALTIME_CORROBORATION_MS = 30_000;
  * last resort for a case nothing else can see, not a routine trigger.
  */
 export const REALTIME_UNOBSERVED_MS = 300_000;
+/**
+ * Minimum delay before an unobserved-transport reload. A view resuming from
+ * suspension trips the unobserved check synchronously, while the worker probe
+ * that would clear it is asynchronous and allowed to take its full timeout —
+ * so recovery has to wait out that probe or it would reload a page whose
+ * transport was about to report healthy.
+ */
+export const REALTIME_UNOBSERVED_SETTLE_MS = 15_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
 export type RealtimeHealthSource = "socket" | "worker";
@@ -104,6 +112,13 @@ export class RealtimeRecoveryTracker {
    * Messenger, not a fault.
    */
   needsRecovery(now = Date.now()): boolean {
+    // A backwards wall-clock adjustment would otherwise leave reports dated in
+    // the future: elapsed() clamps those to zero, so they would vouch for a
+    // stale source forever and the unobserved window could not elapse until
+    // real time caught up. Rebase them and restart from now.
+    for (const [source, at] of this.lastHealthyAt) {
+      if (at > now) this.lastHealthyAt.set(source, now);
+    }
     if (this.staleSources.size === 0) return this.unobserved(now);
     for (const [source, at] of this.lastHealthyAt) {
       if (this.staleSources.has(source)) continue;
@@ -117,6 +132,8 @@ export class RealtimeRecoveryTracker {
    * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
    * so this still warrants recovery. A page that never connected at all is
    * excluded — [[status]] already reports that as "never".
+   *
+   * Callers must rebase future-dated reports first (see [[needsRecovery]]).
    */
   private unobserved(now: number): boolean {
     if (!this.everHealthy) return false;

@@ -213,6 +213,7 @@
   var REALTIME_NEVER_CONNECTED_MS = 9e4;
   var REALTIME_CORROBORATION_MS = 3e4;
   var REALTIME_UNOBSERVED_MS = 3e5;
+  var REALTIME_UNOBSERVED_SETTLE_MS = 15e3;
   function looksLikeFacebookErrorPage(doc) {
     return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
   }
@@ -262,6 +263,9 @@
      * Messenger, not a fault.
      */
     needsRecovery(now = Date.now()) {
+      for (const [source, at] of this.lastHealthyAt) {
+        if (at > now) this.lastHealthyAt.set(source, now);
+      }
       if (this.staleSources.size === 0) return this.unobserved(now);
       for (const [source, at] of this.lastHealthyAt) {
         if (this.staleSources.has(source)) continue;
@@ -274,6 +278,8 @@
      * for [[REALTIME_UNOBSERVED_MS]]. Not knowing is not the same as being fine,
      * so this still warrants recovery. A page that never connected at all is
      * excluded — [[status]] already reports that as "never".
+     *
+     * Callers must rebase future-dated reports first (see [[needsRecovery]]).
      */
     unobserved(now) {
       if (!this.everHealthy) return false;
@@ -645,8 +651,8 @@
     };
     setInterval(() => {
       realtime.check();
-      if (realtimeRecovery.needsRecovery(Date.now())) {
-        schedule(realtimeRecoveryDelay(), "realtime", true);
+      if (realtimeRecovery.needsRecovery(Date.now()) && !(pending && pendingReason === "realtime")) {
+        schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
       }
       emitHeartbeat();
       const reason = watchdog.heartbeat(pageIsActive(), Date.now());

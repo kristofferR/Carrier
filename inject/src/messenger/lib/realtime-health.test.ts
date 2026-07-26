@@ -182,6 +182,27 @@ describe("realtime recovery signals", () => {
     expect(tracker.status(REALTIME_UNOBSERVED_MS * 2 - 1)).toBe("ok");
   });
 
+  test("restarts the unobserved window when the clock jumps backwards", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("socket", REALTIME_UNOBSERVED_MS * 4);
+    tracker.withdraw("socket");
+
+    // Wall time is corrected backwards, leaving the report dated in the
+    // future. Without rebasing, the window could not elapse until real time
+    // caught up — hours of "ok" over a frozen inbox.
+    expect(tracker.needsRecovery(0)).toBe(false);
+    expect(tracker.needsRecovery(REALTIME_UNOBSERVED_MS)).toBe(true);
+  });
+
+  test("a future-dated report cannot vouch for a stale source indefinitely", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.healthy("worker", REALTIME_UNOBSERVED_MS * 4);
+    tracker.stale("socket");
+
+    expect(tracker.needsRecovery(0)).toBe(false);
+    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(true);
+  });
+
   test("a page that never connected is left to the never ladder", () => {
     const tracker = new RealtimeRecoveryTracker(0);
 

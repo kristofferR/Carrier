@@ -5,7 +5,11 @@
 
 import { diag, invoke } from "../bridge";
 import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
-import { looksLikeFacebookErrorPage, RealtimeRecoveryTracker } from "../lib/realtime-health";
+import {
+  looksLikeFacebookErrorPage,
+  REALTIME_UNOBSERVED_SETTLE_MS,
+  RealtimeRecoveryTracker,
+} from "../lib/realtime-health";
 import { isMessengerContentPath } from "../lib/threads";
 import { monitorRealtimeHealth } from "./realtime-health";
 
@@ -235,9 +239,13 @@ export function initAutoRefresh() {
     realtime.check();
     // No source reports stale when none can observe the transport at all (the
     // worker bridge is gone and the page socket was never replaced), so that
-    // state has to arm recovery here or nothing ever would.
-    if (realtimeRecovery.needsRecovery(Date.now())) {
-      schedule(realtimeRecoveryDelay(), "realtime", true);
+    // state has to arm recovery here or nothing ever would. Give the probe
+    // realtime.check() just started room to answer — a view resuming from
+    // suspension looks unobserved synchronously while its worker heartbeat is
+    // still in flight. Re-arming every tick would also keep pushing the
+    // deadline out of reach, so only arm when nothing is pending.
+    if (realtimeRecovery.needsRecovery(Date.now()) && !(pending && pendingReason === "realtime")) {
+      schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
     }
     emitHeartbeat();
     const reason = watchdog.heartbeat(pageIsActive(), Date.now());
