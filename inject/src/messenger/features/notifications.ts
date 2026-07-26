@@ -365,23 +365,24 @@ export function initNotificationBridge() {
   /**
    * Whether the thread pane is showing the conversation `title` names. The
    * header repeats the row's own title, so a prefix of it is enough — and a
-   * prefix is all a row that renders its name truncated can offer.
+   * prefix is all a row that renders its name truncated can offer. A title too
+   * short to identify anything ("unknown") is not evidence either way.
    */
-  const paneShowsThread = (title: string) => {
+  const paneShowsThread = (title: string): "yes" | "no" | "unknown" => {
     const needle = title
       .replace(/[…\s]+$/, "")
       .slice(0, 16)
       .toLowerCase();
-    if (needle.length < 3) return true;
+    if (needle.length < 3) return "unknown";
     const main = document.querySelector('[role="main"]');
-    if (!main) return false;
+    if (!main) return "no";
     let checked = 0;
     for (const el of main.querySelectorAll<HTMLElement>('[aria-label], h1, h2, [role="heading"]')) {
       if (checked++ > 60) break;
       const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-      if (label.includes(needle)) return true;
+      if (label.includes(needle)) return "yes";
     }
-    return false;
+    return "no";
   };
 
   const harvestSenderAvatars = (now: number) => {
@@ -403,8 +404,11 @@ export function initNotificationBridge() {
     // pane to name the destination rather than for a timeout to expire; the
     // render that changed the route was already coalesced into this pass, so
     // nothing else would schedule the one that reads it.
-    const routedTitle = rowTitles.get(openThread) || "";
-    const settled = routedTitle ? paneShowsThread(routedTitle) : openThread === harvestedRoute;
+    // A title the pane cannot be checked against falls back to the weaker rule:
+    // one pass must already have seen this route, so the render that switched
+    // to it has been and gone.
+    const shown = paneShowsThread(rowTitles.get(openThread) || "");
+    const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
     harvestedRoute = openThread;
     if (!settled) {
       scheduleHarvest(500);

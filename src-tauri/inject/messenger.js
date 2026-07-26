@@ -2724,7 +2724,7 @@
             this.entries.set(entry[0], {
               fingerprint: entry[1],
               legacy: legacy || entry[2],
-              staleText: staleText || void 0,
+              staleText: staleText || entry[4] === true || void 0,
               bodyHash: typeof entry[3] === "string" ? entry[3] : void 0
             });
           }
@@ -2744,8 +2744,11 @@
           this.storageKey,
           JSON.stringify({
             version: NOTIFIED_STORE_VERSION,
+            // The stale-text marker rides along: reconciling one row promotes the
+            // whole payload to the current version, and an entry still waiting
+            // its turn would otherwise come back as freshly hashed and replay.
             entries: [...this.entries].map(
-              ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
+              ([key, entry]) => entry.staleText ? [key, entry.fingerprint, entry.legacy, entry.bodyHash ?? null, true] : entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
             )
           })
         );
@@ -3703,23 +3706,23 @@
     };
     const paneShowsThread = (title) => {
       const needle = title.replace(/[…\s]+$/, "").slice(0, 16).toLowerCase();
-      if (needle.length < 3) return true;
+      if (needle.length < 3) return "unknown";
       const main2 = document.querySelector('[role="main"]');
-      if (!main2) return false;
+      if (!main2) return "no";
       let checked = 0;
       for (const el of main2.querySelectorAll('[aria-label], h1, h2, [role="heading"]')) {
         if (checked++ > 60) break;
         const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-        if (label.includes(needle)) return true;
+        if (label.includes(needle)) return "yes";
       }
-      return false;
+      return "no";
     };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
       if (!openThread) return;
-      const routedTitle = rowTitles.get(openThread) || "";
-      const settled = routedTitle ? paneShowsThread(routedTitle) : openThread === harvestedRoute;
+      const shown = paneShowsThread(rowTitles.get(openThread) || "");
+      const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
       harvestedRoute = openThread;
       if (!settled) {
         scheduleHarvest(500);

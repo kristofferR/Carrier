@@ -757,6 +757,38 @@ describe("NotifiedSignatureStore text migration", () => {
     expect(store.alreadyNotified("t1", after)).toBe(true);
   });
 
+  test("carries the marker through a reload that lands mid-migration", () => {
+    const before = notificationDedupeKey("Group", "Kim:");
+    const other = notificationDedupeKey("Other", "Jane: hi");
+    const storage = v2([
+      ["t1", before, false, notificationDedupeKey("", "Kim:")],
+      ["t2", other, false, notificationDedupeKey("", "Jane: hi")],
+    ]);
+    // Reconciling the visible row promotes the payload to the current version.
+    const store = new NotifiedSignatureStore(storage);
+    store.reconcileFingerprint(
+      "t1",
+      "Group",
+      notificationDedupeKey("Group", "Kim: 😢"),
+      undefined,
+      {
+        fingerprint: before,
+        bodyHash: notificationDedupeKey("", "Kim:"),
+      },
+    );
+    // The offscreen row must still be recognized after the reload.
+    const reloaded = new NotifiedSignatureStore(storage);
+    expect(
+      reloaded.reconcileFingerprint(
+        "t2",
+        "Other",
+        notificationDedupeKey("Other", "Jane: hi 😢"),
+        undefined,
+        { fingerprint: other, bodyHash: notificationDedupeKey("", "Jane: hi") },
+      ),
+    ).toBe("matched");
+  });
+
   test("still reports a message that arrived during the upgrade", () => {
     const before = notificationDedupeKey("Group", "Kim:");
     const store = new NotifiedSignatureStore(v2([["t1", before, false]]));

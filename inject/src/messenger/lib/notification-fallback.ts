@@ -221,7 +221,7 @@ export class NotifiedSignatureStore {
           this.entries.set(entry[0], {
             fingerprint: entry[1],
             legacy: legacy || entry[2],
-            staleText: staleText || undefined,
+            staleText: staleText || entry[4] === true || undefined,
             bodyHash: typeof entry[3] === "string" ? entry[3] : undefined,
           });
         }
@@ -244,10 +244,15 @@ export class NotifiedSignatureStore {
         this.storageKey,
         JSON.stringify({
           version: NOTIFIED_STORE_VERSION,
+          // The stale-text marker rides along: reconciling one row promotes the
+          // whole payload to the current version, and an entry still waiting
+          // its turn would otherwise come back as freshly hashed and replay.
           entries: [...this.entries].map(([key, entry]) =>
-            entry.bodyHash === undefined
-              ? [key, entry.fingerprint, entry.legacy]
-              : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
+            entry.staleText
+              ? [key, entry.fingerprint, entry.legacy, entry.bodyHash ?? null, true]
+              : entry.bodyHash === undefined
+                ? [key, entry.fingerprint, entry.legacy]
+                : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
           ),
         }),
       );
