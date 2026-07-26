@@ -2693,6 +2693,7 @@
   }
   var NOTIFIED_STORE_LIMIT = 300;
   var NOTIFIED_STORE_VERSION = 3;
+  var NOTIFIED_STORE_TEXT_VERSION = 2;
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
   var READ_TRANSITION_CONFIRM_MS = 1e3;
@@ -2715,12 +2716,15 @@
         if (!raw) return;
         const parsed = JSON.parse(raw);
         const legacy = Array.isArray(parsed);
-        const persistedEntries = legacy ? parsed : parsed && typeof parsed === "object" && "version" in parsed && parsed.version === NOTIFIED_STORE_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        const version = !legacy && parsed && typeof parsed === "object" && "version" in parsed ? parsed.version : null;
+        const staleText = version === NOTIFIED_STORE_TEXT_VERSION;
+        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || staleText) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
         for (const entry of persistedEntries) {
           if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
             this.entries.set(entry[0], {
               fingerprint: entry[1],
               legacy: legacy || entry[2],
+              staleText: staleText || void 0,
               bodyHash: typeof entry[3] === "string" ? entry[3] : void 0
             });
           }
@@ -2761,9 +2765,23 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash) {
+    /**
+     * `prior` is the same row read the way the previous version read it — with
+     * emoji dropped. An entry hashed by that scraper matches its own message
+     * only under those hashes, so this is what tells a changed extraction apart
+     * from a message that arrived while the app was updating.
+     */
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, prior) {
       const entry = this.entries.get(conversationKey);
       if (!entry) return "missing";
+      if (entry.staleText && prior && (entry.fingerprint === prior.fingerprint || entry.bodyHash !== void 0 && entry.bodyHash === prior.bodyHash)) {
+        entry.fingerprint = fingerprint;
+        entry.bodyHash = bodyHash;
+        entry.legacy = false;
+        entry.staleText = void 0;
+        this.persist();
+        return "matched";
+      }
       if (entry.fingerprint === fingerprint) {
         if (entry.legacy || bodyHash !== void 0 && entry.bodyHash === void 0) {
           entry.legacy = false;
@@ -3675,12 +3693,35 @@
     let harvestedRoute = "";
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
+    const rowTitles = /* @__PURE__ */ new Map();
+    const ROW_TITLE_LIMIT = 300;
+    const rememberRowTitle = (key, title) => {
+      if (!key || !title) return;
+      rowTitles.delete(key);
+      rowTitles.set(key, title);
+      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
+    };
+    const paneShowsThread = (title) => {
+      const needle = title.replace(/[…\s]+$/, "").slice(0, 16).toLowerCase();
+      if (needle.length < 3) return true;
+      const main2 = document.querySelector('[role="main"]');
+      if (!main2) return false;
+      let checked = 0;
+      for (const el of main2.querySelectorAll('[aria-label], h1, h2, [role="heading"]')) {
+        if (checked++ > 60) break;
+        const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
+        if (label.includes(needle)) return true;
+      }
+      return false;
+    };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
       if (!openThread) return;
-      if (openThread !== harvestedRoute) {
-        harvestedRoute = openThread;
+      const routedTitle = rowTitles.get(openThread) || "";
+      const settled = routedTitle ? paneShowsThread(routedTitle) : openThread === harvestedRoute;
+      harvestedRoute = openThread;
+      if (!settled) {
         scheduleHarvest(500);
         return;
       }
@@ -3704,9 +3745,9 @@
           const heading = normalizedText(
             image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent
           );
-          if (heading !== name && isPersonName(heading) && name.startsWith(`${heading} `)) {
-            note(heading, source, name);
+          if (isPersonName(heading) && (heading === name || name.startsWith(`${heading} `))) {
             senderAvatars.rememberGroupThread(openThread);
+            if (heading !== name) note(heading, source, name);
           }
         }
       }
@@ -3759,22 +3800,28 @@
       const id = threadIdFromHref(link?.getAttribute("href"));
       if (!id) return null;
       const row = link.closest('[role="row"]') || link;
-      const text = conversationTextParts(
-        [...row.querySelectorAll("span")].map((el) => {
-          const rect = el.getBoundingClientRect();
-          return {
-            text: conversationNodeText(el),
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-            ariaHidden: el.getAttribute("aria-hidden") === "true",
-            inAbbreviation: !!el.closest("abbr"),
-            // An emoji sprite (and the System emoji glyph beside it) is part of
-            // this span's own text, not a nested text surface of its own.
-            hasTextChild: hasCandidateTextChild(el)
-          };
-        })
+      const surfaces = [...row.querySelectorAll("span")].map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          text: conversationNodeText(el),
+          // The same row as the previous version read it, so a fingerprint it
+          // persisted can still be recognized as this message (see
+          // NotifiedSignatureStore.reconcileFingerprint).
+          priorText: el.textContent || "",
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          ariaHidden: el.getAttribute("aria-hidden") === "true",
+          inAbbreviation: !!el.closest("abbr"),
+          // An emoji sprite (and the System emoji glyph beside it) is part of
+          // this span's own text, not a nested text surface of its own.
+          hasTextChild: hasCandidateTextChild(el)
+        };
+      });
+      const text = conversationTextParts(surfaces);
+      const priorText = conversationTextParts(
+        surfaces.map(({ priorText: prior, ...rest }) => ({ ...rest, text: prior }))
       );
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
@@ -3792,6 +3839,8 @@
         threadPath: `/t/${id}/`,
         title: text.title,
         body: text.body,
+        priorTitle: priorText.title,
+        priorBody: priorText.body,
         icon: image?.currentSrc || image?.src || "",
         // A photo-less group draws its members as a composite; one with a photo
         // is only known as a group once its thread has been read.
@@ -3888,6 +3937,7 @@
         const links = chatRows();
         if (!links.length) return;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
+        for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
@@ -3988,7 +4038,11 @@
             conversation.key,
             conversation.title,
             fingerprint,
-            bodyHash
+            bodyHash,
+            {
+              fingerprint: notificationDedupeKey(conversation.priorTitle, conversation.priorBody),
+              bodyHash: notificationDedupeKey("", conversation.priorBody)
+            }
           );
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);

@@ -733,6 +733,43 @@ describe("notificationTextMatches", () => {
   });
 });
 
+describe("NotifiedSignatureStore text migration", () => {
+  const v2 = (entries: unknown[]) => {
+    const storage = memoryStorage();
+    storage.setItem("__carrier_notified_previews__", JSON.stringify({ version: 2, entries }));
+    return storage;
+  };
+
+  test("recognizes its own message once previews carry emoji", () => {
+    // Delivered as "Kim:" by the scraper that dropped the sprite.
+    const before = notificationDedupeKey("Group", "Kim:");
+    const storage = v2([["t1", before, false, notificationDedupeKey("", "Kim:")]]);
+    const store = new NotifiedSignatureStore(storage);
+    // The same row now reads "Kim: 😢".
+    const after = notificationDedupeKey("Group", "Kim: 😢");
+    expect(
+      store.reconcileFingerprint("t1", "Group", after, notificationDedupeKey("", "Kim: 😢"), {
+        fingerprint: before,
+        bodyHash: notificationDedupeKey("", "Kim:"),
+      }),
+    ).toBe("matched");
+    // Rekeyed, so the next scan matches exactly.
+    expect(store.alreadyNotified("t1", after)).toBe(true);
+  });
+
+  test("still reports a message that arrived during the upgrade", () => {
+    const before = notificationDedupeKey("Group", "Kim:");
+    const store = new NotifiedSignatureStore(v2([["t1", before, false]]));
+    const next = notificationDedupeKey("Group", "Jane: hi");
+    expect(
+      store.reconcileFingerprint("t1", "Group", next, notificationDedupeKey("", "Jane: hi"), {
+        fingerprint: notificationDedupeKey("Group", "Jane: hi"),
+        bodyHash: notificationDedupeKey("", "Jane: hi"),
+      }),
+    ).toBe("mismatched");
+  });
+});
+
 describe("groupPreviewSender", () => {
   test("names the sender a group preview prefixes", () => {
     expect(groupPreviewSender("Kim: 😢")).toBe("Kim");

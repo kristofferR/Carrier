@@ -351,6 +351,39 @@ export function initNotificationBridge() {
     photo: string;
   }
 
+  // What each thread's row calls itself, so a harvest can check that the pane
+  // in front of it is the conversation the address bar names. In memory only.
+  const rowTitles = new Map<string, string>();
+  const ROW_TITLE_LIMIT = 300;
+  const rememberRowTitle = (key: string, title: string) => {
+    if (!key || !title) return;
+    rowTitles.delete(key);
+    rowTitles.set(key, title);
+    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
+  };
+
+  /**
+   * Whether the thread pane is showing the conversation `title` names. The
+   * header repeats the row's own title, so a prefix of it is enough — and a
+   * prefix is all a row that renders its name truncated can offer.
+   */
+  const paneShowsThread = (title: string) => {
+    const needle = title
+      .replace(/[…\s]+$/, "")
+      .slice(0, 16)
+      .toLowerCase();
+    if (needle.length < 3) return true;
+    const main = document.querySelector('[role="main"]');
+    if (!main) return false;
+    let checked = 0;
+    for (const el of main.querySelectorAll<HTMLElement>('[aria-label], h1, h2, [role="heading"]')) {
+      if (checked++ > 60) break;
+      const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
+      if (label.includes(needle)) return true;
+    }
+    return false;
+  };
+
   const harvestSenderAvatars = (now: number) => {
     if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
     // Only a group prints the sender's name above their message, so the open
@@ -365,10 +398,15 @@ export function initNotificationBridge() {
     // attribute a pass to a route this scan is the first to see: the render
     // that follows schedules the next pass, and that one describes the
     // destination.
-    if (openThread !== harvestedRoute) {
-      harvestedRoute = openThread;
-      // The render that changed the route was already coalesced into this
-      // pass, so nothing else would schedule the one that reads it.
+    // Messenger routes before it re-renders, so for a moment after switching
+    // conversations the pane still shows the previous one's faces. Wait for the
+    // pane to name the destination rather than for a timeout to expire; the
+    // render that changed the route was already coalesced into this pass, so
+    // nothing else would schedule the one that reads it.
+    const routedTitle = rowTitles.get(openThread) || "";
+    const settled = routedTitle ? paneShowsThread(routedTitle) : openThread === harvestedRoute;
+    harvestedRoute = openThread;
+    if (!settled) {
       scheduleHarvest(500);
       return;
     }
@@ -397,13 +435,14 @@ export function initNotificationBridge() {
         const heading = normalizedText(
           image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent,
         );
-        if (heading !== name && isPersonName(heading) && name.startsWith(`${heading} `)) {
-          note(heading, source, name);
-          // Only a group prints who wrote above their message, and only a real
-          // one pairs that name with the face it belongs to. A direct message
-          // that merely starts with "John: " must not read as a sender prefix,
-          // so nothing weaker than this pairing may mark the thread.
+        // Only a group prints who wrote above their message, and only a real
+        // one pairs that name with the face it belongs to. A direct message
+        // that merely starts with "John: " must not read as a sender prefix,
+        // so nothing weaker than this pairing may mark the thread — but a
+        // one-word name pairs exactly rather than as a prefix.
+        if (isPersonName(heading) && (heading === name || name.startsWith(`${heading} `))) {
           senderAvatars.rememberGroupThread(openThread);
+          if (heading !== name) note(heading, source, name);
         }
       }
     }
@@ -475,22 +514,28 @@ export function initNotificationBridge() {
     const id = threadIdFromHref(link?.getAttribute("href"));
     if (!id) return null;
     const row = link.closest('[role="row"]') || link;
-    const text = conversationTextParts(
-      [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: conversationNodeText(el),
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-          ariaHidden: el.getAttribute("aria-hidden") === "true",
-          inAbbreviation: !!el.closest("abbr"),
-          // An emoji sprite (and the System emoji glyph beside it) is part of
-          // this span's own text, not a nested text surface of its own.
-          hasTextChild: hasCandidateTextChild(el),
-        };
-      }),
+    const surfaces = [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        text: conversationNodeText(el),
+        // The same row as the previous version read it, so a fingerprint it
+        // persisted can still be recognized as this message (see
+        // NotifiedSignatureStore.reconcileFingerprint).
+        priorText: el.textContent || "",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        ariaHidden: el.getAttribute("aria-hidden") === "true",
+        inAbbreviation: !!el.closest("abbr"),
+        // An emoji sprite (and the System emoji glyph beside it) is part of
+        // this span's own text, not a nested text surface of its own.
+        hasTextChild: hasCandidateTextChild(el),
+      };
+    });
+    const text = conversationTextParts(surfaces);
+    const priorText = conversationTextParts(
+      surfaces.map(({ priorText: prior, ...rest }) => ({ ...rest, text: prior })),
     );
     // The same predicate the text extraction uses: a sprite counted here would
     // become the notification icon, or read as a group's member composite.
@@ -510,6 +555,8 @@ export function initNotificationBridge() {
       threadPath: `/t/${id}/`,
       title: text.title,
       body: text.body,
+      priorTitle: priorText.title,
+      priorBody: priorText.body,
       icon: image?.currentSrc || image?.src || "",
       // A photo-less group draws its members as a composite; one with a photo
       // is only known as a group once its thread has been read.
@@ -651,6 +698,7 @@ export function initNotificationBridge() {
       const observed = links
         .map(conversationFromLink)
         .filter((conversation): conversation is Conversation => conversation !== null);
+      for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
@@ -788,6 +836,10 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
+          {
+            fingerprint: notificationDedupeKey(conversation.priorTitle, conversation.priorBody),
+            bodyHash: notificationDedupeKey("", conversation.priorBody),
+          },
         );
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
