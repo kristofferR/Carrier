@@ -190,6 +190,26 @@ describe("SenderAvatarStore", () => {
     expect(store.lookup(OTHER_THREAD, "Kim")).toBe("https://cdn/jones.jpg");
   });
 
+  test("stops an alias from outliving the doubt it should carry", () => {
+    // Small enough that the full name is evicted while its alias survives.
+    const store = new SenderAvatarStore(null, 2);
+    store.remember(THREAD, "Kim Andersen", "https://cdn/andersen.jpg");
+    store.remember(THREAD, "Kim", "https://cdn/andersen.jpg", "Kim Andersen");
+    store.remember(THREAD, "Kim Berg", "https://cdn/berg.jpg");
+    expect(store.lookup(THREAD, "Kim Andersen")).toBe("");
+    // The alias is still there, but Berg answers to "Kim" as well.
+    expect(store.lookup(THREAD, "Kim")).toBe("");
+    expect(store.describe(THREAD, "Kim")).toBe("ambiguous");
+  });
+
+  test("keeps an alias that only its own owner answers to", () => {
+    const store = new SenderAvatarStore();
+    store.remember(THREAD, "Kim Andersen", "https://cdn/andersen.jpg");
+    store.remember(THREAD, "Kim", "https://cdn/andersen.jpg", "Kim Andersen");
+    expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/andersen.jpg");
+    expect(store.describe(THREAD, "Kim")).toBe("exact");
+  });
+
   test("keeps a collision after its avatars are evicted", () => {
     const storage = memoryStorage();
     const store = new SenderAvatarStore(storage, 1);

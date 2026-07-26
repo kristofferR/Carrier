@@ -3326,7 +3326,10 @@
       const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
       if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
       const exact = this.entries.get(key);
-      if (exact) return { verdict: "exact", url: exact.url };
+      if (exact) {
+        const rival = prefixed.some(([, entry]) => entry.owner !== exact.owner);
+        return rival ? { verdict: "ambiguous", url: "" } : { verdict: "exact", url: exact.url };
+      }
       const only = prefixed[0];
       return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
     }
@@ -3699,7 +3702,7 @@
         if (checked++ > 60) break;
         const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
         if (!label.includes(needle)) continue;
-        if (other && other !== needle && label.includes(other)) return "unknown";
+        if (other && (other === needle || label.includes(other))) return "unknown";
         found = true;
       }
       return found ? "yes" : "no";

@@ -223,7 +223,12 @@ export class SenderAvatarStore {
     const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
     if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
     const exact = this.entries.get(key);
-    if (exact) return { verdict: "exact", url: exact.url };
+    if (exact) {
+      // Someone else in this thread answers to the short name too — the alias
+      // may be all that is left of its owner, but it still names two people.
+      const rival = prefixed.some(([, entry]) => entry.owner !== exact.owner);
+      return rival ? { verdict: "ambiguous", url: "" } : { verdict: "exact", url: exact.url };
+    }
     const only = prefixed[0];
     return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
   }

@@ -382,8 +382,9 @@ export function initNotificationBridge() {
       const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
       if (!label.includes(needle)) continue;
       // The pane the route is leaving answers to this title too — one of the
-      // two is on screen and the header cannot say which.
-      if (other && other !== needle && label.includes(other)) return "unknown";
+      // two is on screen and the header cannot say which. Two conversations
+      // that share a title are the same problem, exactly.
+      if (other && (other === needle || label.includes(other))) return "unknown";
       found = true;
     }
     return found ? "yes" : "no";
