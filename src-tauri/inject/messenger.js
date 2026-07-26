@@ -3682,6 +3682,8 @@
     const HARVEST_THROTTLE_MS = 5e3;
     let lastHarvestAt = 0;
     let harvestedRoute = "";
+    const SETTLE_ATTEMPT_LIMIT = 6;
+    let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
     const rowTitles = /* @__PURE__ */ new Map();
@@ -3696,18 +3698,12 @@
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
       const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
-      const main2 = document.querySelector('[role="main"]');
-      if (!main2) return "no";
-      let found = false;
-      let checked = 0;
-      for (const el of main2.querySelectorAll('[aria-label], h1, h2, [role="heading"]')) {
-        if (checked++ > 60) break;
-        const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-        if (!label.includes(needle)) continue;
-        if (other && (other === needle || label.includes(other))) return "unknown";
-        found = true;
-      }
-      return found ? "yes" : "no";
+      const log = document.querySelector('[role="main"] [role="log"][aria-label]');
+      if (!log) return "no";
+      const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+      if (!label.includes(needle)) return "no";
+      if (other && (other === needle || label.includes(other))) return "unknown";
+      return "yes";
     };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
@@ -3717,11 +3713,16 @@
         rowTitles.get(openThread) || "",
         openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || ""
       );
+      if (openThread !== harvestedRoute) settleAttempts = 0;
       harvestedRoute = openThread;
       if (shown !== "yes") {
-        scheduleHarvest(500);
+        if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+          settleAttempts++;
+          scheduleHarvest(500);
+        }
         return;
       }
+      settleAttempts = 0;
       lastHarvestAt = now;
       const pass = /* @__PURE__ */ new Map();
       const note = (name, url, owner) => {

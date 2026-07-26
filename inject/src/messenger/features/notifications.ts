@@ -333,6 +333,9 @@ export function initNotificationBridge() {
   const HARVEST_THROTTLE_MS = 5_000;
   let lastHarvestAt = 0;
   let harvestedRoute = "";
+  // How many times a route may re-check a pane that has not caught up.
+  const SETTLE_ATTEMPT_LIMIT = 6;
+  let settleAttempts = 0;
   const normalizedText = (value: string | null | undefined) =>
     (value || "").replace(/\s+/g, " ").trim();
   // Alt text on Messenger's avatars is the person's name; its photo and
@@ -363,31 +366,26 @@ export function initNotificationBridge() {
   };
 
   /**
-   * Whether the thread pane is showing the conversation `title` names. Its
-   * header repeats the row's own title, so containment of the whole title is
-   * the test — a row that renders its name truncated offers what it has, minus
-   * the ellipsis. Two answers are not evidence: a title too short to identify
-   * anything, and one the thread being navigated away from answers to as well.
+   * Whether the thread pane is showing the conversation `title` names. The
+   * message list — the surface the harvest reads — labels itself with the
+   * conversation it belongs to, so that one label is the evidence; a
+   * participant who happens to share the name cannot forge it. Two answers are
+   * not evidence: a title too short to identify anything, and one the thread
+   * being navigated away from answers to as well.
    */
   const paneShowsThread = (title: string, leaving = ""): "yes" | "no" | "unknown" => {
     const needle = title.replace(/[…\s]+$/, "").toLowerCase();
     const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
     if (needle.length < 3) return "unknown";
-    const main = document.querySelector('[role="main"]');
-    if (!main) return "no";
-    let found = false;
-    let checked = 0;
-    for (const el of main.querySelectorAll<HTMLElement>('[aria-label], h1, h2, [role="heading"]')) {
-      if (checked++ > 60) break;
-      const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-      if (!label.includes(needle)) continue;
-      // The pane the route is leaving answers to this title too — one of the
-      // two is on screen and the header cannot say which. Two conversations
-      // that share a title are the same problem, exactly.
-      if (other && (other === needle || label.includes(other))) return "unknown";
-      found = true;
-    }
-    return found ? "yes" : "no";
+    const log = document.querySelector('[role="main"] [role="log"][aria-label]');
+    if (!log) return "no";
+    const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+    if (!label.includes(needle)) return "no";
+    // The pane the route is leaving answers to this title too — one of the two
+    // is on screen and the label cannot say which. Two conversations that
+    // share a title are the same problem, exactly.
+    if (other && (other === needle || label.includes(other))) return "unknown";
+    return "yes";
   };
 
   const harvestSenderAvatars = (now: number) => {
@@ -416,11 +414,19 @@ export function initNotificationBridge() {
       rowTitles.get(openThread) || "",
       openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",
     );
+    if (openThread !== harvestedRoute) settleAttempts = 0;
     harvestedRoute = openThread;
     if (shown !== "yes") {
-      scheduleHarvest(500);
+      // Retry while the render is plausibly still coming. A title that can
+      // never be verified would otherwise wake Carrier twice a second forever,
+      // and a hidden window has no reader to harvest for at all.
+      if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+        settleAttempts++;
+        scheduleHarvest(500);
+      }
       return;
     }
+    settleAttempts = 0;
     lastHarvestAt = now;
     // Collect the whole pass before writing: one name wearing two different
     // faces at the same moment is two people — an avatar URL cannot rotate

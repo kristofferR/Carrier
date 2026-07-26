@@ -2103,6 +2103,19 @@
       return NOTIFY_WORD_RE.test(String(value).replace(NOTIFY_KEYCAP_RE, ""));
     }
 
+    // Rectangles would put page geometry in a probe that reports only
+    // classifications and counts; what the notification work needs from an
+    // image is which kind of picture it is.
+    function sizeKind(img) {
+      var box = rect(img);
+      var side = Math.max(box.w, box.h);
+      if (!side) return "hidden";
+      if (side <= 20) return "sprite";
+      if (side <= 48) return "avatar";
+      if (side <= 80) return "thread-picture";
+      return "large";
+    }
+
     function isEmojiSprite(img) {
       return EMOJI_SPRITE_RE.test(img.currentSrc || img.getAttribute("src") || "");
     }
@@ -2299,6 +2312,46 @@
       });
       var cache = senderAvatarCache();
       var stored = cache.entries;
+      // Which elements in the thread pane carry the routed conversation's own
+      // title, and how exactly: the harvest needs one it can trust as the
+      // header rather than any label that happens to contain the name.
+      function paneIdentity() {
+        var row = null;
+        document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (candidate) {
+          if (!row && threadIdOf(candidate) === threadIdOf({ getAttribute: function () {
+            return location.pathname;
+          } })) {
+            row = candidate;
+          }
+        });
+        if (!row) return { routedRow: false, matches: [] };
+        var leaves = conversationRowLeaves(row.closest('[role="row"]') || row);
+        var title = leaves[0] ? notifyNorm(leaves[0].textContent).toLowerCase() : "";
+        if (!title) return { routedRow: true, title: false, matches: [] };
+        var main = document.querySelector('[role="main"]');
+        var matches = [];
+        if (main) {
+          var checked = 0;
+          main.querySelectorAll('[aria-label], h1, h2, [role="heading"]').forEach(function (el) {
+            if (checked++ > 60 || matches.length >= 8) return;
+            var label = notifyNorm(el.getAttribute("aria-label") || el.textContent).toLowerCase();
+            if (!label.includes(title)) return;
+            matches.push({
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute("role") || "",
+              from: el.getAttribute("aria-label") ? "aria-label" : "text",
+              exact: label === title,
+              extraChars: label.length - title.length,
+              depth: (function () {
+                var depth = 0;
+                for (var node = el; node && node !== main; node = node.parentElement) depth++;
+                return depth;
+              })(),
+            });
+          });
+        }
+        return { routedRow: true, title: true, titleLength: title.length, matches: matches };
+      }
       // What each visible group preview's sender would resolve to right now.
       var rowLookups = [];
       document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (row) {
@@ -2330,6 +2383,7 @@
           }),
         },
         rowLookups: rowLookups,
+        paneIdentity: paneIdentity(),
         injected: {
           notificationBridge: typeof window.__carrierNotifyClick === "function",
           openThread: typeof window.__carrierOpenThread === "function",
@@ -2394,7 +2448,6 @@
           textLength: text.length,
           emojiChars: emojiCount(text),
           fontWeight: getComputedStyle(span).fontWeight,
-          rect: rect(span),
           images: images.slice(0, 6),
           labelled: labelled.slice(0, 6),
           spanDescendantsWithText: Array.prototype.filter.call(
@@ -2415,7 +2468,7 @@
           altSenderMatch: matchKind(img.getAttribute("alt"), sender),
           ariaKind: textKind(img.getAttribute("aria-label")),
           ariaSenderMatch: matchKind(img.getAttribute("aria-label"), sender),
-          rect: rect(img),
+          sizeKind: sizeKind(img),
           parentTag: parent ? parent.tagName.toLowerCase() : "",
           parentAriaKind: parent ? textKind(parent.getAttribute("aria-label")) : "",
           parentAriaSenderMatch: parent ? matchKind(parent.getAttribute("aria-label"), sender) : "",
@@ -2439,6 +2492,7 @@
             var link = img.closest('a[href]');
             images.push({
               srcKind: srcKind(img),
+              sizeKind: sizeKind(img),
               altKind: textKind(img.getAttribute("alt")),
               altHeadingMatch: matchKind(img.getAttribute("alt"), headingText),
               altRemainder: (function () {
@@ -2453,7 +2507,6 @@
                 };
               })(),
               ariaKind: textKind(img.getAttribute("aria-label")),
-              rect: rect(img),
               parentTag: img.parentElement ? img.parentElement.tagName.toLowerCase() : "",
               parentAriaKind: img.parentElement
                 ? textKind(img.parentElement.getAttribute("aria-label"))
@@ -2474,7 +2527,6 @@
             headingLength: headingText.length,
             ariaKind: textKind(article.getAttribute("aria-label")),
             ariaHeadingMatch: matchKind(article.getAttribute("aria-label"), headingText),
-            rect: rect(article),
             images: images,
           });
         });
@@ -2544,9 +2596,9 @@
                 if (images.length >= 2) return;
                 images.push({
                   srcKind: srcKind(img),
+                  sizeKind: sizeKind(img),
                   altKind: textKind(img.getAttribute("alt")),
                   altLength: norm(img.getAttribute("alt")).length,
-                  rect: rect(img),
                 });
               });
               if (!images.length) return;
@@ -2566,7 +2618,6 @@
                     textKind: textKind(text),
                     length: text.length,
                     altMatch: firstImage ? matchKind(firstImage.getAttribute("alt"), text) : "",
-                    rect: rect(leaf),
                   };
                 }),
                 firstLeafMatchesAlt:
