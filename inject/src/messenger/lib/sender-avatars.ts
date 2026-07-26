@@ -188,10 +188,14 @@ export class SenderAvatarStore {
       }
       if (existing.url === url) {
         // Keep the sighting fresh so a namesake rendered minutes later still
-        // reads as a collision. Persist only when the stored time has aged
-        // past the window itself — re-seeing a face must not rewrite storage.
+        // reads as a collision, and move the entry to the newest slot so
+        // eviction follows what was last seen rather than what was first
+        // stored. Persist only when the stored time has aged past the window
+        // itself — re-seeing a face must not rewrite storage.
         const stale = at - existing.at >= COLLISION_WINDOW_MS;
         existing.at = at;
+        this.entries.delete(key);
+        this.entries.set(key, existing);
         if (stale) this.persist();
         return false;
       }

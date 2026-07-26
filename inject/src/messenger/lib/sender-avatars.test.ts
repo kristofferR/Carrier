@@ -94,6 +94,17 @@ describe("SenderAvatarStore", () => {
     expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/kim.jpg?oh=new");
   });
 
+  test("evicts what was seen longest ago, not what was stored first", () => {
+    const store = new SenderAvatarStore(null, 2);
+    store.remember(THREAD, "Kim", "https://cdn/kim.jpg", "Kim", 1_000);
+    store.remember(THREAD, "Jane", "https://cdn/jane.jpg", "Jane", 2_000);
+    // Kim renders again unchanged — the common case, and enough to keep them.
+    store.remember(THREAD, "Kim", "https://cdn/kim.jpg", "Kim", 3_000);
+    store.remember(THREAD, "John", "https://cdn/john.jpg", "John", 4_000);
+    expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/kim.jpg");
+    expect(store.lookup(THREAD, "Jane")).toBe("");
+  });
+
   test("survives the auto-refresh reload through storage", () => {
     const storage = memoryStorage();
     new SenderAvatarStore(storage).remember(THREAD, "Kim", "https://cdn/kim.jpg", "Kim Andersen");

@@ -409,16 +409,15 @@ export function initNotificationBridge() {
     // pane to name the destination rather than for a timeout to expire; the
     // render that changed the route was already coalesced into this pass, so
     // nothing else would schedule the one that reads it.
-    // A title the pane cannot be checked against falls back to the weaker rule:
-    // one pass must already have seen this route, so the render that switched
-    // to it has been and gone.
+    // Without a title the pane can be checked against there is no evidence
+    // the render has caught up, and a repeated route is not evidence either:
+    // wait rather than file the previous conversation's faces here.
     const shown = paneShowsThread(
       rowTitles.get(openThread) || "",
       openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",
     );
-    const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
     harvestedRoute = openThread;
-    if (!settled) {
+    if (shown !== "yes") {
       scheduleHarvest(500);
       return;
     }
@@ -564,6 +563,9 @@ export function initNotificationBridge() {
       // A photo-less group draws its members as a composite; one with a photo
       // is only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
+      // That composite is made of members' faces, so it is not this thread's
+      // picture and must never stand in for a sender.
+      compositeIcon: images.length > 1,
       unread,
     };
   };
@@ -618,12 +620,16 @@ export function initNotificationBridge() {
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
+    // When the sender is unknown the row's own image stands in — unless that
+    // image is a members' composite, whose first face belongs to whoever sorts
+    // first rather than to whoever wrote. Better no picture than that one.
+    const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
     const avatar =
-      senderIcon && senderIcon !== conversation.icon
-        ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(conversation.icon)]).then(
+      senderIcon && senderIcon !== rowIcon
+        ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
             ([sender, row]) => sender || row,
           )
-        : avatarToDataUrl(conversation.icon);
+        : avatarToDataUrl(rowIcon);
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (settings.mute_notifications) {

@@ -3299,6 +3299,8 @@
         if (existing.url === url) {
           const stale = at - existing.at >= COLLISION_WINDOW_MS;
           existing.at = at;
+          this.entries.delete(key);
+          this.entries.set(key, existing);
           if (stale) this.persist();
           return false;
         }
@@ -3715,9 +3717,8 @@
         rowTitles.get(openThread) || "",
         openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || ""
       );
-      const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
       harvestedRoute = openThread;
-      if (!settled) {
+      if (shown !== "yes") {
         scheduleHarvest(500);
         return;
       }
@@ -3832,6 +3833,9 @@
         // A photo-less group draws its members as a composite; one with a photo
         // is only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
+        // That composite is made of members' faces, so it is not this thread's
+        // picture and must never stand in for a sender.
+        compositeIcon: images.length > 1,
         unread
       };
     };
@@ -3864,9 +3868,10 @@
         return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const avatar = senderIcon && senderIcon !== conversation.icon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(conversation.icon)]).then(
+      const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
+      const avatar = senderIcon && senderIcon !== rowIcon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
         ([sender, row]) => sender || row
-      ) : avatarToDataUrl(conversation.icon);
+      ) : avatarToDataUrl(rowIcon);
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
