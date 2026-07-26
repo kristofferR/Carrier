@@ -3345,6 +3345,12 @@
       if (this.ambiguous.has(key)) return false;
       this.ambiguous.add(key);
       this.entries.delete(key);
+      const prefix = `${threadId}\0`;
+      for (const [candidate, entry] of [...this.entries]) {
+        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
+        this.entries.delete(candidate);
+        this.ambiguous.add(candidate);
+      }
       this.trim();
       this.persist();
       return true;
@@ -3707,27 +3713,22 @@
         harvestSenderAvatars(Date.now());
       }, 300);
     };
-    let harvestRoot = null;
-    let harvestBodyObserved = false;
+    let harvestRoots = [];
     const harvestObserver = new MutationObserver(scheduleHarvest);
     const attachHarvestObserver = () => {
       if (document.hidden) {
         harvestObserver.disconnect();
-        harvestRoot = null;
-        harvestBodyObserved = false;
+        harvestRoots = [];
         return;
       }
-      const root = document.querySelector('[role="main"]');
-      if (root !== harvestRoot || root && !root.isConnected) {
-        harvestObserver.disconnect();
-        harvestBodyObserved = false;
-        harvestRoot = root;
-        if (root) harvestObserver.observe(root, { childList: true, subtree: true });
+      const roots = [...document.querySelectorAll(HARVEST_SEL)];
+      if (harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
+        return;
       }
-      if (!harvestBodyObserved && document.body) {
-        harvestObserver.observe(document.body, { childList: true });
-        harvestBodyObserved = true;
-      }
+      harvestObserver.disconnect();
+      harvestRoots = roots;
+      for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
+      if (document.body) harvestObserver.observe(document.body, { childList: true });
     };
     const conversationFromLink = (link) => {
       const id = threadIdFromHref(link?.getAttribute("href"));

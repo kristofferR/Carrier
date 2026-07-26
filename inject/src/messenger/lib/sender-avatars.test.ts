@@ -137,6 +137,20 @@ describe("SenderAvatarStore", () => {
     expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/kim-b.jpg");
   });
 
+  test("retires the short names an ambiguous full name owns", () => {
+    const store = new SenderAvatarStore();
+    store.remember(THREAD, "Kim Andersen", "https://cdn/kim.jpg");
+    store.remember(THREAD, "Kim", "https://cdn/kim.jpg", "Kim Andersen");
+    expect(store.lookup(THREAD, "Kim")).toBe("https://cdn/kim.jpg");
+    // A second Kim Andersen turns up: the alias cannot survive its owner.
+    store.markAmbiguous(THREAD, "Kim Andersen");
+    expect(store.lookup(THREAD, "Kim")).toBe("");
+    expect(store.describe(THREAD, "Kim")).toBe("ambiguous");
+    // Another thread's alias for that name is untouched.
+    store.remember(OTHER_THREAD, "Kim", "https://cdn/kim.jpg", "Kim Andersen");
+    expect(store.lookup(OTHER_THREAD, "Kim")).toBe("https://cdn/kim.jpg");
+  });
+
   test("keeps a collision after its avatars are evicted", () => {
     const storage = memoryStorage();
     const store = new SenderAvatarStore(storage, 1);

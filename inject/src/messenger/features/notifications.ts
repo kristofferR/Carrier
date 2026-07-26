@@ -416,28 +416,27 @@ export function initNotificationBridge() {
       harvestSenderAvatars(Date.now());
     }, 300);
   };
-  let harvestRoot: Element | null = null;
-  let harvestBodyObserved = false;
+  let harvestRoots: Element[] = [];
   const harvestObserver = new MutationObserver(scheduleHarvest);
   const attachHarvestObserver = () => {
     if (document.hidden) {
       harvestObserver.disconnect();
-      harvestRoot = null;
-      harvestBodyObserved = false;
+      harvestRoots = [];
       return;
     }
-    const root = document.querySelector('[role="main"]');
-    if (root !== harvestRoot || (root && !root.isConnected)) {
-      harvestObserver.disconnect();
-      harvestBodyObserved = false;
-      harvestRoot = root;
-      if (root) harvestObserver.observe(root, { childList: true, subtree: true });
+    // Both harvested surfaces, whichever of them React has mounted.
+    const roots = [...document.querySelectorAll<HTMLElement>(HARVEST_SEL)];
+    if (
+      harvestRoots.length === roots.length &&
+      roots.every((root, index) => root === harvestRoots[index] && root.isConnected)
+    ) {
+      return;
     }
-    if (!harvestBodyObserved && document.body) {
-      // People dialogs mount at the body, outside the thread pane.
-      harvestObserver.observe(document.body, { childList: true });
-      harvestBodyObserved = true;
-    }
+    harvestObserver.disconnect();
+    harvestRoots = roots;
+    for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
+    // React mounts a whole surface at the body, outside either of them.
+    if (document.body) harvestObserver.observe(document.body, { childList: true });
   };
 
   const conversationFromLink = (link: HTMLAnchorElement) => {

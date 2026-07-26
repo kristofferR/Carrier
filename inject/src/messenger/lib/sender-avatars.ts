@@ -248,6 +248,14 @@ export class SenderAvatarStore {
     if (this.ambiguous.has(key)) return false;
     this.ambiguous.add(key);
     this.entries.delete(key);
+    // Every short name this one answers to is just as ambiguous: an alias
+    // outliving its owner would hand one namesake's face to the other.
+    const prefix = `${threadId}\u0000`;
+    for (const [candidate, entry] of [...this.entries]) {
+      if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
+      this.entries.delete(candidate);
+      this.ambiguous.add(candidate);
+    }
     this.trim();
     this.persist();
     return true;
