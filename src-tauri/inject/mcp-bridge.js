@@ -2083,7 +2083,9 @@
     // cache-lookup logic lives here once — a probe that classified a row
     // differently than its sibling would be worse than no probe at all.
     var NOTIFY_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
-    var NOTIFY_PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
+    // splitGroupSender() in the injected code accepts a prefix up to 80
+    // characters; a shorter limit here would report senders it can resolve.
+    var NOTIFY_PREVIEW_NAME_RE = /^([^:]{1,80}):(?=\s|$)/;
     var SENDER_AVATAR_KEY = "__carrier_sender_avatars__";
     var EMOJI_SPRITE_RE = /emoji\.php|\/images\/emoji/;
     // Mirror the injected classification (inject/src/messenger/lib/emoji.ts):

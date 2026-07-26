@@ -3705,30 +3705,44 @@
       }
     };
     let harvestScheduled = false;
-    const scheduleHarvest = () => {
+    const scheduleHarvest = (delay = 300) => {
       if (harvestScheduled) return;
       harvestScheduled = true;
       setTimeout(() => {
         harvestScheduled = false;
+        attachHarvestObserver();
+        const wait = HARVEST_THROTTLE_MS - (Date.now() - lastHarvestAt);
+        if (wait > 0) {
+          scheduleHarvest(wait);
+          return;
+        }
         harvestSenderAvatars(Date.now());
-      }, 300);
+      }, delay);
     };
     let harvestRoots = [];
-    const harvestObserver = new MutationObserver(scheduleHarvest);
+    let harvestAttached = false;
+    const harvestObserver = new MutationObserver(() => scheduleHarvest());
     const attachHarvestObserver = () => {
       if (document.hidden) {
         harvestObserver.disconnect();
         harvestRoots = [];
+        harvestAttached = false;
         return;
       }
       const roots = [...document.querySelectorAll(HARVEST_SEL)];
-      if (harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
+      if (harvestAttached && harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
         return;
       }
       harvestObserver.disconnect();
       harvestRoots = roots;
       for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
-      if (document.body) harvestObserver.observe(document.body, { childList: true });
+      if (document.body) {
+        harvestObserver.observe(document.body, { childList: true });
+        harvestAttached = true;
+      } else {
+        harvestObserver.observe(document.documentElement, { childList: true });
+        harvestAttached = false;
+      }
     };
     const conversationFromLink = (link) => {
       const id = threadIdFromHref(link?.getAttribute("href"));

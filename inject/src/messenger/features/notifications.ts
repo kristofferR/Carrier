@@ -408,25 +408,39 @@ export function initNotificationBridge() {
   // the window is visible: those faces are rendered for a reader, and an
   // unfocused Carrier should stay off the CPU.
   let harvestScheduled = false;
-  const scheduleHarvest = () => {
+  const scheduleHarvest = (delay = 300) => {
     if (harvestScheduled) return;
     harvestScheduled = true;
     setTimeout(() => {
       harvestScheduled = false;
+      // Surfaces mount and vanish between polls, so pick up whatever is
+      // mounted now — this is also how the observer recovers when there was
+      // nothing to observe yet at document-start.
+      attachHarvestObserver();
+      // A mutation the throttle rejects must not be dropped: the list that
+      // just rendered may close again before the safety poll comes round.
+      const wait = HARVEST_THROTTLE_MS - (Date.now() - lastHarvestAt);
+      if (wait > 0) {
+        scheduleHarvest(wait);
+        return;
+      }
       harvestSenderAvatars(Date.now());
-    }, 300);
+    }, delay);
   };
   let harvestRoots: Element[] = [];
-  const harvestObserver = new MutationObserver(scheduleHarvest);
+  let harvestAttached = false;
+  const harvestObserver = new MutationObserver(() => scheduleHarvest());
   const attachHarvestObserver = () => {
     if (document.hidden) {
       harvestObserver.disconnect();
       harvestRoots = [];
+      harvestAttached = false;
       return;
     }
     // Both harvested surfaces, whichever of them React has mounted.
     const roots = [...document.querySelectorAll<HTMLElement>(HARVEST_SEL)];
     if (
+      harvestAttached &&
       harvestRoots.length === roots.length &&
       roots.every((root, index) => root === harvestRoots[index] && root.isConnected)
     ) {
@@ -435,8 +449,16 @@ export function initNotificationBridge() {
     harvestObserver.disconnect();
     harvestRoots = roots;
     for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
-    // React mounts a whole surface at the body, outside either of them.
-    if (document.body) harvestObserver.observe(document.body, { childList: true });
+    // React mounts a whole surface at the body, outside either of them. This
+    // script runs at document-start, so the body itself may still be missing —
+    // watch the document until it appears rather than counting as attached.
+    if (document.body) {
+      harvestObserver.observe(document.body, { childList: true });
+      harvestAttached = true;
+    } else {
+      harvestObserver.observe(document.documentElement, { childList: true });
+      harvestAttached = false;
+    }
   };
 
   const conversationFromLink = (link: HTMLAnchorElement) => {
