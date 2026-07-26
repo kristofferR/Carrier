@@ -77,6 +77,12 @@ On `main` (committed `d8a25a6`).
   ancestor/attribute shapes; it must not expose message text, raw numeric IDs,
   image URLs, or `alt` / `aria-label` contents. Prefer extending this probe over
   guessing selectors or dumping raw DOM when debugging privacy blur coverage.
+- Notification work has the same treatment: `__carrier_mcp_notification_row_probe__`
+  (conversation-row and message-row shape — where emoji sprites sit, which
+  images a row carries) and `__carrier_mcp_sender_avatar_probe__` (what the
+  sender-avatar harvest would take, what it cached, and whether each visible
+  group preview's sender resolves to a face). Both report classifications and
+  counts only.
 
 ---
 

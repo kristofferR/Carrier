@@ -2,9 +2,16 @@
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
 import { diag, invoke } from "../bridge";
-import { conversationTextParts, isUnreadConversationText } from "../lib/conversation-row";
+import {
+  conversationNodeText,
+  conversationTextParts,
+  hasCandidateTextChild,
+  isUnreadConversationText,
+} from "../lib/conversation-row";
+import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
   ConversationNotificationTracker,
+  groupPreviewSender,
   isOwnMessagePreview,
   NotifiedSignatureStore,
   notificationDedupeKey,
@@ -16,6 +23,7 @@ import {
   StableMismatchTracker,
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
+import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { threadIdFromHref } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -141,6 +149,14 @@ export function initNotificationBridge() {
   })();
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+  const senderAvatars = new SenderAvatarStore(notificationStorage);
+  // For the dev-only MCP probe: cache sizes, or the verdict for a sender the
+  // probe already read from the DOM. Nothing but counts and classifications
+  // crosses this boundary — no names, no URLs.
+  window.__carrierSenderAvatarStats = (thread?: string, sender?: string) =>
+    thread === undefined
+      ? senderAvatars.stats
+      : { resolves: senderAvatars.describe(thread, sender || "") };
 
   interface PendingFallback {
     timer: number;
@@ -305,29 +321,234 @@ export function initNotificationBridge() {
   // role/link selectors and kept as a delayed fallback to the page bridge.
   const conversationTracker = new ConversationNotificationTracker();
 
+  // A group's conversation row only carries the thread picture, so the sender
+  // named in a "Kim: …" preview has no face there. Messenger does pair the two
+  // on surfaces that belong to the open conversation — every message row
+  // (heading + avatar) and the conversation-info panel with its chat-member
+  // list — so harvest those pairings as they render and look them up when a
+  // group notification fires. All of `main` is this conversation: the thread
+  // list is a `navigation` landmark, and a global people dialog such as the
+  // forward or contact picker mounts outside it.
+  const HARVEST_SEL = '[role="main"], [role="complementary"]';
+  const HARVEST_THROTTLE_MS = 5_000;
+  let lastHarvestAt = 0;
+  let harvestedRoute = "";
+  // How many times a route may re-check a pane that has not caught up.
+  const SETTLE_ATTEMPT_LIMIT = 6;
+  let settleAttempts = 0;
+  const normalizedText = (value: string | null | undefined) =>
+    (value || "").replace(/\s+/g, " ").trim();
+  // Alt text on Messenger's avatars is the person's name; its photo and
+  // attachment images describe themselves instead ("May be an image of …").
+  const isPersonName = (value: string) =>
+    value.length > 0 &&
+    value.length <= 60 &&
+    value.split(" ").length <= 5 &&
+    /\p{Letter}/u.test(value) &&
+    !/profile|picture|photo|image|avatar|bilde/i.test(value);
+
+  interface HarvestedFace {
+    name: string;
+    url: string;
+    owner: string;
+    photo: string;
+  }
+
+  // What each thread's row calls itself, so a harvest can check that the pane
+  // in front of it is the conversation the address bar names. In memory only.
+  const rowTitles = new Map<string, string>();
+  const ROW_TITLE_LIMIT = 300;
+  const rememberRowTitle = (key: string, title: string) => {
+    if (!key || !title) return;
+    rowTitles.delete(key);
+    rowTitles.set(key, title);
+    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
+  };
+
+  /**
+   * Whether the thread pane is showing the conversation `title` names. The
+   * message list — the surface the harvest reads — labels itself with the
+   * conversation it belongs to, so that one label is the evidence; a
+   * participant who happens to share the name cannot forge it. Two answers are
+   * not evidence: a title too short to identify anything, and one the thread
+   * being navigated away from answers to as well.
+   */
+  const paneShowsThread = (title: string, leaving = ""): "yes" | "no" | "unknown" => {
+    const needle = title.replace(/[…\s]+$/, "").toLowerCase();
+    const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
+    if (needle.length < 3) return "unknown";
+    const log = document.querySelector('[role="main"] [role="log"][aria-label]');
+    if (!log) return "no";
+    const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+    if (!label.includes(needle)) return "no";
+    // The pane the route is leaving answers to this title too — one of the two
+    // is on screen and the label cannot say which. Two conversations that
+    // share a title are the same problem, exactly.
+    if (other && (other === needle || label.includes(other))) return "unknown";
+    return "yes";
+  };
+
+  const harvestSenderAvatars = (now: number) => {
+    if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
+    // Only a group prints the sender's name above their message, so the open
+    // thread proves its own kind — and a row's preview prefix is a real sender
+    // only in a group (a direct message may simply start with "John: ").
+    // Without an open thread there is nothing to attribute a face to, and
+    // nothing that should spend the throttle a brief render then waits on.
+    const openThread = threadIdFromHref(location.pathname);
+    if (!openThread) return;
+    // Messenger routes before it re-renders, so for a moment after switching
+    // conversations the pane still shows the previous one's faces. Wait for the
+    // pane to name the destination itself: a timeout only guesses, and a route
+    // this scan has seen before proves nothing about what is rendered under it.
+    // The render that changed the route was already coalesced into this pass,
+    // so the retry below is what reads the destination.
+    const shown = paneShowsThread(
+      rowTitles.get(openThread) || "",
+      openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",
+    );
+    if (openThread !== harvestedRoute) settleAttempts = 0;
+    harvestedRoute = openThread;
+    if (shown !== "yes") {
+      // Retry while the render is plausibly still coming. A title that can
+      // never be verified would otherwise wake Carrier twice a second forever,
+      // and a hidden window has no reader to harvest for at all.
+      if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+        settleAttempts++;
+        scheduleHarvest(500);
+      }
+      return;
+    }
+    settleAttempts = 0;
+    lastHarvestAt = now;
+    // Collect the whole pass before writing: one name wearing two different
+    // faces at the same moment is two people — an avatar URL cannot rotate
+    // mid-render — and neither of them may keep the name.
+    const pass = new Map<string, HarvestedFace | null>();
+    const note = (name: string, url: string, owner: string) => {
+      const seen = pass.get(name.toLowerCase());
+      if (seen === undefined) {
+        pass.set(name.toLowerCase(), { name, url, owner, photo: avatarPhotoId(url) });
+        return;
+      }
+      if (seen && seen.photo !== avatarPhotoId(url)) pass.set(name.toLowerCase(), null);
+    };
+    for (const container of document.querySelectorAll<HTMLElement>(HARVEST_SEL)) {
+      for (const image of container.querySelectorAll<HTMLImageElement>("img[alt]")) {
+        const source = image.currentSrc || image.src || "";
+        if (!source || EMOJI_SOURCE_RE.test(source)) continue;
+        const name = normalizedText(image.getAttribute("alt"));
+        if (!isPersonName(name)) continue;
+        note(name, source, name);
+        // Group previews use the short name Messenger prints above a message
+        // ("Kim"), while the avatar's alt holds the full one ("Kim Andersen").
+        const heading = normalizedText(
+          image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent,
+        );
+        // Only a group prints who wrote above their message, and only a real
+        // one pairs that name with the face it belongs to. A direct message
+        // that merely starts with "John: " must not read as a sender prefix,
+        // so nothing weaker than this pairing may mark the thread — but a
+        // one-word name pairs exactly rather than as a prefix.
+        if (isPersonName(heading) && (heading === name || name.startsWith(`${heading} `))) {
+          senderAvatars.rememberGroupThread(openThread);
+          if (heading !== name) note(heading, source, name);
+        }
+      }
+    }
+    for (const [key, face] of pass) {
+      if (face) senderAvatars.remember(openThread, face.name, face.url, face.owner, now);
+      else senderAvatars.markAmbiguous(openThread, key);
+    }
+  };
+
+  // The row scan alone would miss a chat-member dialog or a thread opened and
+  // closed between polls, so watch the harvested surfaces too — but only while
+  // the window is visible: those faces are rendered for a reader, and an
+  // unfocused Carrier should stay off the CPU.
+  let harvestScheduled = false;
+  const scheduleHarvest = (delay = 300) => {
+    if (harvestScheduled) return;
+    harvestScheduled = true;
+    setTimeout(() => {
+      harvestScheduled = false;
+      // Surfaces mount and vanish between polls, so pick up whatever is
+      // mounted now — this is also how the observer recovers when there was
+      // nothing to observe yet at document-start.
+      attachHarvestObserver();
+      // A mutation the throttle rejects must not be dropped: the list that
+      // just rendered may close again before the safety poll comes round.
+      const wait = HARVEST_THROTTLE_MS - (Date.now() - lastHarvestAt);
+      if (wait > 0) {
+        scheduleHarvest(wait);
+        return;
+      }
+      harvestSenderAvatars(Date.now());
+    }, delay);
+  };
+  let harvestRoots: Element[] = [];
+  let harvestAttached = false;
+  const harvestObserver = new MutationObserver(() => scheduleHarvest());
+  const attachHarvestObserver = () => {
+    if (document.hidden) {
+      harvestObserver.disconnect();
+      harvestRoots = [];
+      harvestAttached = false;
+      return;
+    }
+    // Both harvested surfaces, whichever of them React has mounted.
+    const roots = [...document.querySelectorAll<HTMLElement>(HARVEST_SEL)];
+    if (
+      harvestAttached &&
+      harvestRoots.length === roots.length &&
+      roots.every((root, index) => root === harvestRoots[index] && root.isConnected)
+    ) {
+      return;
+    }
+    harvestObserver.disconnect();
+    harvestRoots = roots;
+    for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
+    // React mounts a whole surface at the body, outside either of them. This
+    // script runs at document-start, so the body itself may still be missing —
+    // watch the document until it appears rather than counting as attached.
+    if (document.body) {
+      harvestObserver.observe(document.body, { childList: true });
+      harvestAttached = true;
+    } else {
+      harvestObserver.observe(document.documentElement, { childList: true });
+      harvestAttached = false;
+    }
+  };
+
   const conversationFromLink = (link: HTMLAnchorElement) => {
     const id = threadIdFromHref(link?.getAttribute("href"));
     if (!id) return null;
     const row = link.closest('[role="row"]') || link;
-    const text = conversationTextParts(
-      [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
-        const rect = el.getBoundingClientRect();
-        return {
-          text: el.textContent || "",
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-          ariaHidden: el.getAttribute("aria-hidden") === "true",
-          inAbbreviation: !!el.closest("abbr"),
-          hasTextChild: [...el.children].some((child) => !!(child.textContent || "").trim()),
-        };
-      }),
+    const surfaces = [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        text: conversationNodeText(el),
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        ariaHidden: el.getAttribute("aria-hidden") === "true",
+        inAbbreviation: !!el.closest("abbr"),
+        // An emoji sprite (and the System emoji glyph beside it) is part of
+        // this span's own text, not a nested text surface of its own.
+        hasTextChild: hasCandidateTextChild(el),
+      };
+    });
+    const text = conversationTextParts(surfaces);
+    // The same predicate the text extraction uses: a sprite counted here would
+    // become the notification icon, or read as a group's member composite.
+    const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(
+      (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src),
     );
-    const image = row.querySelector<HTMLImageElement>("img[src]");
+    const image = images[0];
     let unread = false;
-    for (const span of row.querySelectorAll("span")) {
-      if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
+    for (const span of row.querySelectorAll<HTMLElement>("span")) {
+      if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
         unread = true;
         break;
       }
@@ -338,6 +559,12 @@ export function initNotificationBridge() {
       title: text.title,
       body: text.body,
       icon: image?.currentSrc || image?.src || "",
+      // A photo-less group draws its members as a composite; one with a photo
+      // is only known as a group once its thread has been read.
+      isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
+      // That composite is made of members' faces, so it is not this thread's
+      // picture and must never stand in for a sender.
+      compositeIcon: images.length > 1,
       unread,
     };
   };
@@ -383,7 +610,25 @@ export function initNotificationBridge() {
     }
     // Start the bounded avatar conversion during the pairing grace period.
     // Delivery therefore stays ahead of the four-second auto-refresh nudge.
-    const avatar = avatarToDataUrl(conversation.icon);
+    // In a group, show whoever wrote rather than the thread picture — falling
+    // back to the row's own image when the sender is unknown or their cached
+    // avatar URL has expired.
+    // Both conversions run under their own bounded timeout at the same time:
+    // chaining them could outlast the four-second auto-refresh nudge and lose
+    // the banner entirely.
+    const senderIcon = conversation.isGroup
+      ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
+      : "";
+    // When the sender is unknown the row's own image stands in — unless that
+    // image is a members' composite, whose first face belongs to whoever sorts
+    // first rather than to whoever wrote. Better no picture than that one.
+    const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
+    const avatar =
+      senderIcon && senderIcon !== rowIcon
+        ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
+            ([sender, row]) => sender || row,
+          )
+        : avatarToDataUrl(rowIcon);
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (settings.mute_notifications) {
@@ -453,6 +698,7 @@ export function initNotificationBridge() {
     }
     scanRunning = true;
     try {
+      harvestSenderAvatars(Date.now());
       const links = chatRows();
       // A grid can exist briefly before its rows hydrate. Do not prime an empty
       // list or the first real render would look like a burst of new messages.
@@ -460,6 +706,7 @@ export function initNotificationBridge() {
       const observed = links
         .map(conversationFromLink)
         .filter((conversation): conversation is Conversation => conversation !== null);
+      for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
@@ -730,6 +977,7 @@ export function initNotificationBridge() {
   let pollTimer: number | undefined;
   const poll = () => {
     attachScanner();
+    attachHarvestObserver();
     scanUnreadConversations();
   };
   const startPoll = () => {
@@ -741,7 +989,9 @@ export function initNotificationBridge() {
   };
   document.addEventListener("visibilitychange", () => {
     startPoll();
+    attachHarvestObserver();
     if (!document.hidden) poll();
   });
+  attachHarvestObserver();
   startPoll();
 }

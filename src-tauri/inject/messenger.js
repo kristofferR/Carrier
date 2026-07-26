@@ -2569,7 +2569,53 @@
     );
   }
 
+  // inject/src/messenger/lib/emoji.ts
+  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
+  var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
+  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
+  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
+  function emojiGlyph(value) {
+    const text = String(value || "").trim();
+    if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
+    if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
+    return text;
+  }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
+  }
+
   // inject/src/messenger/lib/conversation-row.ts
+  function conversationNodeText(node) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    if (node.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) return "";
+    if ((node.tagName || "").toUpperCase() === "IMG") {
+      const source = node.getAttribute?.("src") || "";
+      return !source || EMOJI_SOURCE_RE.test(source) ? emojiGlyph(node.getAttribute?.("alt")) : "";
+    }
+    let text = "";
+    for (const child of Array.from(node.childNodes || [])) text += conversationNodeText(child);
+    return text || emojiGlyph(node.getAttribute?.("aria-label"));
+  }
+  function plainNodeText(node) {
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    let text = "";
+    for (const child of Array.from(node.childNodes || [])) text += plainNodeText(child);
+    return text;
+  }
+  function hasCandidateTextChild(node) {
+    for (const child of Array.from(node.childNodes || [])) {
+      if (child.nodeType !== 1) continue;
+      if (child.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) continue;
+      if (plainNodeText(child).trim()) return true;
+    }
+    return false;
+  }
   function conversationTextParts(candidates) {
     const values = [];
     for (const candidate of candidates.filter(
@@ -2578,7 +2624,13 @@
       const text = candidate.text.replace(/\s+/g, " ").trim();
       if (!text) continue;
       const last = values[values.length - 1];
-      if (last && last.text === text && Math.abs(last.y - candidate.y) < 1) continue;
+      if (last && Math.abs(last.y - candidate.y) < 1) {
+        if (last.text.includes(text)) continue;
+        if (text.includes(last.text)) {
+          values[values.length - 1] = { text, y: candidate.y };
+          continue;
+        }
+      }
       values.push({ text, y: candidate.y });
     }
     return {
@@ -2640,7 +2692,8 @@
     return hashText(value);
   }
   var NOTIFIED_STORE_LIMIT = 300;
-  var NOTIFIED_STORE_VERSION = 2;
+  var NOTIFIED_STORE_VERSION = 3;
+  var NOTIFIED_STORE_TEXT_VERSION = 2;
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
   var READ_TRANSITION_CONFIRM_MS = 1e3;
@@ -2663,7 +2716,8 @@
         if (!raw) return;
         const parsed = JSON.parse(raw);
         const legacy = Array.isArray(parsed);
-        const persistedEntries = legacy ? parsed : parsed && typeof parsed === "object" && "version" in parsed && parsed.version === NOTIFIED_STORE_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        const version = !legacy && parsed && typeof parsed === "object" && "version" in parsed ? parsed.version : null;
+        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
         for (const entry of persistedEntries) {
           if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
             this.entries.set(entry[0], {
@@ -3111,6 +3165,9 @@
       return { recovered, confirmInMs };
     }
   };
+  function groupPreviewSender(value) {
+    return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
+  }
   function isOwnMessagePreview(value) {
     return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
       value.trim().replace(/\s+/g, " ")
@@ -3127,6 +3184,213 @@
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
+
+  // inject/src/messenger/lib/sender-avatars.ts
+  var SENDER_AVATAR_LIMIT = 120;
+  var SENDER_AVATAR_VERSION = 3;
+  var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
+  var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
+  function avatarPhotoId(url) {
+    try {
+      return new URL(url, "https://www.facebook.com/").pathname;
+    } catch (_) {
+      return url;
+    }
+  }
+  var COLLISION_WINDOW_MS = 5 * 6e4;
+  var GROUP_THREAD_LIMIT = 200;
+  var AMBIGUOUS_LIMIT = 200;
+  var SenderAvatarStore = class {
+    constructor(storage = null, limit = SENDER_AVATAR_LIMIT) {
+      __publicField(this, "storage", storage);
+      __publicField(this, "limit", limit);
+      __publicField(this, "entries", /* @__PURE__ */ new Map());
+      __publicField(this, "ambiguous", /* @__PURE__ */ new Set());
+      __publicField(this, "groupThreads", /* @__PURE__ */ new Set());
+      try {
+        const raw = this.storage?.getItem(SENDER_AVATAR_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        const persisted = parsed && typeof parsed === "object" && "version" in parsed && parsed.version === SENDER_AVATAR_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        for (const entry of persisted) {
+          if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && typeof entry[2] === "string") {
+            if (entry[1]) {
+              this.entries.set(entry[0], {
+                url: entry[1],
+                owner: entry[2],
+                photo: typeof entry[3] === "string" ? entry[3] : avatarPhotoId(entry[1]),
+                at: typeof entry[4] === "number" ? entry[4] : 0
+              });
+            } else {
+              this.ambiguous.add(entry[0]);
+            }
+          }
+        }
+        const ambiguous = parsed && typeof parsed === "object" && "ambiguous" in parsed && Array.isArray(parsed.ambiguous) ? parsed.ambiguous : [];
+        for (const key of ambiguous) {
+          if (typeof key === "string" && key) this.ambiguous.add(key);
+        }
+        const groups = parsed && typeof parsed === "object" && "groups" in parsed && Array.isArray(parsed.groups) ? parsed.groups : [];
+        for (const id of groups) {
+          if (typeof id === "string" && id) this.groupThreads.add(id);
+        }
+      } catch (_) {
+      }
+      if (this.trim()) this.persist();
+    }
+    trim() {
+      let trimmed = false;
+      while (this.entries.size > this.limit) {
+        this.entries.delete(this.entries.keys().next().value);
+        trimmed = true;
+      }
+      while (this.ambiguous.size > AMBIGUOUS_LIMIT) {
+        this.ambiguous.delete(this.ambiguous.values().next().value);
+        trimmed = true;
+      }
+      while (this.groupThreads.size > GROUP_THREAD_LIMIT) {
+        this.groupThreads.delete(this.groupThreads.values().next().value);
+        trimmed = true;
+      }
+      return trimmed;
+    }
+    persist() {
+      try {
+        this.storage?.setItem(
+          SENDER_AVATAR_STORAGE_KEY,
+          JSON.stringify({
+            version: SENDER_AVATAR_VERSION,
+            entries: [...this.entries].map(([key, entry]) => [
+              key,
+              entry.url,
+              entry.owner,
+              entry.photo,
+              entry.at
+            ]),
+            ambiguous: [...this.ambiguous],
+            groups: [...this.groupThreads]
+          })
+        );
+      } catch (_) {
+      }
+    }
+    /**
+     * Record one name/avatar pairing; returns whether anything changed. `owner`
+     * names who the URL belongs to when the key is an alias for them ("Kim" for
+     * "Kim Andersen"): an alias two different people answer to identifies
+     * neither, so the second claim retires it and the group photo wins instead.
+     * Two contacts who share a name across different threads never meet here.
+     * Re-seeing an unchanged pairing writes nothing — a rendered thread repeats
+     * the same faces on every scan.
+     */
+    remember(threadId, name, url, owner = name, at = 0) {
+      const normalized = normalizeSenderName(name);
+      const ownerKey = normalizeSenderName(owner) || normalized;
+      if (!threadId || !normalized || !url) return false;
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return false;
+      const photo = avatarPhotoId(url);
+      const existing = this.entries.get(key);
+      if (existing) {
+        if (existing.owner !== ownerKey) return this.markAmbiguous(threadId, name);
+        if (existing.photo !== photo && at - existing.at < COLLISION_WINDOW_MS) {
+          return this.markAmbiguous(threadId, name);
+        }
+        if (existing.url === url) {
+          const stale = at - existing.at >= COLLISION_WINDOW_MS;
+          existing.at = at;
+          this.entries.delete(key);
+          this.entries.set(key, existing);
+          if (stale) this.persist();
+          return false;
+        }
+      }
+      this.entries.delete(key);
+      this.entries.set(key, { url, owner: ownerKey, photo, at });
+      this.trim();
+      this.persist();
+      return true;
+    }
+    /**
+     * Resolve a preview's sender prefix. Group previews name the sender the same
+     * way the thread does ("Kim"), but a members list may hold the full name — so
+     * a unique "Kim …" match counts, while several of them do not, even when one
+     * of them also cached the short name: showing the wrong person's face is
+     * worse than showing the group photo.
+     */
+    resolve(threadId, name) {
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
+      const prefix = `${key} `;
+      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(prefix));
+      const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
+      if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
+      const exact = this.entries.get(key);
+      if (exact) {
+        const rival = prefixed.some(([, entry]) => entry.owner !== exact.owner);
+        return rival ? { verdict: "ambiguous", url: "" } : { verdict: "exact", url: exact.url };
+      }
+      const only = prefixed[0];
+      return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
+    }
+    /** The avatar for a preview's sender prefix, or "" when it is not knowable. */
+    lookup(threadId, name) {
+      return this.resolve(threadId, name).url;
+    }
+    /** Why a sender resolves the way it does — for the dev-only MCP probe. */
+    describe(threadId, name) {
+      return this.resolve(threadId, name).verdict;
+    }
+    /**
+     * Remember that a thread is a group, which only its own message rows can
+     * prove (they print the sender's name above each message). A direct message
+     * that happens to start with "John: " must not be read as a sender prefix.
+     */
+    rememberGroupThread(id) {
+      if (!id || this.groupThreads.has(id)) return false;
+      this.groupThreads.add(id);
+      this.trim();
+      this.persist();
+      return true;
+    }
+    /**
+     * Give up on a name: two people in this thread answer to it. Sticky, and
+     * held outside the avatar entries so evicting a face cannot resurrect it.
+     */
+    markAmbiguous(threadId, name) {
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return false;
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return false;
+      this.ambiguous.add(key);
+      this.entries.delete(key);
+      const prefix = `${threadId}\0`;
+      for (const [candidate, entry] of [...this.entries]) {
+        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
+        this.entries.delete(candidate);
+        this.ambiguous.add(candidate);
+      }
+      this.trim();
+      this.persist();
+      return true;
+    }
+    isGroupThread(id) {
+      return this.groupThreads.has(id);
+    }
+    get size() {
+      return this.entries.size;
+    }
+    /** Counts only, for the dev-only MCP probe. */
+    get stats() {
+      return {
+        avatars: this.entries.size,
+        groups: this.groupThreads.size,
+        retired: this.ambiguous.size
+      };
+    }
+  };
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -3325,6 +3589,8 @@
     })();
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
     const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+    const senderAvatars = new SenderAvatarStore(notificationStorage);
+    window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
@@ -3412,29 +3678,149 @@
     } catch (_) {
     }
     const conversationTracker = new ConversationNotificationTracker();
+    const HARVEST_SEL = '[role="main"], [role="complementary"]';
+    const HARVEST_THROTTLE_MS = 5e3;
+    let lastHarvestAt = 0;
+    let harvestedRoute = "";
+    const SETTLE_ATTEMPT_LIMIT = 6;
+    let settleAttempts = 0;
+    const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
+    const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
+    const rowTitles = /* @__PURE__ */ new Map();
+    const ROW_TITLE_LIMIT = 300;
+    const rememberRowTitle = (key, title) => {
+      if (!key || !title) return;
+      rowTitles.delete(key);
+      rowTitles.set(key, title);
+      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
+    };
+    const paneShowsThread = (title, leaving = "") => {
+      const needle = title.replace(/[…\s]+$/, "").toLowerCase();
+      const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
+      if (needle.length < 3) return "unknown";
+      const log = document.querySelector('[role="main"] [role="log"][aria-label]');
+      if (!log) return "no";
+      const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+      if (!label.includes(needle)) return "no";
+      if (other && (other === needle || label.includes(other))) return "unknown";
+      return "yes";
+    };
+    const harvestSenderAvatars = (now) => {
+      if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
+      const openThread = threadIdFromHref(location.pathname);
+      if (!openThread) return;
+      const shown = paneShowsThread(
+        rowTitles.get(openThread) || "",
+        openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || ""
+      );
+      if (openThread !== harvestedRoute) settleAttempts = 0;
+      harvestedRoute = openThread;
+      if (shown !== "yes") {
+        if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+          settleAttempts++;
+          scheduleHarvest(500);
+        }
+        return;
+      }
+      settleAttempts = 0;
+      lastHarvestAt = now;
+      const pass = /* @__PURE__ */ new Map();
+      const note = (name, url, owner) => {
+        const seen = pass.get(name.toLowerCase());
+        if (seen === void 0) {
+          pass.set(name.toLowerCase(), { name, url, owner, photo: avatarPhotoId(url) });
+          return;
+        }
+        if (seen && seen.photo !== avatarPhotoId(url)) pass.set(name.toLowerCase(), null);
+      };
+      for (const container of document.querySelectorAll(HARVEST_SEL)) {
+        for (const image of container.querySelectorAll("img[alt]")) {
+          const source = image.currentSrc || image.src || "";
+          if (!source || EMOJI_SOURCE_RE.test(source)) continue;
+          const name = normalizedText(image.getAttribute("alt"));
+          if (!isPersonName(name)) continue;
+          note(name, source, name);
+          const heading = normalizedText(
+            image.closest('[role="article"]')?.querySelector("h3, h4")?.textContent
+          );
+          if (isPersonName(heading) && (heading === name || name.startsWith(`${heading} `))) {
+            senderAvatars.rememberGroupThread(openThread);
+            if (heading !== name) note(heading, source, name);
+          }
+        }
+      }
+      for (const [key, face] of pass) {
+        if (face) senderAvatars.remember(openThread, face.name, face.url, face.owner, now);
+        else senderAvatars.markAmbiguous(openThread, key);
+      }
+    };
+    let harvestScheduled = false;
+    const scheduleHarvest = (delay = 300) => {
+      if (harvestScheduled) return;
+      harvestScheduled = true;
+      setTimeout(() => {
+        harvestScheduled = false;
+        attachHarvestObserver();
+        const wait = HARVEST_THROTTLE_MS - (Date.now() - lastHarvestAt);
+        if (wait > 0) {
+          scheduleHarvest(wait);
+          return;
+        }
+        harvestSenderAvatars(Date.now());
+      }, delay);
+    };
+    let harvestRoots = [];
+    let harvestAttached = false;
+    const harvestObserver = new MutationObserver(() => scheduleHarvest());
+    const attachHarvestObserver = () => {
+      if (document.hidden) {
+        harvestObserver.disconnect();
+        harvestRoots = [];
+        harvestAttached = false;
+        return;
+      }
+      const roots = [...document.querySelectorAll(HARVEST_SEL)];
+      if (harvestAttached && harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
+        return;
+      }
+      harvestObserver.disconnect();
+      harvestRoots = roots;
+      for (const root of roots) harvestObserver.observe(root, { childList: true, subtree: true });
+      if (document.body) {
+        harvestObserver.observe(document.body, { childList: true });
+        harvestAttached = true;
+      } else {
+        harvestObserver.observe(document.documentElement, { childList: true });
+        harvestAttached = false;
+      }
+    };
     const conversationFromLink = (link) => {
       const id = threadIdFromHref(link?.getAttribute("href"));
       if (!id) return null;
       const row = link.closest('[role="row"]') || link;
-      const text = conversationTextParts(
-        [...row.querySelectorAll("span")].map((el) => {
-          const rect = el.getBoundingClientRect();
-          return {
-            text: el.textContent || "",
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height,
-            ariaHidden: el.getAttribute("aria-hidden") === "true",
-            inAbbreviation: !!el.closest("abbr"),
-            hasTextChild: [...el.children].some((child) => !!(child.textContent || "").trim())
-          };
-        })
+      const surfaces = [...row.querySelectorAll("span")].map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          text: conversationNodeText(el),
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          ariaHidden: el.getAttribute("aria-hidden") === "true",
+          inAbbreviation: !!el.closest("abbr"),
+          // An emoji sprite (and the System emoji glyph beside it) is part of
+          // this span's own text, not a nested text surface of its own.
+          hasTextChild: hasCandidateTextChild(el)
+        };
+      });
+      const text = conversationTextParts(surfaces);
+      const images = [...row.querySelectorAll("img[src]")].filter(
+        (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
-      const image = row.querySelector("img[src]");
+      const image = images[0];
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
-        if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
+        if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
           unread = true;
           break;
         }
@@ -3445,6 +3831,12 @@
         title: text.title,
         body: text.body,
         icon: image?.currentSrc || image?.src || "",
+        // A photo-less group draws its members as a composite; one with a photo
+        // is only known as a group once its thread has been read.
+        isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
+        // That composite is made of members' faces, so it is not this thread's
+        // picture and must never stand in for a sender.
+        compositeIcon: images.length > 1,
         unread
       };
     };
@@ -3476,7 +3868,11 @@
         pendingFallbacks.delete(conversation.key);
         return;
       }
-      const avatar = avatarToDataUrl(conversation.icon);
+      const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
+      const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
+      const avatar = senderIcon && senderIcon !== rowIcon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
+        ([sender, row]) => sender || row
+      ) : avatarToDataUrl(rowIcon);
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
@@ -3530,9 +3926,11 @@
       }
       scanRunning = true;
       try {
+        harvestSenderAvatars(Date.now());
         const links = chatRows();
         if (!links.length) return;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
+        for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
@@ -3744,6 +4142,7 @@
     let pollTimer;
     const poll = () => {
       attachScanner();
+      attachHarvestObserver();
       scanUnreadConversations();
     };
     const startPoll = () => {
@@ -3755,8 +4154,10 @@
     };
     document.addEventListener("visibilitychange", () => {
       startPoll();
+      attachHarvestObserver();
       if (!document.hidden) poll();
     });
+    attachHarvestObserver();
     startPoll();
   }
 
@@ -4575,25 +4976,9 @@
     }, SYNC_CHECK_INTERVAL_MS);
   }
 
-  // inject/src/messenger/lib/emoji.ts
-  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
-  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
-  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
-  function emojiGlyph(value) {
-    const text = String(value || "").trim();
-    if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
-    if (LABEL_TEXT_RE.test(text)) return "";
-    return text;
-  }
-  function isReactionMenuShape(children) {
-    if (children.length < 6 || children.length > 9) return false;
-    const addButton = children.at(-1);
-    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
-  }
-
   // inject/src/messenger/features/system-emoji.ts
   var SOURCE_ATTR = "data-carrier-emoji-sprite";
-  var GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var GLYPH_ATTR = SYSTEM_EMOJI_GLYPH_ATTR;
   var REACTION_ATTR = "data-carrier-reaction-emoji";
   var CANDIDATE_SEL = "img[alt], [aria-label]";
   var INTERACTIVE_SEL = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';

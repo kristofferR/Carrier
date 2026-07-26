@@ -2,10 +2,15 @@
 // Facebook usually renders emoji as CDN sprites with the Unicode glyph in
 // alt/aria-label. When enabled, hide those sprites and insert a native text
 // glyph next to each one so the OS emoji font is used instead.
-import { EMOJI_SOURCE_RE, emojiGlyph, isReactionMenuShape } from "../lib/emoji";
+import {
+  EMOJI_SOURCE_RE,
+  emojiGlyph,
+  isReactionMenuShape,
+  SYSTEM_EMOJI_GLYPH_ATTR,
+} from "../lib/emoji";
 
 const SOURCE_ATTR = "data-carrier-emoji-sprite";
-const GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+const GLYPH_ATTR = SYSTEM_EMOJI_GLYPH_ATTR;
 const REACTION_ATTR = "data-carrier-reaction-emoji";
 const CANDIDATE_SEL = "img[alt], [aria-label]";
 const INTERACTIVE_SEL =

@@ -110,7 +110,16 @@ export function notificationDedupeKey(title: string, body: string): string {
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
-const NOTIFIED_STORE_VERSION = 2;
+const NOTIFIED_STORE_VERSION = 3;
+// Version 2 was written by the scraper that dropped emoji from a preview. Its
+// entries are kept rather than discarded, so a message that arrives while the
+// app is updating still has something to differ from and still notifies. A row
+// whose preview does carry emoji now hashes differently than version 2 stored
+// it, and that difference is indistinguishable from new content: the previous
+// text is lossy, so "Kim: hi" and "Kim: hi 😢" collapse to the same reading.
+// Such a row is treated as new — one repeated banner at the upgrade beats
+// silencing a message that really did arrive.
+const NOTIFIED_STORE_TEXT_VERSION = 2;
 const LEGACY_PLACEHOLDER_BODY = "New message";
 // Messenger can produce many mutation-driven scans within a few hundred
 // milliseconds while a reloaded row hydrates. Require a continuously observed
@@ -186,15 +195,20 @@ export class NotifiedSignatureStore {
       if (!raw) return;
       const parsed: unknown = JSON.parse(raw);
       const legacy = Array.isArray(parsed);
-      const persistedEntries = legacy
-        ? parsed
-        : parsed &&
-            typeof parsed === "object" &&
-            "version" in parsed &&
-            parsed.version === NOTIFIED_STORE_VERSION &&
-            "entries" in parsed &&
-            Array.isArray(parsed.entries)
-          ? parsed.entries
+      const version =
+        !legacy && parsed && typeof parsed === "object" && "version" in parsed
+          ? parsed.version
+          : null;
+      const persistedEntries =
+        legacy ||
+        ((version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) &&
+          parsed &&
+          typeof parsed === "object" &&
+          "entries" in parsed &&
+          Array.isArray(parsed.entries))
+          ? legacy
+            ? parsed
+            : ((parsed as { entries: unknown[] }).entries ?? [])
           : [];
       for (const entry of persistedEntries) {
         if (
@@ -826,6 +840,11 @@ export class StableMismatchTracker {
     }
     return { recovered, confirmInMs };
   }
+}
+
+/** The sender a group preview names in its "Sender: message" prefix, else "". */
+export function groupPreviewSender(value: string): string {
+  return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
 }
 
 /** Best-effort suppression for previews produced by the signed-in user. */
