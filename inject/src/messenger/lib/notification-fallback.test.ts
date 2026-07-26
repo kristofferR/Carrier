@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
+  groupPreviewSender,
   isOwnMessagePreview,
   NotifiedSignatureStore,
   notificationDedupeKey,
@@ -308,7 +309,7 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("k0", "f")).toBe(false);
     expect(store.alreadyNotified("k300", "f")).toBe(true);
     const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.entries).toHaveLength(300);
   });
 
@@ -729,5 +730,18 @@ describe("notificationTextMatches", () => {
     expect(notificationTextMatches("Project group", "Jane: OK", "Project group", "Jane: OK")).toBe(
       true,
     );
+  });
+});
+
+describe("groupPreviewSender", () => {
+  test("names the sender a group preview prefixes", () => {
+    expect(groupPreviewSender("Kim: 😢")).toBe("Kim");
+    expect(groupPreviewSender("  Kim   Andersen:   hello ")).toBe("Kim Andersen");
+  });
+
+  test("reports no sender for a preview without a prefix", () => {
+    expect(groupPreviewSender("hello there")).toBe("");
+    expect(groupPreviewSender(": orphaned")).toBe("");
+    expect(groupPreviewSender("")).toBe("");
   });
 });

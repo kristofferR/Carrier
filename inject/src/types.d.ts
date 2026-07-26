@@ -97,6 +97,11 @@ interface Window {
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
+  /** Sender-avatar cache sizes, or one sender's verdict, for the MCP probe. */
+  __carrierSenderAvatarStats?: (
+    thread?: string,
+    sender?: string,
+  ) => { avatars: number; groups: number; retired: number } | { resolves: string };
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */
   __carrierInCall?: boolean;
   /** Respond to the native renderer watchdog without exposing page content. */

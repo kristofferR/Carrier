@@ -540,6 +540,18 @@
           reply(privacyProbe());
           return;
         }
+        // Sanitized state of the notification sender-avatar cache: how many
+        // name/face pairings the injected harvest has stored, and why the
+        // avatars rendered right now would or would not qualify.
+        if (code === "__carrier_mcp_sender_avatar_probe__") {
+          reply(senderAvatarProbe());
+          return;
+        }
+        // CSP-safe, sanitized shape of conversation rows for notification work.
+        if (code === "__carrier_mcp_notification_row_probe__") {
+          reply(notificationRowProbe());
+          return;
+        }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
         if (code === "__carrier_mcp_network_probe__") {
           reply(networkProbe());
@@ -2064,6 +2076,504 @@
         return { applied: true, removedNodes: descendants + 1 };
       }
       return { applied: false, reason: "unknown experiment" };
+    }
+
+    /* ------------- Shared helpers for the notification probes ------------ */
+    // Both notification diagnostics read the same surfaces, so the row/leaf and
+    // cache-lookup logic lives here once — a probe that classified a row
+    // differently than its sibling would be worse than no probe at all.
+    var NOTIFY_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
+    var NOTIFY_PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
+    var SENDER_AVATAR_KEY = "__carrier_sender_avatars__";
+    var EMOJI_SPRITE_RE = /emoji\.php|\/images\/emoji/;
+    // Mirror the injected classification (inject/src/messenger/lib/emoji.ts):
+    // a probe that judged text differently than the code it diagnoses lies.
+    // biome-ignore lint: dev-only probe
+    var NOTIFY_EMOJI_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/gu;
+    var NOTIFY_WORD_RE = /[\p{Letter}\p{Number}]/u;
+    // Keycap emoji carry a digit or symbol as their base character; strip them
+    // before the word test, the way emojiGlyph() does.
+    var NOTIFY_KEYCAP_RE = /[#*0-9]️?⃣/gu;
+
+    function hasWordCharacters(value) {
+      return NOTIFY_WORD_RE.test(String(value).replace(NOTIFY_KEYCAP_RE, ""));
+    }
+
+    function isEmojiSprite(img) {
+      return EMOJI_SPRITE_RE.test(img.currentSrc || img.getAttribute("src") || "");
+    }
+
+    // A span's own visible content, sprites included: an emoji-only preview has
+    // no text at all, and dropping it would hide the case the probe exists for.
+    function notifyLeafContent(span) {
+      var text = notifyNorm(span.textContent);
+      if (text) return text;
+      if (Array.prototype.some.call(span.querySelectorAll("img"), isEmojiSprite)) return "sprite";
+      // Background-image emoji carry their glyph on the span's own aria-label,
+      // the way conversationNodeText() reads them.
+      var label = notifyNorm(span.getAttribute("aria-label"));
+      return label && !hasWordCharacters(label) ? label : "";
+    }
+
+    function notifyNorm(value) {
+      return String(value == null ? "" : value)
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    // A container's own-text leaves, ordered the way the injected scraper
+    // reads them (conversation rows, and the people lists shaped like them).
+    function conversationRowLeaves(container) {
+      var leaves = [];
+      container.querySelectorAll("span").forEach(function (span) {
+        if (!notifyLeafContent(span) || !visible(span)) return;
+        var childContent = false;
+        Array.prototype.forEach.call(span.children || [], function (child) {
+          if (child.hasAttribute("data-carrier-system-emoji-glyph")) return;
+          if (child.tagName === "SPAN" && notifyLeafContent(child)) childContent = true;
+        });
+        if (!childContent) leaves.push({ span: span, box: rect(span) });
+      });
+      return leaves
+        .sort(function (left, right) {
+          return left.box.y - right.box.y || left.box.x - right.box.x;
+        })
+        .map(function (leaf) {
+          return leaf.span;
+        });
+    }
+
+    // The sender a group preview names — what a per-sender avatar must match.
+    function previewSenderName(leaves) {
+      var match = NOTIFY_PREVIEW_NAME_RE.exec(leaves[1] ? notifyNorm(leaves[1].textContent) : "");
+      return match ? match[1] : "";
+    }
+
+    function senderAvatarCache() {
+      try {
+        var parsed = JSON.parse(localStorage.getItem(SENDER_AVATAR_KEY) || "null");
+        var entries = parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        // Collisions live in their own array now; older builds wrote them as
+        // an entry with no URL.
+        var ambiguous = parsed && Array.isArray(parsed.ambiguous) ? parsed.ambiguous.slice() : [];
+        entries.forEach(function (entry) {
+          if (!entry[1]) ambiguous.push(entry[0]);
+        });
+        return {
+          entries: entries.filter(function (entry) {
+            return !!entry[1];
+          }),
+          ambiguous: ambiguous,
+          groups: parsed && Array.isArray(parsed.groups) ? parsed.groups : [],
+        };
+      } catch (_) {
+        return { entries: [], ambiguous: [], groups: [] };
+      }
+    }
+
+    function threadIdOf(row) {
+      var match = /\/t\/(\d+)/.exec(row.getAttribute("href") || "");
+      return match ? match[1] : "";
+    }
+
+    // A route shape, never the path itself: a Messenger route can carry a
+    // username or query metadata that a counts-and-classifications probe must
+    // not emit.
+    function routeKind(path) {
+      if (!path) return "none";
+      if (/\/messages\/e2ee\/t\//.test(path)) return "e2ee-thread";
+      if (/\/t\/\d+/.test(path)) return "thread";
+      if (/\/messages\b/.test(path)) return "inbox";
+      return "other";
+    }
+
+    function threadRouteKind(row) {
+      return routeKind(row.getAttribute("href") || "");
+    }
+
+    // The verdict the fallback notification reaches when it picks a face —
+    // including the gates production applies before it even looks: a sender
+    // prefix counts only in a group, and entries are scoped to their thread.
+    function senderAvatarLookupKind(cache, row, sender) {
+      var name = notifyNorm(sender).toLowerCase();
+      if (!name) return "no-sender";
+      var threadId = threadIdOf(row);
+      var container = row.closest('[role="row"]') || row;
+      var avatars = Array.prototype.filter.call(
+        container.querySelectorAll("img[src]"),
+        function (img) {
+          return !isEmojiSprite(img);
+        },
+      );
+      var isGroup = avatars.length > 1 || cache.groups.indexOf(threadId) !== -1;
+      if (!isGroup) return "not-a-group";
+      var key = threadId + "\u0000" + name;
+      // A retired name resolves to no face at all: production falls back to
+      // the thread picture, so reporting a match here would be a lie.
+      if (cache.ambiguous.indexOf(key) !== -1) return "ambiguous";
+      var exact = cache.entries.filter(function (entry) {
+        return entry[0] === key;
+      });
+      if (exact.length) return "exact";
+      var prefixed = cache.entries.filter(function (entry) {
+        return !!entry[1] && String(entry[0]).indexOf(key + " ") === 0;
+      });
+      return prefixed.length === 1 ? "full-name" : prefixed.length ? "ambiguous" : "miss";
+    }
+
+    // The injected store's own verdict for a sender the probe read from the
+    // DOM; falls back to the persisted view when the hook is absent.
+    function liveSenderAvatarResolve(cache, row, sender) {
+      try {
+        if (window.__carrierSenderAvatarStats) {
+          var name = notifyNorm(sender);
+          if (!name) return "no-sender";
+          if (senderAvatarLookupKind(cache, row, name) === "not-a-group") return "not-a-group";
+          return window.__carrierSenderAvatarStats(threadIdOf(row), name).resolves;
+        }
+      } catch (_) {}
+      return senderAvatarLookupKind(cache, row, sender);
+    }
+
+    // Counts straight from the injected store, which is what production reads.
+    function liveSenderAvatarStats() {
+      try {
+        var stats = window.__carrierSenderAvatarStats && window.__carrierSenderAvatarStats();
+        return stats
+          ? { avatars: stats.avatars, groups: stats.groups, retired: stats.retired }
+          : { available: false };
+      } catch (_) {
+        return { available: false };
+      }
+    }
+
+    function senderAvatarsAllFbcdn(entries) {
+      return (
+        entries.length > 0 &&
+        entries.every(function (entry) {
+          return /fbcdn|scontent/.test(String(entry[1] || ""));
+        })
+      );
+    }
+
+    // Sanitized view of the notification sender-avatar cache and of what the
+    // injected harvest would take from the DOM right now. Names never leave
+    // this function — only counts and rejection reasons.
+    function senderAvatarProbe() {
+      // The production harvester's own scope (features/notifications.ts): all
+      // of `main` is the open conversation, and a global people dialog mounts
+      // outside it.
+      var HARVEST_SEL = '[role="main"], [role="complementary"]';
+      var reasons = {};
+      var accepted = 0;
+      var seenImages = 0;
+      document.querySelectorAll(HARVEST_SEL).forEach(function (container) {
+        container.querySelectorAll("img[alt]").forEach(function (img) {
+          seenImages++;
+          var alt = String(img.getAttribute("alt") || "")
+            .replace(/\s+/g, " ")
+            .trim();
+          var source = img.currentSrc || img.src || "";
+          var reason = !source
+            ? "no-src"
+            : isEmojiSprite(img)
+              ? "emoji-sprite"
+              : !alt
+                ? "empty-alt"
+                : alt.length > 60
+                  ? "long-alt"
+                  : alt.split(" ").length > 5
+                    ? "many-words"
+                    : !/\p{Letter}/u.test(alt)
+                      ? "no-letters"
+                      : /profile|picture|photo|image|avatar|bilde/i.test(alt)
+                        ? "describes-image"
+                        : "accepted";
+          if (reason === "accepted") accepted++;
+          reasons[reason] = (reasons[reason] || 0) + 1;
+        });
+      });
+      var cache = senderAvatarCache();
+      var stored = cache.entries;
+      // What each visible group preview's sender would resolve to right now.
+      var rowLookups = [];
+      document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (row) {
+        if (rowLookups.length >= 10 || !visible(row)) return;
+        var sender = previewSenderName(conversationRowLeaves(row.closest('[role="row"]') || row));
+        rowLookups.push({
+          senderLength: sender.length,
+          resolves: liveSenderAvatarResolve(cache, row, sender),
+        });
+      });
+      return {
+        containers: document.querySelectorAll(HARVEST_SEL).length,
+        images: seenImages,
+        wouldHarvest: accepted,
+        reasons: reasons,
+        // Trust `cache`: it is the injected store itself. `persisted` is read
+        // through this probe's own storage handle, which under WebKit script
+        // worlds does not always resolve to the page's localStorage — an empty
+        // persisted view here does not mean the page failed to write one.
+        cache: liveSenderAvatarStats(),
+        persisted: {
+          present: localStorage.getItem(SENDER_AVATAR_KEY) !== null,
+          count: stored.length,
+          groupThreads: cache.groups.length,
+          retiredNames: cache.ambiguous.length,
+          allFbcdn: senderAvatarsAllFbcdn(stored),
+          keyLengths: stored.slice(0, 10).map(function (entry) {
+            return String(entry[0] || "").length;
+          }),
+        },
+        rowLookups: rowLookups,
+        injected: {
+          notificationBridge: typeof window.__carrierNotifyClick === "function",
+          openThread: typeof window.__carrierOpenThread === "function",
+          notificationPatched: String(window.Notification && window.Notification.name),
+          settings: !!window.__CARRIER_SETTINGS__,
+        },
+        hidden: document.hidden,
+      };
+    }
+
+    // Sanitized shape of the conversation rows the notification fallback reads:
+    // how emoji are embedded in a row's preview text, and whether a group row's
+    // avatar images can be attributed to the sender named in that preview.
+    // Reports classifications, counts, and rectangles only — never message
+    // text, contact names, image URLs, or raw alt/aria-label contents.
+    function notificationRowProbe() {
+      var EMOJI_RE = NOTIFY_EMOJI_RE;
+
+      var norm = notifyNorm;
+      function emojiCount(value) {
+        var found = norm(value).match(EMOJI_RE);
+        return found ? found.length : 0;
+      }
+      function textKind(value) {
+        var text = norm(value);
+        if (!text) return "empty";
+        if (!hasWordCharacters(text)) return emojiCount(text) ? "emoji" : "symbols";
+        return emojiCount(text) ? "text+emoji" : "text";
+      }
+      function srcKind(img) {
+        var src = img.currentSrc || img.getAttribute("src") || "";
+        if (!src) return "none";
+        if (isEmojiSprite(img)) return "emoji-sprite";
+        if (/^data:/.test(src)) return "data-url";
+        if (/fbcdn|scontent/.test(src)) return "fbcdn";
+        return "other";
+      }
+      function matchKind(value, sender) {
+        var text = norm(value);
+        if (!sender || !text) return "";
+        if (text === sender) return "equals";
+        if (text.indexOf(sender) === 0) return "starts-with";
+        if (text.indexOf(sender) !== -1) return "contains";
+        return "no";
+      }
+      function leafShape(span) {
+        var images = [];
+        span.querySelectorAll("img").forEach(function (img) {
+          images.push({ srcKind: srcKind(img), altKind: textKind(img.getAttribute("alt")) });
+        });
+        var labelled = [];
+        span.querySelectorAll("[aria-label]").forEach(function (el) {
+          labelled.push({
+            tag: el.tagName.toLowerCase(),
+            ariaKind: textKind(el.getAttribute("aria-label")),
+            backgroundImage: getComputedStyle(el).backgroundImage !== "none",
+          });
+        });
+        var text = norm(span.textContent);
+        return {
+          textKind: textKind(text),
+          textLength: text.length,
+          emojiChars: emojiCount(text),
+          fontWeight: getComputedStyle(span).fontWeight,
+          rect: rect(span),
+          images: images.slice(0, 6),
+          labelled: labelled.slice(0, 6),
+          spanDescendantsWithText: Array.prototype.filter.call(
+            span.querySelectorAll("span"),
+            function (child) {
+              return !!norm(child.textContent);
+            },
+          ).length,
+        };
+      }
+      function imageShape(img, sender) {
+        var parent = img.parentElement;
+        return {
+          srcKind: srcKind(img),
+          altKind: textKind(img.getAttribute("alt")),
+          altLength: norm(img.getAttribute("alt")).length,
+          altWords: norm(img.getAttribute("alt")).split(" ").filter(Boolean).length,
+          altSenderMatch: matchKind(img.getAttribute("alt"), sender),
+          ariaKind: textKind(img.getAttribute("aria-label")),
+          ariaSenderMatch: matchKind(img.getAttribute("aria-label"), sender),
+          rect: rect(img),
+          parentTag: parent ? parent.tagName.toLowerCase() : "",
+          parentAriaKind: parent ? textKind(parent.getAttribute("aria-label")) : "",
+          parentAriaSenderMatch: parent ? matchKind(parent.getAttribute("aria-label"), sender) : "",
+          inSvgMask: !!img.closest("svg, mask, [style*='mask']"),
+        };
+      }
+
+      // Message rows in the open thread: can a sender's name be paired with
+      // their avatar there (the conversation list only carries the thread's
+      // own picture)?
+      function threadArticles(limit) {
+        var main = document.querySelector('[role="main"]') || document.body;
+        var out = [];
+        main.querySelectorAll('[role="article"]').forEach(function (article) {
+          if (out.length >= limit || !visible(article)) return;
+          var heading = article.querySelector("h3, h4");
+          var headingText = norm(heading && heading.textContent);
+          var images = [];
+          article.querySelectorAll("img").forEach(function (img) {
+            if (images.length >= 4) return;
+            var link = img.closest('a[href]');
+            images.push({
+              srcKind: srcKind(img),
+              altKind: textKind(img.getAttribute("alt")),
+              altHeadingMatch: matchKind(img.getAttribute("alt"), headingText),
+              altRemainder: (function () {
+                var alt = norm(img.getAttribute("alt"));
+                if (!headingText || alt.indexOf(headingText) !== 0) return "";
+                var rest = alt.slice(headingText.length);
+                return {
+                  length: rest.length,
+                  words: rest.split(" ").filter(Boolean).length,
+                  photoWords: /profile|picture|photo|avatar|bilde|profil/i.test(rest),
+                  startsWithApostrophe: /^['’]/.test(rest.trim()),
+                };
+              })(),
+              ariaKind: textKind(img.getAttribute("aria-label")),
+              rect: rect(img),
+              parentTag: img.parentElement ? img.parentElement.tagName.toLowerCase() : "",
+              parentAriaKind: img.parentElement
+                ? textKind(img.parentElement.getAttribute("aria-label"))
+                : "",
+              parentAriaHeadingMatch: img.parentElement
+                ? matchKind(img.parentElement.getAttribute("aria-label"), headingText)
+                : "",
+              linkKind: !link
+                ? ""
+                : /\/(?:messages|t)\//.test(link.getAttribute("href") || "")
+                  ? "thread"
+                  : "profile",
+            });
+          });
+          out.push({
+            headingTag: heading ? heading.tagName.toLowerCase() : "",
+            headingKind: textKind(headingText),
+            headingLength: headingText.length,
+            ariaKind: textKind(article.getAttribute("aria-label")),
+            ariaHeadingMatch: matchKind(article.getAttribute("aria-label"), headingText),
+            rect: rect(article),
+            images: images,
+          });
+        });
+        return out;
+      }
+
+      // What features/notifications.ts harvested into its sender-avatar cache,
+      // and whether the senders the visible group previews name resolve to a
+      // face. Counts and verdicts only — no names, no image URLs.
+      var avatarCache = senderAvatarCache();
+      var rows = [];
+      var seen = {};
+      document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (row) {
+        var href = row.getAttribute("href") || "";
+        if (rows.length >= 8 || seen[href] || !visible(row)) return;
+        seen[href] = true;
+        var container = row.closest('[role="row"]') || row;
+        var leaves = conversationRowLeaves(container);
+        var sender = previewSenderName(leaves);
+        var images = [];
+        container.querySelectorAll("img").forEach(function (img) {
+          if (images.length < 6) images.push(imageShape(img, sender));
+        });
+        var labelledAncestors = [];
+        for (var node = row; node && labelledAncestors.length < 4; node = node.parentElement) {
+          if (!node.getAttribute || !node.getAttribute("aria-label")) continue;
+          labelledAncestors.push({
+            tag: node.tagName.toLowerCase(),
+            role: node.getAttribute("role") || "",
+            ariaKind: textKind(node.getAttribute("aria-label")),
+            ariaSenderMatch: matchKind(node.getAttribute("aria-label"), sender),
+          });
+        }
+        rows.push({
+          route: threadRouteKind(row),
+          senderPrefix: {
+            present: !!sender,
+            length: sender.length,
+            avatarLookup: liveSenderAvatarResolve(avatarCache, row, sender),
+          },
+          leaves: leaves.slice(0, 6).map(leafShape),
+          images: images,
+          labelledAncestors: labelledAncestors,
+        });
+      });
+      return {
+        route: routeKind(location.pathname),
+        hasQuery: !!location.search || !!location.hash,
+        systemEmoji: document.documentElement.hasAttribute("data-carrier-system-emoji"),
+        senderAvatarCache: liveSenderAvatarStats(),
+        rows: rows,
+        threadArticles: threadArticles(10),
+        // Conversation-info sidebar / dialogs: the Chat members list pairs a
+        // name with a face for every participant, including senders whose
+        // messages are not currently rendered.
+        peopleLists: (function () {
+          var out = [];
+          document
+            .querySelectorAll(
+              '[role="complementary"] [role="listitem"], [role="dialog"] [role="listitem"], [role="complementary"] [role="link"], [role="complementary"] [role="button"]',
+            )
+            .forEach(function (item) {
+              if (out.length >= 8 || !visible(item)) return;
+              var firstImage = item.querySelector("img");
+              var images = [];
+              item.querySelectorAll("img").forEach(function (img) {
+                if (images.length >= 2) return;
+                images.push({
+                  srcKind: srcKind(img),
+                  altKind: textKind(img.getAttribute("alt")),
+                  altLength: norm(img.getAttribute("alt")).length,
+                  rect: rect(img),
+                });
+              });
+              if (!images.length) return;
+              var leaves = conversationRowLeaves(item);
+              out.push({
+                tag: item.tagName.toLowerCase(),
+                role: item.getAttribute("role") || "",
+                containerRole: item.closest('[role="complementary"]')
+                  ? "complementary"
+                  : item.closest('[role="dialog"]')
+                    ? "dialog"
+                    : "",
+                images: images,
+                leaves: leaves.slice(0, 3).map(function (leaf) {
+                  var text = norm(leaf.textContent);
+                  return {
+                    textKind: textKind(text),
+                    length: text.length,
+                    altMatch: firstImage ? matchKind(firstImage.getAttribute("alt"), text) : "",
+                    rect: rect(leaf),
+                  };
+                }),
+                firstLeafMatchesAlt:
+                  leaves[0] && firstImage
+                    ? matchKind(firstImage.getAttribute("alt"), norm(leaves[0].textContent))
+                    : "",
+              });
+            });
+          return out;
+        })(),
+      };
     }
 
     // Keep privacy diagnostics sanitized: no message text, raw thread/profile

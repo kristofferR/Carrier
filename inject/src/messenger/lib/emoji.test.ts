@@ -8,6 +8,12 @@ describe("emojiGlyph", () => {
     expect(emojiGlyph("❤️")).toBe("❤️");
   });
 
+  test("passes through keycap emoji despite their digit base", () => {
+    expect(emojiGlyph("1️⃣")).toBe("1️⃣");
+    expect(emojiGlyph("#️⃣")).toBe("#️⃣");
+    expect(emojiGlyph("Photo 1")).toBe("");
+  });
+
   test("rejects labels, long strings, and empties", () => {
     expect(emojiGlyph("smiling face")).toBe("");
     expect(emojiGlyph("😀 yes")).toBe(""); // letters mixed in

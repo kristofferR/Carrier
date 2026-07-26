@@ -110,7 +110,11 @@ export function notificationDedupeKey(title: string, body: string): string {
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
-const NOTIFIED_STORE_VERSION = 2;
+// Bumped to 3 when row previews started carrying emoji: fingerprints written
+// by the old `textContent` scraper hash different text for the same message, so
+// keeping them would read as new content and replay a delivered notification.
+// Dropping them re-primes silently on the first hydrated scan after an update.
+const NOTIFIED_STORE_VERSION = 3;
 const LEGACY_PLACEHOLDER_BODY = "New message";
 // Messenger can produce many mutation-driven scans within a few hundred
 // milliseconds while a reloaded row hydrates. Require a continuously observed
@@ -826,6 +830,11 @@ export class StableMismatchTracker {
     }
     return { recovered, confirmInMs };
   }
+}
+
+/** The sender a group preview names in its "Sender: message" prefix, else "". */
+export function groupPreviewSender(value: string): string {
+  return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
 }
 
 /** Best-effort suppression for previews produced by the signed-in user. */

@@ -1,3 +1,64 @@
+import { EMOJI_SOURCE_RE, emojiGlyph, SYSTEM_EMOJI_GLYPH_ATTR } from "./emoji";
+
+/** The DOM surface conversationNodeText walks (a Node in production). */
+export interface ConversationTextNode {
+  nodeType: number;
+  nodeValue?: string | null;
+  tagName?: string;
+  childNodes?: ArrayLike<ConversationTextNode> | null;
+  getAttribute?: (name: string) => string | null;
+}
+
+/**
+ * A row node's text with Facebook's emoji restored. Messenger renders emoji as
+ * sprite images (and background-image spans), which `textContent` drops
+ * entirely: a "Kim: 😢" preview would notify as "Kim:" and an emoji-only
+ * preview would read as an unhydrated row and never notify at all.
+ */
+export function conversationNodeText(node: ConversationTextNode | null | undefined): string {
+  if (!node) return "";
+  if (node.nodeType === 3) return node.nodeValue || "";
+  if (node.nodeType !== 1) return "";
+  // Skip Carrier's own System emoji glyphs: the sprite they sit next to
+  // contributes the same character below, so counting both would double it.
+  if (node.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) return "";
+  if ((node.tagName || "").toUpperCase() === "IMG") {
+    // A sprite URL is the reliable signal, but features/emoji-images.ts defers
+    // `src` on off-screen emoji, so a bare-emoji alt counts on its own too.
+    const source = node.getAttribute?.("src") || "";
+    return !source || EMOJI_SOURCE_RE.test(source) ? emojiGlyph(node.getAttribute?.("alt")) : "";
+  }
+  let text = "";
+  for (const child of Array.from(node.childNodes || [])) text += conversationNodeText(child);
+  // Emoji drawn as a background image carry their glyph only on aria-label.
+  return text || emojiGlyph(node.getAttribute?.("aria-label"));
+}
+
+/** Plain text of a node, the way `textContent` reads it (sprites excluded). */
+function plainNodeText(node: ConversationTextNode): string {
+  if (node.nodeType === 3) return node.nodeValue || "";
+  if (node.nodeType !== 1) return "";
+  let text = "";
+  for (const child of Array.from(node.childNodes || [])) text += plainNodeText(child);
+  return text;
+}
+
+/**
+ * Whether a child element carries text of its own — that is, this node is a
+ * wrapper whose text belongs to a deeper candidate. Carrier's own System emoji
+ * glyphs never count: they sit beside a sprite *inside* the leaf, and reading
+ * one as nested text would discard the whole preview (the sprite is not a
+ * candidate itself, so nothing else would report that text).
+ */
+export function hasCandidateTextChild(node: ConversationTextNode): boolean {
+  for (const child of Array.from(node.childNodes || [])) {
+    if (child.nodeType !== 1) continue;
+    if (child.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) continue;
+    if (plainNodeText(child).trim()) return true;
+  }
+  return false;
+}
+
 export interface ConversationTextCandidate {
   text: string;
   x: number;
