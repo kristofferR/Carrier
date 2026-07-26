@@ -332,7 +332,13 @@ export function initNotificationBridge() {
   const HARVEST_SEL = '[role="main"], [role="complementary"]';
   const HARVEST_THROTTLE_MS = 5_000;
   let lastHarvestAt = 0;
-  let harvestedRoute = "";
+  // The route being waited on, and every route passed through since a pane was
+  // last positively identified. Routing away from a thread does not unrender
+  // it, so until some pane answers for itself each of those threads may still
+  // be the one on screen — and a label that answers to any of them proves
+  // nothing about the destination.
+  let settlingRoute = "";
+  const staleRoutes = new Set<string>();
   // How many times a route may re-check a pane that has not caught up.
   const SETTLE_ATTEMPT_LIMIT = 6;
   let settleAttempts = 0;
@@ -370,21 +376,26 @@ export function initNotificationBridge() {
    * message list — the surface the harvest reads — labels itself with the
    * conversation it belongs to, so that one label is the evidence; a
    * participant who happens to share the name cannot forge it. Two answers are
-   * not evidence: a title too short to identify anything, and one the thread
-   * being navigated away from answers to as well.
+   * not evidence: a title too short to identify anything, and one that a thread
+   * the pane has not been seen to leave answers to as well.
    */
-  const paneShowsThread = (title: string, leaving = ""): "yes" | "no" | "unknown" => {
+  const paneShowsThread = (
+    title: string,
+    leaving: Iterable<string> = [],
+  ): "yes" | "no" | "unknown" => {
     const needle = title.replace(/[…\s]+$/, "").toLowerCase();
-    const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
     if (needle.length < 3) return "unknown";
     const log = document.querySelector('[role="main"] [role="log"][aria-label]');
     if (!log) return "no";
     const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
     if (!label.includes(needle)) return "no";
-    // The pane the route is leaving answers to this title too — one of the two
-    // is on screen and the label cannot say which. Two conversations that
+    // A thread still possibly on screen answers to this title too — one of them
+    // is in front of us and the label cannot say which. Two conversations that
     // share a title are the same problem, exactly.
-    if (other && (other === needle || label.includes(other))) return "unknown";
+    for (const previous of leaving) {
+      const other = previous.replace(/[…\s]+$/, "").toLowerCase();
+      if (other && (other === needle || label.includes(other))) return "unknown";
+    }
     return "yes";
   };
 
@@ -403,12 +414,23 @@ export function initNotificationBridge() {
     // this scan has seen before proves nothing about what is rendered under it.
     // The render that changed the route was already coalesced into this pass,
     // so the retry below is what reads the destination.
-    const shown = paneShowsThread(
-      rowTitles.get(openThread) || "",
-      openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",
-    );
-    if (openThread !== harvestedRoute) settleAttempts = 0;
-    harvestedRoute = openThread;
+    if (openThread !== settlingRoute) {
+      // Nothing has identified the pane since the thread we just left, so that
+      // thread joins the ones it may still be showing. Only a positive match
+      // clears them — retiring one on the retry would let the very pane we are
+      // waiting out answer for the destination.
+      if (settlingRoute) staleRoutes.add(settlingRoute);
+      settlingRoute = openThread;
+      settleAttempts = 0;
+    }
+    const leaving: string[] = [];
+    for (const route of staleRoutes) {
+      // The destination is not evidence against itself, however it was reached.
+      if (route === openThread) continue;
+      const title = rowTitles.get(route);
+      if (title) leaving.push(title);
+    }
+    const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
     if (shown !== "yes") {
       // Retry while the render is plausibly still coming. A title that can
       // never be verified would otherwise wake Carrier twice a second forever,
@@ -419,6 +441,8 @@ export function initNotificationBridge() {
       }
       return;
     }
+    // The pane spoke for itself, so every thread behind it is off screen.
+    staleRoutes.clear();
     settleAttempts = 0;
     lastHarvestAt = now;
     // Collect the whole pass before writing: one name wearing two different

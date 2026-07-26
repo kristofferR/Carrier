@@ -3681,7 +3681,8 @@
     const HARVEST_SEL = '[role="main"], [role="complementary"]';
     const HARVEST_THROTTLE_MS = 5e3;
     let lastHarvestAt = 0;
-    let harvestedRoute = "";
+    let settlingRoute = "";
+    const staleRoutes = /* @__PURE__ */ new Set();
     const SETTLE_ATTEMPT_LIMIT = 6;
     let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
@@ -3694,27 +3695,35 @@
       rowTitles.set(key, title);
       if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
     };
-    const paneShowsThread = (title, leaving = "") => {
+    const paneShowsThread = (title, leaving = []) => {
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
-      const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
       const log = document.querySelector('[role="main"] [role="log"][aria-label]');
       if (!log) return "no";
       const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
       if (!label.includes(needle)) return "no";
-      if (other && (other === needle || label.includes(other))) return "unknown";
+      for (const previous of leaving) {
+        const other = previous.replace(/[…\s]+$/, "").toLowerCase();
+        if (other && (other === needle || label.includes(other))) return "unknown";
+      }
       return "yes";
     };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
       if (!openThread) return;
-      const shown = paneShowsThread(
-        rowTitles.get(openThread) || "",
-        openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || ""
-      );
-      if (openThread !== harvestedRoute) settleAttempts = 0;
-      harvestedRoute = openThread;
+      if (openThread !== settlingRoute) {
+        if (settlingRoute) staleRoutes.add(settlingRoute);
+        settlingRoute = openThread;
+        settleAttempts = 0;
+      }
+      const leaving = [];
+      for (const route of staleRoutes) {
+        if (route === openThread) continue;
+        const title = rowTitles.get(route);
+        if (title) leaving.push(title);
+      }
+      const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
       if (shown !== "yes") {
         if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
           settleAttempts++;
@@ -3722,6 +3731,7 @@
         }
         return;
       }
+      staleRoutes.clear();
       settleAttempts = 0;
       lastHarvestAt = now;
       const pass = /* @__PURE__ */ new Map();
