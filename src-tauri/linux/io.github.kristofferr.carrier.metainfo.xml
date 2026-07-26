@@ -37,6 +37,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.7.0" date="2026-07-26">
+      <description>
+        <p>Completed Linux desktop integration and cut Messenger memory and CPU use.</p>
+      </description>
+    </release>
     <release version="1.6.0" date="2026-07-23">
       <description>
         <p>Improved Messenger reliability and reduced Linux WebKit memory use.</p>
