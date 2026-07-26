@@ -2624,7 +2624,13 @@
       const text = candidate.text.replace(/\s+/g, " ").trim();
       if (!text) continue;
       const last = values[values.length - 1];
-      if (last && last.text === text && Math.abs(last.y - candidate.y) < 1) continue;
+      if (last && Math.abs(last.y - candidate.y) < 1) {
+        if (last.text.includes(text)) continue;
+        if (text.includes(last.text)) {
+          values[values.length - 1] = { text, y: candidate.y };
+          continue;
+        }
+      }
       values.push({ text, y: candidate.y });
     }
     return {
@@ -3302,32 +3308,31 @@
       return true;
     }
     /**
-     * The avatar for a preview's sender prefix. Group previews name the sender
-     * the same way the thread does ("Kim"), but a members list may hold the full
-     * name — so a unique "Kim …" match counts, while an ambiguous one does not:
-     * showing the wrong person's face is worse than showing the group photo.
+     * Resolve a preview's sender prefix. Group previews name the sender the same
+     * way the thread does ("Kim"), but a members list may hold the full name — so
+     * a unique "Kim …" match counts, while several of them do not, even when one
+     * of them also cached the short name: showing the wrong person's face is
+     * worse than showing the group photo.
      */
+    resolve(threadId, name) {
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
+      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
+      if (prefixed.length > 1) return { verdict: "ambiguous", url: "" };
+      const exact = this.entries.get(key);
+      if (exact) return { verdict: "exact", url: exact.url };
+      const only = prefixed[0];
+      return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
+    }
+    /** The avatar for a preview's sender prefix, or "" when it is not knowable. */
+    lookup(threadId, name) {
+      return this.resolve(threadId, name).url;
+    }
     /** Why a sender resolves the way it does — for the dev-only MCP probe. */
     describe(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return "no-sender";
-      const key = entryKey(threadId, name);
-      if (this.ambiguous.has(key)) return "ambiguous";
-      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-      if (prefixed.length > 1) return "ambiguous";
-      if (this.entries.has(key)) return "exact";
-      return prefixed.length === 1 ? "full-name" : "miss";
-    }
-    lookup(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return "";
-      const key = entryKey(threadId, name);
-      if (this.ambiguous.has(key)) return "";
-      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-      if (prefixed.length > 1) return "";
-      const exact = this.entries.get(key);
-      if (exact) return exact.url;
-      return prefixed.length === 1 ? prefixed[0]?.[1].url ?? "" : "";
+      return this.resolve(threadId, name).verdict;
     }
     /**
      * Remember that a thread is a group, which only its own message rows can
@@ -3676,17 +3681,10 @@
       if (!openThread) return;
       if (openThread !== harvestedRoute) {
         harvestedRoute = openThread;
+        scheduleHarvest(500);
         return;
       }
       lastHarvestAt = now;
-      for (const heading of document.querySelectorAll(
-        '[role="main"] [role="article"] h3, [role="main"] [role="article"] h4'
-      )) {
-        if (isPersonName(normalizedText(heading.textContent))) {
-          senderAvatars.rememberGroupThread(openThread);
-          break;
-        }
-      }
       const pass = /* @__PURE__ */ new Map();
       const note = (name, url, owner) => {
         const seen = pass.get(name.toLowerCase());
@@ -3708,6 +3706,7 @@
           );
           if (heading !== name && isPersonName(heading) && name.startsWith(`${heading} `)) {
             note(heading, source, name);
+            senderAvatars.rememberGroupThread(openThread);
           }
         }
       }

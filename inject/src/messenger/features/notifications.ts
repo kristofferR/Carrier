@@ -367,17 +367,12 @@ export function initNotificationBridge() {
     // destination.
     if (openThread !== harvestedRoute) {
       harvestedRoute = openThread;
+      // The render that changed the route was already coalesced into this
+      // pass, so nothing else would schedule the one that reads it.
+      scheduleHarvest(500);
       return;
     }
     lastHarvestAt = now;
-    for (const heading of document.querySelectorAll<HTMLElement>(
-      '[role="main"] [role="article"] h3, [role="main"] [role="article"] h4',
-    )) {
-      if (isPersonName(normalizedText(heading.textContent))) {
-        senderAvatars.rememberGroupThread(openThread);
-        break;
-      }
-    }
     // Collect the whole pass before writing: one name wearing two different
     // faces at the same moment is two people — an avatar URL cannot rotate
     // mid-render — and neither of them may keep the name.
@@ -404,6 +399,11 @@ export function initNotificationBridge() {
         );
         if (heading !== name && isPersonName(heading) && name.startsWith(`${heading} `)) {
           note(heading, source, name);
+          // Only a group prints who wrote above their message, and only a real
+          // one pairs that name with the face it belongs to. A direct message
+          // that merely starts with "John: " must not read as a sender prefix,
+          // so nothing weaker than this pairing may mark the thread.
+          senderAvatars.rememberGroupThread(openThread);
         }
       }
     }

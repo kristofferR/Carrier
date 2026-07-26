@@ -205,35 +205,33 @@ export class SenderAvatarStore {
   }
 
   /**
-   * The avatar for a preview's sender prefix. Group previews name the sender
-   * the same way the thread does ("Kim"), but a members list may hold the full
-   * name — so a unique "Kim …" match counts, while an ambiguous one does not:
-   * showing the wrong person's face is worse than showing the group photo.
+   * Resolve a preview's sender prefix. Group previews name the sender the same
+   * way the thread does ("Kim"), but a members list may hold the full name — so
+   * a unique "Kim …" match counts, while several of them do not, even when one
+   * of them also cached the short name: showing the wrong person's face is
+   * worse than showing the group photo.
    */
-  /** Why a sender resolves the way it does — for the dev-only MCP probe. */
-  describe(threadId: string, name: string): string {
+  private resolve(threadId: string, name: string): { verdict: string; url: string } {
     const normalized = normalizeSenderName(name);
-    if (!threadId || !normalized) return "no-sender";
+    if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
     const key = entryKey(threadId, name);
-    if (this.ambiguous.has(key)) return "ambiguous";
+    if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
     const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-    if (prefixed.length > 1) return "ambiguous";
-    if (this.entries.has(key)) return "exact";
-    return prefixed.length === 1 ? "full-name" : "miss";
+    if (prefixed.length > 1) return { verdict: "ambiguous", url: "" };
+    const exact = this.entries.get(key);
+    if (exact) return { verdict: "exact", url: exact.url };
+    const only = prefixed[0];
+    return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
   }
 
+  /** The avatar for a preview's sender prefix, or "" when it is not knowable. */
   lookup(threadId: string, name: string): string {
-    const normalized = normalizeSenderName(name);
-    if (!threadId || !normalized) return "";
-    const key = entryKey(threadId, name);
-    if (this.ambiguous.has(key)) return "";
-    // Full names sharing this short name settle it first: two of them mean the
-    // preview cannot say who wrote, even if one of them also cached the alias.
-    const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-    if (prefixed.length > 1) return "";
-    const exact = this.entries.get(key);
-    if (exact) return exact.url;
-    return prefixed.length === 1 ? (prefixed[0]?.[1].url ?? "") : "";
+    return this.resolve(threadId, name).url;
+  }
+
+  /** Why a sender resolves the way it does — for the dev-only MCP probe. */
+  describe(threadId: string, name: string): string {
+    return this.resolve(threadId, name).verdict;
   }
 
   /**

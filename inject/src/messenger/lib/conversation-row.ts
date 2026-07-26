@@ -89,11 +89,19 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
     .sort((left, right) => left.y - right.y || left.x - right.x)) {
     const text = candidate.text.replace(/\s+/g, " ").trim();
     if (!text) continue;
-    // Collapse wrapper duplicates: the same text rendered at the same
-    // vertical position. The same text on a different line is real content —
-    // a contact named "OK" sending "OK" must keep both title and preview.
+    // Collapse wrapper duplicates: text rendered at the same vertical position
+    // that one of the pair already contains. An emoji drawn as a nested span
+    // is part of its parent's line, not a surface of its own — left standing it
+    // would displace the preview. The same text on a different line is real
+    // content: a contact named "OK" sending "OK" keeps both title and preview.
     const last = values[values.length - 1];
-    if (last && last.text === text && Math.abs(last.y - candidate.y) < 1) continue;
+    if (last && Math.abs(last.y - candidate.y) < 1) {
+      if (last.text.includes(text)) continue;
+      if (text.includes(last.text)) {
+        values[values.length - 1] = { text, y: candidate.y };
+        continue;
+      }
+    }
     values.push({ text, y: candidate.y });
   }
   // An empty body means the row's preview has not hydrated yet — callers use

@@ -56,6 +56,26 @@ describe("conversationTextParts", () => {
     ).toEqual({ title: "Jane", body: "Preview" });
   });
 
+  test("folds a nested emoji into the line it belongs to", () => {
+    // A title with a background-image emoji renders the glyph as its own span
+    // inside the title; left standing it would displace the preview.
+    expect(
+      conversationTextParts([
+        candidate("Kim 😀", { y: 0 }),
+        candidate("😀", { y: 0, x: 40 }),
+        candidate("Preview", { y: 20 }),
+      ]),
+    ).toEqual({ title: "Kim 😀", body: "Preview" });
+    // Whichever of the pair sorts first, the fuller text is what survives.
+    expect(
+      conversationTextParts([
+        candidate("😀", { y: 0 }),
+        candidate("Kim 😀", { y: 0, x: 40 }),
+        candidate("Preview", { y: 20 }),
+      ]),
+    ).toEqual({ title: "Kim 😀", body: "Preview" });
+  });
+
   test("keeps a preview identical to the title on its own line", () => {
     expect(conversationTextParts([candidate("OK", { y: 0 }), candidate("OK", { y: 20 })])).toEqual({
       title: "OK",

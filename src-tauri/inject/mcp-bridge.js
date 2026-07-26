@@ -2087,7 +2087,9 @@
     // characters; a shorter limit here would report senders it can resolve.
     var NOTIFY_PREVIEW_NAME_RE = /^([^:]{1,80}):(?=\s|$)/;
     var SENDER_AVATAR_KEY = "__carrier_sender_avatars__";
-    var EMOJI_SPRITE_RE = /emoji\.php|\/images\/emoji/;
+    // Exactly EMOJI_SOURCE_RE from inject/src/messenger/lib/emoji.ts: a
+    // narrower test here would call a sprite production skips an avatar.
+    var EMOJI_SPRITE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
     // Mirror the injected classification (inject/src/messenger/lib/emoji.ts):
     // a probe that judged text differently than the code it diagnoses lies.
     // biome-ignore lint: dev-only probe
