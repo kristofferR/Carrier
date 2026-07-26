@@ -522,10 +522,6 @@ export function initNotificationBridge() {
       const rect = el.getBoundingClientRect();
       return {
         text: conversationNodeText(el),
-        // The same row as the previous version read it, so a fingerprint it
-        // persisted can still be recognized as this message (see
-        // NotifiedSignatureStore.reconcileFingerprint).
-        priorText: el.textContent || "",
         x: rect.x,
         y: rect.y,
         width: rect.width,
@@ -538,9 +534,6 @@ export function initNotificationBridge() {
       };
     });
     const text = conversationTextParts(surfaces);
-    const priorText = conversationTextParts(
-      surfaces.map(({ priorText: prior, ...rest }) => ({ ...rest, text: prior })),
-    );
     // The same predicate the text extraction uses: a sprite counted here would
     // become the notification icon, or read as a group's member composite.
     const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(
@@ -559,8 +552,6 @@ export function initNotificationBridge() {
       threadPath: `/t/${id}/`,
       title: text.title,
       body: text.body,
-      priorTitle: priorText.title,
-      priorBody: priorText.body,
       icon: image?.currentSrc || image?.src || "",
       // A photo-less group draws its members as a composite; one with a photo
       // is only known as a group once its thread has been read.
@@ -840,10 +831,6 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          {
-            fingerprint: notificationDedupeKey(conversation.priorTitle, conversation.priorBody),
-            bodyHash: notificationDedupeKey("", conversation.priorBody),
-          },
         );
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);

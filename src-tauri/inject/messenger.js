@@ -2717,14 +2717,12 @@
         const parsed = JSON.parse(raw);
         const legacy = Array.isArray(parsed);
         const version = !legacy && parsed && typeof parsed === "object" && "version" in parsed ? parsed.version : null;
-        const staleText = version === NOTIFIED_STORE_TEXT_VERSION;
-        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || staleText) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
+        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
         for (const entry of persistedEntries) {
           if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
             this.entries.set(entry[0], {
               fingerprint: entry[1],
               legacy: legacy || entry[2],
-              staleText: staleText || entry[4] === true || void 0,
               bodyHash: typeof entry[3] === "string" ? entry[3] : void 0
             });
           }
@@ -2744,11 +2742,8 @@
           this.storageKey,
           JSON.stringify({
             version: NOTIFIED_STORE_VERSION,
-            // The stale-text marker rides along: reconciling one row promotes the
-            // whole payload to the current version, and an entry still waiting
-            // its turn would otherwise come back as freshly hashed and replay.
             entries: [...this.entries].map(
-              ([key, entry]) => entry.staleText ? [key, entry.fingerprint, entry.legacy, entry.bodyHash ?? null, true] : entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
+              ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
             )
           })
         );
@@ -2768,23 +2763,9 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    /**
-     * `prior` is the same row read the way the previous version read it — with
-     * emoji dropped. An entry hashed by that scraper matches its own message
-     * only under those hashes, so this is what tells a changed extraction apart
-     * from a message that arrived while the app was updating.
-     */
-    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, prior) {
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash) {
       const entry = this.entries.get(conversationKey);
       if (!entry) return "missing";
-      if (entry.staleText && prior && (entry.fingerprint === prior.fingerprint || entry.bodyHash !== void 0 && entry.bodyHash === prior.bodyHash)) {
-        entry.fingerprint = fingerprint;
-        entry.bodyHash = bodyHash;
-        entry.legacy = false;
-        entry.staleText = void 0;
-        this.persist();
-        return "matched";
-      }
       if (entry.fingerprint === fingerprint) {
         if (entry.legacy || bodyHash !== void 0 && entry.bodyHash === void 0) {
           entry.legacy = false;
@@ -3807,10 +3788,6 @@
         const rect = el.getBoundingClientRect();
         return {
           text: conversationNodeText(el),
-          // The same row as the previous version read it, so a fingerprint it
-          // persisted can still be recognized as this message (see
-          // NotifiedSignatureStore.reconcileFingerprint).
-          priorText: el.textContent || "",
           x: rect.x,
           y: rect.y,
           width: rect.width,
@@ -3823,9 +3800,6 @@
         };
       });
       const text = conversationTextParts(surfaces);
-      const priorText = conversationTextParts(
-        surfaces.map(({ priorText: prior, ...rest }) => ({ ...rest, text: prior }))
-      );
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
@@ -3842,8 +3816,6 @@
         threadPath: `/t/${id}/`,
         title: text.title,
         body: text.body,
-        priorTitle: priorText.title,
-        priorBody: priorText.body,
         icon: image?.currentSrc || image?.src || "",
         // A photo-less group draws its members as a composite; one with a photo
         // is only known as a group once its thread has been read.
@@ -4041,11 +4013,7 @@
             conversation.key,
             conversation.title,
             fingerprint,
-            bodyHash,
-            {
-              fingerprint: notificationDedupeKey(conversation.priorTitle, conversation.priorBody),
-              bodyHash: notificationDedupeKey("", conversation.priorBody)
-            }
+            bodyHash
           );
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);

@@ -733,71 +733,32 @@ describe("notificationTextMatches", () => {
   });
 });
 
-describe("NotifiedSignatureStore text migration", () => {
+describe("NotifiedSignatureStore across the preview-text change", () => {
   const v2 = (entries: unknown[]) => {
     const storage = memoryStorage();
     storage.setItem("__carrier_notified_previews__", JSON.stringify({ version: 2, entries }));
     return storage;
   };
 
-  test("recognizes its own message once previews carry emoji", () => {
-    // Delivered as "Kim:" by the scraper that dropped the sprite.
-    const before = notificationDedupeKey("Group", "Kim:");
-    const storage = v2([["t1", before, false, notificationDedupeKey("", "Kim:")]]);
-    const store = new NotifiedSignatureStore(storage);
-    // The same row now reads "Kim: 😢".
-    const after = notificationDedupeKey("Group", "Kim: 😢");
+  test("keeps what the previous version delivered", () => {
+    const delivered = notificationDedupeKey("Group", "Kim: hi");
+    const store = new NotifiedSignatureStore(v2([["t1", delivered, false]]));
+    // A row without emoji reads exactly as it did, and must not replay.
+    expect(store.reconcileFingerprint("t1", "Group", delivered)).toBe("matched");
+    // A message that arrived while the app was updating still differs.
     expect(
-      store.reconcileFingerprint("t1", "Group", after, notificationDedupeKey("", "Kim: 😢"), {
-        fingerprint: before,
-        bodyHash: notificationDedupeKey("", "Kim:"),
-      }),
-    ).toBe("matched");
-    // Rekeyed, so the next scan matches exactly.
-    expect(store.alreadyNotified("t1", after)).toBe(true);
+      store.reconcileFingerprint("t1", "Group", notificationDedupeKey("Group", "Jane: hi")),
+    ).toBe("mismatched");
   });
 
-  test("carries the marker through a reload that lands mid-migration", () => {
-    const before = notificationDedupeKey("Group", "Kim:");
-    const other = notificationDedupeKey("Other", "Jane: hi");
-    const storage = v2([
-      ["t1", before, false, notificationDedupeKey("", "Kim:")],
-      ["t2", other, false, notificationDedupeKey("", "Jane: hi")],
-    ]);
-    // Reconciling the visible row promotes the payload to the current version.
-    const store = new NotifiedSignatureStore(storage);
-    store.reconcileFingerprint(
-      "t1",
-      "Group",
-      notificationDedupeKey("Group", "Kim: 😢"),
-      undefined,
-      {
-        fingerprint: before,
-        bodyHash: notificationDedupeKey("", "Kim:"),
-      },
+  test("reports a row whose preview now carries its emoji", () => {
+    // Lossy the other way: "Kim: hi" and "Kim: hi 😢" were stored alike, so a
+    // difference here cannot prove the message is the same one. Report it.
+    const store = new NotifiedSignatureStore(
+      v2([["t1", notificationDedupeKey("Group", "Kim: hi"), false]]),
     );
-    // The offscreen row must still be recognized after the reload.
-    const reloaded = new NotifiedSignatureStore(storage);
     expect(
-      reloaded.reconcileFingerprint(
-        "t2",
-        "Other",
-        notificationDedupeKey("Other", "Jane: hi 😢"),
-        undefined,
-        { fingerprint: other, bodyHash: notificationDedupeKey("", "Jane: hi") },
-      ),
-    ).toBe("matched");
-  });
-
-  test("still reports a message that arrived during the upgrade", () => {
-    const before = notificationDedupeKey("Group", "Kim:");
-    const store = new NotifiedSignatureStore(v2([["t1", before, false]]));
-    const next = notificationDedupeKey("Group", "Jane: hi");
-    expect(
-      store.reconcileFingerprint("t1", "Group", next, notificationDedupeKey("", "Jane: hi"), {
-        fingerprint: notificationDedupeKey("Group", "Jane: hi"),
-        bodyHash: notificationDedupeKey("", "Jane: hi"),
-      }),
+      store.reconcileFingerprint("t1", "Group", notificationDedupeKey("Group", "Kim: hi 😢")),
     ).toBe("mismatched");
   });
 });

@@ -111,12 +111,14 @@ export function notificationDedupeKey(title: string, body: string): string {
 
 const NOTIFIED_STORE_LIMIT = 300;
 const NOTIFIED_STORE_VERSION = 3;
-// Version 2 was written by the scraper that dropped emoji from a preview, so
-// its hashes describe the same messages under different text. The entries are
-// kept and marked: reconciliation compares them against the caller's
-// emoji-free reading of the row, which tells "the extraction changed" apart
-// from "a new message arrived while the app was updating". Dropping them
-// outright would have silenced that new message.
+// Version 2 was written by the scraper that dropped emoji from a preview. Its
+// entries are kept rather than discarded, so a message that arrives while the
+// app is updating still has something to differ from and still notifies. A row
+// whose preview does carry emoji now hashes differently than version 2 stored
+// it, and that difference is indistinguishable from new content: the previous
+// text is lossy, so "Kim: hi" and "Kim: hi 😢" collapse to the same reading.
+// Such a row is treated as new — one repeated banner at the upgrade beats
+// silencing a message that really did arrive.
 const NOTIFIED_STORE_TEXT_VERSION = 2;
 const LEGACY_PLACEHOLDER_BODY = "New message";
 // Messenger can produce many mutation-driven scans within a few hundred
@@ -152,8 +154,6 @@ interface NotifiedEntry {
   fingerprint: string;
   /** Loaded from the unversioned schema that could persist placeholder text. */
   legacy: boolean;
-  /** Hashed before row previews carried emoji (see NOTIFIED_STORE_TEXT_VERSION). */
-  staleText?: boolean;
   /**
    * Hash of the delivered preview body alone. Thread titles drift without new
    * content (renames, hydration variants), which shifts the combined
@@ -199,10 +199,9 @@ export class NotifiedSignatureStore {
         !legacy && parsed && typeof parsed === "object" && "version" in parsed
           ? parsed.version
           : null;
-      const staleText = version === NOTIFIED_STORE_TEXT_VERSION;
       const persistedEntries =
         legacy ||
-        ((version === NOTIFIED_STORE_VERSION || staleText) &&
+        ((version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) &&
           parsed &&
           typeof parsed === "object" &&
           "entries" in parsed &&
@@ -221,7 +220,6 @@ export class NotifiedSignatureStore {
           this.entries.set(entry[0], {
             fingerprint: entry[1],
             legacy: legacy || entry[2],
-            staleText: staleText || entry[4] === true || undefined,
             bodyHash: typeof entry[3] === "string" ? entry[3] : undefined,
           });
         }
@@ -244,15 +242,10 @@ export class NotifiedSignatureStore {
         this.storageKey,
         JSON.stringify({
           version: NOTIFIED_STORE_VERSION,
-          // The stale-text marker rides along: reconciling one row promotes the
-          // whole payload to the current version, and an entry still waiting
-          // its turn would otherwise come back as freshly hashed and replay.
           entries: [...this.entries].map(([key, entry]) =>
-            entry.staleText
-              ? [key, entry.fingerprint, entry.legacy, entry.bodyHash ?? null, true]
-              : entry.bodyHash === undefined
-                ? [key, entry.fingerprint, entry.legacy]
-                : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
+            entry.bodyHash === undefined
+              ? [key, entry.fingerprint, entry.legacy]
+              : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
           ),
         }),
       );
@@ -274,35 +267,14 @@ export class NotifiedSignatureStore {
    * migrate only those proven-legacy placeholders, never a new-schema message
    * whose real text happens to be the same phrase.
    */
-  /**
-   * `prior` is the same row read the way the previous version read it — with
-   * emoji dropped. An entry hashed by that scraper matches its own message
-   * only under those hashes, so this is what tells a changed extraction apart
-   * from a message that arrived while the app was updating.
-   */
   reconcileFingerprint(
     conversationKey: string,
     title: string,
     fingerprint: string,
     bodyHash?: string,
-    prior?: { fingerprint: string; bodyHash?: string },
   ): FingerprintReconciliation {
     const entry = this.entries.get(conversationKey);
     if (!entry) return "missing";
-    if (
-      entry.staleText &&
-      prior &&
-      (entry.fingerprint === prior.fingerprint ||
-        (entry.bodyHash !== undefined && entry.bodyHash === prior.bodyHash))
-    ) {
-      // Same message, read by a scraper that now keeps its emoji.
-      entry.fingerprint = fingerprint;
-      entry.bodyHash = bodyHash;
-      entry.legacy = false;
-      entry.staleText = undefined;
-      this.persist();
-      return "matched";
-    }
     if (entry.fingerprint === fingerprint) {
       if (entry.legacy || (bodyHash !== undefined && entry.bodyHash === undefined)) {
         entry.legacy = false;
