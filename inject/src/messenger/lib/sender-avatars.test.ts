@@ -174,6 +174,22 @@ describe("SenderAvatarStore", () => {
     expect(store.lookup(THREAD, "Kim")).toBe("");
   });
 
+  test("counts a retired namesake when a short name looks unique", () => {
+    const store = new SenderAvatarStore();
+    // Two Kim Smiths retire that name; a third Kim is left standing alone.
+    store.remember(THREAD, "Kim Smith", "https://cdn/smith-a.jpg", "Kim Smith", 1_000);
+    store.remember(THREAD, "Kim Smith", "https://cdn/smith-b.jpg", "Kim Smith", 2_000);
+    store.remember(THREAD, "Kim Jones", "https://cdn/jones.jpg");
+    expect(store.describe(THREAD, "Kim Smith")).toBe("ambiguous");
+    // "Kim" must not resolve to Jones: the thread is known to hold another.
+    expect(store.lookup(THREAD, "Kim")).toBe("");
+    expect(store.describe(THREAD, "Kim")).toBe("ambiguous");
+    // With no retired namesake in the way, a unique full name still resolves.
+    expect(store.lookup(OTHER_THREAD, "Kim")).toBe("");
+    store.remember(OTHER_THREAD, "Kim Jones", "https://cdn/jones.jpg");
+    expect(store.lookup(OTHER_THREAD, "Kim")).toBe("https://cdn/jones.jpg");
+  });
+
   test("keeps a collision after its avatars are evicted", () => {
     const storage = memoryStorage();
     const store = new SenderAvatarStore(storage, 1);

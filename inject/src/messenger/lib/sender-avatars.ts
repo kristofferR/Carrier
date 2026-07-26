@@ -216,8 +216,12 @@ export class SenderAvatarStore {
     if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
     const key = entryKey(threadId, name);
     if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
-    const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-    if (prefixed.length > 1) return { verdict: "ambiguous", url: "" };
+    const prefix = `${key} `;
+    const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(prefix));
+    // A retired namesake still counts: the thread is known to hold someone
+    // else this preview could be naming, even though their face is gone.
+    const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
+    if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
     const exact = this.entries.get(key);
     if (exact) return { verdict: "exact", url: exact.url };
     const only = prefixed[0];

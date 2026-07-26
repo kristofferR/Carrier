@@ -363,26 +363,30 @@ export function initNotificationBridge() {
   };
 
   /**
-   * Whether the thread pane is showing the conversation `title` names. The
-   * header repeats the row's own title, so a prefix of it is enough — and a
-   * prefix is all a row that renders its name truncated can offer. A title too
-   * short to identify anything ("unknown") is not evidence either way.
+   * Whether the thread pane is showing the conversation `title` names. Its
+   * header repeats the row's own title, so containment of the whole title is
+   * the test — a row that renders its name truncated offers what it has, minus
+   * the ellipsis. Two answers are not evidence: a title too short to identify
+   * anything, and one the thread being navigated away from answers to as well.
    */
-  const paneShowsThread = (title: string): "yes" | "no" | "unknown" => {
-    const needle = title
-      .replace(/[…\s]+$/, "")
-      .slice(0, 16)
-      .toLowerCase();
+  const paneShowsThread = (title: string, leaving = ""): "yes" | "no" | "unknown" => {
+    const needle = title.replace(/[…\s]+$/, "").toLowerCase();
+    const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
     if (needle.length < 3) return "unknown";
     const main = document.querySelector('[role="main"]');
     if (!main) return "no";
+    let found = false;
     let checked = 0;
     for (const el of main.querySelectorAll<HTMLElement>('[aria-label], h1, h2, [role="heading"]')) {
       if (checked++ > 60) break;
       const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-      if (label.includes(needle)) return "yes";
+      if (!label.includes(needle)) continue;
+      // The pane the route is leaving answers to this title too — one of the
+      // two is on screen and the header cannot say which.
+      if (other && other !== needle && label.includes(other)) return "unknown";
+      found = true;
     }
-    return "no";
+    return found ? "yes" : "no";
   };
 
   const harvestSenderAvatars = (now: number) => {
@@ -407,7 +411,10 @@ export function initNotificationBridge() {
     // A title the pane cannot be checked against falls back to the weaker rule:
     // one pass must already have seen this route, so the render that switched
     // to it has been and gone.
-    const shown = paneShowsThread(rowTitles.get(openThread) || "");
+    const shown = paneShowsThread(
+      rowTitles.get(openThread) || "",
+      openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || "",
+    );
     const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
     harvestedRoute = openThread;
     if (!settled) {

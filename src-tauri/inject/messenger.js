@@ -3321,8 +3321,10 @@
       if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
-      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(`${key} `));
-      if (prefixed.length > 1) return { verdict: "ambiguous", url: "" };
+      const prefix = `${key} `;
+      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(prefix));
+      const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
+      if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
       const exact = this.entries.get(key);
       if (exact) return { verdict: "exact", url: exact.url };
       const only = prefixed[0];
@@ -3685,24 +3687,31 @@
       rowTitles.set(key, title);
       if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
     };
-    const paneShowsThread = (title) => {
-      const needle = title.replace(/[…\s]+$/, "").slice(0, 16).toLowerCase();
+    const paneShowsThread = (title, leaving = "") => {
+      const needle = title.replace(/[…\s]+$/, "").toLowerCase();
+      const other = leaving.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
       const main2 = document.querySelector('[role="main"]');
       if (!main2) return "no";
+      let found = false;
       let checked = 0;
       for (const el of main2.querySelectorAll('[aria-label], h1, h2, [role="heading"]')) {
         if (checked++ > 60) break;
         const label = normalizedText(el.getAttribute("aria-label") || el.textContent).toLowerCase();
-        if (label.includes(needle)) return "yes";
+        if (!label.includes(needle)) continue;
+        if (other && other !== needle && label.includes(other)) return "unknown";
+        found = true;
       }
-      return "no";
+      return found ? "yes" : "no";
     };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
       if (!openThread) return;
-      const shown = paneShowsThread(rowTitles.get(openThread) || "");
+      const shown = paneShowsThread(
+        rowTitles.get(openThread) || "",
+        openThread === harvestedRoute ? "" : rowTitles.get(harvestedRoute) || ""
+      );
       const settled = shown === "unknown" ? openThread === harvestedRoute : shown === "yes";
       harvestedRoute = openThread;
       if (!settled) {
