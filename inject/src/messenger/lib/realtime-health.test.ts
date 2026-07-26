@@ -140,8 +140,11 @@ describe("realtime recovery signals", () => {
     // Once that proof goes stale the socket's verdict stands on its own.
     expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(true);
 
+    // Both sources healthy again: nothing left to recover. Checked at the
+    // moment of recovery, since letting the clock run on from here would
+    // instead exercise the unobserved-transport window.
     tracker.healthy("socket", REALTIME_CORROBORATION_MS + 1);
-    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS * 10)).toBe(false);
+    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(false);
   });
 
   test("a withdrawn source stops asserting the staleness it reported", () => {

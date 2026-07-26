@@ -212,7 +212,7 @@
   var REALTIME_SILENCE_MS = 9e4;
   var REALTIME_NEVER_CONNECTED_MS = 9e4;
   var REALTIME_CORROBORATION_MS = 3e4;
-  var REALTIME_UNOBSERVED_MS = 3e5;
+  var REALTIME_UNOBSERVED_MS = 6e4;
   var REALTIME_UNOBSERVED_SETTLE_MS = 15e3;
   function looksLikeFacebookErrorPage(doc) {
     return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;

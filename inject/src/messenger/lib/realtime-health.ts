@@ -15,10 +15,16 @@ export const REALTIME_CORROBORATION_MS = 30_000;
  * Reached when the worker bridge is unavailable *and* the page owns no socket:
  * nobody reports stale, so without this the tracker would sit on its last
  * "ok" forever and disarm both page-side and native recovery while the inbox
- * quietly froze. Deliberately far longer than the recovery gap — this is the
- * last resort for a case nothing else can see, not a routine trigger.
+ * quietly froze.
+ *
+ * Tuned for fast recovery. Note the trade: a source that can still see the
+ * transport refreshes this every heartbeat, so a healthy worker keeps it from
+ * ever tripping — but if nothing can observe the transport at all, reloads
+ * settle into a cadence of roughly this interval (floored by the recovery gap
+ * in realtimeRecoveryDelay). Raise it if that churn is ever worse than the
+ * staleness it is trying to clear.
  */
-export const REALTIME_UNOBSERVED_MS = 300_000;
+export const REALTIME_UNOBSERVED_MS = 60_000;
 /**
  * Minimum delay before an unobserved-transport reload. A view resuming from
  * suspension trips the unobserved check synchronously, while the worker probe
