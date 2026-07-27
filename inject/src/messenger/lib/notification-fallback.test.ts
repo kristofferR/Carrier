@@ -5,6 +5,7 @@ import {
   isOwnMessagePreview,
   NotifiedSignatureStore,
   notificationDedupeKey,
+  notificationDeliveryDedupeKey,
   notificationTextMatches,
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
@@ -35,6 +36,16 @@ describe("notificationDedupeKey", () => {
     const key = notificationDedupeKey("Jane", "First");
     expect(notificationDedupeKey("John", "First")).not.toBe(key);
     expect(notificationDedupeKey("Jane", "Second")).not.toBe(key);
+  });
+
+  test("gives confirmed repeats a fresh opaque native delivery key", () => {
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    expect(notificationDeliveryDedupeKey(fingerprint)).toBe(fingerprint);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:1000")).not.toBe(fingerprint);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:1000")).toMatch(/^[0-9a-f]{16}$/);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:2000")).not.toBe(
+      notificationDeliveryDedupeKey(fingerprint, "thread-1:1000"),
+    );
   });
 });
 

@@ -79,6 +79,11 @@ interface NotificationText {
 export interface PageNotificationSignal extends NotificationText {
   at: number;
   /**
+   * Native dedupe identity supplied when a row confirms this is a new logical
+   * delivery despite repeating the previous preview.
+   */
+  dedupeKey?: string;
+  /**
    * The native notification id emitted for a page-first Notification (one that
    * fires before its conversation row is known). Kept so the row-driven pairing
    * can attach a reload-safe route to that already-emitted notification.
@@ -147,6 +152,16 @@ const splitGroupSender = (value: string): { sender: string | null; message: stri
 export function notificationDedupeKey(title: string, body: string): string {
   const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
   return hashText(value);
+}
+
+/**
+ * Gives a confirmed repeat its own native dedupe identity while keeping the
+ * ordinary page and row paths on the shared content fingerprint. The
+ * generation may contain a conversation key or timestamp because it is hashed
+ * before crossing the native bridge.
+ */
+export function notificationDeliveryDedupeKey(fingerprint: string, generation?: string): string {
+  return generation === undefined ? fingerprint : notificationDedupeKey(fingerprint, generation);
 }
 
 const NOTIFIED_STORE_LIMIT = 300;

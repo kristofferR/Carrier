@@ -2716,6 +2716,9 @@
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
     return hashText(value);
   }
+  function notificationDeliveryDedupeKey(fingerprint, generation) {
+    return generation === void 0 ? fingerprint : notificationDedupeKey(fingerprint, generation);
+  }
   var NOTIFIED_STORE_LIMIT = 300;
   var NOTIFIED_STORE_VERSION = 3;
   var NOTIFIED_STORE_TEXT_VERSION = 2;
@@ -3631,7 +3634,8 @@
             fingerprint: pending.fingerprint,
             bodyHash: notificationDedupeKey("", pending.body),
             expect: notifiedStore.notifiedFingerprint(key)
-          }
+          },
+          dedupeKey: pending.dedupeKey
         };
       }
       return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
@@ -3659,7 +3663,7 @@
             hidePreview ? "Messenger" : originalTitle,
             hidePreview ? "New message" : originalBody,
             icon,
-            notificationDedupeKey(originalTitle, originalBody),
+            pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
             },
@@ -3876,8 +3880,12 @@
         unread
       };
     };
-    const scheduleFallback = (conversation, detectedAt) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const dedupeKey = notificationDeliveryDedupeKey(
+        fingerprint,
+        confirmedRepeat ? `${conversation.key}:${detectedAt}` : void 0
+      );
       const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = pendingFallbacks.get(conversation.key);
       if (previous) clearTimeout(previous.timer);
@@ -3887,6 +3895,7 @@
         PAGE_NOTIFICATION_MATCH_MS
       );
       if (pageSignal) {
+        pageSignal.dedupeKey = dedupeKey;
         if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
@@ -3931,7 +3940,7 @@
           hidePreview ? "Messenger" : conversation.title,
           hidePreview ? "New message" : conversation.body,
           icon,
-          fingerprint,
+          dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
@@ -3943,7 +3952,8 @@
         title: conversation.title,
         body: conversation.body,
         threadPath: conversation.threadPath,
-        fingerprint
+        fingerprint,
+        dedupeKey
       });
     };
     let scanRunning = false;
@@ -4044,6 +4054,7 @@
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
         const unhydrated = /* @__PURE__ */ new Set();
+        const confirmedRepeats = /* @__PURE__ */ new Set();
         for (const conversation of conversations) {
           if (!conversation.body) {
             if (changed.has(conversation.key)) {
@@ -4077,6 +4088,7 @@
             bodyHash,
             readTransitions.has(conversation.key) && !pageReceipt
           );
+          if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
             const pending = pendingFallbacks.get(conversation.key);
@@ -4119,7 +4131,7 @@
         }
         for (const conversation of conversations) {
           if (changed.has(conversation.key) && !stale.has(conversation.key) && !unhydrated.has(conversation.key)) {
-            scheduleFallback(conversation, detectedAt);
+            scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
           }
         }
       } finally {

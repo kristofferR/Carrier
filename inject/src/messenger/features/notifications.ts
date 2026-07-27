@@ -15,6 +15,7 @@ import {
   isOwnMessagePreview,
   NotifiedSignatureStore,
   notificationDedupeKey,
+  notificationDeliveryDedupeKey,
   notificationTextMatches,
   PageNotificationQueue,
   PageNotificationReceiptStore,
@@ -164,6 +165,7 @@ export function initNotificationBridge() {
     body: string;
     threadPath: string;
     fingerprint: string;
+    dedupeKey: string;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
   const unmatchedPageNotifications = new PageNotificationQueue();
@@ -182,6 +184,7 @@ export function initNotificationBridge() {
   ): {
     threadPath?: string;
     deliver?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+    dedupeKey?: string;
     signal?: PageNotificationSignal;
   } => {
     for (const [key, pending] of pendingFallbacks) {
@@ -196,6 +199,7 @@ export function initNotificationBridge() {
           bodyHash: notificationDedupeKey("", pending.body),
           expect: notifiedStore.notifiedFingerprint(key),
         },
+        dedupeKey: pending.dedupeKey,
       };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
@@ -255,7 +259,9 @@ export function initNotificationBridge() {
           hidePreview ? "Messenger" : originalTitle,
           hidePreview ? "New message" : originalBody,
           icon,
-          notificationDedupeKey(originalTitle, originalBody),
+          pageMatch.dedupeKey ??
+            pageMatch.signal?.dedupeKey ??
+            notificationDedupeKey(originalTitle, originalBody),
           () => {
             // Facebook's onclick expects the click Event (it can read it / call
             // preventDefault); a native notification click carries no DOM
@@ -595,8 +601,16 @@ export function initNotificationBridge() {
 
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
 
-  const scheduleFallback = (conversation: Conversation, detectedAt: number) => {
+  const scheduleFallback = (
+    conversation: Conversation,
+    detectedAt: number,
+    confirmedRepeat = false,
+  ) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    const dedupeKey = notificationDeliveryDedupeKey(
+      fingerprint,
+      confirmedRepeat ? `${conversation.key}:${detectedAt}` : undefined,
+    );
     const bodyHash = notificationDedupeKey("", conversation.body);
     // Clear an older pending preview for this thread before checking the page
     // queue. Otherwise a page Notification can consume the new row while the
@@ -609,6 +623,10 @@ export function initNotificationBridge() {
       PAGE_NOTIFICATION_MATCH_MS,
     );
     if (pageSignal) {
+      // The page's async avatar conversion may still be in flight. Give that
+      // normal path the same fresh identity so it remains paired with this row
+      // while bypassing the native replay guard for a confirmed repeat.
+      pageSignal.dedupeKey = dedupeKey;
       // The page path already delivered this logical notification. If it fired
       // before this row was known, its native notification carries no route —
       // attach one now so a click survives the auto-refresh reload.
@@ -680,7 +698,7 @@ export function initNotificationBridge() {
         hidePreview ? "Messenger" : conversation.title,
         hidePreview ? "New message" : conversation.body,
         icon,
-        fingerprint,
+        dedupeKey,
         () => {
           window.__carrierOpenThread?.(conversation.threadPath);
         },
@@ -693,6 +711,7 @@ export function initNotificationBridge() {
       body: conversation.body,
       threadPath: conversation.threadPath,
       fingerprint,
+      dedupeKey,
     });
   };
 
@@ -849,6 +868,7 @@ export function initNotificationBridge() {
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
       const unhydrated = new Set<string>();
+      const confirmedRepeats = new Set<string>();
       for (const conversation of conversations) {
         if (!conversation.body) {
           if (changed.has(conversation.key)) {
@@ -891,6 +911,7 @@ export function initNotificationBridge() {
           bodyHash,
           readTransitions.has(conversation.key) && !pageReceipt,
         );
+        if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
           // The current content is already delivered — an armed fallback for
@@ -950,7 +971,7 @@ export function initNotificationBridge() {
           !stale.has(conversation.key) &&
           !unhydrated.has(conversation.key)
         ) {
-          scheduleFallback(conversation, detectedAt);
+          scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
         }
       }
     } finally {
