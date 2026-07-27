@@ -2724,9 +2724,10 @@
   var NOTIFIED_STORE_TEXT_VERSION = 2;
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
-  var READ_TRANSITION_CONFIRM_MS = 1e3;
   var READ_DROP_CONFIRM_MS = 2e4;
   var READ_DROP_MIN_OBSERVATIONS = 3;
+  var READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
+  var READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
@@ -3147,7 +3148,10 @@
         }
         previous = 0;
       }
-      if (count <= previous) return [];
+      if (count <= previous) {
+        this.changedAt.clear();
+        return [];
+      }
       const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
@@ -3980,7 +3984,8 @@
         body: conversation.body,
         threadPath: conversation.threadPath,
         fingerprint,
-        dedupeKey
+        dedupeKey,
+        confirmedRepeat
       });
     };
     let scanRunning = false;
@@ -3992,7 +3997,7 @@
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
     const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
-    const readCandidateAt = /* @__PURE__ */ new Map();
+    const readCandidates = /* @__PURE__ */ new Map();
     let lastScanAt = 0;
     const MAX_MUTATION_GRACE_MS = 9e4;
     const scanUnreadConversations = () => {
@@ -4014,6 +4019,9 @@
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
+        const deliveredBeforeRead = new Map(
+          observed.map(({ key }) => [key, notifiedStore.notifiedFingerprint(key)])
+        );
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
           observed.map(({ key }) => key),
@@ -4027,29 +4035,30 @@
         clearTimeout(readConfirmationTimer);
         readConfirmationTimer = void 0;
         let nextReadConfirmationIn = null;
-        for (const key of readCandidateAt.keys()) {
-          if (!hydratedReadKeys.has(key)) readCandidateAt.delete(key);
+        for (const key of readCandidates.keys()) {
+          if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
         }
         for (const conversation of observed) {
           if (!hydratedReadKeys.has(conversation.key)) continue;
           if (readObservedKeys.has(conversation.key)) continue;
-          const since = readCandidateAt.get(conversation.key);
-          if (since === void 0) {
-            readCandidateAt.set(conversation.key, detectedAt);
-            if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
-              readCandidateAt.delete(readCandidateAt.keys().next().value);
+          const candidate = readCandidates.get(conversation.key);
+          if (candidate === void 0 || detectedAt < candidate.since) {
+            readCandidates.set(conversation.key, { since: detectedAt, observations: 1 });
+            if (readCandidates.size > READ_OBSERVED_LIMIT) {
+              readCandidates.delete(readCandidates.keys().next().value);
             }
             nextReadConfirmationIn = nextReadConfirmationIn === null ? READ_TRANSITION_CONFIRM_MS : Math.min(nextReadConfirmationIn, READ_TRANSITION_CONFIRM_MS);
             continue;
           }
-          const elapsed3 = detectedAt - since;
-          if (elapsed3 >= READ_TRANSITION_CONFIRM_MS) {
-            readCandidateAt.delete(conversation.key);
+          candidate.observations += 1;
+          const elapsed3 = detectedAt - candidate.since;
+          if (elapsed3 >= READ_TRANSITION_CONFIRM_MS && candidate.observations >= READ_TRANSITION_MIN_OBSERVATIONS) {
+            readCandidates.delete(conversation.key);
             readObservedKeys.add(conversation.key);
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
-          } else {
+          } else if (elapsed3 < READ_TRANSITION_CONFIRM_MS) {
             const remaining = READ_TRANSITION_CONFIRM_MS - elapsed3;
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
@@ -4133,13 +4142,13 @@
             conversation.title,
             fingerprint,
             bodyHash,
-            readTransitions.has(conversation.key) && !pageReceipt
+            readTransitions.has(conversation.key) && deliveredBeforeRead.get(conversation.key) === fingerprint && !pageReceipt
           );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
             const pending = pendingFallbacks.get(conversation.key);
-            if (pending) {
+            if (pending && !pending.confirmedRepeat) {
               clearTimeout(pending.timer);
               pendingFallbacks.delete(conversation.key);
             }

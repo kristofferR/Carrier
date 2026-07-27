@@ -579,6 +579,17 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
   });
 
+  test("does not reuse mutations examined before an unchanged count", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["examined"], 1_100);
+    expect(tracker.observeUnreadCount(2, 1_200, 2_000)).toEqual([]);
+    // A hidden poll can expand the mutation-age allowance by a full minute,
+    // but the earlier scan already established that this mutation was not an
+    // unread-count arrival.
+    expect(tracker.observeUnreadCount(3, 61_200, 62_000)).toEqual([]);
+  });
+
   test("absorbs the title hydrating from zero as the baseline", () => {
     const tracker = new UnreadArrivalTracker(10_000);
     // Post-reload: the title has no "(N)" yet, rows mutate while hydrating.

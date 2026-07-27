@@ -21,6 +21,7 @@ import {
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   READ_TRANSITION_CONFIRM_MS,
+  READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
@@ -186,6 +187,7 @@ export function initNotificationBridge() {
     threadPath: string;
     fingerprint: string;
     dedupeKey: string;
+    confirmedRepeat: boolean;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
   const unmatchedPageNotifications = new PageNotificationQueue();
@@ -763,6 +765,7 @@ export function initNotificationBridge() {
       threadPath: conversation.threadPath,
       fingerprint,
       dedupeKey,
+      confirmedRepeat,
     });
   };
 
@@ -785,7 +788,7 @@ export function initNotificationBridge() {
   // during the settle window.
   const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
-  const readCandidateAt = new Map<string, number>();
+  const readCandidates = new Map<string, { since: number; observations: number }>();
   // When the previous scan actually examined the list. Row mutations are
   // attributed against real elapsed time, but the scan that reads them is
   // deferred by a timer the webview throttles hard while hidden — and the
@@ -825,6 +828,13 @@ export function initNotificationBridge() {
       // corroboration below rely on this to tell a settled list apart from one
       // that is still hydrating.
       const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
+      // Read confirmation and persisted-entry retirement deliberately use the
+      // same robust threshold. Snapshot the delivered fingerprint first so an
+      // identical next preview can still receive a fresh native dedupe key on
+      // the scan that confirms the transition and retires the stored entry.
+      const deliveredBeforeRead = new Map(
+        observed.map(({ key }) => [key, notifiedStore.notifiedFingerprint(key)]),
+      );
       // "Read" means the row is no longer unread — not merely filtered from
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
@@ -851,17 +861,17 @@ export function initNotificationBridge() {
       clearTimeout(readConfirmationTimer);
       readConfirmationTimer = undefined;
       let nextReadConfirmationIn: number | null = null;
-      for (const key of readCandidateAt.keys()) {
-        if (!hydratedReadKeys.has(key)) readCandidateAt.delete(key);
+      for (const key of readCandidates.keys()) {
+        if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
       }
       for (const conversation of observed) {
         if (!hydratedReadKeys.has(conversation.key)) continue;
         if (readObservedKeys.has(conversation.key)) continue;
-        const since = readCandidateAt.get(conversation.key);
-        if (since === undefined) {
-          readCandidateAt.set(conversation.key, detectedAt);
-          if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
-            readCandidateAt.delete(readCandidateAt.keys().next().value!);
+        const candidate = readCandidates.get(conversation.key);
+        if (candidate === undefined || detectedAt < candidate.since) {
+          readCandidates.set(conversation.key, { since: detectedAt, observations: 1 });
+          if (readCandidates.size > READ_OBSERVED_LIMIT) {
+            readCandidates.delete(readCandidates.keys().next().value!);
           }
           nextReadConfirmationIn =
             nextReadConfirmationIn === null
@@ -869,14 +879,18 @@ export function initNotificationBridge() {
               : Math.min(nextReadConfirmationIn, READ_TRANSITION_CONFIRM_MS);
           continue;
         }
-        const elapsed = detectedAt - since;
-        if (elapsed >= READ_TRANSITION_CONFIRM_MS) {
-          readCandidateAt.delete(conversation.key);
+        candidate.observations += 1;
+        const elapsed = detectedAt - candidate.since;
+        if (
+          elapsed >= READ_TRANSITION_CONFIRM_MS &&
+          candidate.observations >= READ_TRANSITION_MIN_OBSERVATIONS
+        ) {
+          readCandidates.delete(conversation.key);
           readObservedKeys.add(conversation.key);
           if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
             readObservedKeys.delete(readObservedKeys.keys().next().value!);
           }
-        } else {
+        } else if (elapsed < READ_TRANSITION_CONFIRM_MS) {
           const remaining = READ_TRANSITION_CONFIRM_MS - elapsed;
           nextReadConfirmationIn =
             nextReadConfirmationIn === null
@@ -989,16 +1003,20 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          readTransitions.has(conversation.key) && !pageReceipt,
+          readTransitions.has(conversation.key) &&
+            deliveredBeforeRead.get(conversation.key) === fingerprint &&
+            !pageReceipt,
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
           // The current content is already delivered — an armed fallback for
           // this thread (e.g. from a mismatch the hydration then corrected)
-          // would only replay it or emit an outdated preview.
+          // would only replay it or emit an outdated preview. A confirmed
+          // repeated message is the exception: its intentionally identical
+          // fingerprint must stay armed until its fresh-key delivery fires.
           const pending = pendingFallbacks.get(conversation.key);
-          if (pending) {
+          if (pending && !pending.confirmedRepeat) {
             clearTimeout(pending.timer);
             pendingFallbacks.delete(conversation.key);
           }

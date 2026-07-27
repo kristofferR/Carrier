@@ -187,11 +187,6 @@ const LEGACY_PLACEHOLDER_BODY = "New message";
 // read state for real elapsed time so those scans cannot erase replay
 // suppression merely by arriving in a burst.
 export const STABLE_READ_MS = 30_000;
-// Once the current document has actually observed the row as unread, a later
-// read-looking state is a real transition rather than initial hydration. Keep
-// a short confirmation for ordinary styling flicker without suppressing an
-// identical new message for the full reload guard.
-export const READ_TRANSITION_CONFIRM_MS = 1_000;
 /**
  * How long a row must render continuously read before its delivered
  * fingerprint is forgotten. Unread state is scraped from computed font
@@ -210,6 +205,12 @@ export const READ_DROP_CONFIRM_MS = 20_000;
  * consecutive read observations as well.
  */
 export const READ_DROP_MIN_OBSERVATIONS = 3;
+// A confirmed read transition can bypass an exact delivered fingerprint when
+// the next message repeats the same preview. Apply the same conservative guard
+// used before forgetting that fingerprint so a styling flap cannot manufacture
+// a repeated-message notification.
+export const READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
+export const READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
 
 interface NotifiedEntry {
   fingerprint: string;
@@ -841,7 +842,13 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    if (count <= previous) return [];
+    if (count <= previous) {
+      // This scan has examined every queued mutation without seeing a matching
+      // title-count increase. Do not let a later scan's expanded hidden-window
+      // grace reattribute those same mutations to an unrelated arrival.
+      this.changedAt.clear();
+      return [];
+    }
 
     const candidates = [...this.changedAt]
       .sort((left, right) => right[1] - left[1])
