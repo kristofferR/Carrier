@@ -542,7 +542,17 @@ pub fn run() {
                 match serde_json::from_str::<NotifyMsg>(event.payload()) {
                     Ok(msg) => {
                         log::info!("carrier:notify received (id {})", msg.id());
-                        show_message_notification(notify_handle.clone(), msg);
+                        let id = msg.id();
+                        let delivery = show_message_notification(notify_handle.clone(), msg);
+                        if let Some(window) = notify_handle.get_webview_window("main") {
+                            let delivery = serde_json::to_string(&delivery)
+                                .expect("notification delivery serializes");
+                            if let Err(e) = window
+                                .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
+                            {
+                                log::warn!("carrier:notify result callback failed: {e}");
+                            }
+                        }
                     }
                     Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
                 }

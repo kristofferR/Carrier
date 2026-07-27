@@ -35,6 +35,8 @@ interface CarrierNotificationInstance {
   close: () => void;
 }
 
+type NativeNotificationDelivery = "accepted" | "duplicate" | "suppressed";
+
 const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
@@ -97,6 +99,7 @@ export function initNotificationBridge() {
   // an older OS notification cannot collide with a fresh in-page handler.
   let notifySeq = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const notifyHandlers = new Map<number, () => void>();
+  const deliveryHandlers = new Map<number, (delivery: NativeNotificationDelivery) => void>();
   window.__carrierNotifyClick = (id: number) => {
     const handler = notifyHandlers.get(id);
     notifyHandlers.delete(id);
@@ -109,6 +112,13 @@ export function initNotificationBridge() {
     return handler !== undefined;
   };
 
+  window.__carrierNotifyResult = (id, delivery) => {
+    if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
+    const handler = deliveryHandlers.get(id);
+    deliveryHandlers.delete(id);
+    handler?.(delivery);
+  };
+
   const emitNotification = (
     id: number,
     title: string,
@@ -117,13 +127,23 @@ export function initNotificationBridge() {
     dedupeKey: string,
     onClick: () => void,
     threadPath?: string,
+    onDelivery?: (delivery: NativeNotificationDelivery) => void,
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
+    if (onDelivery) {
+      deliveryHandlers.set(id, onDelivery);
+      if (deliveryHandlers.size > 50) {
+        deliveryHandlers.delete(deliveryHandlers.keys().next().value!);
+      }
+    }
     invoke("plugin:event|emit", {
       event: "carrier:notify",
       payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" },
-    })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+    })?.catch?.(() => {
+      deliveryHandlers.delete(id);
+      diag("notify.emit", "carrier:notify emit failed");
+    });
   };
 
   // Attach (or refresh) the native-side route for an already-emitted
@@ -270,6 +290,14 @@ export function initNotificationBridge() {
             this.onclick?.(new Event("click"));
           },
           pageMatch.threadPath,
+          pageMatch.signal
+            ? (delivery) => {
+                pageMatch.signal!.nativeDelivery = delivery;
+                const handler = pageMatch.signal!.onNativeDelivery;
+                pageMatch.signal!.onNativeDelivery = undefined;
+                handler?.(delivery);
+              }
+            : undefined,
         );
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
@@ -635,7 +663,21 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (pageSignal.emitted) {
-        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        const finishDelivery = (delivery: NativeNotificationDelivery) => {
+          if (confirmedRepeat && delivery === "duplicate") {
+            // The page emitted with the old content fingerprint before this
+            // row confirmed a new, identical message. Retry only when native
+            // delivery reports that exact emit was suppressed.
+            scheduleFallback(conversation, detectedAt, true);
+            return;
+          }
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        };
+        if (pageSignal.nativeDelivery) {
+          finishDelivery(pageSignal.nativeDelivery);
+        } else {
+          pageSignal.onNativeDelivery = finishDelivery;
+        }
       } else {
         // The signal's native emit is still waiting on the avatar conversion.
         // A reload before it queues would leave no banner, so the delivered
@@ -649,8 +691,6 @@ export function initNotificationBridge() {
       }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
-      // An emitted page notification may or may not have passed the native
-      // deduper, and retrying without that result can show a second banner.
       return;
     }
     // Start the bounded avatar conversion during the pairing grace period.
@@ -721,6 +761,7 @@ export function initNotificationBridge() {
   let scanRunning = false;
   let scanPending = false;
   let mismatchConfirmationTimer: number | undefined;
+  let readConfirmationTimer: number | undefined;
   const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
   const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
   // Arrivals attributed while their row preview was still empty. The
@@ -796,9 +837,12 @@ export function initNotificationBridge() {
       // unread again is only a new message if this document had established it
       // was read, and the tracker needs that verdict for the very scan the
       // transition shows up in.
-      const hydratedReadKeys = new Set(
-        observed.filter(({ body, unread }) => body.length > 0 && !unread).map(({ key }) => key),
+      const hydratedReadKeys = new Set<string>(
+        listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : [],
       );
+      clearTimeout(readConfirmationTimer);
+      readConfirmationTimer = undefined;
+      let nextReadConfirmationIn: number | null = null;
       for (const key of readCandidateAt.keys()) {
         if (!hydratedReadKeys.has(key)) readCandidateAt.delete(key);
       }
@@ -811,15 +855,32 @@ export function initNotificationBridge() {
           if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
             readCandidateAt.delete(readCandidateAt.keys().next().value!);
           }
+          nextReadConfirmationIn =
+            nextReadConfirmationIn === null
+              ? READ_TRANSITION_CONFIRM_MS
+              : Math.min(nextReadConfirmationIn, READ_TRANSITION_CONFIRM_MS);
           continue;
         }
-        if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
+        const elapsed = detectedAt - since;
+        if (elapsed >= READ_TRANSITION_CONFIRM_MS) {
           readCandidateAt.delete(conversation.key);
           readObservedKeys.add(conversation.key);
           if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
             readObservedKeys.delete(readObservedKeys.keys().next().value!);
           }
+        } else {
+          const remaining = READ_TRANSITION_CONFIRM_MS - elapsed;
+          nextReadConfirmationIn =
+            nextReadConfirmationIn === null
+              ? remaining
+              : Math.min(nextReadConfirmationIn, remaining);
         }
+      }
+      if (nextReadConfirmationIn !== null) {
+        readConfirmationTimer = setTimeout(
+          scanUnreadConversations,
+          Math.max(1, nextReadConfirmationIn),
+        );
       }
       const readTransitions = new Set<string>();
       const changed = new Set(

@@ -106,6 +106,12 @@ export interface PageNotificationSignal extends NotificationText {
    */
   emitted?: boolean;
   /**
+   * Whether the native layer accepted this emit or recognized it as a replay.
+   * A confirmed repeated preview retries only the latter with its fresh key.
+   */
+  nativeDelivery?: "accepted" | "duplicate" | "suppressed";
+  onNativeDelivery?: (delivery: "accepted" | "duplicate" | "suppressed") => void;
+  /**
    * `expect` snapshots the store's fingerprint for the key at pairing time;
    * the emitter only persists the delivery if the store is still in that
    * state, so a newer delivery during the avatar conversion is never

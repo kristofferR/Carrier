@@ -3582,6 +3582,7 @@
     });
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
+    const deliveryHandlers = /* @__PURE__ */ new Map();
     window.__carrierNotifyClick = (id) => {
       const handler = notifyHandlers.get(id);
       notifyHandlers.delete(id);
@@ -3595,13 +3596,28 @@
       }
       return handler !== void 0;
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath) => {
+    window.__carrierNotifyResult = (id, delivery) => {
+      if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
+      const handler = deliveryHandlers.get(id);
+      deliveryHandlers.delete(id);
+      handler?.(delivery);
+    };
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
+      if (onDelivery) {
+        deliveryHandlers.set(id, onDelivery);
+        if (deliveryHandlers.size > 50) {
+          deliveryHandlers.delete(deliveryHandlers.keys().next().value);
+        }
+      }
       invoke("plugin:event|emit", {
         event: "carrier:notify",
         payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
-      })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+      })?.catch?.(() => {
+        deliveryHandlers.delete(id);
+        diag("notify.emit", "carrier:notify emit failed");
+      });
     };
     const updateNotificationRoute = (id, threadPath) => {
       invoke("plugin:event|emit", {
@@ -3667,7 +3683,13 @@
             () => {
               this.onclick?.(new Event("click"));
             },
-            pageMatch.threadPath
+            pageMatch.threadPath,
+            pageMatch.signal ? (delivery) => {
+              pageMatch.signal.nativeDelivery = delivery;
+              const handler = pageMatch.signal.onNativeDelivery;
+              pageMatch.signal.onNativeDelivery = void 0;
+              handler?.(delivery);
+            } : void 0
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -3900,7 +3922,18 @@
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          const finishDelivery = (delivery) => {
+            if (confirmedRepeat && delivery === "duplicate") {
+              scheduleFallback(conversation, detectedAt, true);
+              return;
+            }
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          };
+          if (pageSignal.nativeDelivery) {
+            finishDelivery(pageSignal.nativeDelivery);
+          } else {
+            pageSignal.onNativeDelivery = finishDelivery;
+          }
         } else {
           pageSignal.pendingDelivery = {
             key: conversation.key,
@@ -3959,6 +3992,7 @@
     let scanRunning = false;
     let scanPending = false;
     let mismatchConfirmationTimer;
+    let readConfirmationTimer;
     const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
@@ -3994,8 +4028,11 @@
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
         const hydratedReadKeys = new Set(
-          observed.filter(({ body, unread }) => body.length > 0 && !unread).map(({ key }) => key)
+          listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
+        clearTimeout(readConfirmationTimer);
+        readConfirmationTimer = void 0;
+        let nextReadConfirmationIn = null;
         for (const key of readCandidateAt.keys()) {
           if (!hydratedReadKeys.has(key)) readCandidateAt.delete(key);
         }
@@ -4008,15 +4045,26 @@
             if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
               readCandidateAt.delete(readCandidateAt.keys().next().value);
             }
+            nextReadConfirmationIn = nextReadConfirmationIn === null ? READ_TRANSITION_CONFIRM_MS : Math.min(nextReadConfirmationIn, READ_TRANSITION_CONFIRM_MS);
             continue;
           }
-          if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
+          const elapsed3 = detectedAt - since;
+          if (elapsed3 >= READ_TRANSITION_CONFIRM_MS) {
             readCandidateAt.delete(conversation.key);
             readObservedKeys.add(conversation.key);
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
+          } else {
+            const remaining = READ_TRANSITION_CONFIRM_MS - elapsed3;
+            nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
+        }
+        if (nextReadConfirmationIn !== null) {
+          readConfirmationTimer = setTimeout(
+            scanUnreadConversations,
+            Math.max(1, nextReadConfirmationIn)
+          );
         }
         const readTransitions = /* @__PURE__ */ new Set();
         const changed = new Set(
