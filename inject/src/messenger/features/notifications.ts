@@ -166,7 +166,6 @@ export function initNotificationBridge() {
     threadPath: string;
     fingerprint: string;
     dedupeKey: string;
-    confirmedRepeat: boolean;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
   const unmatchedPageNotifications = new PageNotificationQueue();
@@ -625,9 +624,10 @@ export function initNotificationBridge() {
     );
     if (pageSignal) {
       // The page's async avatar conversion may still be in flight. Give that
-      // normal path the same fresh identity so it remains paired with this row
-      // while bypassing the native replay guard for a confirmed repeat.
-      pageSignal.dedupeKey = dedupeKey;
+      // pending path the same fresh identity so it remains paired with this row
+      // while bypassing the native replay guard for a confirmed repeat. Once
+      // emitted, changing the signal cannot update the payload already sent.
+      if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
       // The page path already delivered this logical notification. If it fired
       // before this row was known, its native notification carries no route —
       // attach one now so a click survives the auto-refresh reload.
@@ -635,9 +635,7 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (pageSignal.emitted) {
-        if (!confirmedRepeat) {
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-        }
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
       } else {
         // The signal's native emit is still waiting on the avatar conversion.
         // A reload before it queues would leave no banner, so the delivered
@@ -651,10 +649,9 @@ export function initNotificationBridge() {
       }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
-      // Once emitted, changing the signal cannot update the payload already
-      // sent through IPC. Retry a confirmed repeat through the fallback with
-      // its fresh key; the old content key may have been natively deduped.
-      if (!pageSignal.emitted || !confirmedRepeat) return;
+      // An emitted page notification may or may not have passed the native
+      // deduper, and retrying without that result can show a second banner.
+      return;
     }
     // Start the bounded avatar conversion during the pairing grace period.
     // Delivery therefore stays ahead of the four-second auto-refresh nudge.
@@ -718,7 +715,6 @@ export function initNotificationBridge() {
       threadPath: conversation.threadPath,
       fingerprint,
       dedupeKey,
-      confirmedRepeat,
     });
   };
 
@@ -800,12 +796,14 @@ export function initNotificationBridge() {
       // unread again is only a new message if this document had established it
       // was read, and the tracker needs that verdict for the very scan the
       // transition shows up in.
+      const hydratedReadKeys = new Set(
+        observed.filter(({ body, unread }) => body.length > 0 && !unread).map(({ key }) => key),
+      );
+      for (const key of readCandidateAt.keys()) {
+        if (!hydratedReadKeys.has(key)) readCandidateAt.delete(key);
+      }
       for (const conversation of observed) {
-        if (!conversation.body) continue;
-        if (conversation.unread) {
-          readCandidateAt.delete(conversation.key);
-          continue;
-        }
+        if (!hydratedReadKeys.has(conversation.key)) continue;
         if (readObservedKeys.has(conversation.key)) continue;
         const since = readCandidateAt.get(conversation.key);
         if (since === undefined) {
@@ -899,22 +897,14 @@ export function initNotificationBridge() {
         const bodyHash = notificationDedupeKey("", conversation.body);
 
         const pageReceipt = pageReceipts.get(conversation.key);
-        const pending = pendingFallbacks.get(conversation.key);
-        const confirmedRepeat =
-          readTransitions.has(conversation.key) ||
-          (pending?.confirmedRepeat === true && pending.fingerprint === fingerprint);
         if (pageReceipt) {
           // An earlier scan may have armed a fallback while this receipt was
-          // still ambiguous. Ordinarily the page already showed this
-          // notification, so that timer must not fire a duplicate. A confirmed
-          // repeat is different: the receipt proves only that the old
-          // content-key emit was queued, and the native deduper may have
-          // suppressed it. Keep its fresh-key fallback armed.
-          if (!confirmedRepeat) {
-            if (pending) clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-          }
+          // still ambiguous — the page already emitted this notification, so
+          // that timer must not fire a possible duplicate.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) clearTimeout(pending.timer);
+          pendingFallbacks.delete(conversation.key);
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
           // Remove the same-document raw signal too; otherwise it could linger
           // briefly and pair with a different but text-identical row.
           unmatchedPageNotifications.consumeMatching(
@@ -930,7 +920,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          confirmedRepeat,
+          readTransitions.has(conversation.key) && !pageReceipt,
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {
