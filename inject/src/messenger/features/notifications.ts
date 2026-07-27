@@ -982,6 +982,7 @@ export function initNotificationBridge() {
         // so a first arrival inside the settle window can still report.
         listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
+        new Set(conversations.map(({ key }) => key)),
       )) {
         changed.add(key);
       }

@@ -11,6 +11,7 @@ import {
   PageNotificationQueue,
   PageNotificationReceiptStore,
   READ_DROP_CONFIRM_MS,
+  RETIRED_FINGERPRINT_TTL_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
@@ -376,6 +377,23 @@ describe("NotifiedSignatureStore", () => {
     expect(store.reconcileFingerprint("1", "Jane", fingerprint, bodyHash, true)).toBe("repeated");
   });
 
+  test("persists a retired fingerprint across a reload through the native dedupe window", () => {
+    const storage = memoryStorage();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    expect(RETIRED_FINGERPRINT_TTL_MS).toBeGreaterThanOrEqual(30_000);
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", fingerprint, bodyHash),
+    ).toBe("repeated");
+  });
+
   test("keeps entries for unread rows that are merely still rendered", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
@@ -651,8 +669,10 @@ describe("UnreadArrivalTracker", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(5, 1_000, 2_000);
     tracker.markRowsChanged(["new-message"], 1_100);
-    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
-    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
+    expect(
+      tracker.observeUnreadCount(3, 1_200, 2_000, false, undefined, new Set(["new-message"])),
+    ).toEqual(["new-message"]);
+    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual([]);
   });
 
   test("expires retained mutations that outlive the attribution window", () => {

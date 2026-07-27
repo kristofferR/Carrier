@@ -2728,15 +2728,16 @@
   var READ_DROP_MIN_OBSERVATIONS = 3;
   var READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
   var READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
+  var RETIRED_FINGERPRINT_TTL_MS = 3e4;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
       /**
-       * In-memory fingerprints retired by a confirmed read. The next unread
-       * transition can still identify an identical preview as a fresh delivery
-       * after the persisted entry has been removed.
+       * Fingerprints retired by a confirmed read. These survive a prompt reload so
+       * the next unread transition can identify an identical preview as a fresh
+       * delivery while the native content-key dedupe is still active.
        */
       __publicField(this, "readFingerprints", /* @__PURE__ */ new Map());
       /**
@@ -2762,11 +2763,26 @@
             });
           }
         }
+        if (version === NOTIFIED_STORE_VERSION && parsed && typeof parsed === "object" && "retired" in parsed && Array.isArray(parsed.retired)) {
+          const now = Date.now();
+          for (const retired of parsed.retired) {
+            if (Array.isArray(retired) && typeof retired[0] === "string" && typeof retired[1] === "string" && typeof retired[2] === "number" && now - retired[2] <= RETIRED_FINGERPRINT_TTL_MS) {
+              this.readFingerprints.set(retired[0], {
+                fingerprint: retired[1],
+                retiredAt: retired[2]
+              });
+            }
+          }
+        }
       } catch (_) {
       }
       let trimmed = false;
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         this.entries.delete(this.entries.keys().next().value);
+        trimmed = true;
+      }
+      while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+        this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         trimmed = true;
       }
       if (trimmed) this.persist();
@@ -2779,7 +2795,12 @@
             version: NOTIFIED_STORE_VERSION,
             entries: [...this.entries].map(
               ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
-            )
+            ),
+            retired: [...this.readFingerprints].map(([key, retired]) => [
+              key,
+              retired.fingerprint,
+              retired.retiredAt
+            ])
           })
         );
       } catch (_) {
@@ -2800,9 +2821,11 @@
      */
     reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, confirmedReadTransition = false) {
       const entry = this.entries.get(conversationKey);
-      if (confirmedReadTransition) {
-        const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
-        this.readFingerprints.delete(conversationKey);
+      const retired = this.readFingerprints.get(conversationKey);
+      const retiredFingerprint = retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS ? retired.fingerprint : void 0;
+      if (confirmedReadTransition || retiredFingerprint !== void 0) {
+        const deliveredFingerprint = entry?.fingerprint ?? retiredFingerprint;
+        if (this.readFingerprints.delete(conversationKey)) this.persist();
         if (deliveredFingerprint === fingerprint || bodyHash !== void 0 && entry?.bodyHash === bodyHash) {
           return "repeated";
         }
@@ -2832,11 +2855,13 @@
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
       this.readStreaks.delete(conversationKey);
-      this.readFingerprints.delete(conversationKey);
+      const retired = this.readFingerprints.delete(conversationKey);
       const current = this.entries.get(conversationKey);
       if (current?.fingerprint === fingerprint && !current.legacy) {
         if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
           current.bodyHash = bodyHash;
+          this.persist();
+        } else if (retired) {
           this.persist();
         }
         return;
@@ -2896,7 +2921,10 @@
         this.readStreaks.delete(key);
         this.observedUnread.delete(key);
         this.readFingerprints.delete(key);
-        this.readFingerprints.set(key, this.entries.get(key).fingerprint);
+        this.readFingerprints.set(key, {
+          fingerprint: this.entries.get(key).fingerprint,
+          retiredAt: Date.now()
+        });
         while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
           this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         }
@@ -3148,7 +3176,7 @@
      * (hydrating rows are never observed read first), so it can be reported
      * even inside the settle window after an uncorroborated zero.
      */
-    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys) {
+    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys, currentUnreadKeys) {
       for (const [key, candidate] of this.changedAt) {
         candidate.eligibleUntil = Math.max(
           candidate.eligibleUntil,
@@ -3178,8 +3206,7 @@
         }
         previous = 0;
       }
-      if (count <= previous) return [];
-      const candidates = [...this.changedAt].sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count - previous).map(([key]) => key);
+      const candidates = [...this.changedAt].filter(([key]) => currentUnreadKeys === void 0 || currentUnreadKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count > previous ? count - previous : currentUnreadKeys ? count : 0).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
     }
@@ -4160,7 +4187,8 @@
           // title: it is the inbox's real state, not a still-unstamped title,
           // so a first arrival inside the settle window can still report.
           listHydrated && !observed.some(({ unread }) => unread),
-          readObservedKeys
+          readObservedKeys,
+          new Set(conversations.map(({ key: key2 }) => key2))
         )) {
           changed.add(key);
         }

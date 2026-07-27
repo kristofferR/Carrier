@@ -213,6 +213,8 @@ export const READ_DROP_MIN_OBSERVATIONS = 3;
 // a repeated-message notification.
 export const READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
 export const READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
+/** Keep confirmed-read evidence through the native notification dedupe window. */
+export const RETIRED_FINGERPRINT_TTL_MS = 30_000;
 
 interface NotifiedEntry {
   fingerprint: string;
@@ -226,6 +228,11 @@ interface NotifiedEntry {
    * persisted before the field existed.
    */
   bodyHash?: string;
+}
+
+interface RetiredFingerprint {
+  fingerprint: string;
+  retiredAt: number;
 }
 
 export type FingerprintReconciliation =
@@ -248,11 +255,11 @@ export type FingerprintReconciliation =
 export class NotifiedSignatureStore {
   private readonly entries = new Map<string, NotifiedEntry>();
   /**
-   * In-memory fingerprints retired by a confirmed read. The next unread
-   * transition can still identify an identical preview as a fresh delivery
-   * after the persisted entry has been removed.
+   * Fingerprints retired by a confirmed read. These survive a prompt reload so
+   * the next unread transition can identify an identical preview as a fresh
+   * delivery while the native content-key dedupe is still active.
    */
-  private readonly readFingerprints = new Map<string, string>();
+  private readonly readFingerprints = new Map<string, RetiredFingerprint>();
   /**
    * In-memory only: when each continuously observed read state began, and how
    * many consecutive scans have seen it.
@@ -299,6 +306,29 @@ export class NotifiedSignatureStore {
           });
         }
       }
+      if (
+        version === NOTIFIED_STORE_VERSION &&
+        parsed &&
+        typeof parsed === "object" &&
+        "retired" in parsed &&
+        Array.isArray(parsed.retired)
+      ) {
+        const now = Date.now();
+        for (const retired of parsed.retired) {
+          if (
+            Array.isArray(retired) &&
+            typeof retired[0] === "string" &&
+            typeof retired[1] === "string" &&
+            typeof retired[2] === "number" &&
+            now - retired[2] <= RETIRED_FINGERPRINT_TTL_MS
+          ) {
+            this.readFingerprints.set(retired[0], {
+              fingerprint: retired[1],
+              retiredAt: retired[2],
+            });
+          }
+        }
+      }
     } catch (_) {}
     // Persisted state is bounded by persist(), but never trust storage: keep
     // only the newest entries if an oversized payload is ever encountered,
@@ -306,6 +336,10 @@ export class NotifiedSignatureStore {
     let trimmed = false;
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       this.entries.delete(this.entries.keys().next().value!);
+      trimmed = true;
+    }
+    while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+      this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
       trimmed = true;
     }
     if (trimmed) this.persist();
@@ -322,6 +356,11 @@ export class NotifiedSignatureStore {
               ? [key, entry.fingerprint, entry.legacy]
               : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
           ),
+          retired: [...this.readFingerprints].map(([key, retired]) => [
+            key,
+            retired.fingerprint,
+            retired.retiredAt,
+          ]),
         }),
       );
     } catch (_) {}
@@ -351,12 +390,20 @@ export class NotifiedSignatureStore {
   ): FingerprintReconciliation {
     // A confirmed read→unread transition is a new logical delivery even when
     // its preview is byte-identical to the previous one. The previous
-    // fingerprint can still be live or retained in memory after read
-    // confirmation retired it from persistent storage.
+    // fingerprint can still be live or retained briefly after read
+    // confirmation retired the main entry.
     const entry = this.entries.get(conversationKey);
-    if (confirmedReadTransition) {
-      const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
-      this.readFingerprints.delete(conversationKey);
+    const retired = this.readFingerprints.get(conversationKey);
+    const retiredFingerprint =
+      retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS
+        ? retired.fingerprint
+        : undefined;
+    // Persisted retired evidence already proves the row was read before this
+    // document loaded, so it can recover a repeated delivery even before the
+    // new in-memory tracker has time to reconfirm that read state.
+    if (confirmedReadTransition || retiredFingerprint !== undefined) {
+      const deliveredFingerprint = entry?.fingerprint ?? retiredFingerprint;
+      if (this.readFingerprints.delete(conversationKey)) this.persist();
       if (
         deliveredFingerprint === fingerprint ||
         (bodyHash !== undefined && entry?.bodyHash === bodyHash)
@@ -398,11 +445,13 @@ export class NotifiedSignatureStore {
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
-    this.readFingerprints.delete(conversationKey);
+    const retired = this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);
     if (current?.fingerprint === fingerprint && !current.legacy) {
       if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
         current.bodyHash = bodyHash;
+        this.persist();
+      } else if (retired) {
         this.persist();
       }
       return;
@@ -474,7 +523,10 @@ export class NotifiedSignatureStore {
       this.readStreaks.delete(key);
       this.observedUnread.delete(key);
       this.readFingerprints.delete(key);
-      this.readFingerprints.set(key, this.entries.get(key)!.fingerprint);
+      this.readFingerprints.set(key, {
+        fingerprint: this.entries.get(key)!.fingerprint,
+        retiredAt: Date.now(),
+      });
       while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
         this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
       }
@@ -838,6 +890,7 @@ export class UnreadArrivalTracker {
     maxMutationAgeMs: number,
     zeroCorroborated = false,
     readObservedKeys?: ReadonlySet<string>,
+    currentUnreadKeys?: ReadonlySet<string>,
   ): string[] {
     for (const [key, candidate] of this.changedAt) {
       // A delayed hidden-webview scan grants the mutation a longer absolute
@@ -892,14 +945,13 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    // The aggregate can decrease while one mutated row is a real arrival if
-    // the user reads more other threads in the same interval. Only candidate
-    // age or individual attribution can disprove it.
-    if (count <= previous) return [];
-
     const candidates = [...this.changedAt]
+      .filter(([key]) => currentUnreadKeys === undefined || currentUnreadKeys.has(key))
       .sort((left, right) => right[1].changedAt - left[1].changedAt)
-      .slice(0, count - previous)
+      // A currently unread mutated row can be a real arrival even when more
+      // other threads were read in the same interval and the aggregate stayed
+      // flat or fell. With no row-level unread evidence, wait for an increase.
+      .slice(0, count > previous ? count - previous : currentUnreadKeys ? count : 0)
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);
     return candidates;
