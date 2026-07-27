@@ -1114,7 +1114,17 @@ export function initNotificationBridge() {
           reconciliation = "matched";
         }
 
-        if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
+        if (reconciliation === "repeated") {
+          confirmedRepeats.add(conversation.key);
+          // A repeated verdict is itself an arrival, not merely a modifier for
+          // one detected elsewhere: it means this row was confirmed read and is
+          // unread again with the same preview. When the evidence came from the
+          // persisted retired fingerprint, a reload that hydrates straight into
+          // the unread row leaves every tracker above freshly primed and silent,
+          // so nothing else would put the key in `changed` — and reconciliation
+          // consumes the retired entry, so no later scan gets a second chance.
+          changed.add(conversation.key);
+        }
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
           // The current content is already delivered — an armed fallback for

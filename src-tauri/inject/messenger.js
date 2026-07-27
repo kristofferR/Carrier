@@ -4270,7 +4270,10 @@
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             reconciliation = "matched";
           }
-          if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
+          if (reconciliation === "repeated") {
+            confirmedRepeats.add(conversation.key);
+            changed.add(conversation.key);
+          }
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
             const pending = pendingFallbacks.get(conversation.key);
