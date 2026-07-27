@@ -2734,6 +2734,12 @@
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
       /**
+       * In-memory fingerprints retired by a confirmed read. The next unread
+       * transition can still identify an identical preview as a fresh delivery
+       * after the persisted entry has been removed.
+       */
+      __publicField(this, "readFingerprints", /* @__PURE__ */ new Map());
+      /**
        * In-memory only: when each continuously observed read state began, and how
        * many consecutive scans have seen it.
        */
@@ -2792,9 +2798,13 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, confirmedRepeat = false) {
-      if (confirmedRepeat) return "repeated";
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, confirmedReadTransition = false) {
       const entry = this.entries.get(conversationKey);
+      if (confirmedReadTransition) {
+        const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
+        this.readFingerprints.delete(conversationKey);
+        if (deliveredFingerprint === fingerprint) return "repeated";
+      }
       if (!entry) return "missing";
       if (entry.fingerprint === fingerprint) {
         if (entry.legacy || bodyHash !== void 0 && entry.bodyHash === void 0) {
@@ -2820,6 +2830,7 @@
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
       this.readStreaks.delete(conversationKey);
+      this.readFingerprints.delete(conversationKey);
       const current = this.entries.get(conversationKey);
       if (current?.fingerprint === fingerprint && !current.legacy) {
         if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
@@ -2835,6 +2846,7 @@
         this.entries.delete(oldest);
         this.readStreaks.delete(oldest);
         this.observedUnread.delete(oldest);
+        this.readFingerprints.delete(oldest);
       }
       this.persist();
     }
@@ -2881,6 +2893,11 @@
         if (streak.observations < READ_DROP_MIN_OBSERVATIONS) continue;
         this.readStreaks.delete(key);
         this.observedUnread.delete(key);
+        this.readFingerprints.delete(key);
+        this.readFingerprints.set(key, this.entries.get(key).fingerprint);
+        while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+          this.readFingerprints.delete(this.readFingerprints.keys().next().value);
+        }
         this.entries.delete(key);
         dropped = true;
       }
@@ -3148,10 +3165,11 @@
         }
         previous = 0;
       }
-      if (count <= previous) {
+      if (count < previous) {
         this.changedAt.clear();
         return [];
       }
+      if (count === previous) return [];
       const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
@@ -4019,9 +4037,6 @@
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
-        const deliveredBeforeRead = new Map(
-          observed.map(({ key }) => [key, notifiedStore.notifiedFingerprint(key)])
-        );
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
           observed.map(({ key }) => key),
@@ -4142,7 +4157,7 @@
             conversation.title,
             fingerprint,
             bodyHash,
-            readTransitions.has(conversation.key) && deliveredBeforeRead.get(conversation.key) === fingerprint && !pageReceipt
+            readTransitions.has(conversation.key) && !pageReceipt
           );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {

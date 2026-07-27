@@ -246,6 +246,12 @@ export type FingerprintReconciliation =
 export class NotifiedSignatureStore {
   private readonly entries = new Map<string, NotifiedEntry>();
   /**
+   * In-memory fingerprints retired by a confirmed read. The next unread
+   * transition can still identify an identical preview as a fresh delivery
+   * after the persisted entry has been removed.
+   */
+  private readonly readFingerprints = new Map<string, string>();
+  /**
    * In-memory only: when each continuously observed read state began, and how
    * many consecutive scans have seen it.
    */
@@ -339,14 +345,18 @@ export class NotifiedSignatureStore {
     title: string,
     fingerprint: string,
     bodyHash?: string,
-    confirmedRepeat = false,
+    confirmedReadTransition = false,
   ): FingerprintReconciliation {
     // A confirmed read→unread transition is a new logical delivery even when
-    // its preview is byte-identical to the previous one. Keep the persisted
-    // entry until the new notification is actually delivered, but do not let
-    // it suppress this arrival.
-    if (confirmedRepeat) return "repeated";
+    // its preview is byte-identical to the previous one. The previous
+    // fingerprint can still be live or retained in memory after read
+    // confirmation retired it from persistent storage.
     const entry = this.entries.get(conversationKey);
+    if (confirmedReadTransition) {
+      const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
+      this.readFingerprints.delete(conversationKey);
+      if (deliveredFingerprint === fingerprint) return "repeated";
+    }
     if (!entry) return "missing";
     if (entry.fingerprint === fingerprint) {
       if (entry.legacy || (bodyHash !== undefined && entry.bodyHash === undefined)) {
@@ -381,6 +391,7 @@ export class NotifiedSignatureStore {
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
+    this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);
     if (current?.fingerprint === fingerprint && !current.legacy) {
       if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
@@ -397,6 +408,7 @@ export class NotifiedSignatureStore {
       this.entries.delete(oldest);
       this.readStreaks.delete(oldest);
       this.observedUnread.delete(oldest);
+      this.readFingerprints.delete(oldest);
     }
     this.persist();
   }
@@ -454,6 +466,11 @@ export class NotifiedSignatureStore {
       if (streak.observations < READ_DROP_MIN_OBSERVATIONS) continue;
       this.readStreaks.delete(key);
       this.observedUnread.delete(key);
+      this.readFingerprints.delete(key);
+      this.readFingerprints.set(key, this.entries.get(key)!.fingerprint);
+      while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+        this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
+      }
       this.entries.delete(key);
       dropped = true;
     }
@@ -842,13 +859,15 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    if (count <= previous) {
-      // This scan has examined every queued mutation without seeing a matching
-      // title-count increase. Do not let a later scan's expanded hidden-window
-      // grace reattribute those same mutations to an unrelated arrival.
+    if (count < previous) {
+      // A count decrease proves the queued mutations did not represent a new
+      // unread arrival. Unchanged counts are different: Messenger can render
+      // the row before asynchronously updating the title, so those candidates
+      // remain eligible until a later increase or the age bound above.
       this.changedAt.clear();
       return [];
     }
+    if (count === previous) return [];
 
     const candidates = [...this.changedAt]
       .sort((left, right) => right[1] - left[1])

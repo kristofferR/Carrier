@@ -828,13 +828,6 @@ export function initNotificationBridge() {
       // corroboration below rely on this to tell a settled list apart from one
       // that is still hydrating.
       const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
-      // Read confirmation and persisted-entry retirement deliberately use the
-      // same robust threshold. Snapshot the delivered fingerprint first so an
-      // identical next preview can still receive a fresh native dedupe key on
-      // the scan that confirms the transition and retires the stored entry.
-      const deliveredBeforeRead = new Map(
-        observed.map(({ key }) => [key, notifiedStore.notifiedFingerprint(key)]),
-      );
       // "Read" means the row is no longer unread — not merely filtered from
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
@@ -1003,9 +996,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          readTransitions.has(conversation.key) &&
-            deliveredBeforeRead.get(conversation.key) === fingerprint &&
-            !pageReceipt,
+          readTransitions.has(conversation.key) && !pageReceipt,
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {

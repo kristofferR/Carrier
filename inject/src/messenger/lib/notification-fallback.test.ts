@@ -341,6 +341,20 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
   });
 
+  test("retains a retired fingerprint for an identical post-read delivery", () => {
+    const store = new NotifiedSignatureStore();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    expect(store.alreadyNotified("1", fingerprint)).toBe(false);
+    expect(store.reconcileFingerprint("1", "Jane", fingerprint, bodyHash, true)).toBe("repeated");
+  });
+
   test("keeps entries for unread rows that are merely still rendered", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
@@ -579,15 +593,20 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
   });
 
-  test("does not reuse mutations examined before an unchanged count", () => {
+  test("retains mutations until an asynchronous title count catches up", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(2, 1_000, 2_000);
-    tracker.markRowsChanged(["examined"], 1_100);
+    tracker.markRowsChanged(["new-message"], 1_100);
     expect(tracker.observeUnreadCount(2, 1_200, 2_000)).toEqual([]);
-    // A hidden poll can expand the mutation-age allowance by a full minute,
-    // but the earlier scan already established that this mutation was not an
-    // unread-count arrival.
-    expect(tracker.observeUnreadCount(3, 61_200, 62_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
+  test("expires retained mutations that outlive the attribution window", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["stale"], 1_100);
+    expect(tracker.observeUnreadCount(2, 1_200, 2_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 3_101, 2_000)).toEqual([]);
   });
 
   test("absorbs the title hydrating from zero as the baseline", () => {
