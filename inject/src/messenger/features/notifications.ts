@@ -715,6 +715,16 @@ export function initNotificationBridge() {
   const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
   const readCandidateAt = new Map<string, number>();
+  // When the previous scan actually examined the list. Row mutations are
+  // attributed against real elapsed time, but the scan that reads them is
+  // deferred by a timer the webview throttles hard while hidden — and the
+  // hidden poll runs a full minute apart. Measuring the attribution window
+  // from the last scan instead of a fixed 2s keeps mutations eligible for as
+  // long as nothing has looked at them, so a throttled scan no longer finds
+  // the arrival already expired. Capped so a scan resuming after a long
+  // suspend cannot attribute a count increase to hours-old churn.
+  let lastScanAt = 0;
+  const MAX_MUTATION_GRACE_MS = 90_000;
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -735,6 +745,10 @@ export function initNotificationBridge() {
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
       );
       const detectedAt = Date.now();
+      const mutationGrace = lastScanAt
+        ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt))
+        : 0;
+      lastScanAt = detectedAt;
       // Every rendered row carries preview text, so unread styling has had its
       // chance to apply. Both the read-state bookkeeping and the zero-unread
       // corroboration below rely on this to tell a settled list apart from one
@@ -756,12 +770,10 @@ export function initNotificationBridge() {
       // must not evict a tracked signature either. The first hydrated
       // observation primes silently instead.
       const hydrated = conversations.filter(({ body }) => body.length > 0);
-      const changed = new Set(
-        conversationTracker.observe(
-          hydrated.map(({ key, body }) => ({ key, signature: body })),
-          observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
-        ),
-      );
+      // Confirm read state before the signature tracker runs: a thread turning
+      // unread again is only a new message if this document had established it
+      // was read, and the tracker needs that verdict for the very scan the
+      // transition shows up in.
       for (const conversation of observed) {
         if (!conversation.body) continue;
         if (conversation.unread) {
@@ -785,10 +797,17 @@ export function initNotificationBridge() {
           }
         }
       }
+      const changed = new Set(
+        conversationTracker.observe(
+          hydrated.map(({ key, body }) => ({ key, signature: body })),
+          observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+          readObservedKeys,
+        ),
+      );
       for (const key of unreadArrivals.observeUnreadCount(
         unreadCountFromTitle(document.title || ""),
         detectedAt,
-        ROW_MUTATION_MATCH_MS,
+        ROW_MUTATION_MATCH_MS + mutationGrace,
         // A fully hydrated list with no unread rows corroborates a zero
         // title: it is the inbox's real state, not a still-unstamped title,
         // so a first arrival inside the settle window can still report.

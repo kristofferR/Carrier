@@ -64,6 +64,40 @@ describe("ConversationNotificationTracker", () => {
     expect(tracker.observe([], ["1"])).toEqual([]);
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
   });
+
+  test("reports the first message after a conversation was read", () => {
+    const tracker = new ConversationNotificationTracker();
+    // Unread, then read: the signature is dropped with every other read row.
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    expect(tracker.observe([], ["1"], ["1"])).toEqual([]);
+    // Reading a thread must not make its next message silent.
+    expect(tracker.observe([{ key: "1", signature: "new message" }], ["1"], ["1"])).toEqual(["1"]);
+  });
+
+  test("reports a repeated preview after a read, which a kept signature would hide", () => {
+    const tracker = new ConversationNotificationTracker();
+    tracker.observe([{ key: "1", signature: "ok" }], ["1"]);
+    tracker.observe([], ["1"], ["1"]);
+    expect(tracker.observe([{ key: "1", signature: "ok" }], ["1"], ["1"])).toEqual(["1"]);
+  });
+
+  test("reports a read-to-unread arrival once, not on every later scan", () => {
+    const tracker = new ConversationNotificationTracker();
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    tracker.observe([], ["1"], ["1"]);
+    // The caller's confirmed-read set is never cleared, so it still names the
+    // thread while the row sits unread — that must not re-report it.
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], ["1"])).toEqual(["1"]);
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], ["1"])).toEqual([]);
+  });
+
+  test("ignores a read glimpse the caller never confirmed", () => {
+    const tracker = new ConversationNotificationTracker();
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    // Mid-hydration flap: rendered without unread styling, but unconfirmed.
+    expect(tracker.observe([], ["1"], [])).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "hello" }], ["1"], [])).toEqual([]);
+  });
 });
 
 describe("NotifiedSignatureStore", () => {

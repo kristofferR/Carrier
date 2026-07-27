@@ -2644,24 +2644,48 @@
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
+  var READ_SINCE_LIMIT = 500;
   var ConversationNotificationTracker = class {
     constructor() {
       __publicField(this, "signatures", /* @__PURE__ */ new Map());
+      /**
+       * Threads observed rendered-and-read, waiting for their next message. A read
+       * row's signature is dropped below along with every other non-unread row, so
+       * without this set the thread comes back as a first sighting and primes
+       * silently — the first message after you read a conversation would never
+       * notify, however different its preview text.
+       */
+      __publicField(this, "readSince", /* @__PURE__ */ new Set());
       __publicField(this, "primed", false);
     }
-    observe(current, observedKeys) {
+    /**
+     * `confirmedRead` — threads the caller has observed hydrated-and-read across
+     * scans spanning real time. Single-scan read state is not enough: mid-
+     * hydration a row can render its text before its unread styling, and that
+     * flap would otherwise report as a new message.
+     */
+    observe(current, observedKeys, confirmedRead) {
       const currentKeys = /* @__PURE__ */ new Set();
       const changed = [];
       for (const conversation of current) {
         currentKeys.add(conversation.key);
         const previous = this.signatures.get(conversation.key);
+        const wasRead = this.readSince.delete(conversation.key);
         this.signatures.set(conversation.key, conversation.signature);
-        if (this.primed && previous !== void 0 && previous !== conversation.signature) {
+        if (!this.primed) continue;
+        if (wasRead || previous !== void 0 && previous !== conversation.signature) {
           changed.push(conversation.key);
         }
       }
       for (const key of observedKeys || currentKeys) {
         if (!currentKeys.has(key)) this.signatures.delete(key);
+      }
+      for (const key of confirmedRead || []) {
+        if (currentKeys.has(key) || this.readSince.has(key)) continue;
+        this.readSince.add(key);
+        if (this.readSince.size > READ_SINCE_LIMIT) {
+          this.readSince.delete(this.readSince.keys().next().value);
+        }
       }
       this.primed = true;
       return changed;
@@ -3929,6 +3953,8 @@
     const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
     const readCandidateAt = /* @__PURE__ */ new Map();
+    let lastScanAt = 0;
+    const MAX_MUTATION_GRACE_MS = 9e4;
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -3945,6 +3971,8 @@
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
         const detectedAt = Date.now();
+        const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
+        lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
@@ -3953,12 +3981,6 @@
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
-        const changed = new Set(
-          conversationTracker.observe(
-            hydrated.map(({ key, body }) => ({ key, signature: body })),
-            observed.filter(({ body }) => body.length > 0).map(({ key }) => key)
-          )
-        );
         for (const conversation of observed) {
           if (!conversation.body) continue;
           if (conversation.unread) {
@@ -3982,10 +4004,17 @@
             }
           }
         }
+        const changed = new Set(
+          conversationTracker.observe(
+            hydrated.map(({ key, body }) => ({ key, signature: body })),
+            observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+            readObservedKeys
+          )
+        );
         for (const key of unreadArrivals.observeUnreadCount(
           unreadCountFromTitle(document.title || ""),
           detectedAt,
-          ROW_MUTATION_MATCH_MS,
+          ROW_MUTATION_MATCH_MS + mutationGrace,
           // A fully hydrated list with no unread rows corroborates a zero
           // title: it is the inbox's real state, not a still-unstamped title,
           // so a first arrival inside the settle window can still report.
@@ -4399,7 +4428,11 @@
     // The injected Settings gear depends on Messenger's localized overflow
     // control/icon. Watch the actual output rather than testing a copied icon
     // path constant against itself.
-    { key: "settings-button", sel: "[data-carrier-settings-button]" }
+    // Mounted from a requestAnimationFrame callback, which a hidden webview
+    // never runs — so a hidden window says nothing about whether the selector
+    // still works, and checking one would report a break every interval for as
+    // long as Carrier sits in the background.
+    { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true }
   ];
   function initSelectorHealth() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -4408,7 +4441,11 @@
     const check = () => {
       if (!location.pathname.startsWith("/messages")) return;
       if (document.querySelector('input[name="pass"]')) return;
-      for (const { key, sel } of WATCHED_SELECTORS) {
+      for (const { key, sel, needsVisible } of WATCHED_SELECTORS) {
+        if (needsVisible && document.hidden) {
+          misses.set(key, 0);
+          continue;
+        }
         if (document.querySelector(sel)) {
           misses.set(key, 0);
           continue;

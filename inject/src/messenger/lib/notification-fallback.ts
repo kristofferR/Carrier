@@ -3,19 +3,48 @@ export interface ConversationSignature {
   signature: string;
 }
 
+/** Bounds the read set like the sibling stores; read threads are never pruned
+ * by being read, only by age. */
+const READ_SINCE_LIMIT = 500;
+
 /** Primes existing unread rows, then reports only new/changed conversations. */
 export class ConversationNotificationTracker {
   private readonly signatures = new Map<string, string>();
+  /**
+   * Threads observed rendered-and-read, waiting for their next message. A read
+   * row's signature is dropped below along with every other non-unread row, so
+   * without this set the thread comes back as a first sighting and primes
+   * silently — the first message after you read a conversation would never
+   * notify, however different its preview text.
+   */
+  private readonly readSince = new Set<string>();
   private primed = false;
 
-  observe(current: ConversationSignature[], observedKeys?: Iterable<string>): string[] {
+  /**
+   * `confirmedRead` — threads the caller has observed hydrated-and-read across
+   * scans spanning real time. Single-scan read state is not enough: mid-
+   * hydration a row can render its text before its unread styling, and that
+   * flap would otherwise report as a new message.
+   */
+  observe(
+    current: ConversationSignature[],
+    observedKeys?: Iterable<string>,
+    confirmedRead?: Iterable<string>,
+  ): string[] {
     const currentKeys = new Set<string>();
     const changed: string[] = [];
     for (const conversation of current) {
       currentKeys.add(conversation.key);
       const previous = this.signatures.get(conversation.key);
+      // Leaving the read set is what reports the arrival, so it reports once:
+      // later scans of the same unread row find nothing left to remove, and by
+      // then the stored signature matches.
+      const wasRead = this.readSince.delete(conversation.key);
       this.signatures.set(conversation.key, conversation.signature);
-      if (this.primed && previous !== undefined && previous !== conversation.signature) {
+      if (!this.primed) continue;
+      // A thread that had been read has a new message whatever its preview
+      // says — the same text arriving twice is still twice.
+      if (wasRead || (previous !== undefined && previous !== conversation.signature)) {
         changed.push(conversation.key);
       }
     }
@@ -25,6 +54,15 @@ export class ConversationNotificationTracker {
     // and observed without an incoming unread preview.
     for (const key of observedKeys || currentKeys) {
       if (!currentKeys.has(key)) this.signatures.delete(key);
+    }
+    // A row this scan sees unread is not read, whatever an earlier scan
+    // confirmed — `currentKeys` keeps it out until it is read again.
+    for (const key of confirmedRead || []) {
+      if (currentKeys.has(key) || this.readSince.has(key)) continue;
+      this.readSince.add(key);
+      if (this.readSince.size > READ_SINCE_LIMIT) {
+        this.readSince.delete(this.readSince.keys().next().value!);
+      }
     }
     this.primed = true;
     return changed;
