@@ -3133,7 +3133,7 @@
       __publicField(this, "sawDeferredZero", false);
     }
     markRowsChanged(keys, at) {
-      for (const key of keys) this.changedAt.set(key, at);
+      for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
     }
     /**
      * `zeroCorroborated` — the caller observed a fully hydrated conversation
@@ -3149,8 +3149,12 @@
      * even inside the settle window after an uncorroborated zero.
      */
     observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys) {
-      for (const [key, changedAt] of this.changedAt) {
-        if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+      for (const [key, candidate] of this.changedAt) {
+        candidate.eligibleUntil = Math.max(
+          candidate.eligibleUntil,
+          candidate.changedAt + maxMutationAgeMs
+        );
+        if (at > candidate.eligibleUntil) this.changedAt.delete(key);
       }
       if (this.firstObservedAt === null) this.firstObservedAt = at;
       const settled = at - this.firstObservedAt >= this.settleMs;
@@ -3163,7 +3167,7 @@
       if (previous === null) {
         if (!(this.sawDeferredZero && settled && count > 0)) {
           if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1] - left[1]).slice(0, count).map(([key]) => key);
+            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count).map(([key]) => key);
             if (transitions.length) {
               this.changedAt.clear();
               return transitions;
@@ -3174,12 +3178,8 @@
         }
         previous = 0;
       }
-      if (count < previous) {
-        this.changedAt.clear();
-        return [];
-      }
-      if (count === previous) return [];
-      const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
+      if (count <= previous) return [];
+      const candidates = [...this.changedAt].sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count - previous).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
     }
@@ -3601,54 +3601,58 @@
       img.onerror = () => done(null);
       img.src = url;
     });
-    const facesToDataUrl = (urls) => Promise.all(urls.slice(0, 2).map(loadAvatarImage)).then((images) => {
-      const faces = images.filter((image) => image !== null);
-      if (!faces.length) return "";
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = AVATAR_SIZE;
-        canvas.height = AVATAR_SIZE;
-        const context = canvas.getContext("2d");
-        const paired = faces.length > 1;
-        const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
-        const offset = AVATAR_SIZE - diameter;
-        faces.forEach((face, index) => {
-          const left = index * offset;
-          const top = index * offset;
-          const centerX = left + diameter / 2;
-          const centerY = top + diameter / 2;
-          if (paired) {
-            context.save();
-            context.globalCompositeOperation = "destination-out";
-            context.beginPath();
-            context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
-            context.fill();
-            context.restore();
-            context.save();
-            context.beginPath();
-            context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
-            context.clip();
-          }
-          const scale = Math.max(diameter / face.width, diameter / face.height);
-          const sourceSize = diameter / scale;
-          context.drawImage(
-            face,
-            (face.width - sourceSize) / 2,
-            (face.height - sourceSize) / 2,
-            sourceSize,
-            sourceSize,
-            left,
-            top,
-            diameter,
-            diameter
-          );
-          if (paired) context.restore();
-        });
-        return canvas.toDataURL("image/png");
-      } catch (_) {
-        return "";
-      }
-    });
+    const facesToDataUrl = (urls) => {
+      const requested = urls.slice(0, 2);
+      return Promise.all(requested.map(loadAvatarImage)).then((images) => {
+        const faces = images.filter((image) => image !== null);
+        if (!faces.length) return "";
+        if (requested.length > 1 && faces.length !== requested.length) return "";
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = AVATAR_SIZE;
+          canvas.height = AVATAR_SIZE;
+          const context = canvas.getContext("2d");
+          const paired = faces.length > 1;
+          const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
+          const offset = AVATAR_SIZE - diameter;
+          faces.forEach((face, index) => {
+            const left = index * offset;
+            const top = index * offset;
+            const centerX = left + diameter / 2;
+            const centerY = top + diameter / 2;
+            if (paired) {
+              context.save();
+              context.globalCompositeOperation = "destination-out";
+              context.beginPath();
+              context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
+              context.fill();
+              context.restore();
+              context.save();
+              context.beginPath();
+              context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
+              context.clip();
+            }
+            const scale = Math.max(diameter / face.width, diameter / face.height);
+            const sourceSize = diameter / scale;
+            context.drawImage(
+              face,
+              (face.width - sourceSize) / 2,
+              (face.height - sourceSize) / 2,
+              sourceSize,
+              sourceSize,
+              left,
+              top,
+              diameter,
+              diameter
+            );
+            if (paired) context.restore();
+          });
+          return canvas.toDataURL("image/png");
+        } catch (_) {
+          return "";
+        }
+      });
+    };
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
     const notificationStorage = (() => {
       try {
@@ -4200,7 +4204,7 @@
             detectedAt,
             PAGE_NOTIFICATION_MATCH_MS
           ) : null;
-          const receiptSuppressedRepeat = pageReceipt !== void 0 && (readTransitions.has(conversation.key) || pageSignal === null) && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
+          const receiptSuppressedRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
           const receiptPendingRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal !== null && pageSignal.nativeDelivery === void 0;
           if (receiptPendingRepeat) {
             const pending = pendingFallbacks.get(conversation.key);

@@ -635,6 +635,26 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(3, 1_300, 2_000)).toEqual(["new-message"]);
   });
 
+  test("keeps a delayed-scan grace deadline through prompt follow-up scans", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["new-message"], 1_100);
+    // The first hidden-webview scan grants enough grace to cover its delay.
+    expect(tracker.observeUnreadCount(2, 61_000, 62_000)).toEqual([]);
+    // A prompt scan must not shrink that absolute deadline while the title is
+    // still catching up.
+    expect(tracker.observeUnreadCount(2, 61_500, 2_500)).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 62_000, 2_500)).toEqual(["new-message"]);
+  });
+
+  test("preserves arrivals when other reads decrease the aggregate count", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(5, 1_000, 2_000);
+    tracker.markRowsChanged(["new-message"], 1_100);
+    expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
   test("expires retained mutations that outlive the attribution window", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(2, 1_000, 2_000);

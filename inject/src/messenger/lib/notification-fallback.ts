@@ -808,7 +808,7 @@ export class PageNotificationQueue {
 
 /** Correlates unread-count increases with the rows most recently mutated. */
 export class UnreadArrivalTracker {
-  private readonly changedAt = new Map<string, number>();
+  private readonly changedAt = new Map<string, { changedAt: number; eligibleUntil: number }>();
   private unreadCount: number | null = null;
   private firstObservedAt: number | null = null;
   private sawDeferredZero = false;
@@ -816,7 +816,7 @@ export class UnreadArrivalTracker {
   constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
-    for (const key of keys) this.changedAt.set(key, at);
+    for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
   }
 
   /**
@@ -839,8 +839,15 @@ export class UnreadArrivalTracker {
     zeroCorroborated = false,
     readObservedKeys?: ReadonlySet<string>,
   ): string[] {
-    for (const [key, changedAt] of this.changedAt) {
-      if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+    for (const [key, candidate] of this.changedAt) {
+      // A delayed hidden-webview scan grants the mutation a longer absolute
+      // lifetime. Keep that deadline through prompt follow-up scans instead of
+      // shrinking it again before Messenger's asynchronous title update lands.
+      candidate.eligibleUntil = Math.max(
+        candidate.eligibleUntil,
+        candidate.changedAt + maxMutationAgeMs,
+      );
+      if (at > candidate.eligibleUntil) this.changedAt.delete(key);
     }
 
     // After a reload the title reads no "(N)" until Facebook hydrates it, so
@@ -869,7 +876,7 @@ export class UnreadArrivalTracker {
         if (this.sawDeferredZero && count > 0 && readObservedKeys) {
           const transitions = [...this.changedAt]
             .filter(([key]) => readObservedKeys.has(key))
-            .sort((left, right) => right[1] - left[1])
+            .sort((left, right) => right[1].changedAt - left[1].changedAt)
             .slice(0, count)
             .map(([key]) => key);
           if (transitions.length) {
@@ -885,18 +892,13 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    if (count < previous) {
-      // A count decrease proves the queued mutations did not represent a new
-      // unread arrival. Unchanged counts are different: Messenger can render
-      // the row before asynchronously updating the title, so those candidates
-      // remain eligible until a later increase or the age bound above.
-      this.changedAt.clear();
-      return [];
-    }
-    if (count === previous) return [];
+    // The aggregate can decrease while one mutated row is a real arrival if
+    // the user reads more other threads in the same interval. Only candidate
+    // age or individual attribution can disprove it.
+    if (count <= previous) return [];
 
     const candidates = [...this.changedAt]
-      .sort((left, right) => right[1] - left[1])
+      .sort((left, right) => right[1].changedAt - left[1].changedAt)
       .slice(0, count - previous)
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);

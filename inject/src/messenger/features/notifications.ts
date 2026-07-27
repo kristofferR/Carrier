@@ -86,10 +86,15 @@ export function initNotificationBridge() {
   // so the pair reads as a group rather than as one badly cropped person.
   // Best-effort: resolves "" if nothing could be read (e.g. the canvas is
   // tainted) and the notification then shows text only.
-  const facesToDataUrl = (urls: (string | undefined)[]) =>
-    Promise.all(urls.slice(0, 2).map(loadAvatarImage)).then((images) => {
+  const facesToDataUrl = (urls: (string | undefined)[]) => {
+    const requested = urls.slice(0, 2);
+    return Promise.all(requested.map(loadAvatarImage)).then((images) => {
       const faces = images.filter((image): image is HTMLImageElement => image !== null);
       if (!faces.length) return "";
+      // A lone survivor from a photo-less group's member pair is not the
+      // thread's avatar. Fail closed to a text-only notification instead of
+      // presenting that arbitrary member as the whole group.
+      if (requested.length > 1 && faces.length !== requested.length) return "";
       try {
         const canvas = document.createElement("canvas");
         canvas.width = AVATAR_SIZE;
@@ -138,6 +143,7 @@ export function initNotificationBridge() {
         return "";
       }
     });
+  };
 
   const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
@@ -1043,12 +1049,13 @@ export function initNotificationBridge() {
           : null;
         // A receipt proves that the page queued an emit and persists the native
         // result. The same-document signal carries that result in memory too.
-        // For an identical post-read message, "duplicate" means the old content
-        // key suppressed this new banner, so it still needs the fresh-key
-        // fallback even when a reload has discarded the read transition.
+        // For a proven identical post-read message, "duplicate" means the old
+        // content key suppressed this new banner, so it still needs the
+        // fresh-key fallback. A receipt surviving a reload proves only that
+        // the page replayed an emit, not that the conversation was read.
         const receiptSuppressedRepeat =
           pageReceipt !== undefined &&
-          (readTransitions.has(conversation.key) || pageSignal === null) &&
+          readTransitions.has(conversation.key) &&
           (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
         const receiptPendingRepeat =
           pageReceipt !== undefined &&
@@ -1076,8 +1083,8 @@ export function initNotificationBridge() {
         }
         if (receiptSuppressedRepeat) {
           // The native layer did not show the page emit. A reload also erased
-          // the read transition that would normally carry this repeat through
-          // reconciliation, so retry it directly with a fresh delivery key.
+          // the in-memory page signal, but the confirmed row transition still
+          // proves this is a new logical delivery, so retry it with a fresh key.
           scheduleFallback(conversation, detectedAt, true);
           changed.delete(conversation.key);
           continue;
