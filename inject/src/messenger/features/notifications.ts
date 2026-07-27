@@ -466,10 +466,13 @@ export function initNotificationBridge() {
     }
     const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
     if (shown !== "yes") {
-      // Retry while the render is plausibly still coming. A title that can
-      // never be verified would otherwise wake Carrier twice a second forever,
-      // and a hidden window has no reader to harvest for at all.
-      if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+      // Retry while the render is plausibly still coming; the attempt limit
+      // stops a title that can never be verified from waking Carrier twice a
+      // second forever. This deliberately runs while hidden: the harvest feeds
+      // notifications, which are read precisely when nobody is looking at the
+      // window, and gating it on visibility left group senders unharvested for
+      // as long as Carrier stayed in the background.
+      if (settleAttempts < SETTLE_ATTEMPT_LIMIT) {
         settleAttempts++;
         scheduleHarvest(500);
       }
@@ -521,9 +524,10 @@ export function initNotificationBridge() {
   };
 
   // The row scan alone would miss a chat-member dialog or a thread opened and
-  // closed between polls, so watch the harvested surfaces too — but only while
-  // the window is visible: those faces are rendered for a reader, and an
-  // unfocused Carrier should stay off the CPU.
+  // closed between polls, so watch the harvested surfaces too. This runs while
+  // hidden as well: the faces feed notifications, which matter precisely when
+  // nobody is watching the window, and the throttle above is what keeps an
+  // unfocused Carrier off the CPU.
   let harvestScheduled = false;
   const scheduleHarvest = (delay = 300) => {
     if (harvestScheduled) return;
@@ -548,12 +552,6 @@ export function initNotificationBridge() {
   let harvestAttached = false;
   const harvestObserver = new MutationObserver(() => scheduleHarvest());
   const attachHarvestObserver = () => {
-    if (document.hidden) {
-      harvestObserver.disconnect();
-      harvestRoots = [];
-      harvestAttached = false;
-      return;
-    }
     // Both harvested surfaces, whichever of them React has mounted.
     const roots = [...document.querySelectorAll<HTMLElement>(HARVEST_SEL)];
     if (
@@ -620,9 +618,6 @@ export function initNotificationBridge() {
       // A photo-less group draws its members as a composite; one with a photo
       // is only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
-      // That composite is made of members' faces, so it is not this thread's
-      // picture and must never stand in for a sender.
-      compositeIcon: images.length > 1,
       unread,
     };
   };
@@ -704,10 +699,15 @@ export function initNotificationBridge() {
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    // When the sender is unknown the row's own image stands in — unless that
-    // image is a members' composite, whose first face belongs to whoever sorts
-    // first rather than to whoever wrote. Better no picture than that one.
-    const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
+    // When the sender is unknown the row's own image stands in, including a
+    // members' composite. That composite names no single member — beside a
+    // title that is the group's name it reads as the group, which is what it
+    // is. Suppressing it (out of concern that its first face looks like the
+    // author) left group notifications with no picture at all whenever the
+    // sender's face had not been harvested yet, which is the common case: the
+    // harvest only sees a thread while it is open. A blank icon is the worse
+    // of the two wrongs, so the composite stays as the last resort.
+    const rowIcon = conversation.icon;
     const avatar =
       senderIcon && senderIcon !== rowIcon
         ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
@@ -724,6 +724,14 @@ export function initNotificationBridge() {
       }
       const hidePreview = settings.hide_notification_preview === true;
       const icon = hidePreview ? "" : await avatar;
+      // Content-free breadcrumb: a group notification with nothing to show
+      // means neither the sender's harvested face nor the row's own picture
+      // resolved, which is otherwise invisible until someone reports a blank
+      // banner. Not logged when the preview is hidden — that is meant to be
+      // pictureless.
+      if (!hidePreview && !icon && conversation.isGroup) {
+        diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+      }
       // Keep the entry cancellable until the avatar conversion finishes. A
       // late page Notification must still win instead of producing a second
       // native notification while this fallback is in flight.

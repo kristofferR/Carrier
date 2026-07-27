@@ -3215,7 +3215,7 @@
   }
 
   // inject/src/messenger/lib/sender-avatars.ts
-  var SENDER_AVATAR_LIMIT = 120;
+  var SENDER_AVATAR_LIMIT = 500;
   var SENDER_AVATAR_VERSION = 3;
   var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
   var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -3777,7 +3777,7 @@
       }
       const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
       if (shown !== "yes") {
-        if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+        if (settleAttempts < SETTLE_ATTEMPT_LIMIT) {
           settleAttempts++;
           scheduleHarvest(500);
         }
@@ -3835,12 +3835,6 @@
     let harvestAttached = false;
     const harvestObserver = new MutationObserver(() => scheduleHarvest());
     const attachHarvestObserver = () => {
-      if (document.hidden) {
-        harvestObserver.disconnect();
-        harvestRoots = [];
-        harvestAttached = false;
-        return;
-      }
       const roots = [...document.querySelectorAll(HARVEST_SEL)];
       if (harvestAttached && harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
         return;
@@ -3896,9 +3890,6 @@
         // A photo-less group draws its members as a composite; one with a photo
         // is only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
-        // That composite is made of members' faces, so it is not this thread's
-        // picture and must never stand in for a sender.
-        compositeIcon: images.length > 1,
         unread
       };
     };
@@ -3947,7 +3938,7 @@
         return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
+      const rowIcon = conversation.icon;
       const avatar = senderIcon && senderIcon !== rowIcon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
         ([sender, row]) => sender || row
       ) : avatarToDataUrl(rowIcon);
@@ -3961,6 +3952,9 @@
         }
         const hidePreview = settings.hide_notification_preview === true;
         const icon = hidePreview ? "" : await avatar;
+        if (!hidePreview && !icon && conversation.isGroup) {
+          diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+        }
         if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
         pendingFallbacks.delete(conversation.key);
         notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
