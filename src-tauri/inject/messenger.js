@@ -2803,7 +2803,9 @@
       if (confirmedReadTransition) {
         const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
         this.readFingerprints.delete(conversationKey);
-        if (deliveredFingerprint === fingerprint) return "repeated";
+        if (deliveredFingerprint === fingerprint || bodyHash !== void 0 && entry?.bodyHash === bodyHash) {
+          return "repeated";
+        }
       }
       if (!entry) return "missing";
       if (entry.fingerprint === fingerprint) {
@@ -4191,6 +4193,22 @@
             PAGE_NOTIFICATION_MATCH_MS
           ) : null;
           const receiptSuppressedRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal?.nativeDelivery === "duplicate";
+          const receiptPendingRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal !== null && pageSignal.nativeDelivery === void 0;
+          if (receiptPendingRepeat) {
+            const pending = pendingFallbacks.get(conversation.key);
+            if (pending) clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            pageSignal.onNativeDelivery = (delivery) => {
+              if (delivery === "duplicate") {
+                scheduleFallback(conversation, detectedAt, true);
+                return;
+              }
+              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            };
+            changed.delete(conversation.key);
+            continue;
+          }
           if (pageReceipt && !receiptSuppressedRepeat) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);

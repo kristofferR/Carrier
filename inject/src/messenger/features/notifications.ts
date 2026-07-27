@@ -1045,6 +1045,30 @@ export function initNotificationBridge() {
           pageReceipt !== undefined &&
           readTransitions.has(conversation.key) &&
           pageSignal?.nativeDelivery === "duplicate";
+        const receiptPendingRepeat =
+          pageReceipt !== undefined &&
+          readTransitions.has(conversation.key) &&
+          pageSignal !== null &&
+          pageSignal.nativeDelivery === undefined;
+        if (receiptPendingRepeat) {
+          // Do not stamp an identical post-read message as delivered until the
+          // native layer says whether the page's old content key was accepted.
+          // A duplicate needs the fresh-key fallback; accepted/suppressed
+          // results can safely retire the transition.
+          const pending = pendingFallbacks.get(conversation.key);
+          if (pending) clearTimeout(pending.timer);
+          pendingFallbacks.delete(conversation.key);
+          updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+          pageSignal.onNativeDelivery = (delivery) => {
+            if (delivery === "duplicate") {
+              scheduleFallback(conversation, detectedAt, true);
+              return;
+            }
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          };
+          changed.delete(conversation.key);
+          continue;
+        }
         if (pageReceipt && !receiptSuppressedRepeat) {
           // An earlier scan may have armed a fallback while this receipt was
           // still ambiguous — the page already emitted this notification, so

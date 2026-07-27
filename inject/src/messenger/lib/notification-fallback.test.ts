@@ -216,6 +216,27 @@ describe("NotifiedSignatureStore", () => {
     ).toBe("mismatched");
   });
 
+  test("treats a confirmed same-body transition as repeated across title drift", () => {
+    const storage = memoryStorage();
+    const bodyHash = notificationDedupeKey("", "Hello there");
+    new NotifiedSignatureStore(storage).markNotified(
+      "1",
+      notificationDedupeKey("Old name", "Hello there"),
+      bodyHash,
+    );
+
+    const store = new NotifiedSignatureStore(storage);
+    expect(
+      store.reconcileFingerprint(
+        "1",
+        "New name",
+        notificationDedupeKey("New name", "Hello there"),
+        bodyHash,
+        true,
+      ),
+    ).toBe("repeated");
+  });
+
   test("forgets a conversation after a continuously stable read interval", () => {
     const storage = memoryStorage();
     new NotifiedSignatureStore(storage).markNotified("1", "aaaa");

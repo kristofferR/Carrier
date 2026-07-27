@@ -355,7 +355,12 @@ export class NotifiedSignatureStore {
     if (confirmedReadTransition) {
       const deliveredFingerprint = entry?.fingerprint ?? this.readFingerprints.get(conversationKey);
       this.readFingerprints.delete(conversationKey);
-      if (deliveredFingerprint === fingerprint) return "repeated";
+      if (
+        deliveredFingerprint === fingerprint ||
+        (bodyHash !== undefined && entry?.bodyHash === bodyHash)
+      ) {
+        return "repeated";
+      }
     }
     if (!entry) return "missing";
     if (entry.fingerprint === fingerprint) {
