@@ -3206,7 +3206,7 @@
         }
         previous = 0;
       }
-      const candidates = [...this.changedAt].filter(([key]) => currentUnreadKeys === void 0 || currentUnreadKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count > previous ? count - previous : currentUnreadKeys ? count : 0).map(([key]) => key);
+      const candidates = [...this.changedAt].filter(([key]) => currentUnreadKeys === void 0 || currentUnreadKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, Math.max(0, count - previous)).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
     }
@@ -4232,8 +4232,16 @@
             detectedAt,
             PAGE_NOTIFICATION_MATCH_MS
           ) : null;
-          const receiptSuppressedRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
-          const receiptPendingRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal !== null && pageSignal.nativeDelivery === void 0;
+          let reconciliation = notifiedStore.reconcileFingerprint(
+            conversation.key,
+            conversation.title,
+            fingerprint,
+            bodyHash,
+            readTransitions.has(conversation.key) && !pageReceipt
+          );
+          const repeatedDelivery = readTransitions.has(conversation.key) || reconciliation === "repeated";
+          const receiptSuppressedRepeat = pageReceipt !== void 0 && repeatedDelivery && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
+          const receiptPendingRepeat = pageReceipt !== void 0 && repeatedDelivery && pageSignal !== null && pageSignal.nativeDelivery === void 0;
           if (receiptPendingRepeat) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);
@@ -4260,14 +4268,8 @@
             pendingFallbacks.delete(conversation.key);
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            reconciliation = "matched";
           }
-          const reconciliation = notifiedStore.reconcileFingerprint(
-            conversation.key,
-            conversation.title,
-            fingerprint,
-            bodyHash,
-            readTransitions.has(conversation.key) && !pageReceipt
-          );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);

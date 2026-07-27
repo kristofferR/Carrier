@@ -649,7 +649,9 @@ describe("UnreadArrivalTracker", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(2, 1_000, 2_000);
     tracker.markRowsChanged(["new-message"], 1_100);
-    expect(tracker.observeUnreadCount(2, 1_200, 2_000)).toEqual([]);
+    expect(
+      tracker.observeUnreadCount(2, 1_200, 2_000, false, undefined, new Set(["new-message"])),
+    ).toEqual([]);
     expect(tracker.observeUnreadCount(3, 1_300, 2_000)).toEqual(["new-message"]);
   });
 
@@ -665,14 +667,14 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(3, 62_000, 2_500)).toEqual(["new-message"]);
   });
 
-  test("preserves arrivals when other reads decrease the aggregate count", () => {
+  test("retains unread-row mutations through a count decrease", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(5, 1_000, 2_000);
     tracker.markRowsChanged(["new-message"], 1_100);
     expect(
       tracker.observeUnreadCount(3, 1_200, 2_000, false, undefined, new Set(["new-message"])),
-    ).toEqual(["new-message"]);
-    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual([]);
+    ).toEqual([]);
+    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
   });
 
   test("expires retained mutations that outlive the attribution window", () => {

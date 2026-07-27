@@ -948,10 +948,9 @@ export class UnreadArrivalTracker {
     const candidates = [...this.changedAt]
       .filter(([key]) => currentUnreadKeys === undefined || currentUnreadKeys.has(key))
       .sort((left, right) => right[1].changedAt - left[1].changedAt)
-      // A currently unread mutated row can be a real arrival even when more
-      // other threads were read in the same interval and the aggregate stayed
-      // flat or fell. With no row-level unread evidence, wait for an increase.
-      .slice(0, count > previous ? count - previous : currentUnreadKeys ? count : 0)
+      // Current unread styling narrows attribution, but an aggregate increase
+      // is still required: scrolling can mutate a pre-existing unread row.
+      .slice(0, Math.max(0, count - previous))
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);
     return candidates;

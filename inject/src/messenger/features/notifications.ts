@@ -1048,6 +1048,15 @@ export function initNotificationBridge() {
               PAGE_NOTIFICATION_MATCH_MS,
             )
           : null;
+        let reconciliation = notifiedStore.reconcileFingerprint(
+          conversation.key,
+          conversation.title,
+          fingerprint,
+          bodyHash,
+          readTransitions.has(conversation.key) && !pageReceipt,
+        );
+        const repeatedDelivery =
+          readTransitions.has(conversation.key) || reconciliation === "repeated";
         // A receipt proves that the page queued an emit and persists the native
         // result. The same-document signal carries that result in memory too.
         // For a proven identical post-read message, "duplicate" means the old
@@ -1056,11 +1065,11 @@ export function initNotificationBridge() {
         // the page replayed an emit, not that the conversation was read.
         const receiptSuppressedRepeat =
           pageReceipt !== undefined &&
-          readTransitions.has(conversation.key) &&
+          repeatedDelivery &&
           (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
         const receiptPendingRepeat =
           pageReceipt !== undefined &&
-          readTransitions.has(conversation.key) &&
+          repeatedDelivery &&
           pageSignal !== null &&
           pageSignal.nativeDelivery === undefined;
         if (receiptPendingRepeat) {
@@ -1099,15 +1108,12 @@ export function initNotificationBridge() {
           pendingFallbacks.delete(conversation.key);
           notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+          // The receipt proved this fingerprint was already emitted. Treat it
+          // as matched below after retaining any repeated-delivery evidence
+          // needed by the duplicate and pending-result paths above.
+          reconciliation = "matched";
         }
 
-        const reconciliation = notifiedStore.reconcileFingerprint(
-          conversation.key,
-          conversation.title,
-          fingerprint,
-          bodyHash,
-          readTransitions.has(conversation.key) && !pageReceipt,
-        );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
