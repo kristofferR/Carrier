@@ -102,14 +102,17 @@ describe("ConversationNotificationTracker", () => {
     ).toBe("repeated");
   });
 
-  test("reports a read-to-unread arrival once, not on every later scan", () => {
+  test("requires a fresh read confirmation after a read-to-unread arrival", () => {
     const tracker = new ConversationNotificationTracker();
     tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
-    tracker.observe([], ["1"], ["1"]);
-    // The caller's confirmed-read set is never cleared, so it still names the
-    // thread while the row sits unread — that must not re-report it.
-    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], ["1"])).toEqual(["1"]);
-    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], ["1"])).toEqual([]);
+    const confirmedRead = new Set(["1"]);
+    tracker.observe([], ["1"], confirmedRead);
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], confirmedRead)).toEqual(["1"]);
+    confirmedRead.delete("1");
+    // A transient read-looking render after delivery is not enough to arm
+    // another repeat without the caller confirming it across real time.
+    expect(tracker.observe([], ["1"], confirmedRead)).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], confirmedRead)).toEqual([]);
   });
 
   test("ignores a read glimpse the caller never confirmed", () => {

@@ -3900,7 +3900,9 @@
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          if (!confirmedRepeat) {
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          }
         } else {
           pageSignal.pendingDelivery = {
             key: conversation.key,
@@ -3911,7 +3913,7 @@
         }
         pageNotificationReceipts.consumeMatching(conversation, detectedAt);
         pendingFallbacks.delete(conversation.key);
-        return;
+        if (!pageSignal.emitted || !confirmedRepeat) return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
       const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
@@ -4036,6 +4038,9 @@
           readObservedKeys
         )) {
           changed.add(key);
+        }
+        for (const { key, unread } of observed) {
+          if (unread) readObservedKeys.delete(key);
         }
         for (const conversation of hydrated) {
           if (pendingArrivalKeys.delete(conversation.key)) changed.add(conversation.key);

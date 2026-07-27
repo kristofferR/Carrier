@@ -634,7 +634,9 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (pageSignal.emitted) {
-        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        if (!confirmedRepeat) {
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        }
       } else {
         // The signal's native emit is still waiting on the avatar conversion.
         // A reload before it queues would leave no banner, so the delivered
@@ -648,7 +650,10 @@ export function initNotificationBridge() {
       }
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       pendingFallbacks.delete(conversation.key);
-      return;
+      // Once emitted, changing the signal cannot update the payload already
+      // sent through IPC. Retry a confirmed repeat through the fallback with
+      // its fresh key; the old content key may have been natively deduped.
+      if (!pageSignal.emitted || !confirmedRepeat) return;
     }
     // Start the bounded avatar conversion during the pairing grace period.
     // Delivery therefore stays ahead of the four-second auto-refresh nudge.
@@ -836,6 +841,12 @@ export function initNotificationBridge() {
         readObservedKeys,
       )) {
         changed.add(key);
+      }
+      // Keep a confirmed-read verdict through the scan that first observes
+      // the unread transition, then retire it. A later transient read-looking
+      // render must earn confirmation again before it can arm another repeat.
+      for (const { key, unread } of observed) {
+        if (unread) readObservedKeys.delete(key);
       }
       // Carry earlier attributed arrivals whose row has hydrated since, and
       // drop the ones whose row was read before ever hydrating.
