@@ -394,6 +394,29 @@ describe("NotifiedSignatureStore", () => {
     ).toBe("repeated");
   });
 
+  test("reports a persisted repeat once, so treating it as an arrival cannot loop", () => {
+    const storage = memoryStorage();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    // A reload reads the retired evidence and reports the repeat once. The scan
+    // promotes that verdict straight to an arrival, so a row still sitting
+    // unread on the next scan must not report it again — nor may a later
+    // document resurrect it from storage.
+    const reloaded = new NotifiedSignatureStore(storage);
+    expect(reloaded.reconcileFingerprint("1", "Jane", fingerprint, bodyHash)).toBe("repeated");
+    expect(reloaded.reconcileFingerprint("1", "Jane", fingerprint, bodyHash)).not.toBe("repeated");
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", fingerprint, bodyHash),
+    ).not.toBe("repeated");
+  });
+
   test("keeps entries for unread rows that are merely still rendered", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
