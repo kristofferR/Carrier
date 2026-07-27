@@ -3895,7 +3895,7 @@
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
-      const image = images[0];
+      const image = images.length === 1 ? images[0] : void 0;
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
         if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
@@ -3909,8 +3909,8 @@
         title: text.title,
         body: text.body,
         icon: image?.currentSrc || image?.src || "",
-        // A photo-less group draws its members as a composite; one with a photo
-        // is only known as a group once its thread has been read.
+        // A photo-less group draws its members side by side; one with a photo is
+        // only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
         unread
       };
@@ -4073,8 +4073,8 @@
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
-          } else if (elapsed3 < READ_TRANSITION_CONFIRM_MS) {
-            const remaining = READ_TRANSITION_CONFIRM_MS - elapsed3;
+          } else {
+            const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed3);
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
         }
@@ -4140,16 +4140,17 @@
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
           const bodyHash = notificationDedupeKey("", conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
-          if (pageReceipt) {
+          const pageSignal = pageReceipt ? unmatchedPageNotifications.consumeMatching(
+            conversation,
+            detectedAt,
+            PAGE_NOTIFICATION_MATCH_MS
+          ) : null;
+          const receiptSuppressedRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal?.nativeDelivery === "duplicate";
+          if (pageReceipt && !receiptSuppressedRepeat) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);
             pendingFallbacks.delete(conversation.key);
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-            unmatchedPageNotifications.consumeMatching(
-              conversation,
-              detectedAt,
-              PAGE_NOTIFICATION_MATCH_MS
-            );
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           }
           const reconciliation = notifiedStore.reconcileFingerprint(
@@ -4157,7 +4158,7 @@
             conversation.title,
             fingerprint,
             bodyHash,
-            readTransitions.has(conversation.key) && !pageReceipt
+            readTransitions.has(conversation.key) && (!pageReceipt || receiptSuppressedRepeat)
           );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {

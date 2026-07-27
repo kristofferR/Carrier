@@ -603,7 +603,10 @@ export function initNotificationBridge() {
     const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(
       (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src),
     );
-    const image = images[0];
+    // A photo-less group renders several member images side by side. None of
+    // those individual faces is a valid thread icon; use an image only when
+    // the row exposes a single contact or group photo.
+    const image = images.length === 1 ? images[0] : undefined;
     let unread = false;
     for (const span of row.querySelectorAll<HTMLElement>("span")) {
       if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
@@ -617,8 +620,8 @@ export function initNotificationBridge() {
       title: text.title,
       body: text.body,
       icon: image?.currentSrc || image?.src || "",
-      // A photo-less group draws its members as a composite; one with a photo
-      // is only known as a group once its thread has been read.
+      // A photo-less group draws its members side by side; one with a photo is
+      // only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
       unread,
     };
@@ -693,22 +696,14 @@ export function initNotificationBridge() {
     // Start the bounded avatar conversion during the pairing grace period.
     // Delivery therefore stays ahead of the four-second auto-refresh nudge.
     // In a group, show whoever wrote rather than the thread picture — falling
-    // back to the row's own image when the sender is unknown or their cached
-    // avatar URL has expired.
+    // back to the row's single group photo when the sender is unknown or their
+    // cached avatar URL has expired.
     // Both conversions run under their own bounded timeout at the same time:
     // chaining them could outlast the four-second auto-refresh nudge and lose
     // the banner entirely.
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    // When the sender is unknown the row's own image stands in, including a
-    // members' composite. That composite names no single member — beside a
-    // title that is the group's name it reads as the group, which is what it
-    // is. Suppressing it (out of concern that its first face looks like the
-    // author) left group notifications with no picture at all whenever the
-    // sender's face had not been harvested yet, which is the common case: the
-    // harvest only sees a thread while it is open. A blank icon is the worse
-    // of the two wrongs, so the composite stays as the last resort.
     const rowIcon = conversation.icon;
     const avatar =
       senderIcon && senderIcon !== rowIcon
@@ -883,8 +878,11 @@ export function initNotificationBridge() {
           if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
             readObservedKeys.delete(readObservedKeys.keys().next().value!);
           }
-        } else if (elapsed < READ_TRANSITION_CONFIRM_MS) {
-          const remaining = READ_TRANSITION_CONFIRM_MS - elapsed;
+        } else {
+          // Once the elapsed-time guard is met, keep scanning until the
+          // observation guard is met too. Otherwise the scheduled scan at the
+          // time boundary can stop on observation two and never confirm.
+          const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed);
           nextReadConfirmationIn =
             nextReadConfirmationIn === null
               ? remaining
@@ -973,7 +971,22 @@ export function initNotificationBridge() {
         const bodyHash = notificationDedupeKey("", conversation.body);
 
         const pageReceipt = pageReceipts.get(conversation.key);
-        if (pageReceipt) {
+        const pageSignal = pageReceipt
+          ? unmatchedPageNotifications.consumeMatching(
+              conversation,
+              detectedAt,
+              PAGE_NOTIFICATION_MATCH_MS,
+            )
+          : null;
+        // A receipt proves that the page queued an emit, but the same-document
+        // signal also carries the native result. For an identical post-read
+        // message, "duplicate" means the old content key suppressed this new
+        // banner, so it still needs the fresh-key fallback.
+        const receiptSuppressedRepeat =
+          pageReceipt !== undefined &&
+          readTransitions.has(conversation.key) &&
+          pageSignal?.nativeDelivery === "duplicate";
+        if (pageReceipt && !receiptSuppressedRepeat) {
           // An earlier scan may have armed a fallback while this receipt was
           // still ambiguous — the page already emitted this notification, so
           // that timer must not fire a possible duplicate.
@@ -981,13 +994,6 @@ export function initNotificationBridge() {
           if (pending) clearTimeout(pending.timer);
           pendingFallbacks.delete(conversation.key);
           notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-          // Remove the same-document raw signal too; otherwise it could linger
-          // briefly and pair with a different but text-identical row.
-          unmatchedPageNotifications.consumeMatching(
-            conversation,
-            detectedAt,
-            PAGE_NOTIFICATION_MATCH_MS,
-          );
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
         }
 
@@ -996,7 +1002,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          readTransitions.has(conversation.key) && !pageReceipt,
+          readTransitions.has(conversation.key) && (!pageReceipt || receiptSuppressedRepeat),
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {
