@@ -91,6 +91,7 @@ interface Window {
     responsivenessWorkersStopped: number;
   };
   __carrierNotifyClick?: (id: number) => boolean;
+  __carrierNotifyResult?: (id: number, delivery: string) => void;
   /** Deliver a KDE notification reply without raising the Carrier window. */
   __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
   /** Preserve a failed notification reply as an unsent composer draft. */

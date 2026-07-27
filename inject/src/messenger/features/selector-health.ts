@@ -16,7 +16,11 @@ const WATCHED_SELECTORS = [
   // The injected Settings gear depends on Messenger's localized overflow
   // control/icon. Watch the actual output rather than testing a copied icon
   // path constant against itself.
-  { key: "settings-button", sel: "[data-carrier-settings-button]" },
+  // Mounted from a requestAnimationFrame callback, which a hidden webview
+  // never runs — so a hidden window says nothing about whether the selector
+  // still works, and checking one would report a break every interval for as
+  // long as Carrier sits in the background.
+  { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true },
 ];
 
 export function initSelectorHealth() {
@@ -28,7 +32,13 @@ export function initSelectorHealth() {
     // page, checkpoints, and mid-reload states.
     if (!location.pathname.startsWith("/messages")) return;
     if (document.querySelector('input[name="pass"]')) return;
-    for (const { key, sel } of WATCHED_SELECTORS) {
+    for (const { key, sel, needsVisible } of WATCHED_SELECTORS) {
+      // Nothing this feature renders is observable right now. Clear the streak
+      // too: after unhiding, the mount needs a frame the check may beat.
+      if (needsVisible && document.hidden) {
+        misses.set(key, 0);
+        continue;
+      }
       if (document.querySelector(sel)) {
         misses.set(key, 0);
         continue;

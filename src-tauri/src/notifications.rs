@@ -20,7 +20,7 @@ use base64::Engine as _;
 use futures_util::future::{select, Either};
 #[cfg(target_os = "linux")]
 use futures_util::{pin_mut, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 #[cfg(target_os = "macos")]
@@ -69,6 +69,14 @@ enum Delivery {
     /// attached to it — the page-first notification it duplicates may have been
     /// emitted before its conversation row (and thus its route) was known.
     Suppress { delivered_id: u64 },
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum NativeNotificationDelivery {
+    Accepted,
+    Duplicate,
+    Suppressed,
 }
 
 /// A delivered notification kept for the dedupe window: when it was last seen
@@ -1070,7 +1078,10 @@ fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
 /// startup), so there's no per-notification thread. Linux and Windows each
 /// park one thread per notification until the server reports a response;
 /// Linux additionally handles KDE's inline-reply signal.
-pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
+pub(crate) fn show_message_notification(
+    app: tauri::AppHandle,
+    msg: NotifyMsg,
+) -> NativeNotificationDelivery {
     // Re-enforce the privacy settings here on the trusted side. The page-side
     // checks in messenger.js run in the remote facebook.com origin, so a page
     // bug (or a hostile script emitting carrier:notify directly) must not be
@@ -1089,7 +1100,7 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
             "carrier:notify suppressed by mute_notifications (id {})",
             msg.id
         );
-        return;
+        return NativeNotificationDelivery::Suppressed;
     }
 
     let decision = NOTIFICATION_DEDUPER
@@ -1104,7 +1115,7 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         // Attach it to the notification the user actually has on screen.
         remember_notification_route(delivered_id, &msg.thread_path);
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
-        return;
+        return NativeNotificationDelivery::Duplicate;
     }
 
     let rate_decision = NOTIFICATION_RATE_LIMITER
@@ -1116,7 +1127,7 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
         log::warn!("carrier:notify suppressed by native rate limit");
     }
     if rate_decision != RateLimitDecision::Allow {
-        return;
+        return NativeNotificationDelivery::Suppressed;
     }
 
     // Same redaction the page applies: generic title/body, no avatar.
@@ -1197,6 +1208,8 @@ pub(crate) fn show_message_notification(app: tauri::AppHandle, msg: NotifyMsg) {
             }
         }
     });
+
+    NativeNotificationDelivery::Accepted
 }
 
 /// A response represents a click unless the platform explicitly reports that
@@ -1485,6 +1498,22 @@ mod tests {
         let bare: NotifyMsg = serde_json::from_str("{}").expect("empty object parses");
         assert_eq!(bare.id, 0);
         assert!(bare.title.is_empty());
+    }
+
+    #[test]
+    fn native_delivery_results_match_the_page_callback_protocol() {
+        assert_eq!(
+            serde_json::to_string(&NativeNotificationDelivery::Accepted).unwrap(),
+            r#""accepted""#
+        );
+        assert_eq!(
+            serde_json::to_string(&NativeNotificationDelivery::Duplicate).unwrap(),
+            r#""duplicate""#
+        );
+        assert_eq!(
+            serde_json::to_string(&NativeNotificationDelivery::Suppressed).unwrap(),
+            r#""suppressed""#
+        );
     }
 
     #[test]

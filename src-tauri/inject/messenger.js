@@ -2644,24 +2644,49 @@
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
+  var READ_SINCE_LIMIT = 500;
   var ConversationNotificationTracker = class {
     constructor() {
       __publicField(this, "signatures", /* @__PURE__ */ new Map());
+      /**
+       * Threads observed rendered-and-read, waiting for their next message. A read
+       * row's signature is dropped below along with every other non-unread row, so
+       * without this set the thread comes back as a first sighting and primes
+       * silently — the first message after you read a conversation would never
+       * notify, however different its preview text.
+       */
+      __publicField(this, "readSince", /* @__PURE__ */ new Set());
       __publicField(this, "primed", false);
     }
-    observe(current, observedKeys) {
+    /**
+     * `confirmedRead` — threads the caller has observed hydrated-and-read across
+     * scans spanning real time. Single-scan read state is not enough: mid-
+     * hydration a row can render its text before its unread styling, and that
+     * flap would otherwise report as a new message.
+     */
+    observe(current, observedKeys, confirmedRead, readTransitions) {
       const currentKeys = /* @__PURE__ */ new Set();
       const changed = [];
       for (const conversation of current) {
         currentKeys.add(conversation.key);
         const previous = this.signatures.get(conversation.key);
+        const wasRead = this.readSince.delete(conversation.key);
         this.signatures.set(conversation.key, conversation.signature);
-        if (this.primed && previous !== void 0 && previous !== conversation.signature) {
+        if (!this.primed) continue;
+        if (wasRead || previous !== void 0 && previous !== conversation.signature) {
           changed.push(conversation.key);
+          if (wasRead) readTransitions?.add(conversation.key);
         }
       }
       for (const key of observedKeys || currentKeys) {
         if (!currentKeys.has(key)) this.signatures.delete(key);
+      }
+      for (const key of confirmedRead || []) {
+        if (currentKeys.has(key) || this.readSince.has(key)) continue;
+        this.readSince.add(key);
+        if (this.readSince.size > READ_SINCE_LIMIT) {
+          this.readSince.delete(this.readSince.keys().next().value);
+        }
       }
       this.primed = true;
       return changed;
@@ -2691,19 +2716,30 @@
     const value = `${normalizeNotificationText(title)}\0${normalizeNotificationText(body)}`;
     return hashText(value);
   }
+  function notificationDeliveryDedupeKey(fingerprint, generation) {
+    return generation === void 0 ? fingerprint : notificationDedupeKey(fingerprint, generation);
+  }
   var NOTIFIED_STORE_LIMIT = 300;
   var NOTIFIED_STORE_VERSION = 3;
   var NOTIFIED_STORE_TEXT_VERSION = 2;
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
-  var READ_TRANSITION_CONFIRM_MS = 1e3;
   var READ_DROP_CONFIRM_MS = 2e4;
   var READ_DROP_MIN_OBSERVATIONS = 3;
+  var READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
+  var READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
+  var RETIRED_FINGERPRINT_TTL_MS = 3e4;
   var NotifiedSignatureStore = class {
     constructor(storage = null, storageKey = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
+      /**
+       * Fingerprints retired by a confirmed read. These survive a prompt reload so
+       * the next unread transition can identify an identical preview as a fresh
+       * delivery while the native content-key dedupe is still active.
+       */
+      __publicField(this, "readFingerprints", /* @__PURE__ */ new Map());
       /**
        * In-memory only: when each continuously observed read state began, and how
        * many consecutive scans have seen it.
@@ -2727,11 +2763,26 @@
             });
           }
         }
+        if (version === NOTIFIED_STORE_VERSION && parsed && typeof parsed === "object" && "retired" in parsed && Array.isArray(parsed.retired)) {
+          const now = Date.now();
+          for (const retired of parsed.retired) {
+            if (Array.isArray(retired) && typeof retired[0] === "string" && typeof retired[1] === "string" && typeof retired[2] === "number" && now - retired[2] <= RETIRED_FINGERPRINT_TTL_MS) {
+              this.readFingerprints.set(retired[0], {
+                fingerprint: retired[1],
+                retiredAt: retired[2]
+              });
+            }
+          }
+        }
       } catch (_) {
       }
       let trimmed = false;
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         this.entries.delete(this.entries.keys().next().value);
+        trimmed = true;
+      }
+      while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+        this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         trimmed = true;
       }
       if (trimmed) this.persist();
@@ -2744,7 +2795,12 @@
             version: NOTIFIED_STORE_VERSION,
             entries: [...this.entries].map(
               ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
-            )
+            ),
+            retired: [...this.readFingerprints].map(([key, retired]) => [
+              key,
+              retired.fingerprint,
+              retired.retiredAt
+            ])
           })
         );
       } catch (_) {
@@ -2763,8 +2819,17 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash) {
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, confirmedReadTransition = false) {
       const entry = this.entries.get(conversationKey);
+      const retired = this.readFingerprints.get(conversationKey);
+      const retiredFingerprint = retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS ? retired.fingerprint : void 0;
+      if (confirmedReadTransition || retiredFingerprint !== void 0) {
+        const deliveredFingerprint = entry?.fingerprint ?? retiredFingerprint;
+        if (this.readFingerprints.delete(conversationKey)) this.persist();
+        if (deliveredFingerprint === fingerprint || bodyHash !== void 0 && entry?.bodyHash === bodyHash) {
+          return "repeated";
+        }
+      }
       if (!entry) return "missing";
       if (entry.fingerprint === fingerprint) {
         if (entry.legacy || bodyHash !== void 0 && entry.bodyHash === void 0) {
@@ -2790,10 +2855,13 @@
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
       this.readStreaks.delete(conversationKey);
+      const retired = this.readFingerprints.delete(conversationKey);
       const current = this.entries.get(conversationKey);
       if (current?.fingerprint === fingerprint && !current.legacy) {
         if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
           current.bodyHash = bodyHash;
+          this.persist();
+        } else if (retired) {
           this.persist();
         }
         return;
@@ -2805,6 +2873,7 @@
         this.entries.delete(oldest);
         this.readStreaks.delete(oldest);
         this.observedUnread.delete(oldest);
+        this.readFingerprints.delete(oldest);
       }
       this.persist();
     }
@@ -2851,6 +2920,14 @@
         if (streak.observations < READ_DROP_MIN_OBSERVATIONS) continue;
         this.readStreaks.delete(key);
         this.observedUnread.delete(key);
+        this.readFingerprints.delete(key);
+        this.readFingerprints.set(key, {
+          fingerprint: this.entries.get(key).fingerprint,
+          retiredAt: Date.now()
+        });
+        while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+          this.readFingerprints.delete(this.readFingerprints.keys().next().value);
+        }
         this.entries.delete(key);
         dropped = true;
       }
@@ -2863,6 +2940,7 @@
   var BODY_PREFIX_LIMIT = 240;
   var PAGE_RECEIPT_LIMIT = 20;
   var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
+  var receiptMatch = (receipt) => receipt.nativeDelivery === void 0 ? { nativeId: receipt.nativeId } : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
   var opaqueTextIdentity = (value, prefixLimit) => {
     const prefixes = [];
     const lastPrefix = Math.min(value.length - 1, prefixLimit);
@@ -2921,7 +2999,7 @@
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
               this.receipts.push(candidate);
             }
           }
@@ -2956,6 +3034,12 @@
       if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
       this.persist();
     }
+    recordDelivery(nativeId, delivery) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.nativeDelivery = delivery;
+      this.persist();
+    }
     consumeMatching(row, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return null;
@@ -2965,7 +3049,7 @@
         if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
         this.receipts.splice(index, 1);
         this.persist();
-        return { nativeId: receipt.nativeId };
+        return receiptMatch(receipt);
       }
       return null;
     }
@@ -3005,7 +3089,7 @@
         if (match === null) continue;
         remove.push(index);
         if (ambiguous || consumed.has(match)) continue;
-        consumed.set(match, { nativeId: receipt.nativeId });
+        consumed.set(match, receiptMatch(receipt));
       }
       for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i], 1);
       if (remove.length) this.persist();
@@ -3077,7 +3161,7 @@
       __publicField(this, "sawDeferredZero", false);
     }
     markRowsChanged(keys, at) {
-      for (const key of keys) this.changedAt.set(key, at);
+      for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
     }
     /**
      * `zeroCorroborated` — the caller observed a fully hydrated conversation
@@ -3092,9 +3176,13 @@
      * (hydrating rows are never observed read first), so it can be reported
      * even inside the settle window after an uncorroborated zero.
      */
-    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys) {
-      for (const [key, changedAt] of this.changedAt) {
-        if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys, currentUnreadKeys) {
+      for (const [key, candidate] of this.changedAt) {
+        candidate.eligibleUntil = Math.max(
+          candidate.eligibleUntil,
+          candidate.changedAt + maxMutationAgeMs
+        );
+        if (at > candidate.eligibleUntil) this.changedAt.delete(key);
       }
       if (this.firstObservedAt === null) this.firstObservedAt = at;
       const settled = at - this.firstObservedAt >= this.settleMs;
@@ -3107,7 +3195,7 @@
       if (previous === null) {
         if (!(this.sawDeferredZero && settled && count > 0)) {
           if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1] - left[1]).slice(0, count).map(([key]) => key);
+            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count).map(([key]) => key);
             if (transitions.length) {
               this.changedAt.clear();
               return transitions;
@@ -3118,8 +3206,7 @@
         }
         previous = 0;
       }
-      if (count <= previous) return [];
-      const candidates = [...this.changedAt].sort((left, right) => right[1] - left[1]).slice(0, count - previous).map(([key]) => key);
+      const candidates = [...this.changedAt].filter(([key]) => currentUnreadKeys === void 0 || currentUnreadKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, Math.max(0, count - previous)).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
     }
@@ -3186,7 +3273,7 @@
   }
 
   // inject/src/messenger/lib/sender-avatars.ts
-  var SENDER_AVATAR_LIMIT = 120;
+  var SENDER_AVATAR_LIMIT = 500;
   var SENDER_AVATAR_VERSION = 3;
   var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
   var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -3524,35 +3611,87 @@
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
-    const avatarToDataUrl = (url) => new Promise((resolve) => {
-      if (!url) return resolve("");
+    const AVATAR_SIZE = 64;
+    const loadAvatarImage = (url) => new Promise((resolve) => {
+      if (!url) return resolve(null);
       const img = new Image();
       img.crossOrigin = "anonymous";
       let settled = false;
-      const done = (v) => {
+      const done = (value) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(v);
+        resolve(value);
       };
-      const timer = setTimeout(() => done(""), 2500);
-      img.onload = () => {
-        try {
-          const size = 64;
-          const c = document.createElement("canvas");
-          c.width = size;
-          c.height = size;
-          c.getContext("2d").drawImage(img, 0, 0, size, size);
-          done(c.toDataURL("image/png"));
-        } catch (_) {
-          done("");
-        }
-      };
-      img.onerror = () => done("");
+      const timer = setTimeout(() => done(null), 2500);
+      img.onload = () => done(img);
+      img.onerror = () => done(null);
       img.src = url;
     });
+    const facesToDataUrl = (urls) => {
+      const requested = urls.slice(0, 2);
+      return Promise.all(requested.map(loadAvatarImage)).then((images) => {
+        const faces = images.filter((image) => image !== null);
+        if (!faces.length) return "";
+        if (requested.length > 1 && faces.length !== requested.length) return "";
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = AVATAR_SIZE;
+          canvas.height = AVATAR_SIZE;
+          const context = canvas.getContext("2d");
+          const paired = faces.length > 1;
+          const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
+          const offset = AVATAR_SIZE - diameter;
+          faces.forEach((face, index) => {
+            const left = index * offset;
+            const top = index * offset;
+            const centerX = left + diameter / 2;
+            const centerY = top + diameter / 2;
+            if (paired) {
+              context.save();
+              context.globalCompositeOperation = "destination-out";
+              context.beginPath();
+              context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
+              context.fill();
+              context.restore();
+              context.save();
+              context.beginPath();
+              context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
+              context.clip();
+            }
+            const scale = Math.max(diameter / face.width, diameter / face.height);
+            const sourceSize = diameter / scale;
+            context.drawImage(
+              face,
+              (face.width - sourceSize) / 2,
+              (face.height - sourceSize) / 2,
+              sourceSize,
+              sourceSize,
+              left,
+              top,
+              diameter,
+              diameter
+            );
+            if (paired) context.restore();
+          });
+          return canvas.toDataURL("image/png");
+        } catch (_) {
+          return "";
+        }
+      });
+    };
+    const avatarToDataUrl = (url) => facesToDataUrl([url]);
+    const notificationStorage = (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })();
+    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
+    const deliveryHandlers = /* @__PURE__ */ new Map();
     window.__carrierNotifyClick = (id) => {
       const handler = notifyHandlers.get(id);
       notifyHandlers.delete(id);
@@ -3566,13 +3705,29 @@
       }
       return handler !== void 0;
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath) => {
+    window.__carrierNotifyResult = (id, delivery) => {
+      if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
+      pageNotificationReceipts.recordDelivery(id, delivery);
+      const handler = deliveryHandlers.get(id);
+      deliveryHandlers.delete(id);
+      handler?.(delivery);
+    };
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
+      if (onDelivery) {
+        deliveryHandlers.set(id, onDelivery);
+        if (deliveryHandlers.size > 50) {
+          deliveryHandlers.delete(deliveryHandlers.keys().next().value);
+        }
+      }
       invoke("plugin:event|emit", {
         event: "carrier:notify",
         payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
-      })?.catch?.(() => diag("notify.emit", "carrier:notify emit failed"));
+      })?.catch?.(() => {
+        deliveryHandlers.delete(id);
+        diag("notify.emit", "carrier:notify emit failed");
+      });
     };
     const updateNotificationRoute = (id, threadPath) => {
       invoke("plugin:event|emit", {
@@ -3580,15 +3735,7 @@
         payload: { id, thread_path: threadPath }
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
-    const notificationStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
-    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const pendingFallbacks = /* @__PURE__ */ new Map();
@@ -3605,7 +3752,8 @@
             fingerprint: pending.fingerprint,
             bodyHash: notificationDedupeKey("", pending.body),
             expect: notifiedStore.notifiedFingerprint(key)
-          }
+          },
+          dedupeKey: pending.dedupeKey
         };
       }
       return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
@@ -3633,11 +3781,17 @@
             hidePreview ? "Messenger" : originalTitle,
             hidePreview ? "New message" : originalBody,
             icon,
-            notificationDedupeKey(originalTitle, originalBody),
+            pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
               this.onclick?.(new Event("click"));
             },
-            pageMatch.threadPath
+            pageMatch.threadPath,
+            pageMatch.signal ? (delivery) => {
+              pageMatch.signal.nativeDelivery = delivery;
+              const handler = pageMatch.signal.onNativeDelivery;
+              pageMatch.signal.onNativeDelivery = void 0;
+              handler?.(delivery);
+            } : void 0
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -3725,7 +3879,7 @@
       }
       const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
       if (shown !== "yes") {
-        if (!document.hidden && settleAttempts < SETTLE_ATTEMPT_LIMIT) {
+        if (settleAttempts < SETTLE_ATTEMPT_LIMIT) {
           settleAttempts++;
           scheduleHarvest(500);
         }
@@ -3783,12 +3937,6 @@
     let harvestAttached = false;
     const harvestObserver = new MutationObserver(() => scheduleHarvest());
     const attachHarvestObserver = () => {
-      if (document.hidden) {
-        harvestObserver.disconnect();
-        harvestRoots = [];
-        harvestAttached = false;
-        return;
-      }
       const roots = [...document.querySelectorAll(HARVEST_SEL)];
       if (harvestAttached && harvestRoots.length === roots.length && roots.every((root, index) => root === harvestRoots[index] && root.isConnected)) {
         return;
@@ -3827,7 +3975,6 @@
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
-      const image = images[0];
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
         if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
@@ -3840,18 +3987,25 @@
         threadPath: `/t/${id}/`,
         title: text.title,
         body: text.body,
-        icon: image?.currentSrc || image?.src || "",
-        // A photo-less group draws its members as a composite; one with a photo
-        // is only known as a group once its thread has been read.
+        // Every face the row draws, in render order. A photo-less group renders
+        // several member images side by side, and no individual one of them is a
+        // valid thread icon — taking just the first labelled every message in
+        // the thread with whichever member happened to sort first. They are all
+        // kept so they can be drawn together, which is a valid picture of the
+        // group even though none of them is a picture of it alone.
+        icons: images.map((candidate) => candidate.currentSrc || candidate.src).filter(Boolean),
+        // A photo-less group draws its members side by side; one with a photo is
+        // only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
-        // That composite is made of members' faces, so it is not this thread's
-        // picture and must never stand in for a sender.
-        compositeIcon: images.length > 1,
         unread
       };
     };
-    const scheduleFallback = (conversation, detectedAt) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const dedupeKey = notificationDeliveryDedupeKey(
+        fingerprint,
+        confirmedRepeat ? `${conversation.key}:${detectedAt}` : void 0
+      );
       const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = pendingFallbacks.get(conversation.key);
       if (previous) clearTimeout(previous.timer);
@@ -3861,11 +4015,23 @@
         PAGE_NOTIFICATION_MATCH_MS
       );
       if (pageSignal) {
+        if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
         if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          const finishDelivery = (delivery) => {
+            if (confirmedRepeat && delivery === "duplicate") {
+              scheduleFallback(conversation, detectedAt, true);
+              return;
+            }
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          };
+          if (pageSignal.nativeDelivery) {
+            finishDelivery(pageSignal.nativeDelivery);
+          } else {
+            pageSignal.onNativeDelivery = finishDelivery;
+          }
         } else {
           pageSignal.pendingDelivery = {
             key: conversation.key,
@@ -3879,10 +4045,11 @@
         return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const rowIcon = conversation.compositeIcon ? "" : conversation.icon;
-      const avatar = senderIcon && senderIcon !== rowIcon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
+      const rowIcons = conversation.icons;
+      const rowAvatar = () => facesToDataUrl(rowIcons);
+      const avatar = senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0]) ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
         ([sender, row]) => sender || row
-      ) : avatarToDataUrl(rowIcon);
+      ) : rowAvatar();
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
@@ -3893,6 +4060,9 @@
         }
         const hidePreview = settings.hide_notification_preview === true;
         const icon = hidePreview ? "" : await avatar;
+        if (!hidePreview && !icon && conversation.isGroup) {
+          diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+        }
         if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
         pendingFallbacks.delete(conversation.key);
         notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -3905,7 +4075,7 @@
           hidePreview ? "Messenger" : conversation.title,
           hidePreview ? "New message" : conversation.body,
           icon,
-          fingerprint,
+          dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
@@ -3917,18 +4087,23 @@
         title: conversation.title,
         body: conversation.body,
         threadPath: conversation.threadPath,
-        fingerprint
+        fingerprint,
+        dedupeKey,
+        confirmedRepeat
       });
     };
     let scanRunning = false;
     let scanPending = false;
     let mismatchConfirmationTimer;
+    let readConfirmationTimer;
     const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
     const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
-    const readCandidateAt = /* @__PURE__ */ new Map();
+    const readCandidates = /* @__PURE__ */ new Map();
+    let lastScanAt = 0;
+    const MAX_MUTATION_GRACE_MS = 9e4;
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -3945,6 +4120,8 @@
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
         );
         const detectedAt = Date.now();
+        const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
+        lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
         notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
@@ -3953,46 +4130,70 @@
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
-        const changed = new Set(
-          conversationTracker.observe(
-            hydrated.map(({ key, body }) => ({ key, signature: body })),
-            observed.filter(({ body }) => body.length > 0).map(({ key }) => key)
-          )
+        const hydratedReadKeys = new Set(
+          listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
+        clearTimeout(readConfirmationTimer);
+        readConfirmationTimer = void 0;
+        let nextReadConfirmationIn = null;
+        for (const key of readCandidates.keys()) {
+          if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
+        }
         for (const conversation of observed) {
-          if (!conversation.body) continue;
-          if (conversation.unread) {
-            readCandidateAt.delete(conversation.key);
-            continue;
-          }
+          if (!hydratedReadKeys.has(conversation.key)) continue;
           if (readObservedKeys.has(conversation.key)) continue;
-          const since = readCandidateAt.get(conversation.key);
-          if (since === void 0) {
-            readCandidateAt.set(conversation.key, detectedAt);
-            if (readCandidateAt.size > READ_OBSERVED_LIMIT) {
-              readCandidateAt.delete(readCandidateAt.keys().next().value);
+          const candidate = readCandidates.get(conversation.key);
+          if (candidate === void 0 || detectedAt < candidate.since) {
+            readCandidates.set(conversation.key, { since: detectedAt, observations: 1 });
+            if (readCandidates.size > READ_OBSERVED_LIMIT) {
+              readCandidates.delete(readCandidates.keys().next().value);
             }
+            nextReadConfirmationIn = nextReadConfirmationIn === null ? READ_TRANSITION_CONFIRM_MS : Math.min(nextReadConfirmationIn, READ_TRANSITION_CONFIRM_MS);
             continue;
           }
-          if (detectedAt - since >= READ_TRANSITION_CONFIRM_MS) {
-            readCandidateAt.delete(conversation.key);
+          candidate.observations += 1;
+          const elapsed3 = detectedAt - candidate.since;
+          if (elapsed3 >= READ_TRANSITION_CONFIRM_MS && candidate.observations >= READ_TRANSITION_MIN_OBSERVATIONS) {
+            readCandidates.delete(conversation.key);
             readObservedKeys.add(conversation.key);
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
+          } else {
+            const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed3);
+            nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
         }
+        if (nextReadConfirmationIn !== null) {
+          readConfirmationTimer = setTimeout(
+            scanUnreadConversations,
+            Math.max(1, nextReadConfirmationIn)
+          );
+        }
+        const readTransitions = /* @__PURE__ */ new Set();
+        const changed = new Set(
+          conversationTracker.observe(
+            hydrated.map(({ key, body }) => ({ key, signature: body })),
+            observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+            readObservedKeys,
+            readTransitions
+          )
+        );
         for (const key of unreadArrivals.observeUnreadCount(
           unreadCountFromTitle(document.title || ""),
           detectedAt,
-          ROW_MUTATION_MATCH_MS,
+          ROW_MUTATION_MATCH_MS + mutationGrace,
           // A fully hydrated list with no unread rows corroborates a zero
           // title: it is the inbox's real state, not a still-unstamped title,
           // so a first arrival inside the settle window can still report.
           listHydrated && !observed.some(({ unread }) => unread),
-          readObservedKeys
+          readObservedKeys,
+          new Set(conversations.map(({ key: key2 }) => key2))
         )) {
           changed.add(key);
+        }
+        for (const { key, unread } of observed) {
+          if (unread) readObservedKeys.delete(key);
         }
         for (const conversation of hydrated) {
           if (pendingArrivalKeys.delete(conversation.key)) changed.add(conversation.key);
@@ -4011,6 +4212,7 @@
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
         const unhydrated = /* @__PURE__ */ new Set();
+        const confirmedRepeats = /* @__PURE__ */ new Set();
         for (const conversation of conversations) {
           if (!conversation.body) {
             if (changed.has(conversation.key)) {
@@ -4025,28 +4227,57 @@
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
           const bodyHash = notificationDedupeKey("", conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
+          const pageSignal = pageReceipt ? unmatchedPageNotifications.consumeMatching(
+            conversation,
+            detectedAt,
+            PAGE_NOTIFICATION_MATCH_MS
+          ) : null;
+          let reconciliation = notifiedStore.reconcileFingerprint(
+            conversation.key,
+            conversation.title,
+            fingerprint,
+            bodyHash,
+            readTransitions.has(conversation.key) && !pageReceipt
+          );
+          const repeatedDelivery = readTransitions.has(conversation.key) || reconciliation === "repeated";
+          const receiptSuppressedRepeat = pageReceipt !== void 0 && repeatedDelivery && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
+          const receiptPendingRepeat = pageReceipt !== void 0 && repeatedDelivery && pageSignal !== null && pageSignal.nativeDelivery === void 0;
+          if (receiptPendingRepeat) {
+            const pending = pendingFallbacks.get(conversation.key);
+            if (pending) clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            pageSignal.onNativeDelivery = (delivery) => {
+              if (delivery === "duplicate") {
+                scheduleFallback(conversation, detectedAt, true);
+                return;
+              }
+              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            };
+            changed.delete(conversation.key);
+            continue;
+          }
+          if (receiptSuppressedRepeat) {
+            scheduleFallback(conversation, detectedAt, true);
+            changed.delete(conversation.key);
+            continue;
+          }
           if (pageReceipt) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);
             pendingFallbacks.delete(conversation.key);
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-            unmatchedPageNotifications.consumeMatching(
-              conversation,
-              detectedAt,
-              PAGE_NOTIFICATION_MATCH_MS
-            );
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            reconciliation = "matched";
           }
-          const reconciliation = notifiedStore.reconcileFingerprint(
-            conversation.key,
-            conversation.title,
-            fingerprint,
-            bodyHash
-          );
+          if (reconciliation === "repeated") {
+            confirmedRepeats.add(conversation.key);
+            changed.add(conversation.key);
+          }
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
             const pending = pendingFallbacks.get(conversation.key);
-            if (pending) {
+            if (pending && !pending.confirmedRepeat) {
               clearTimeout(pending.timer);
               pendingFallbacks.delete(conversation.key);
             }
@@ -4085,7 +4316,7 @@
         }
         for (const conversation of conversations) {
           if (changed.has(conversation.key) && !stale.has(conversation.key) && !unhydrated.has(conversation.key)) {
-            scheduleFallback(conversation, detectedAt);
+            scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
           }
         }
       } finally {
@@ -4399,7 +4630,11 @@
     // The injected Settings gear depends on Messenger's localized overflow
     // control/icon. Watch the actual output rather than testing a copied icon
     // path constant against itself.
-    { key: "settings-button", sel: "[data-carrier-settings-button]" }
+    // Mounted from a requestAnimationFrame callback, which a hidden webview
+    // never runs — so a hidden window says nothing about whether the selector
+    // still works, and checking one would report a break every interval for as
+    // long as Carrier sits in the background.
+    { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true }
   ];
   function initSelectorHealth() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -4408,7 +4643,11 @@
     const check = () => {
       if (!location.pathname.startsWith("/messages")) return;
       if (document.querySelector('input[name="pass"]')) return;
-      for (const { key, sel } of WATCHED_SELECTORS) {
+      for (const { key, sel, needsVisible } of WATCHED_SELECTORS) {
+        if (needsVisible && document.hidden) {
+          misses.set(key, 0);
+          continue;
+        }
         if (document.querySelector(sel)) {
           misses.set(key, 0);
           continue;

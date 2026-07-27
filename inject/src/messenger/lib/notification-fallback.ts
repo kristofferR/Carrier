@@ -3,20 +3,51 @@ export interface ConversationSignature {
   signature: string;
 }
 
+/** Bounds the read set like the sibling stores; read threads are never pruned
+ * by being read, only by age. */
+const READ_SINCE_LIMIT = 500;
+
 /** Primes existing unread rows, then reports only new/changed conversations. */
 export class ConversationNotificationTracker {
   private readonly signatures = new Map<string, string>();
+  /**
+   * Threads observed rendered-and-read, waiting for their next message. A read
+   * row's signature is dropped below along with every other non-unread row, so
+   * without this set the thread comes back as a first sighting and primes
+   * silently — the first message after you read a conversation would never
+   * notify, however different its preview text.
+   */
+  private readonly readSince = new Set<string>();
   private primed = false;
 
-  observe(current: ConversationSignature[], observedKeys?: Iterable<string>): string[] {
+  /**
+   * `confirmedRead` — threads the caller has observed hydrated-and-read across
+   * scans spanning real time. Single-scan read state is not enough: mid-
+   * hydration a row can render its text before its unread styling, and that
+   * flap would otherwise report as a new message.
+   */
+  observe(
+    current: ConversationSignature[],
+    observedKeys?: Iterable<string>,
+    confirmedRead?: Iterable<string>,
+    readTransitions?: Set<string>,
+  ): string[] {
     const currentKeys = new Set<string>();
     const changed: string[] = [];
     for (const conversation of current) {
       currentKeys.add(conversation.key);
       const previous = this.signatures.get(conversation.key);
+      // Leaving the read set is what reports the arrival, so it reports once:
+      // later scans of the same unread row find nothing left to remove, and by
+      // then the stored signature matches.
+      const wasRead = this.readSince.delete(conversation.key);
       this.signatures.set(conversation.key, conversation.signature);
-      if (this.primed && previous !== undefined && previous !== conversation.signature) {
+      if (!this.primed) continue;
+      // A thread that had been read has a new message whatever its preview
+      // says — the same text arriving twice is still twice.
+      if (wasRead || (previous !== undefined && previous !== conversation.signature)) {
         changed.push(conversation.key);
+        if (wasRead) readTransitions?.add(conversation.key);
       }
     }
 
@@ -25,6 +56,15 @@ export class ConversationNotificationTracker {
     // and observed without an incoming unread preview.
     for (const key of observedKeys || currentKeys) {
       if (!currentKeys.has(key)) this.signatures.delete(key);
+    }
+    // A row this scan sees unread is not read, whatever an earlier scan
+    // confirmed — `currentKeys` keeps it out until it is read again.
+    for (const key of confirmedRead || []) {
+      if (currentKeys.has(key) || this.readSince.has(key)) continue;
+      this.readSince.add(key);
+      if (this.readSince.size > READ_SINCE_LIMIT) {
+        this.readSince.delete(this.readSince.keys().next().value!);
+      }
     }
     this.primed = true;
     return changed;
@@ -36,8 +76,15 @@ interface NotificationText {
   body: string;
 }
 
+export type NativeNotificationDelivery = "accepted" | "duplicate" | "suppressed";
+
 export interface PageNotificationSignal extends NotificationText {
   at: number;
+  /**
+   * Native dedupe identity supplied when a row confirms this is a new logical
+   * delivery despite repeating the previous preview.
+   */
+  dedupeKey?: string;
   /**
    * The native notification id emitted for a page-first Notification (one that
    * fires before its conversation row is known). Kept so the row-driven pairing
@@ -60,6 +107,12 @@ export interface PageNotificationSignal extends NotificationText {
    * their delivery here instead and the emitter persists it after emitting.
    */
   emitted?: boolean;
+  /**
+   * Whether the native layer accepted this emit or recognized it as a replay.
+   * A confirmed repeated preview retries only the latter with its fresh key.
+   */
+  nativeDelivery?: NativeNotificationDelivery;
+  onNativeDelivery?: (delivery: NativeNotificationDelivery) => void;
   /**
    * `expect` snapshots the store's fingerprint for the key at pairing time;
    * the emitter only persists the delivery if the store is still in that
@@ -109,6 +162,16 @@ export function notificationDedupeKey(title: string, body: string): string {
   return hashText(value);
 }
 
+/**
+ * Gives a confirmed repeat its own native dedupe identity while keeping the
+ * ordinary page and row paths on the shared content fingerprint. The
+ * generation may contain a conversation key or timestamp because it is hashed
+ * before crossing the native bridge.
+ */
+export function notificationDeliveryDedupeKey(fingerprint: string, generation?: string): string {
+  return generation === undefined ? fingerprint : notificationDedupeKey(fingerprint, generation);
+}
+
 const NOTIFIED_STORE_LIMIT = 300;
 const NOTIFIED_STORE_VERSION = 3;
 // Version 2 was written by the scraper that dropped emoji from a preview. Its
@@ -126,11 +189,6 @@ const LEGACY_PLACEHOLDER_BODY = "New message";
 // read state for real elapsed time so those scans cannot erase replay
 // suppression merely by arriving in a burst.
 export const STABLE_READ_MS = 30_000;
-// Once the current document has actually observed the row as unread, a later
-// read-looking state is a real transition rather than initial hydration. Keep
-// a short confirmation for ordinary styling flicker without suppressing an
-// identical new message for the full reload guard.
-export const READ_TRANSITION_CONFIRM_MS = 1_000;
 /**
  * How long a row must render continuously read before its delivered
  * fingerprint is forgotten. Unread state is scraped from computed font
@@ -149,6 +207,14 @@ export const READ_DROP_CONFIRM_MS = 20_000;
  * consecutive read observations as well.
  */
 export const READ_DROP_MIN_OBSERVATIONS = 3;
+// A confirmed read transition can bypass an exact delivered fingerprint when
+// the next message repeats the same preview. Apply the same conservative guard
+// used before forgetting that fingerprint so a styling flap cannot manufacture
+// a repeated-message notification.
+export const READ_TRANSITION_CONFIRM_MS = READ_DROP_CONFIRM_MS;
+export const READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
+/** Keep confirmed-read evidence through the native notification dedupe window. */
+export const RETIRED_FINGERPRINT_TTL_MS = 30_000;
 
 interface NotifiedEntry {
   fingerprint: string;
@@ -164,7 +230,17 @@ interface NotifiedEntry {
   bodyHash?: string;
 }
 
-export type FingerprintReconciliation = "missing" | "matched" | "migrated" | "mismatched";
+interface RetiredFingerprint {
+  fingerprint: string;
+  retiredAt: number;
+}
+
+export type FingerprintReconciliation =
+  | "missing"
+  | "matched"
+  | "migrated"
+  | "mismatched"
+  | "repeated";
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -178,6 +254,12 @@ export type FingerprintReconciliation = "missing" | "matched" | "migrated" | "mi
  */
 export class NotifiedSignatureStore {
   private readonly entries = new Map<string, NotifiedEntry>();
+  /**
+   * Fingerprints retired by a confirmed read. These survive a prompt reload so
+   * the next unread transition can identify an identical preview as a fresh
+   * delivery while the native content-key dedupe is still active.
+   */
+  private readonly readFingerprints = new Map<string, RetiredFingerprint>();
   /**
    * In-memory only: when each continuously observed read state began, and how
    * many consecutive scans have seen it.
@@ -224,6 +306,29 @@ export class NotifiedSignatureStore {
           });
         }
       }
+      if (
+        version === NOTIFIED_STORE_VERSION &&
+        parsed &&
+        typeof parsed === "object" &&
+        "retired" in parsed &&
+        Array.isArray(parsed.retired)
+      ) {
+        const now = Date.now();
+        for (const retired of parsed.retired) {
+          if (
+            Array.isArray(retired) &&
+            typeof retired[0] === "string" &&
+            typeof retired[1] === "string" &&
+            typeof retired[2] === "number" &&
+            now - retired[2] <= RETIRED_FINGERPRINT_TTL_MS
+          ) {
+            this.readFingerprints.set(retired[0], {
+              fingerprint: retired[1],
+              retiredAt: retired[2],
+            });
+          }
+        }
+      }
     } catch (_) {}
     // Persisted state is bounded by persist(), but never trust storage: keep
     // only the newest entries if an oversized payload is ever encountered,
@@ -231,6 +336,10 @@ export class NotifiedSignatureStore {
     let trimmed = false;
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       this.entries.delete(this.entries.keys().next().value!);
+      trimmed = true;
+    }
+    while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+      this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
       trimmed = true;
     }
     if (trimmed) this.persist();
@@ -247,6 +356,11 @@ export class NotifiedSignatureStore {
               ? [key, entry.fingerprint, entry.legacy]
               : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
           ),
+          retired: [...this.readFingerprints].map(([key, retired]) => [
+            key,
+            retired.fingerprint,
+            retired.retiredAt,
+          ]),
         }),
       );
     } catch (_) {}
@@ -272,8 +386,31 @@ export class NotifiedSignatureStore {
     title: string,
     fingerprint: string,
     bodyHash?: string,
+    confirmedReadTransition = false,
   ): FingerprintReconciliation {
+    // A confirmed read→unread transition is a new logical delivery even when
+    // its preview is byte-identical to the previous one. The previous
+    // fingerprint can still be live or retained briefly after read
+    // confirmation retired the main entry.
     const entry = this.entries.get(conversationKey);
+    const retired = this.readFingerprints.get(conversationKey);
+    const retiredFingerprint =
+      retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS
+        ? retired.fingerprint
+        : undefined;
+    // Persisted retired evidence already proves the row was read before this
+    // document loaded, so it can recover a repeated delivery even before the
+    // new in-memory tracker has time to reconfirm that read state.
+    if (confirmedReadTransition || retiredFingerprint !== undefined) {
+      const deliveredFingerprint = entry?.fingerprint ?? retiredFingerprint;
+      if (this.readFingerprints.delete(conversationKey)) this.persist();
+      if (
+        deliveredFingerprint === fingerprint ||
+        (bodyHash !== undefined && entry?.bodyHash === bodyHash)
+      ) {
+        return "repeated";
+      }
+    }
     if (!entry) return "missing";
     if (entry.fingerprint === fingerprint) {
       if (entry.legacy || (bodyHash !== undefined && entry.bodyHash === undefined)) {
@@ -308,10 +445,13 @@ export class NotifiedSignatureStore {
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
     // A fresh delivery means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
+    const retired = this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);
     if (current?.fingerprint === fingerprint && !current.legacy) {
       if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
         current.bodyHash = bodyHash;
+        this.persist();
+      } else if (retired) {
         this.persist();
       }
       return;
@@ -324,6 +464,7 @@ export class NotifiedSignatureStore {
       this.entries.delete(oldest);
       this.readStreaks.delete(oldest);
       this.observedUnread.delete(oldest);
+      this.readFingerprints.delete(oldest);
     }
     this.persist();
   }
@@ -381,6 +522,14 @@ export class NotifiedSignatureStore {
       if (streak.observations < READ_DROP_MIN_OBSERVATIONS) continue;
       this.readStreaks.delete(key);
       this.observedUnread.delete(key);
+      this.readFingerprints.delete(key);
+      this.readFingerprints.set(key, {
+        fingerprint: this.entries.get(key)!.fingerprint,
+        retiredAt: Date.now(),
+      });
+      while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
+        this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
+      }
       this.entries.delete(key);
       dropped = true;
     }
@@ -412,7 +561,15 @@ interface PageNotificationReceipt {
   at: number;
   nativeId: number;
   identity: OpaqueNotificationIdentity;
+  nativeDelivery?: NativeNotificationDelivery;
 }
+
+type PageNotificationReceiptMatch = Pick<PageNotificationReceipt, "nativeId" | "nativeDelivery">;
+
+const receiptMatch = (receipt: PageNotificationReceipt): PageNotificationReceiptMatch =>
+  receipt.nativeDelivery === undefined
+    ? { nativeId: receipt.nativeId }
+    : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
 
 const opaqueTextIdentity = (value: string, prefixLimit: number): OpaqueTextIdentity => {
   const prefixes: [number, string][] = [];
@@ -521,6 +678,10 @@ export class PageNotificationReceiptStore {
             Number.isSafeInteger(candidate.nativeId) &&
             candidate.nativeId > 0 &&
             validOpaqueNotificationIdentity(candidate.identity) &&
+            (candidate.nativeDelivery === undefined ||
+              candidate.nativeDelivery === "accepted" ||
+              candidate.nativeDelivery === "duplicate" ||
+              candidate.nativeDelivery === "suppressed") &&
             now - candidate.at >= 0 &&
             now - candidate.at <= this.ttlMs
           ) {
@@ -560,7 +721,14 @@ export class PageNotificationReceiptStore {
     this.persist();
   }
 
-  consumeMatching(row: NotificationText, now = Date.now()): { nativeId: number } | null {
+  recordDelivery(nativeId: number, delivery: NativeNotificationDelivery): void {
+    const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+    if (!receipt) return;
+    receipt.nativeDelivery = delivery;
+    this.persist();
+  }
+
+  consumeMatching(row: NotificationText, now = Date.now()): PageNotificationReceiptMatch | null {
     this.prune(now);
     if (!this.receipts.length) return null;
     const identity = opaqueNotificationIdentity(row.title, row.body);
@@ -569,7 +737,7 @@ export class PageNotificationReceiptStore {
       if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
       this.receipts.splice(index, 1);
       this.persist();
-      return { nativeId: receipt.nativeId };
+      return receiptMatch(receipt);
     }
     return null;
   }
@@ -587,9 +755,9 @@ export class PageNotificationReceiptStore {
   consumeUniquelyMatching(
     rows: Iterable<NotificationText & { key: string }>,
     now = Date.now(),
-  ): Map<string, { nativeId: number }> {
+  ): Map<string, PageNotificationReceiptMatch> {
     this.prune(now);
-    const consumed = new Map<string, { nativeId: number }>();
+    const consumed = new Map<string, PageNotificationReceiptMatch>();
     if (!this.receipts.length) return consumed;
     const identities = new Map<string, OpaqueNotificationIdentity>();
     for (const row of rows) {
@@ -619,7 +787,7 @@ export class PageNotificationReceiptStore {
       // not consumed — the fallback path takes over and the native 30s
       // dedupe absorbs a same-text duplicate.
       if (ambiguous || consumed.has(match)) continue;
-      consumed.set(match, { nativeId: receipt.nativeId });
+      consumed.set(match, receiptMatch(receipt));
     }
     for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i]!, 1);
     if (remove.length) this.persist();
@@ -692,7 +860,7 @@ export class PageNotificationQueue {
 
 /** Correlates unread-count increases with the rows most recently mutated. */
 export class UnreadArrivalTracker {
-  private readonly changedAt = new Map<string, number>();
+  private readonly changedAt = new Map<string, { changedAt: number; eligibleUntil: number }>();
   private unreadCount: number | null = null;
   private firstObservedAt: number | null = null;
   private sawDeferredZero = false;
@@ -700,7 +868,7 @@ export class UnreadArrivalTracker {
   constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
-    for (const key of keys) this.changedAt.set(key, at);
+    for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
   }
 
   /**
@@ -722,9 +890,17 @@ export class UnreadArrivalTracker {
     maxMutationAgeMs: number,
     zeroCorroborated = false,
     readObservedKeys?: ReadonlySet<string>,
+    currentUnreadKeys?: ReadonlySet<string>,
   ): string[] {
-    for (const [key, changedAt] of this.changedAt) {
-      if (at - changedAt > maxMutationAgeMs) this.changedAt.delete(key);
+    for (const [key, candidate] of this.changedAt) {
+      // A delayed hidden-webview scan grants the mutation a longer absolute
+      // lifetime. Keep that deadline through prompt follow-up scans instead of
+      // shrinking it again before Messenger's asynchronous title update lands.
+      candidate.eligibleUntil = Math.max(
+        candidate.eligibleUntil,
+        candidate.changedAt + maxMutationAgeMs,
+      );
+      if (at > candidate.eligibleUntil) this.changedAt.delete(key);
     }
 
     // After a reload the title reads no "(N)" until Facebook hydrates it, so
@@ -753,7 +929,7 @@ export class UnreadArrivalTracker {
         if (this.sawDeferredZero && count > 0 && readObservedKeys) {
           const transitions = [...this.changedAt]
             .filter(([key]) => readObservedKeys.has(key))
-            .sort((left, right) => right[1] - left[1])
+            .sort((left, right) => right[1].changedAt - left[1].changedAt)
             .slice(0, count)
             .map(([key]) => key);
           if (transitions.length) {
@@ -769,11 +945,12 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    if (count <= previous) return [];
-
     const candidates = [...this.changedAt]
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, count - previous)
+      .filter(([key]) => currentUnreadKeys === undefined || currentUnreadKeys.has(key))
+      .sort((left, right) => right[1].changedAt - left[1].changedAt)
+      // Current unread styling narrows attribution, but an aggregate increase
+      // is still required: scrolling can mutate a pre-existing unread row.
+      .slice(0, Math.max(0, count - previous))
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);
     return candidates;

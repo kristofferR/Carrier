@@ -5,7 +5,13 @@
 // thread, the Chat Members list — so those pairs are harvested as they are
 // seen and cached by name for later notifications.
 
-const SENDER_AVATAR_LIMIT = 120;
+// Entries never expire by age; this cap is the only pressure that drops them,
+// so it is what decides how long a face is remembered. 120 was low enough that
+// an active inbox could evict a group's members within days — and a face is
+// only re-harvested when its thread is opened again, so an eviction goes
+// unnoticed until a notification arrives with no picture. Sized like the
+// sibling stores instead, which keeps weeks of senders at a few tens of KB.
+const SENDER_AVATAR_LIMIT = 500;
 const SENDER_AVATAR_VERSION = 3;
 
 export const SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";

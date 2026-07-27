@@ -5,11 +5,13 @@ import {
   isOwnMessagePreview,
   NotifiedSignatureStore,
   notificationDedupeKey,
+  notificationDeliveryDedupeKey,
   notificationTextMatches,
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
   PageNotificationReceiptStore,
   READ_DROP_CONFIRM_MS,
+  RETIRED_FINGERPRINT_TTL_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
@@ -35,6 +37,16 @@ describe("notificationDedupeKey", () => {
     const key = notificationDedupeKey("Jane", "First");
     expect(notificationDedupeKey("John", "First")).not.toBe(key);
     expect(notificationDedupeKey("Jane", "Second")).not.toBe(key);
+  });
+
+  test("gives confirmed repeats a fresh opaque native delivery key", () => {
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    expect(notificationDeliveryDedupeKey(fingerprint)).toBe(fingerprint);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:1000")).not.toBe(fingerprint);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:1000")).toMatch(/^[0-9a-f]{16}$/);
+    expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:2000")).not.toBe(
+      notificationDeliveryDedupeKey(fingerprint, "thread-1:1000"),
+    );
   });
 });
 
@@ -63,6 +75,53 @@ describe("ConversationNotificationTracker", () => {
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
     expect(tracker.observe([], ["1"])).toEqual([]);
     expect(tracker.observe([{ key: "1", signature: "hello" }])).toEqual([]);
+  });
+
+  test("reports the first message after a conversation was read", () => {
+    const tracker = new ConversationNotificationTracker();
+    // Unread, then read: the signature is dropped with every other read row.
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    expect(tracker.observe([], ["1"], ["1"])).toEqual([]);
+    // Reading a thread must not make its next message silent.
+    expect(tracker.observe([{ key: "1", signature: "new message" }], ["1"], ["1"])).toEqual(["1"]);
+  });
+
+  test("preserves a repeated-preview read transition through fingerprint reconciliation", () => {
+    const tracker = new ConversationNotificationTracker();
+    const store = new NotifiedSignatureStore();
+    const fingerprint = notificationDedupeKey("Jane", "ok");
+    const bodyHash = notificationDedupeKey("", "ok");
+    store.markNotified("1", fingerprint, bodyHash);
+    tracker.observe([{ key: "1", signature: "ok" }], ["1"]);
+    tracker.observe([], ["1"], ["1"]);
+    const readTransitions = new Set<string>();
+    expect(tracker.observe([{ key: "1", signature: "ok" }], ["1"], ["1"], readTransitions)).toEqual(
+      ["1"],
+    );
+    expect(
+      store.reconcileFingerprint("1", "Jane", fingerprint, bodyHash, readTransitions.has("1")),
+    ).toBe("repeated");
+  });
+
+  test("requires a fresh read confirmation after a read-to-unread arrival", () => {
+    const tracker = new ConversationNotificationTracker();
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    const confirmedRead = new Set(["1"]);
+    tracker.observe([], ["1"], confirmedRead);
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], confirmedRead)).toEqual(["1"]);
+    confirmedRead.delete("1");
+    // A transient read-looking render after delivery is not enough to arm
+    // another repeat without the caller confirming it across real time.
+    expect(tracker.observe([], ["1"], confirmedRead)).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "new" }], ["1"], confirmedRead)).toEqual([]);
+  });
+
+  test("ignores a read glimpse the caller never confirmed", () => {
+    const tracker = new ConversationNotificationTracker();
+    tracker.observe([{ key: "1", signature: "hello" }], ["1"]);
+    // Mid-hydration flap: rendered without unread styling, but unconfirmed.
+    expect(tracker.observe([], ["1"], [])).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "hello" }], ["1"], [])).toEqual([]);
   });
 });
 
@@ -156,6 +215,27 @@ describe("NotifiedSignatureStore", () => {
         notificationDedupeKey("", "Something new"),
       ),
     ).toBe("mismatched");
+  });
+
+  test("treats a confirmed same-body transition as repeated across title drift", () => {
+    const storage = memoryStorage();
+    const bodyHash = notificationDedupeKey("", "Hello there");
+    new NotifiedSignatureStore(storage).markNotified(
+      "1",
+      notificationDedupeKey("Old name", "Hello there"),
+      bodyHash,
+    );
+
+    const store = new NotifiedSignatureStore(storage);
+    expect(
+      store.reconcileFingerprint(
+        "1",
+        "New name",
+        notificationDedupeKey("New name", "Hello there"),
+        bodyHash,
+        true,
+      ),
+    ).toBe("repeated");
   });
 
   test("forgets a conversation after a continuously stable read interval", () => {
@@ -283,6 +363,60 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
   });
 
+  test("retains a retired fingerprint for an identical post-read delivery", () => {
+    const store = new NotifiedSignatureStore();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    expect(store.alreadyNotified("1", fingerprint)).toBe(false);
+    expect(store.reconcileFingerprint("1", "Jane", fingerprint, bodyHash, true)).toBe("repeated");
+  });
+
+  test("persists a retired fingerprint across a reload through the native dedupe window", () => {
+    const storage = memoryStorage();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    expect(RETIRED_FINGERPRINT_TTL_MS).toBeGreaterThanOrEqual(30_000);
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", fingerprint, bodyHash),
+    ).toBe("repeated");
+  });
+
+  test("reports a persisted repeat once, so treating it as an arrival cannot loop", () => {
+    const storage = memoryStorage();
+    const fingerprint = notificationDedupeKey("Jane", "OK");
+    const bodyHash = notificationDedupeKey("", "OK");
+    const store = new NotifiedSignatureStore(storage);
+    store.markNotified("1", fingerprint, bodyHash);
+    store.observeRead(new Set(["1"]), ["1"], 1_000);
+    store.observeRead(new Set(), ["1"], 2_000);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS - 1);
+    store.observeRead(new Set(), ["1"], 2_000 + READ_DROP_CONFIRM_MS);
+
+    // A reload reads the retired evidence and reports the repeat once. The scan
+    // promotes that verdict straight to an arrival, so a row still sitting
+    // unread on the next scan must not report it again — nor may a later
+    // document resurrect it from storage.
+    const reloaded = new NotifiedSignatureStore(storage);
+    expect(reloaded.reconcileFingerprint("1", "Jane", fingerprint, bodyHash)).toBe("repeated");
+    expect(reloaded.reconcileFingerprint("1", "Jane", fingerprint, bodyHash)).not.toBe("repeated");
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", fingerprint, bodyHash),
+    ).not.toBe("repeated");
+  });
+
   test("keeps entries for unread rows that are merely still rendered", () => {
     const store = new NotifiedSignatureStore();
     store.markNotified("1", "aaaa");
@@ -350,6 +484,19 @@ describe("PageNotificationReceiptStore", () => {
       ),
     ).toEqual({ nativeId: 42 });
     expect(reloaded.consumeMatching({ title, body }, 1_500)).toBeNull();
+  });
+
+  test("preserves the native delivery result across a reload", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "OK", 42, 1_000);
+    receipts.recordDelivery(42, "duplicate");
+
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 1_500);
+    expect(reloaded.consumeMatching({ title: "Jane", body: "OK" }, 1_500)).toEqual({
+      nativeId: 42,
+      nativeDelivery: "duplicate",
+    });
   });
 
   test("drops a receipt matched by several visible rows", () => {
@@ -519,6 +666,46 @@ describe("UnreadArrivalTracker", () => {
     tracker.markRowsChanged(["stale"], 1_100);
     expect(tracker.observeUnreadCount(1, 1_200, 2_000)).toEqual([]);
     expect(tracker.observeUnreadCount(2, 3_101, 2_000)).toEqual([]);
+  });
+
+  test("retains mutations until an asynchronous title count catches up", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["new-message"], 1_100);
+    expect(
+      tracker.observeUnreadCount(2, 1_200, 2_000, false, undefined, new Set(["new-message"])),
+    ).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
+  test("keeps a delayed-scan grace deadline through prompt follow-up scans", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["new-message"], 1_100);
+    // The first hidden-webview scan grants enough grace to cover its delay.
+    expect(tracker.observeUnreadCount(2, 61_000, 62_000)).toEqual([]);
+    // A prompt scan must not shrink that absolute deadline while the title is
+    // still catching up.
+    expect(tracker.observeUnreadCount(2, 61_500, 2_500)).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 62_000, 2_500)).toEqual(["new-message"]);
+  });
+
+  test("retains unread-row mutations through a count decrease", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(5, 1_000, 2_000);
+    tracker.markRowsChanged(["new-message"], 1_100);
+    expect(
+      tracker.observeUnreadCount(3, 1_200, 2_000, false, undefined, new Set(["new-message"])),
+    ).toEqual([]);
+    expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
+  test("expires retained mutations that outlive the attribution window", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["stale"], 1_100);
+    expect(tracker.observeUnreadCount(2, 1_200, 2_000)).toEqual([]);
+    expect(tracker.observeUnreadCount(3, 3_101, 2_000)).toEqual([]);
   });
 
   test("absorbs the title hydrating from zero as the baseline", () => {
