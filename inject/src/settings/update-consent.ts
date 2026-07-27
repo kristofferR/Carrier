@@ -2,7 +2,6 @@ export type UpdatePhase =
   | "idle"
   | "checking"
   | "available"
-  | "cancelled"
   | "installing"
   | "opening-manual"
   | "up-to-date";
@@ -72,8 +71,8 @@ function failureDetail(error: unknown): string {
 
 /**
  * Consent-preserving update state machine for the trusted Settings window.
- * Discovery may change the label, but only activate() can call install_update,
- * and it does so only after the supplied confirmation callback returns true.
+ * A check can only reveal the explicitly labelled install/open action. A later
+ * activation of that action is the user's consent to mutate the installation.
  */
 export class UpdateConsentController {
   private version = "";
@@ -109,7 +108,7 @@ export class UpdateConsentController {
     });
   }
 
-  async activate(confirmInstall: (message: string) => boolean): Promise<UpdateUiState> {
+  async activate(): Promise<UpdateUiState> {
     if (!this.installMode) throw new Error("update controller was not initialized");
     if (!this.version) {
       this.publish({
@@ -129,19 +128,13 @@ export class UpdateConsentController {
       }
       this.version = result.startsWith("available:") ? result.slice(10) : "";
       if (!this.version) throw new Error(`unexpected update-check result: ${result}`);
+      // The user clicked "Check for updates", not an install action. Surface a
+      // second, explicit action instead of installing in the same activation.
+      return this.publish(availableState(this.version, this.installMode));
     }
 
     this.publish(availableState(this.version, this.installMode));
     if (this.installMode.kind === "manual") {
-      if (
-        !confirmInstall(
-          `Carrier ${this.version} is available. Open the package page for update instructions?`,
-        )
-      ) {
-        return this.publish(
-          availableState(this.version, this.installMode, "Update page not opened."),
-        );
-      }
       this.publish({
         phase: "opening-manual",
         buttonLabel: this.installMode.buttonLabel,
@@ -151,14 +144,6 @@ export class UpdateConsentController {
       });
       await this.invoke("open_manual_update");
       return this.publish(availableState(this.version, this.installMode, "Update page opened."));
-    }
-
-    if (
-      !confirmInstall(`Carrier ${this.version} is available. Install it now and restart Carrier?`)
-    ) {
-      return this.publish(
-        availableState(this.version, this.installMode, "Update install cancelled."),
-      );
     }
 
     this.publish({
