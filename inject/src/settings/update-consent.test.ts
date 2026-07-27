@@ -24,17 +24,13 @@ describe("UpdateConsentController", () => {
     });
     expect(calls).toEqual(["update_install_mode", "discovered_update"]);
 
-    const cancelled = await controller.activate(() => false);
-    expect(cancelled.status).toBe("Update install cancelled.");
-    expect(calls).toEqual(["update_install_mode", "discovered_update"]);
-
-    const installed = await controller.activate(() => true);
+    const installed = await controller.activate();
     expect(installed.phase).toBe("up-to-date");
     expect(calls).toEqual(["update_install_mode", "discovered_update", "install_update"]);
     expect(states.some((state) => state.phase === "installing")).toBe(true);
   });
 
-  test("manual check still requires consent before install", async () => {
+  test("manual check reveals a separate install action", async () => {
     const calls: string[] = [];
     const controller = new UpdateConsentController(async (command) => {
       calls.push(command);
@@ -46,10 +42,14 @@ describe("UpdateConsentController", () => {
     });
 
     await controller.initialize();
-    await controller.activate(() => false);
+    expect(await controller.activate()).toMatchObject({
+      phase: "available",
+      buttonLabel: "Install Carrier 2.0.0",
+      version: "2.0.0",
+    });
     expect(calls).toEqual(["update_install_mode", "discovered_update", "check_for_updates"]);
 
-    await controller.activate(() => true);
+    await controller.activate();
     expect(calls).toEqual([
       "update_install_mode",
       "discovered_update",
@@ -58,9 +58,8 @@ describe("UpdateConsentController", () => {
     ]);
   });
 
-  test("reports up-to-date checks without asking for install consent", async () => {
+  test("reports up-to-date checks without exposing an install action", async () => {
     const calls: string[] = [];
-    let confirmations = 0;
     const controller = new UpdateConsentController(async (command) => {
       calls.push(command);
       if (command === "update_install_mode") return { kind: "built-in" };
@@ -73,17 +72,13 @@ describe("UpdateConsentController", () => {
       phase: "idle",
       busy: false,
     });
-    const result = await controller.activate(() => {
-      confirmations += 1;
-      return true;
-    });
+    const result = await controller.activate();
 
     expect(result).toMatchObject({
       phase: "up-to-date",
       status: "Carrier is up to date.",
       busy: false,
     });
-    expect(confirmations).toBe(0);
     expect(calls).toEqual(["update_install_mode", "discovered_update", "check_for_updates"]);
   });
 
@@ -109,11 +104,7 @@ describe("UpdateConsentController", () => {
       status: "Carrier 2.1.0 is available. Run paru -S carrier to update.",
     });
 
-    const cancelled = await controller.activate(() => false);
-    expect(cancelled.status).toBe("Update page not opened. Run paru -S carrier to update.");
-    expect(calls).not.toContain("install_update");
-
-    const opened = await controller.activate(() => true);
+    const opened = await controller.activate();
     expect(opened).toMatchObject({
       phase: "available",
       buttonLabel: "Open Carrier on AUR",
@@ -137,7 +128,7 @@ describe("UpdateConsentController", () => {
     });
 
     await controller.initialize();
-    const checkFailure = await controller.activate(() => true).catch((error: unknown) => error);
+    const checkFailure = await controller.activate().catch((error: unknown) => error);
     expect(checkFailure).toBeInstanceOf(Error);
     expect(controller.fail(checkFailure)).toMatchObject({
       phase: "idle",
@@ -146,7 +137,12 @@ describe("UpdateConsentController", () => {
     });
 
     failInstall = true;
-    const installFailure = await controller.activate(() => true).catch((error: unknown) => error);
+    expect(await controller.activate()).toMatchObject({
+      phase: "available",
+      buttonLabel: "Install Carrier 3.0.0",
+      version: "3.0.0",
+    });
+    const installFailure = await controller.activate().catch((error: unknown) => error);
     expect(installFailure).toBeInstanceOf(Error);
     expect(controller.fail(installFailure)).toMatchObject({
       phase: "available",

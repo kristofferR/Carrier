@@ -473,7 +473,7 @@
       );
       updateButton.onclick = async () => {
         try {
-          await updateController.activate((message) => confirm(message));
+          await updateController.activate();
         } catch (e) {
           updateController.fail(e);
           console.error(e);

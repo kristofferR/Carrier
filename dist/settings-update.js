@@ -88,7 +88,7 @@ var CarrierSettingsUpdate = (() => {
         busy: false
       });
     }
-    async activate(confirmInstall) {
+    async activate() {
       if (!this.installMode) throw new Error("update controller was not initialized");
       if (!this.version) {
         this.publish({
@@ -108,16 +108,10 @@ var CarrierSettingsUpdate = (() => {
         }
         this.version = result.startsWith("available:") ? result.slice(10) : "";
         if (!this.version) throw new Error(`unexpected update-check result: ${result}`);
+        return this.publish(availableState(this.version, this.installMode));
       }
       this.publish(availableState(this.version, this.installMode));
       if (this.installMode.kind === "manual") {
-        if (!confirmInstall(
-          `Carrier ${this.version} is available. Open the package page for update instructions?`
-        )) {
-          return this.publish(
-            availableState(this.version, this.installMode, "Update page not opened.")
-          );
-        }
         this.publish({
           phase: "opening-manual",
           buttonLabel: this.installMode.buttonLabel,
@@ -127,11 +121,6 @@ var CarrierSettingsUpdate = (() => {
         });
         await this.invoke("open_manual_update");
         return this.publish(availableState(this.version, this.installMode, "Update page opened."));
-      }
-      if (!confirmInstall(`Carrier ${this.version} is available. Install it now and restart Carrier?`)) {
-        return this.publish(
-          availableState(this.version, this.installMode, "Update install cancelled.")
-        );
       }
       this.publish({
         phase: "installing",
