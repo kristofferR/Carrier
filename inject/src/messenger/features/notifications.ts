@@ -797,11 +797,13 @@ export function initNotificationBridge() {
           }
         }
       }
+      const readTransitions = new Set<string>();
       const changed = new Set(
         conversationTracker.observe(
           hydrated.map(({ key, body }) => ({ key, signature: body })),
           observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
           readObservedKeys,
+          readTransitions,
         ),
       );
       for (const key of unreadArrivals.observeUnreadCount(
@@ -887,6 +889,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
+          readTransitions.has(conversation.key) && !pageReceipt,
         );
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);

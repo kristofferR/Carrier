@@ -74,11 +74,21 @@ describe("ConversationNotificationTracker", () => {
     expect(tracker.observe([{ key: "1", signature: "new message" }], ["1"], ["1"])).toEqual(["1"]);
   });
 
-  test("reports a repeated preview after a read, which a kept signature would hide", () => {
+  test("preserves a repeated-preview read transition through fingerprint reconciliation", () => {
     const tracker = new ConversationNotificationTracker();
+    const store = new NotifiedSignatureStore();
+    const fingerprint = notificationDedupeKey("Jane", "ok");
+    const bodyHash = notificationDedupeKey("", "ok");
+    store.markNotified("1", fingerprint, bodyHash);
     tracker.observe([{ key: "1", signature: "ok" }], ["1"]);
     tracker.observe([], ["1"], ["1"]);
-    expect(tracker.observe([{ key: "1", signature: "ok" }], ["1"], ["1"])).toEqual(["1"]);
+    const readTransitions = new Set<string>();
+    expect(tracker.observe([{ key: "1", signature: "ok" }], ["1"], ["1"], readTransitions)).toEqual(
+      ["1"],
+    );
+    expect(
+      store.reconcileFingerprint("1", "Jane", fingerprint, bodyHash, readTransitions.has("1")),
+    ).toBe("repeated");
   });
 
   test("reports a read-to-unread arrival once, not on every later scan", () => {

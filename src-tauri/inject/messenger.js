@@ -2664,7 +2664,7 @@
      * hydration a row can render its text before its unread styling, and that
      * flap would otherwise report as a new message.
      */
-    observe(current, observedKeys, confirmedRead) {
+    observe(current, observedKeys, confirmedRead, readTransitions) {
       const currentKeys = /* @__PURE__ */ new Set();
       const changed = [];
       for (const conversation of current) {
@@ -2675,6 +2675,7 @@
         if (!this.primed) continue;
         if (wasRead || previous !== void 0 && previous !== conversation.signature) {
           changed.push(conversation.key);
+          if (wasRead) readTransitions?.add(conversation.key);
         }
       }
       for (const key of observedKeys || currentKeys) {
@@ -2787,7 +2788,8 @@
      * migrate only those proven-legacy placeholders, never a new-schema message
      * whose real text happens to be the same phrase.
      */
-    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash) {
+    reconcileFingerprint(conversationKey, title, fingerprint, bodyHash, confirmedRepeat = false) {
+      if (confirmedRepeat) return "repeated";
       const entry = this.entries.get(conversationKey);
       if (!entry) return "missing";
       if (entry.fingerprint === fingerprint) {
@@ -4004,11 +4006,13 @@
             }
           }
         }
+        const readTransitions = /* @__PURE__ */ new Set();
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
             observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
-            readObservedKeys
+            readObservedKeys,
+            readTransitions
           )
         );
         for (const key of unreadArrivals.observeUnreadCount(
@@ -4070,7 +4074,8 @@
             conversation.key,
             conversation.title,
             fingerprint,
-            bodyHash
+            bodyHash,
+            readTransitions.has(conversation.key) && !pageReceipt
           );
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);

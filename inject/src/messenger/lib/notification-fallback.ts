@@ -30,6 +30,7 @@ export class ConversationNotificationTracker {
     current: ConversationSignature[],
     observedKeys?: Iterable<string>,
     confirmedRead?: Iterable<string>,
+    readTransitions?: Set<string>,
   ): string[] {
     const currentKeys = new Set<string>();
     const changed: string[] = [];
@@ -46,6 +47,7 @@ export class ConversationNotificationTracker {
       // says — the same text arriving twice is still twice.
       if (wasRead || (previous !== undefined && previous !== conversation.signature)) {
         changed.push(conversation.key);
+        if (wasRead) readTransitions?.add(conversation.key);
       }
     }
 
@@ -202,7 +204,12 @@ interface NotifiedEntry {
   bodyHash?: string;
 }
 
-export type FingerprintReconciliation = "missing" | "matched" | "migrated" | "mismatched";
+export type FingerprintReconciliation =
+  | "missing"
+  | "matched"
+  | "migrated"
+  | "mismatched"
+  | "repeated";
 
 /**
  * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
@@ -310,7 +317,13 @@ export class NotifiedSignatureStore {
     title: string,
     fingerprint: string,
     bodyHash?: string,
+    confirmedRepeat = false,
   ): FingerprintReconciliation {
+    // A confirmed read→unread transition is a new logical delivery even when
+    // its preview is byte-identical to the previous one. Keep the persisted
+    // entry until the new notification is actually delivered, but do not let
+    // it suppress this arrival.
+    if (confirmedRepeat) return "repeated";
     const entry = this.entries.get(conversationKey);
     if (!entry) return "missing";
     if (entry.fingerprint === fingerprint) {
