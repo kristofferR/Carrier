@@ -445,6 +445,19 @@ describe("PageNotificationReceiptStore", () => {
     expect(reloaded.consumeMatching({ title, body }, 1_500)).toBeNull();
   });
 
+  test("preserves the native delivery result across a reload", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "OK", 42, 1_000);
+    receipts.recordDelivery(42, "duplicate");
+
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 1_500);
+    expect(reloaded.consumeMatching({ title: "Jane", body: "OK" }, 1_500)).toEqual({
+      nativeId: 42,
+      nativeDelivery: "duplicate",
+    });
+  });
+
   test("drops a receipt matched by several visible rows", () => {
     const store = new PageNotificationReceiptStore(memoryStorage());
     store.add("Jane", "OK", 42, 1_000);

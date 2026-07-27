@@ -76,6 +76,8 @@ interface NotificationText {
   body: string;
 }
 
+export type NativeNotificationDelivery = "accepted" | "duplicate" | "suppressed";
+
 export interface PageNotificationSignal extends NotificationText {
   at: number;
   /**
@@ -109,8 +111,8 @@ export interface PageNotificationSignal extends NotificationText {
    * Whether the native layer accepted this emit or recognized it as a replay.
    * A confirmed repeated preview retries only the latter with its fresh key.
    */
-  nativeDelivery?: "accepted" | "duplicate" | "suppressed";
-  onNativeDelivery?: (delivery: "accepted" | "duplicate" | "suppressed") => void;
+  nativeDelivery?: NativeNotificationDelivery;
+  onNativeDelivery?: (delivery: NativeNotificationDelivery) => void;
   /**
    * `expect` snapshots the store's fingerprint for the key at pairing time;
    * the emitter only persists the delivery if the store is still in that
@@ -507,7 +509,15 @@ interface PageNotificationReceipt {
   at: number;
   nativeId: number;
   identity: OpaqueNotificationIdentity;
+  nativeDelivery?: NativeNotificationDelivery;
 }
+
+type PageNotificationReceiptMatch = Pick<PageNotificationReceipt, "nativeId" | "nativeDelivery">;
+
+const receiptMatch = (receipt: PageNotificationReceipt): PageNotificationReceiptMatch =>
+  receipt.nativeDelivery === undefined
+    ? { nativeId: receipt.nativeId }
+    : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
 
 const opaqueTextIdentity = (value: string, prefixLimit: number): OpaqueTextIdentity => {
   const prefixes: [number, string][] = [];
@@ -616,6 +626,10 @@ export class PageNotificationReceiptStore {
             Number.isSafeInteger(candidate.nativeId) &&
             candidate.nativeId > 0 &&
             validOpaqueNotificationIdentity(candidate.identity) &&
+            (candidate.nativeDelivery === undefined ||
+              candidate.nativeDelivery === "accepted" ||
+              candidate.nativeDelivery === "duplicate" ||
+              candidate.nativeDelivery === "suppressed") &&
             now - candidate.at >= 0 &&
             now - candidate.at <= this.ttlMs
           ) {
@@ -655,7 +669,14 @@ export class PageNotificationReceiptStore {
     this.persist();
   }
 
-  consumeMatching(row: NotificationText, now = Date.now()): { nativeId: number } | null {
+  recordDelivery(nativeId: number, delivery: NativeNotificationDelivery): void {
+    const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+    if (!receipt) return;
+    receipt.nativeDelivery = delivery;
+    this.persist();
+  }
+
+  consumeMatching(row: NotificationText, now = Date.now()): PageNotificationReceiptMatch | null {
     this.prune(now);
     if (!this.receipts.length) return null;
     const identity = opaqueNotificationIdentity(row.title, row.body);
@@ -664,7 +685,7 @@ export class PageNotificationReceiptStore {
       if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
       this.receipts.splice(index, 1);
       this.persist();
-      return { nativeId: receipt.nativeId };
+      return receiptMatch(receipt);
     }
     return null;
   }
@@ -682,9 +703,9 @@ export class PageNotificationReceiptStore {
   consumeUniquelyMatching(
     rows: Iterable<NotificationText & { key: string }>,
     now = Date.now(),
-  ): Map<string, { nativeId: number }> {
+  ): Map<string, PageNotificationReceiptMatch> {
     this.prune(now);
-    const consumed = new Map<string, { nativeId: number }>();
+    const consumed = new Map<string, PageNotificationReceiptMatch>();
     if (!this.receipts.length) return consumed;
     const identities = new Map<string, OpaqueNotificationIdentity>();
     for (const row of rows) {
@@ -714,7 +735,7 @@ export class PageNotificationReceiptStore {
       // not consumed — the fallback path takes over and the native 30s
       // dedupe absorbs a same-text duplicate.
       if (ambiguous || consumed.has(match)) continue;
-      consumed.set(match, { nativeId: receipt.nativeId });
+      consumed.set(match, receiptMatch(receipt));
     }
     for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i]!, 1);
     if (remove.length) this.persist();

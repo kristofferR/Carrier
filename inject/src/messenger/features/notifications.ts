@@ -13,6 +13,7 @@ import {
   ConversationNotificationTracker,
   groupPreviewSender,
   isOwnMessagePreview,
+  type NativeNotificationDelivery,
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
@@ -35,8 +36,6 @@ interface CarrierNotificationInstance {
   onclick: ((e: Event) => unknown) | null;
   close: () => void;
 }
-
-type NativeNotificationDelivery = "accepted" | "duplicate" | "suppressed";
 
 const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
@@ -142,6 +141,19 @@ export function initNotificationBridge() {
 
   const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
+  // The trackers die with every page reload, and the auto-refresh reloads an
+  // unfocused window periodically. Keep the page receipt store alive in
+  // localStorage so even a native result delivered to the new document can be
+  // attached to the emit that the previous document queued.
+  const notificationStorage = (() => {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      return null;
+    }
+  })();
+  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+
   // Clicking a native notification routes back here by id: bring the
   // conversation up by invoking the original `onclick` Facebook assigned to its
   // Notification (that's what opens the right thread). A small bounded map keeps
@@ -165,6 +177,7 @@ export function initNotificationBridge() {
 
   window.__carrierNotifyResult = (id, delivery) => {
     if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
+    pageNotificationReceipts.recordDelivery(id, delivery);
     const handler = deliveryHandlers.get(id);
     deliveryHandlers.delete(id);
     handler?.(delivery);
@@ -209,18 +222,9 @@ export function initNotificationBridge() {
     })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
   };
 
-  // The trackers die with every page reload, and the auto-refresh reloads an
-  // unfocused window periodically. Persist delivered fingerprints so hydration
-  // after a reload cannot replay old unread rows.
-  const notificationStorage = (() => {
-    try {
-      return window.localStorage;
-    } catch (_) {
-      return null;
-    }
-  })();
+  // Persist delivered fingerprints so hydration after a reload cannot replay
+  // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
-  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
   const senderAvatars = new SenderAvatarStore(notificationStorage);
   // For the dev-only MCP probe: cache sizes, or the verdict for a sender the
   // probe already read from the DOM. Nothing but counts and classifications
@@ -1037,14 +1041,15 @@ export function initNotificationBridge() {
               PAGE_NOTIFICATION_MATCH_MS,
             )
           : null;
-        // A receipt proves that the page queued an emit, but the same-document
-        // signal also carries the native result. For an identical post-read
-        // message, "duplicate" means the old content key suppressed this new
-        // banner, so it still needs the fresh-key fallback.
+        // A receipt proves that the page queued an emit and persists the native
+        // result. The same-document signal carries that result in memory too.
+        // For an identical post-read message, "duplicate" means the old content
+        // key suppressed this new banner, so it still needs the fresh-key
+        // fallback even when a reload has discarded the read transition.
         const receiptSuppressedRepeat =
           pageReceipt !== undefined &&
-          readTransitions.has(conversation.key) &&
-          pageSignal?.nativeDelivery === "duplicate";
+          (readTransitions.has(conversation.key) || pageSignal === null) &&
+          (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
         const receiptPendingRepeat =
           pageReceipt !== undefined &&
           readTransitions.has(conversation.key) &&
@@ -1069,7 +1074,15 @@ export function initNotificationBridge() {
           changed.delete(conversation.key);
           continue;
         }
-        if (pageReceipt && !receiptSuppressedRepeat) {
+        if (receiptSuppressedRepeat) {
+          // The native layer did not show the page emit. A reload also erased
+          // the read transition that would normally carry this repeat through
+          // reconciliation, so retry it directly with a fresh delivery key.
+          scheduleFallback(conversation, detectedAt, true);
+          changed.delete(conversation.key);
+          continue;
+        }
+        if (pageReceipt) {
           // An earlier scan may have armed a fallback while this receipt was
           // still ambiguous — the page already emitted this notification, so
           // that timer must not fire a possible duplicate.
@@ -1085,7 +1098,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          readTransitions.has(conversation.key) && (!pageReceipt || receiptSuppressedRepeat),
+          readTransitions.has(conversation.key) && !pageReceipt,
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {

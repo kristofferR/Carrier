@@ -2912,6 +2912,7 @@
   var BODY_PREFIX_LIMIT = 240;
   var PAGE_RECEIPT_LIMIT = 20;
   var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
+  var receiptMatch = (receipt) => receipt.nativeDelivery === void 0 ? { nativeId: receipt.nativeId } : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
   var opaqueTextIdentity = (value, prefixLimit) => {
     const prefixes = [];
     const lastPrefix = Math.min(value.length - 1, prefixLimit);
@@ -2970,7 +2971,7 @@
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
               this.receipts.push(candidate);
             }
           }
@@ -3005,6 +3006,12 @@
       if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
       this.persist();
     }
+    recordDelivery(nativeId, delivery) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.nativeDelivery = delivery;
+      this.persist();
+    }
     consumeMatching(row, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return null;
@@ -3014,7 +3021,7 @@
         if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
         this.receipts.splice(index, 1);
         this.persist();
-        return { nativeId: receipt.nativeId };
+        return receiptMatch(receipt);
       }
       return null;
     }
@@ -3054,7 +3061,7 @@
         if (match === null) continue;
         remove.push(index);
         if (ambiguous || consumed.has(match)) continue;
-        consumed.set(match, { nativeId: receipt.nativeId });
+        consumed.set(match, receiptMatch(receipt));
       }
       for (let i = remove.length - 1; i >= 0; i--) this.receipts.splice(remove[i], 1);
       if (remove.length) this.persist();
@@ -3643,6 +3650,14 @@
       }
     });
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
+    const notificationStorage = (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })();
+    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
@@ -3661,6 +3676,7 @@
     };
     window.__carrierNotifyResult = (id, delivery) => {
       if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
+      pageNotificationReceipts.recordDelivery(id, delivery);
       const handler = deliveryHandlers.get(id);
       deliveryHandlers.delete(id);
       handler?.(delivery);
@@ -3688,15 +3704,7 @@
         payload: { id, thread_path: threadPath }
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
-    const notificationStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
-    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const pendingFallbacks = /* @__PURE__ */ new Map();
@@ -4192,7 +4200,7 @@
             detectedAt,
             PAGE_NOTIFICATION_MATCH_MS
           ) : null;
-          const receiptSuppressedRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal?.nativeDelivery === "duplicate";
+          const receiptSuppressedRepeat = pageReceipt !== void 0 && (readTransitions.has(conversation.key) || pageSignal === null) && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
           const receiptPendingRepeat = pageReceipt !== void 0 && readTransitions.has(conversation.key) && pageSignal !== null && pageSignal.nativeDelivery === void 0;
           if (receiptPendingRepeat) {
             const pending = pendingFallbacks.get(conversation.key);
@@ -4209,7 +4217,12 @@
             changed.delete(conversation.key);
             continue;
           }
-          if (pageReceipt && !receiptSuppressedRepeat) {
+          if (receiptSuppressedRepeat) {
+            scheduleFallback(conversation, detectedAt, true);
+            changed.delete(conversation.key);
+            continue;
+          }
+          if (pageReceipt) {
             const pending = pendingFallbacks.get(conversation.key);
             if (pending) clearTimeout(pending.timer);
             pendingFallbacks.delete(conversation.key);
@@ -4221,7 +4234,7 @@
             conversation.title,
             fingerprint,
             bodyHash,
-            readTransitions.has(conversation.key) && (!pageReceipt || receiptSuppressedRepeat)
+            readTransitions.has(conversation.key) && !pageReceipt
           );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {
