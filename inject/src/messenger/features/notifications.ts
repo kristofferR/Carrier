@@ -58,39 +58,89 @@ export function initNotificationBridge() {
     ?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))
     ?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
 
-  // Render the sender's avatar — Facebook puts its (remote fbcdn) URL on the
-  // Notification's `icon` — to a small PNG data URL, so the native side can
-  // attach it without re-fetching: the page already holds Facebook's session
-  // and the cached image. Best-effort; resolves to "" if the image can't be
-  // read (e.g. the canvas is tainted) and the notification then shows text only.
-  const avatarToDataUrl = (url: string | undefined) =>
-    new Promise<string>((resolve) => {
-      if (!url) return resolve("");
+  const AVATAR_SIZE = 64;
+  // Facebook serves fbcdn avatars with CORS, so an anonymous request can be
+  // drawn to a canvas without tainting it. Bounded: a slow image must not hold
+  // up the notification. Resolves null when the image cannot be used.
+  const loadAvatarImage = (url: string | undefined) =>
+    new Promise<HTMLImageElement | null>((resolve) => {
+      if (!url) return resolve(null);
       const img = new Image();
       img.crossOrigin = "anonymous";
       let settled = false;
-      const done = (v: string) => {
+      const done = (value: HTMLImageElement | null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(v);
+        resolve(value);
       };
-      const timer = setTimeout(() => done(""), 2500);
-      img.onload = () => {
-        try {
-          const size = 64;
-          const c = document.createElement("canvas");
-          c.width = size;
-          c.height = size;
-          c.getContext("2d")!.drawImage(img, 0, 0, size, size);
-          done(c.toDataURL("image/png"));
-        } catch (_) {
-          done("");
-        }
-      };
-      img.onerror = () => done("");
+      const timer = setTimeout(() => done(null), 2500);
+      img.onload = () => done(img);
+      img.onerror = () => done(null);
       img.src = url;
     });
+
+  // Draw the given faces into one small PNG data URL, so the native side can
+  // attach it without re-fetching: the page already holds Facebook's session
+  // and the cached image. One face fills the icon. Two are drawn as offset
+  // overlapping circles — the way Messenger itself draws a photo-less group —
+  // so the pair reads as a group rather than as one badly cropped person.
+  // Best-effort: resolves "" if nothing could be read (e.g. the canvas is
+  // tainted) and the notification then shows text only.
+  const facesToDataUrl = (urls: (string | undefined)[]) =>
+    Promise.all(urls.slice(0, 2).map(loadAvatarImage)).then((images) => {
+      const faces = images.filter((image): image is HTMLImageElement => image !== null);
+      if (!faces.length) return "";
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = AVATAR_SIZE;
+        canvas.height = AVATAR_SIZE;
+        const context = canvas.getContext("2d")!;
+        const paired = faces.length > 1;
+        const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
+        const offset = AVATAR_SIZE - diameter;
+        faces.forEach((face, index) => {
+          const left = index * offset;
+          const top = index * offset;
+          const centerX = left + diameter / 2;
+          const centerY = top + diameter / 2;
+          if (paired) {
+            // Clear a slightly larger disc first, so the face on top sits in a
+            // transparent gap instead of merging into the one behind it.
+            context.save();
+            context.globalCompositeOperation = "destination-out";
+            context.beginPath();
+            context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
+            context.fill();
+            context.restore();
+            context.save();
+            context.beginPath();
+            context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
+            context.clip();
+          }
+          // Cover-crop rather than squashing a non-square photo.
+          const scale = Math.max(diameter / face.width, diameter / face.height);
+          const sourceSize = diameter / scale;
+          context.drawImage(
+            face,
+            (face.width - sourceSize) / 2,
+            (face.height - sourceSize) / 2,
+            sourceSize,
+            sourceSize,
+            left,
+            top,
+            diameter,
+            diameter,
+          );
+          if (paired) context.restore();
+        });
+        return canvas.toDataURL("image/png");
+      } catch (_) {
+        return "";
+      }
+    });
+
+  const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
   // Clicking a native notification routes back here by id: bring the
   // conversation up by invoking the original `onclick` Facebook assigned to its
@@ -603,10 +653,6 @@ export function initNotificationBridge() {
     const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(
       (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src),
     );
-    // A photo-less group renders several member images side by side. None of
-    // those individual faces is a valid thread icon; use an image only when
-    // the row exposes a single contact or group photo.
-    const image = images.length === 1 ? images[0] : undefined;
     let unread = false;
     for (const span of row.querySelectorAll<HTMLElement>("span")) {
       if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
@@ -619,7 +665,13 @@ export function initNotificationBridge() {
       threadPath: `/t/${id}/`,
       title: text.title,
       body: text.body,
-      icon: image?.currentSrc || image?.src || "",
+      // Every face the row draws, in render order. A photo-less group renders
+      // several member images side by side, and no individual one of them is a
+      // valid thread icon — taking just the first labelled every message in
+      // the thread with whichever member happened to sort first. They are all
+      // kept so they can be drawn together, which is a valid picture of the
+      // group even though none of them is a picture of it alone.
+      icons: images.map((candidate) => candidate.currentSrc || candidate.src).filter(Boolean),
       // A photo-less group draws its members side by side; one with a photo is
       // only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
@@ -704,13 +756,20 @@ export function initNotificationBridge() {
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    const rowIcon = conversation.icon;
+    // When the sender is unknown the row's own picture stands in — drawn from
+    // every face the row carries, not just the first. A photo-less group's
+    // first face is only whoever sorts first: alone it would label one member's
+    // message with another's face, and every other message in the thread with
+    // that same face. Drawn together they are a picture of the group, which is
+    // what belongs beside a title naming the group.
+    const rowIcons = conversation.icons;
+    const rowAvatar = () => facesToDataUrl(rowIcons);
     const avatar =
-      senderIcon && senderIcon !== rowIcon
-        ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
+      senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0])
+        ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
             ([sender, row]) => sender || row,
           )
-        : avatarToDataUrl(rowIcon);
+        : rowAvatar();
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (settings.mute_notifications) {

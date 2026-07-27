@@ -3575,33 +3575,72 @@
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
-    const avatarToDataUrl = (url) => new Promise((resolve) => {
-      if (!url) return resolve("");
+    const AVATAR_SIZE = 64;
+    const loadAvatarImage = (url) => new Promise((resolve) => {
+      if (!url) return resolve(null);
       const img = new Image();
       img.crossOrigin = "anonymous";
       let settled = false;
-      const done = (v) => {
+      const done = (value) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        resolve(v);
+        resolve(value);
       };
-      const timer = setTimeout(() => done(""), 2500);
-      img.onload = () => {
-        try {
-          const size = 64;
-          const c = document.createElement("canvas");
-          c.width = size;
-          c.height = size;
-          c.getContext("2d").drawImage(img, 0, 0, size, size);
-          done(c.toDataURL("image/png"));
-        } catch (_) {
-          done("");
-        }
-      };
-      img.onerror = () => done("");
+      const timer = setTimeout(() => done(null), 2500);
+      img.onload = () => done(img);
+      img.onerror = () => done(null);
       img.src = url;
     });
+    const facesToDataUrl = (urls) => Promise.all(urls.slice(0, 2).map(loadAvatarImage)).then((images) => {
+      const faces = images.filter((image) => image !== null);
+      if (!faces.length) return "";
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = AVATAR_SIZE;
+        canvas.height = AVATAR_SIZE;
+        const context = canvas.getContext("2d");
+        const paired = faces.length > 1;
+        const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
+        const offset = AVATAR_SIZE - diameter;
+        faces.forEach((face, index) => {
+          const left = index * offset;
+          const top = index * offset;
+          const centerX = left + diameter / 2;
+          const centerY = top + diameter / 2;
+          if (paired) {
+            context.save();
+            context.globalCompositeOperation = "destination-out";
+            context.beginPath();
+            context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
+            context.fill();
+            context.restore();
+            context.save();
+            context.beginPath();
+            context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
+            context.clip();
+          }
+          const scale = Math.max(diameter / face.width, diameter / face.height);
+          const sourceSize = diameter / scale;
+          context.drawImage(
+            face,
+            (face.width - sourceSize) / 2,
+            (face.height - sourceSize) / 2,
+            sourceSize,
+            sourceSize,
+            left,
+            top,
+            diameter,
+            diameter
+          );
+          if (paired) context.restore();
+        });
+        return canvas.toDataURL("image/png");
+      } catch (_) {
+        return "";
+      }
+    });
+    const avatarToDataUrl = (url) => facesToDataUrl([url]);
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
@@ -3895,7 +3934,6 @@
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
-      const image = images.length === 1 ? images[0] : void 0;
       let unread = false;
       for (const span of row.querySelectorAll("span")) {
         if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
@@ -3908,7 +3946,13 @@
         threadPath: `/t/${id}/`,
         title: text.title,
         body: text.body,
-        icon: image?.currentSrc || image?.src || "",
+        // Every face the row draws, in render order. A photo-less group renders
+        // several member images side by side, and no individual one of them is a
+        // valid thread icon — taking just the first labelled every message in
+        // the thread with whichever member happened to sort first. They are all
+        // kept so they can be drawn together, which is a valid picture of the
+        // group even though none of them is a picture of it alone.
+        icons: images.map((candidate) => candidate.currentSrc || candidate.src).filter(Boolean),
         // A photo-less group draws its members side by side; one with a photo is
         // only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
@@ -3960,10 +4004,11 @@
         return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const rowIcon = conversation.icon;
-      const avatar = senderIcon && senderIcon !== rowIcon ? Promise.all([avatarToDataUrl(senderIcon), avatarToDataUrl(rowIcon)]).then(
+      const rowIcons = conversation.icons;
+      const rowAvatar = () => facesToDataUrl(rowIcons);
+      const avatar = senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0]) ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
         ([sender, row]) => sender || row
-      ) : avatarToDataUrl(rowIcon);
+      ) : rowAvatar();
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (settings.mute_notifications) {
