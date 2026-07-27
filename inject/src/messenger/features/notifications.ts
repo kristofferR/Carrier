@@ -166,6 +166,7 @@ export function initNotificationBridge() {
     threadPath: string;
     fingerprint: string;
     dedupeKey: string;
+    confirmedRepeat: boolean;
   }
   const pendingFallbacks = new Map<string, PendingFallback>();
   const unmatchedPageNotifications = new PageNotificationQueue();
@@ -717,6 +718,7 @@ export function initNotificationBridge() {
       threadPath: conversation.threadPath,
       fingerprint,
       dedupeKey,
+      confirmedRepeat,
     });
   };
 
@@ -897,14 +899,22 @@ export function initNotificationBridge() {
         const bodyHash = notificationDedupeKey("", conversation.body);
 
         const pageReceipt = pageReceipts.get(conversation.key);
+        const pending = pendingFallbacks.get(conversation.key);
+        const confirmedRepeat =
+          readTransitions.has(conversation.key) ||
+          (pending?.confirmedRepeat === true && pending.fingerprint === fingerprint);
         if (pageReceipt) {
           // An earlier scan may have armed a fallback while this receipt was
-          // still ambiguous — the page already showed this notification, so
-          // that timer must not fire a duplicate.
-          const pending = pendingFallbacks.get(conversation.key);
-          if (pending) clearTimeout(pending.timer);
-          pendingFallbacks.delete(conversation.key);
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          // still ambiguous. Ordinarily the page already showed this
+          // notification, so that timer must not fire a duplicate. A confirmed
+          // repeat is different: the receipt proves only that the old
+          // content-key emit was queued, and the native deduper may have
+          // suppressed it. Keep its fresh-key fallback armed.
+          if (!confirmedRepeat) {
+            if (pending) clearTimeout(pending.timer);
+            pendingFallbacks.delete(conversation.key);
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          }
           // Remove the same-document raw signal too; otherwise it could linger
           // briefly and pair with a different but text-identical row.
           unmatchedPageNotifications.consumeMatching(
@@ -920,7 +930,7 @@ export function initNotificationBridge() {
           conversation.title,
           fingerprint,
           bodyHash,
-          readTransitions.has(conversation.key) && !pageReceipt,
+          confirmedRepeat,
         );
         if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
         if (reconciliation === "matched" || reconciliation === "migrated") {

@@ -3955,7 +3955,8 @@
         body: conversation.body,
         threadPath: conversation.threadPath,
         fingerprint,
-        dedupeKey
+        dedupeKey,
+        confirmedRepeat
       });
     };
     let scanRunning = false;
@@ -4074,11 +4075,14 @@
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
           const bodyHash = notificationDedupeKey("", conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
+          const pending = pendingFallbacks.get(conversation.key);
+          const confirmedRepeat = readTransitions.has(conversation.key) || pending?.confirmedRepeat === true && pending.fingerprint === fingerprint;
           if (pageReceipt) {
-            const pending = pendingFallbacks.get(conversation.key);
-            if (pending) clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            if (!confirmedRepeat) {
+              if (pending) clearTimeout(pending.timer);
+              pendingFallbacks.delete(conversation.key);
+              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            }
             unmatchedPageNotifications.consumeMatching(
               conversation,
               detectedAt,
@@ -4091,22 +4095,22 @@
             conversation.title,
             fingerprint,
             bodyHash,
-            readTransitions.has(conversation.key) && !pageReceipt
+            confirmedRepeat
           );
           if (reconciliation === "repeated") confirmedRepeats.add(conversation.key);
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
-            const pending = pendingFallbacks.get(conversation.key);
-            if (pending) {
-              clearTimeout(pending.timer);
+            const pending2 = pendingFallbacks.get(conversation.key);
+            if (pending2) {
+              clearTimeout(pending2.timer);
               pendingFallbacks.delete(conversation.key);
             }
           } else if (reconciliation === "mismatched") {
             changed.delete(conversation.key);
             mismatches.push([conversation.key, fingerprint]);
-            const pending = pendingFallbacks.get(conversation.key);
-            if (pending && pending.fingerprint !== fingerprint) {
-              clearTimeout(pending.timer);
+            const pending2 = pendingFallbacks.get(conversation.key);
+            if (pending2 && pending2.fingerprint !== fingerprint) {
+              clearTimeout(pending2.timer);
               pendingFallbacks.delete(conversation.key);
             }
           }
