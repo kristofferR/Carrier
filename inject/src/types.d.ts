@@ -62,6 +62,16 @@ interface CarrierToastAction {
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
+/**
+ * Same closure-scoped credential, second action: open the macOS share sheet
+ * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
+ */
+declare const carrierShareDownload: (
+  url: string,
+  x: number,
+  y: number,
+) => Promise<unknown> | undefined;
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {
