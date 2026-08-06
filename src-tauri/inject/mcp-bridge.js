@@ -615,10 +615,6 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_display_capture_click__") {
-          reply(displayCaptureClickProbe());
-          return;
-        }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
         if (code === "__carrier_mcp_network_probe__") {
           reply(networkProbe());
@@ -1037,8 +1033,8 @@
     }
 
     // getDisplayMedia demands transient user activation, so the probe is
-    // two-step: arm a one-shot capture-phase click handler, deliver a native
-    // click through tauri-mcp, then read the recorded classification.
+    // two-step: arm a one-shot capture-phase click handler, use tauri-mcp's
+    // native click input, then read the recorded classification.
     var displayCaptureState = null;
     var displayCaptureHandler = null;
     function armDisplayCaptureProbe() {
@@ -1080,13 +1076,6 @@
         return Promise.resolve({ outcome: "unavailable" });
       }
       return classifyCapture(md.getDisplayMedia({ video: true }), 6000);
-    }
-
-    // Fire the armed one-shot handler with a bridge-synthesized click (the
-    // bridge's own code is CSP-exempt, unlike execute_js eval).
-    function displayCaptureClickProbe() {
-      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      return displayCaptureResultProbe();
     }
 
     // Aggregated resource-timing counts for verifying telemetry blocking.

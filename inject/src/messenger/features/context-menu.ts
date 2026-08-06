@@ -10,6 +10,7 @@ const MAX_BLOB = 512 * 1024 * 1024;
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeArrayPush = Array.prototype.push;
 const nativeReflectApply = Reflect.apply;
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
@@ -110,15 +111,18 @@ export function initContextMenu() {
       const fx = e.clientX / Math.max(1, innerWidth);
       const fy = e.clientY / Math.max(1, innerHeight);
       const items: [string, () => unknown][] = [];
+      const addItem = (item: [string, () => unknown]) => {
+        nativeReflectApply(nativeArrayPush, items, [item]);
+      };
       if (imgSrc) {
-        items.push([
+        addItem([
           "Copy image",
           () =>
             copyImageSrc(imgSrc)
               .then(() => toast("Image copied"))
               .catch(() => toast("Copy failed")),
         ]);
-        items.push([
+        addItem([
           "Download image",
           () =>
             downloadSrc(imgSrc, "image")
@@ -126,15 +130,15 @@ export function initContextMenu() {
               .catch(() => toast("Download failed")),
         ]);
         if (isMac) {
-          items.push([
+          addItem([
             "Share…",
             () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
-        items.push(["Copy image address", () => copyAddress(imgSrc)]);
-        items.push(["Open image in browser", () => openUrl(imgSrc)]);
+        addItem(["Copy image address", () => copyAddress(imgSrc)]);
+        addItem(["Open image in browser", () => openUrl(imgSrc)]);
       } else if (vidSrc) {
-        items.push([
+        addItem([
           "Download video",
           () =>
             downloadSrc(vidSrc, "video")
@@ -142,15 +146,15 @@ export function initContextMenu() {
               .catch(() => toast("Download failed")),
         ]);
         if (isMac) {
-          items.push([
+          addItem([
             "Share…",
             () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
-        items.push(["Copy video address", () => copyAddress(vidSrc)]);
+        addItem(["Copy video address", () => copyAddress(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        items.push(["Copy link address", () => copyAddress(linkHref)]);
-        items.push(["Open link in browser", () => openUrl(linkHref)]);
+        addItem(["Copy link address", () => copyAddress(linkHref)]);
+        addItem(["Open link in browser", () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
 
