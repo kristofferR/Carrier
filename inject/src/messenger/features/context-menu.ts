@@ -223,38 +223,41 @@ export function initContextMenu() {
       if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
       if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
       const menuItems = [...ctxMenu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-      ctxMenu.addEventListener("keydown", (event) => {
-        const current = Math.max(0, menuItems.indexOf(document.activeElement as HTMLElement));
-        let next: number | null = null;
-        if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
-        if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-        if (event.key === "Home") next = 0;
-        if (event.key === "End") next = menuItems.length - 1;
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closeMenu(true);
-          return;
-        }
-        if (event.key === "Tab") {
-          // closeMenu(true) restores focus synchronously; block the browser's
-          // own Tab move so focus stays on the restoration target.
-          event.preventDefault();
-          closeMenu(true);
-          return;
-        }
-        if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
-          event.preventDefault();
-          if (!event.isTrusted) return;
-          const selected = menuItems.indexOf(document.activeElement as HTMLElement);
-          closeMenu();
-          items[selected]?.[1]();
-          return;
-        }
-        if (next !== null) {
-          event.preventDefault();
-          menuItems[next]?.focus();
-        }
-      });
+      nativeReflectApply(nativeAddEventListener, ctxMenu, [
+        "keydown",
+        (event: KeyboardEvent) => {
+          const current = Math.max(0, menuItems.indexOf(document.activeElement as HTMLElement));
+          let next: number | null = null;
+          if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
+          if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (event.key === "Home") next = 0;
+          if (event.key === "End") next = menuItems.length - 1;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeMenu(true);
+            return;
+          }
+          if (event.key === "Tab") {
+            // closeMenu(true) restores focus synchronously; block the browser's
+            // own Tab move so focus stays on the restoration target.
+            event.preventDefault();
+            closeMenu(true);
+            return;
+          }
+          if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
+            event.preventDefault();
+            if (!event.isTrusted) return;
+            const selected = menuItems.indexOf(document.activeElement as HTMLElement);
+            closeMenu();
+            items[selected]?.[1]();
+            return;
+          }
+          if (next !== null) {
+            event.preventDefault();
+            menuItems[next]?.focus();
+          }
+        },
+      ]);
       menuItems[0]?.focus({ preventScroll: true });
       setTimeout(() => {
         document.addEventListener("click", closeMenuFromPointer, true);
