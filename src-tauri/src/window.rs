@@ -11,8 +11,8 @@ use url::Url;
 
 use crate::custom_css::apply_custom_css;
 use crate::download::{
-    downloads_dir, filename_from_url, forget_download, is_allowed_download, is_unsafe_download,
-    remember_download, sanitize_filename, unique_path,
+    complete_download, downloads_dir, filename_from_url, forget_download, is_allowed_download,
+    is_unsafe_download, remember_download, sanitize_filename, unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -161,7 +161,9 @@ pub(crate) fn build_app_window(
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
-                if !success {
+                if success {
+                    complete_download(&url);
+                } else {
                     forget_download(&url);
                 }
                 notify_download_finished(&webview, &url, success);

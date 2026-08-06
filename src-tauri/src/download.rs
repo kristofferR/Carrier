@@ -21,6 +21,7 @@ struct RecentDownload {
     url: String,
     path: PathBuf,
     at: Instant,
+    completed: bool,
 }
 
 #[derive(Default)]
@@ -49,6 +50,7 @@ impl RecentDownloads {
             url: url.to_string(),
             path,
             at: now,
+            completed: false,
         });
         while self.entries.len() > MAX_RECENT_DOWNLOADS {
             self.entries.pop_front();
@@ -62,8 +64,14 @@ impl RecentDownloads {
         self.prune(now);
         self.entries
             .iter()
-            .find(|entry| entry.url == url)
+            .find(|entry| entry.url == url && entry.completed)
             .map(|entry| entry.path.clone())
+    }
+
+    fn complete(&mut self, url: &str) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.url == url) {
+            entry.completed = true;
+        }
     }
 
     fn forget(&mut self, url: &str) {
@@ -88,6 +96,10 @@ pub(crate) fn remember_download(url: &Url, path: PathBuf) {
 
 pub(crate) fn forget_download(url: &Url) {
     recent_downloads().lock().unwrap().forget(url.as_str());
+}
+
+pub(crate) fn complete_download(url: &Url) {
+    recent_downloads().lock().unwrap().complete(url.as_str());
 }
 
 /// Non-consuming lookup so repeated clicks on the toast action keep working.
@@ -419,6 +431,7 @@ mod tests {
                 PathBuf::from(format!("download-{n}.png")),
                 now,
             );
+            downloads.complete(&format!("blob:carrier/{n}"));
         }
 
         assert_eq!(downloads.entries.len(), MAX_RECENT_DOWNLOADS);
@@ -439,6 +452,7 @@ mod tests {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
         downloads.remember_at("blob:carrier/expired", PathBuf::from("expired.png"), now);
+        downloads.complete("blob:carrier/expired");
         assert_eq!(
             downloads.lookup_at(
                 "blob:carrier/expired",
@@ -450,6 +464,18 @@ mod tests {
         downloads.remember_at("blob:carrier/failed", PathBuf::from("failed.png"), now);
         downloads.forget("blob:carrier/failed");
         assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
+    }
+
+    #[test]
+    fn recent_downloads_are_hidden_until_completed() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("pending.png");
+        downloads.remember_at("blob:carrier/pending", path.clone(), now);
+        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), None);
+
+        downloads.complete("blob:carrier/pending");
+        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), Some(path));
     }
 
     #[test]

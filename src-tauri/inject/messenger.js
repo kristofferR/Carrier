@@ -746,6 +746,8 @@
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
+  var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeReflectApply = Reflect.apply;
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   async function shareSrc(src, fallbackName, fx, fy) {
     const href = await downloadSrc(src, fallbackName);
@@ -886,12 +888,15 @@
           el.onmouseleave = () => el.style.background = "";
           el.onfocus = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
           el.onblur = () => el.style.background = "";
-          el.addEventListener("click", (ev) => {
-            if (!ev.isTrusted) return;
-            ev.stopPropagation();
-            closeMenu();
-            fn();
-          });
+          nativeReflectApply(nativeAddEventListener, el, [
+            "click",
+            (ev) => {
+              if (!ev.isTrusted) return;
+              ev.stopPropagation();
+              closeMenu();
+              fn();
+            }
+          ]);
           ctxMenu.appendChild(el);
         }
         document.body.appendChild(ctxMenu);

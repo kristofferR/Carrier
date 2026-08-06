@@ -7,6 +7,11 @@ import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 
+// Capture the native registrar at document start. Messenger code runs in the
+// same JS world and may replace the prototype before a menu is opened.
+const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeReflectApply = Reflect.apply;
+
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
 // platforms have no equivalent Carrier can reach, so the item stays hidden.
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
@@ -202,12 +207,15 @@ export function initContextMenu() {
         el.onmouseleave = () => (el.style.background = "");
         el.onfocus = () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
         el.onblur = () => (el.style.background = "");
-        el.addEventListener("click", (ev) => {
-          if (!ev.isTrusted) return;
-          ev.stopPropagation();
-          closeMenu();
-          fn();
-        });
+        nativeReflectApply(nativeAddEventListener, el, [
+          "click",
+          (ev: MouseEvent) => {
+            if (!ev.isTrusted) return;
+            ev.stopPropagation();
+            closeMenu();
+            fn();
+          },
+        ]);
         ctxMenu.appendChild(el);
       }
       document.body.appendChild(ctxMenu);
