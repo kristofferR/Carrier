@@ -90,6 +90,8 @@ export function initContextMenu() {
   document.addEventListener(
     "contextmenu",
     (e) => {
+      // Remote page code must not be able to create Carrier's native-action menu.
+      if (!e.isTrusted) return;
       const t = e.target as Element;
       const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
       const img = t.closest?.("img[alt]") as HTMLImageElement | null;
@@ -102,7 +104,7 @@ export function initContextMenu() {
       // download delay and window resizes better than raw pixels.
       const fx = e.clientX / Math.max(1, innerWidth);
       const fy = e.clientY / Math.max(1, innerHeight);
-      const items: [string, () => unknown][] = [];
+      const items: [string, (trustedActivation: boolean) => unknown][] = [];
       if (imgSrc) {
         items.push([
           "Copy image",
@@ -121,7 +123,10 @@ export function initContextMenu() {
         if (isMac) {
           items.push([
             "Share…",
-            () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
+            (trustedActivation) => {
+              if (!trustedActivation) return;
+              return shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"));
+            },
           ]);
         }
         items.push(["Copy image address", () => copyAddress(imgSrc)]);
@@ -137,7 +142,10 @@ export function initContextMenu() {
         if (isMac) {
           items.push([
             "Share…",
-            () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
+            (trustedActivation) => {
+              if (!trustedActivation) return;
+              return shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"));
+            },
           ]);
         }
         items.push(["Copy video address", () => copyAddress(vidSrc)]);
@@ -203,7 +211,7 @@ export function initContextMenu() {
         el.onclick = (ev) => {
           ev.stopPropagation();
           closeMenu();
-          fn();
+          fn(ev.isTrusted);
         };
         ctxMenu.appendChild(el);
       }
@@ -233,7 +241,9 @@ export function initContextMenu() {
         }
         if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
           event.preventDefault();
-          (document.activeElement as HTMLElement).click();
+          const selected = menuItems.indexOf(document.activeElement as HTMLElement);
+          closeMenu();
+          items[selected]?.[1](event.isTrusted);
           return;
         }
         if (next !== null) {
