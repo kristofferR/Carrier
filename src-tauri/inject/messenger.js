@@ -747,6 +747,7 @@
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeArrayIndexOf = Array.prototype.indexOf;
   var nativeArrayPush = Array.prototype.push;
   var nativeReflectApply = Reflect.apply;
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
@@ -915,7 +916,10 @@
         nativeReflectApply(nativeAddEventListener, ctxMenu, [
           "keydown",
           (event) => {
-            const current = Math.max(0, menuItems.indexOf(document.activeElement));
+            const current = Math.max(
+              0,
+              nativeReflectApply(nativeArrayIndexOf, menuItems, [document.activeElement])
+            );
             let next = null;
             if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
             if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
@@ -934,7 +938,9 @@
             if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
               event.preventDefault();
               if (!event.isTrusted) return;
-              const selected = menuItems.indexOf(document.activeElement);
+              const selected = nativeReflectApply(nativeArrayIndexOf, menuItems, [
+                document.activeElement
+              ]);
               closeMenu();
               items[selected]?.[1]();
               return;
