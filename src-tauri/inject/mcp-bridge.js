@@ -567,6 +567,36 @@
           });
           return;
         }
+        if (code === "__carrier_mcp_camera_capture_probe__") {
+          cameraCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.stack) || e),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_video_call_capture_probe__") {
+          videoCallCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.stack) || e),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_capture_permission_state__") {
+          capturePermissionStateProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.stack) || e),
+            });
+          });
+          return;
+        }
         if (code === "__carrier_mcp_display_capture_arm__") {
           reply(armDisplayCaptureProbe());
           return;
@@ -966,6 +996,44 @@
         return Promise.resolve({ outcome: "unavailable" });
       }
       return classifyCapture(md.getUserMedia({ audio: true }), 4000);
+    }
+
+    function cameraCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ video: true }), 4000);
+    }
+
+    // What a Messenger video call actually asks for: camera and mic together.
+    function videoCallCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ audio: true, video: true }), 4000);
+    }
+
+    // Whether the OS already holds a decision, without triggering capture:
+    // "prompt" means no grant yet, "granted"/"denied" a recorded answer.
+    function capturePermissionStateProbe() {
+      if (!navigator.permissions || typeof navigator.permissions.query !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      var ask = function (name) {
+        return navigator.permissions.query({ name: name }).then(
+          function (status) {
+            return status.state;
+          },
+          function (err) {
+            return "error:" + String(err && err.name);
+          },
+        );
+      };
+      return Promise.all([ask("camera"), ask("microphone")]).then(function (states) {
+        return { camera: states[0], microphone: states[1] };
+      });
     }
 
     // getDisplayMedia demands transient user activation, so the probe is
