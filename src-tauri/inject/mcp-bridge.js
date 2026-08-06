@@ -1040,21 +1040,28 @@
     // two-step: arm a one-shot capture-phase click handler, deliver a native
     // click through tauri-mcp, then read the recorded classification.
     var displayCaptureState = null;
+    var displayCaptureHandler = null;
     function armDisplayCaptureProbe() {
+      if (displayCaptureHandler) {
+        document.removeEventListener("click", displayCaptureHandler, true);
+        displayCaptureHandler = null;
+      }
       var md = navigator.mediaDevices;
       if (!md || typeof md.getDisplayMedia !== "function") {
         displayCaptureState = { outcome: "unavailable" };
         return { armed: false, reason: "getDisplayMedia unavailable" };
       }
       displayCaptureState = { outcome: "armed-waiting-for-click" };
+      displayCaptureHandler = function () {
+        displayCaptureHandler = null;
+        displayCaptureState = { outcome: "click-received" };
+        classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
+          displayCaptureState = result;
+        });
+      };
       document.addEventListener(
         "click",
-        function () {
-          displayCaptureState = { outcome: "click-received" };
-          classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
-            displayCaptureState = result;
-          });
-        },
+        displayCaptureHandler,
         { capture: true, once: true },
       );
       return { armed: true };

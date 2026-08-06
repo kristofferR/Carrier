@@ -803,6 +803,7 @@
     document.addEventListener(
       "contextmenu",
       (e) => {
+        if (!e.isTrusted) return;
         const t = e.target;
         const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
         const img = t.closest?.("img[alt]");
@@ -825,7 +826,10 @@
           if (isMac2) {
             items.push([
               "Share…",
-              () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"))
+              (trustedActivation) => {
+                if (!trustedActivation) return;
+                return shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"));
+              }
             ]);
           }
           items.push(["Copy image address", () => copyAddress(imgSrc)]);
@@ -838,7 +842,10 @@
           if (isMac2) {
             items.push([
               "Share…",
-              () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"))
+              (trustedActivation) => {
+                if (!trustedActivation) return;
+                return shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"));
+              }
             ]);
           }
           items.push(["Copy video address", () => copyAddress(vidSrc)]);
@@ -888,7 +895,7 @@
           el.onclick = (ev) => {
             ev.stopPropagation();
             closeMenu();
-            fn();
+            fn(ev.isTrusted);
           };
           ctxMenu.appendChild(el);
         }
@@ -916,7 +923,9 @@
           }
           if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
             event.preventDefault();
-            document.activeElement.click();
+            const selected = menuItems.indexOf(document.activeElement);
+            closeMenu();
+            items[selected]?.[1](event.isTrusted);
             return;
           }
           if (next !== null) {
