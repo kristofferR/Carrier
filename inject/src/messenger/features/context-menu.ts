@@ -225,6 +225,17 @@ export function initContextMenu() {
             fn();
           },
         ]);
+        nativeReflectApply(nativeAddEventListener, el, [
+          "keydown",
+          (event: KeyboardEvent) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            if (!event.isTrusted) return;
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu();
+            fn();
+          },
+        ]);
         ctxMenu.appendChild(el);
       }
       document.body.appendChild(ctxMenu);
@@ -254,16 +265,6 @@ export function initContextMenu() {
             // own Tab move so focus stays on the restoration target.
             event.preventDefault();
             closeMenu(true);
-            return;
-          }
-          if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
-            event.preventDefault();
-            if (!event.isTrusted) return;
-            const selected = nativeReflectApply(nativeArrayIndexOf, menuItems, [
-              document.activeElement,
-            ]);
-            closeMenu();
-            items[selected]?.[1]();
             return;
           }
           if (next !== null) {
