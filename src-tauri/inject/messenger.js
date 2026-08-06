@@ -877,7 +877,11 @@
           minWidth: "170px",
           font: "13px -apple-system, system-ui, sans-serif"
         });
-        for (const [label, fn] of items) {
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (!item) continue;
+          const label = item[0];
+          const fn = item[1];
           const el = document.createElement("div");
           el.textContent = label;
           el.setAttribute("role", "menuitem");
