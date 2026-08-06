@@ -640,6 +640,23 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     {reveal_token_literal}
   );
 
+  // Same credential, second action: hand a just-downloaded file to the macOS
+  // share sheet, anchored at the given viewport-fraction position.
+  var carrierShareDownload = (function (invoke, authorization) {{
+    return function (url, x, y) {{
+      if (!invoke) return;
+      return invoke('plugin:event|emit', {{
+        event: 'carrier:share-download',
+        payload: {{ url: url, authorization: authorization, x: x, y: y }}
+      }});
+    }};
+  }})(
+    window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
+      ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
+      : undefined,
+    {reveal_token_literal}
+  );
+
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
   // survives Facebook reloading the page (which re-runs this script). Falls back

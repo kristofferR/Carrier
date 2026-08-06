@@ -746,6 +746,11 @@
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
+  var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  async function shareSrc(src, fallbackName, fx, fy) {
+    const href = await downloadSrc(src, fallbackName);
+    await carrierShareDownload(href, fx, fy);
+  }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
   async function downloadSrc(src, fallbackName) {
@@ -805,6 +810,8 @@
         const imgSrc = img && (img.currentSrc || img.src);
         const vidSrc = video && (video.currentSrc || video.src);
         const linkHref = anchor?.href;
+        const fx = e.clientX / Math.max(1, innerWidth);
+        const fy = e.clientY / Math.max(1, innerHeight);
         const items = [];
         if (imgSrc) {
           items.push([
@@ -815,6 +822,12 @@
             "Download image",
             () => downloadSrc(imgSrc, "image").then(toastDownloadSaved).catch(() => toast("Download failed"))
           ]);
+          if (isMac2) {
+            items.push([
+              "Share…",
+              () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"))
+            ]);
+          }
           items.push(["Copy image address", () => copyAddress(imgSrc)]);
           items.push(["Open image in browser", () => openUrl(imgSrc)]);
         } else if (vidSrc) {
@@ -822,6 +835,12 @@
             "Download video",
             () => downloadSrc(vidSrc, "video").then(toastDownloadSaved).catch(() => toast("Download failed"))
           ]);
+          if (isMac2) {
+            items.push([
+              "Share…",
+              () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"))
+            ]);
+          }
           items.push(["Copy video address", () => copyAddress(vidSrc)]);
         } else if (linkHref && !linkHref.startsWith("javascript:")) {
           items.push(["Copy link address", () => copyAddress(linkHref)]);
@@ -4847,8 +4866,8 @@
   }
 
   // inject/src/messenger/features/shortcuts.ts
-  var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-  var accel = (e) => !e.altKey && (isMac2 ? e.metaKey : e.ctrlKey);
+  var isMac3 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  var accel = (e) => !e.altKey && (isMac3 ? e.metaKey : e.ctrlKey);
   var shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),

@@ -7,6 +7,17 @@ import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 
+// The macOS share sheet (NSSharingServicePicker) is native-only; other
+// platforms have no equivalent Carrier can reach, so the item stays hidden.
+const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+
+// Save the media through the trusted download flow (the sheet needs a real
+// file), then ask the native side to share it, anchored at the click point.
+async function shareSrc(src: string, fallbackName: string, fx: number, fy: number) {
+  const href = await downloadSrc(src, fallbackName);
+  await carrierShareDownload(href, fx, fy);
+}
+
 // True when the response advertises a Content-Length over the cap. Absent or
 // unparseable headers yield 0 (falsy), so callers fall back to the blob check.
 const oversizeByHeader = (res: Response) => Number(res.headers.get("content-length")) > MAX_BLOB;
@@ -87,6 +98,10 @@ export function initContextMenu() {
       const vidSrc = video && (video.currentSrc || video.src);
       const linkHref = anchor?.href;
 
+      // Anchor for the macOS share sheet: viewport fractions survive the
+      // download delay and window resizes better than raw pixels.
+      const fx = e.clientX / Math.max(1, innerWidth);
+      const fy = e.clientY / Math.max(1, innerHeight);
       const items: [string, () => unknown][] = [];
       if (imgSrc) {
         items.push([
@@ -103,6 +118,12 @@ export function initContextMenu() {
               .then(toastDownloadSaved)
               .catch(() => toast("Download failed")),
         ]);
+        if (isMac) {
+          items.push([
+            "Share…",
+            () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
+          ]);
+        }
         items.push(["Copy image address", () => copyAddress(imgSrc)]);
         items.push(["Open image in browser", () => openUrl(imgSrc)]);
       } else if (vidSrc) {
@@ -113,6 +134,12 @@ export function initContextMenu() {
               .then(toastDownloadSaved)
               .catch(() => toast("Download failed")),
         ]);
+        if (isMac) {
+          items.push([
+            "Share…",
+            () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
+          ]);
+        }
         items.push(["Copy video address", () => copyAddress(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
         items.push(["Copy link address", () => copyAddress(linkHref)]);

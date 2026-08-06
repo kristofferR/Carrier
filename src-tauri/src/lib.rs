@@ -97,7 +97,18 @@ pub(crate) fn refresh_unread_indicators(
 }
 
 fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
-    !candidate.is_empty() && tokens.values().any(|token| token == candidate)
+    download_token_window(tokens, candidate).is_some()
+}
+
+/// The label of the window whose per-window download credential matches, if any.
+fn download_token_window(tokens: &HashMap<String, String>, candidate: &str) -> Option<String> {
+    if candidate.is_empty() {
+        return None;
+    }
+    tokens
+        .iter()
+        .find(|(_, token)| token.as_str() == candidate)
+        .map(|(label, _)| label.clone())
 }
 
 /// The page we wrap.
@@ -438,6 +449,43 @@ pub fn run() {
                 });
             });
 
+            // Share a just-downloaded media file via the macOS share sheet.
+            // Same trust model as carrier:reveal-download: the per-window
+            // credential authorizes it and the file path only ever comes from
+            // the trusted download map, never from the page.
+            #[cfg(target_os = "macos")]
+            {
+                let share_handle = app.handle().clone();
+                app.listen_any("carrier:share-download", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct ShareDownloadMsg {
+                        url: String,
+                        authorization: String,
+                        x: f64,
+                        y: f64,
+                    }
+
+                    let Ok(msg) = serde_json::from_str::<ShareDownloadMsg>(event.payload()) else {
+                        log::warn!("carrier:share-download payload did not parse");
+                        return;
+                    };
+                    let label = {
+                        let state = share_handle.state::<AppState>();
+                        let tokens = state.download_reveal_tokens.lock().unwrap();
+                        download_token_window(&tokens, &msg.authorization)
+                    };
+                    let Some(label) = label else {
+                        log::warn!("carrier:share-download was not authorized by a trusted click");
+                        return;
+                    };
+                    let Some(path) = lookup_download(&msg.url) else {
+                        log::warn!("carrier:share-download had no recent matching download");
+                        return;
+                    };
+                    macos::share::show_share_picker(&share_handle, &label, path, msg.x, msg.y);
+                });
+            }
+
             // Unread count from the page → every native platform indicator.
             let h = app.handle().clone();
             app.listen_any("carrier:unread", move |event| {
@@ -731,5 +779,20 @@ mod tests {
         assert!(valid_download_reveal_token(&tokens, "second-secret"));
         assert!(!valid_download_reveal_token(&tokens, ""));
         assert!(!valid_download_reveal_token(&tokens, "page-supplied"));
+    }
+
+    #[test]
+    fn download_token_resolves_to_its_own_window() {
+        let tokens = HashMap::from([
+            ("main".to_string(), "main-secret".to_string()),
+            ("win-2".to_string(), "second-secret".to_string()),
+        ]);
+
+        assert_eq!(
+            download_token_window(&tokens, "second-secret").as_deref(),
+            Some("win-2")
+        );
+        assert_eq!(download_token_window(&tokens, ""), None);
+        assert_eq!(download_token_window(&tokens, "page-supplied"), None);
     }
 }
