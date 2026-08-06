@@ -10,6 +10,7 @@ const MAX_BLOB = 512 * 1024 * 1024;
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeArrayIndexOf = Array.prototype.indexOf;
 const nativeArrayPush = Array.prototype.push;
 const nativeReflectApply = Reflect.apply;
 
@@ -234,7 +235,10 @@ export function initContextMenu() {
       nativeReflectApply(nativeAddEventListener, ctxMenu, [
         "keydown",
         (event: KeyboardEvent) => {
-          const current = Math.max(0, menuItems.indexOf(document.activeElement as HTMLElement));
+          const current = Math.max(
+            0,
+            nativeReflectApply(nativeArrayIndexOf, menuItems, [document.activeElement]),
+          );
           let next: number | null = null;
           if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
           if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
@@ -255,7 +259,9 @@ export function initContextMenu() {
           if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
             event.preventDefault();
             if (!event.isTrusted) return;
-            const selected = menuItems.indexOf(document.activeElement as HTMLElement);
+            const selected = nativeReflectApply(nativeArrayIndexOf, menuItems, [
+              document.activeElement,
+            ]);
             closeMenu();
             items[selected]?.[1]();
             return;
