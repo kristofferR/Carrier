@@ -575,6 +575,20 @@
           reply(displayCaptureResultProbe());
           return;
         }
+        if (code === "__carrier_mcp_display_capture_now__") {
+          displayCaptureNowProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.stack) || e),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_click__") {
+          reply(displayCaptureClickProbe());
+          return;
+        }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
         if (code === "__carrier_mcp_network_probe__") {
           reply(networkProbe());
@@ -980,6 +994,24 @@
 
     function displayCaptureResultProbe() {
       return displayCaptureState || { outcome: "never-armed" };
+    }
+
+    // Call getDisplayMedia with no gesture at all: distinguishes gesture
+    // enforcement (InvalidAccessError-style rejection) from permission-layer
+    // failures (instant NotAllowedError) and from the picker appearing.
+    function displayCaptureNowProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getDisplayMedia({ video: true }), 6000);
+    }
+
+    // Fire the armed one-shot handler with a bridge-synthesized click (the
+    // bridge's own code is CSP-exempt, unlike execute_js eval).
+    function displayCaptureClickProbe() {
+      document.body.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      return displayCaptureResultProbe();
     }
 
     // Aggregated resource-timing counts for verifying telemetry blocking.
