@@ -104,7 +104,7 @@ export function initContextMenu() {
       // download delay and window resizes better than raw pixels.
       const fx = e.clientX / Math.max(1, innerWidth);
       const fy = e.clientY / Math.max(1, innerHeight);
-      const items: [string, (trustedActivation: boolean) => unknown][] = [];
+      const items: [string, () => unknown][] = [];
       if (imgSrc) {
         items.push([
           "Copy image",
@@ -123,10 +123,7 @@ export function initContextMenu() {
         if (isMac) {
           items.push([
             "Share…",
-            (trustedActivation) => {
-              if (!trustedActivation) return;
-              return shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"));
-            },
+            () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
         items.push(["Copy image address", () => copyAddress(imgSrc)]);
@@ -142,10 +139,7 @@ export function initContextMenu() {
         if (isMac) {
           items.push([
             "Share…",
-            (trustedActivation) => {
-              if (!trustedActivation) return;
-              return shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"));
-            },
+            () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
         items.push(["Copy video address", () => copyAddress(vidSrc)]);
@@ -208,11 +202,12 @@ export function initContextMenu() {
         el.onmouseleave = () => (el.style.background = "");
         el.onfocus = () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
         el.onblur = () => (el.style.background = "");
-        el.onclick = (ev) => {
+        el.addEventListener("click", (ev) => {
+          if (!ev.isTrusted) return;
           ev.stopPropagation();
           closeMenu();
-          fn(ev.isTrusted);
-        };
+          fn();
+        });
         ctxMenu.appendChild(el);
       }
       document.body.appendChild(ctxMenu);
@@ -241,9 +236,10 @@ export function initContextMenu() {
         }
         if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
           event.preventDefault();
+          if (!event.isTrusted) return;
           const selected = menuItems.indexOf(document.activeElement as HTMLElement);
           closeMenu();
-          items[selected]?.[1](event.isTrusted);
+          items[selected]?.[1]();
           return;
         }
         if (next !== null) {

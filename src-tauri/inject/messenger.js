@@ -826,10 +826,7 @@
           if (isMac2) {
             items.push([
               "Share…",
-              (trustedActivation) => {
-                if (!trustedActivation) return;
-                return shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"));
-              }
+              () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"))
             ]);
           }
           items.push(["Copy image address", () => copyAddress(imgSrc)]);
@@ -842,10 +839,7 @@
           if (isMac2) {
             items.push([
               "Share…",
-              (trustedActivation) => {
-                if (!trustedActivation) return;
-                return shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"));
-              }
+              () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"))
             ]);
           }
           items.push(["Copy video address", () => copyAddress(vidSrc)]);
@@ -892,11 +886,12 @@
           el.onmouseleave = () => el.style.background = "";
           el.onfocus = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
           el.onblur = () => el.style.background = "";
-          el.onclick = (ev) => {
+          el.addEventListener("click", (ev) => {
+            if (!ev.isTrusted) return;
             ev.stopPropagation();
             closeMenu();
-            fn(ev.isTrusted);
-          };
+            fn();
+          });
           ctxMenu.appendChild(el);
         }
         document.body.appendChild(ctxMenu);
@@ -923,9 +918,10 @@
           }
           if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
             event.preventDefault();
+            if (!event.isTrusted) return;
             const selected = menuItems.indexOf(document.activeElement);
             closeMenu();
-            items[selected]?.[1](event.isTrusted);
+            items[selected]?.[1]();
             return;
           }
           if (next !== null) {
