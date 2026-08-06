@@ -552,6 +552,29 @@
           reply(notificationRowProbe());
           return;
         }
+        // Media-capture plumbing checks for call/screen-share verification.
+        if (code === "__carrier_mcp_media_capture_probe__") {
+          reply(mediaCaptureProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_mic_capture_probe__") {
+          micCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.stack) || e),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_arm__") {
+          reply(armDisplayCaptureProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_result__") {
+          reply(displayCaptureResultProbe());
+          return;
+        }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
         if (code === "__carrier_mcp_network_probe__") {
           reply(networkProbe());
@@ -875,6 +898,89 @@
         });
       }
     });
+
+    // Media-capture plumbing probes for call/screen-share verification.
+    // Content-blind: they report API presence, outcome classifications, error
+    // names, and elapsed ms only — never streams, frames, or device labels.
+    function mediaCaptureProbe() {
+      var md = navigator.mediaDevices;
+      return {
+        hasMediaDevices: !!md,
+        getUserMedia: typeof (md && md.getUserMedia),
+        getDisplayMedia: typeof (md && md.getDisplayMedia),
+        isSecureContext: !!window.isSecureContext,
+      };
+    }
+
+    // Classify one capture attempt: "granted" (stream returned, tracks stopped
+    // immediately), "pending" (no answer before the timeout — an OS prompt or
+    // picker is up, i.e. the permission path engaged), or "rejected" with the
+    // error name and elapsed ms (an instant NotAllowedError means the request
+    // was auto-denied before any UI could appear).
+    function classifyCapture(promise, timeoutMs) {
+      var t0 = performance.now();
+      return new Promise(function (resolve) {
+        var settled = false;
+        var done = function (outcome) {
+          if (settled) return;
+          settled = true;
+          outcome.ms = Math.round(performance.now() - t0);
+          resolve(outcome);
+        };
+        setTimeout(function () {
+          done({ outcome: "pending" });
+        }, timeoutMs);
+        promise.then(
+          function (stream) {
+            try {
+              stream.getTracks().forEach(function (t) {
+                t.stop();
+              });
+            } catch (e) {}
+            done({ outcome: "granted" });
+          },
+          function (err) {
+            done({ outcome: "rejected", name: String(err && err.name) });
+          },
+        );
+      });
+    }
+
+    function micCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ audio: true }), 4000);
+    }
+
+    // getDisplayMedia demands transient user activation, so the probe is
+    // two-step: arm a one-shot capture-phase click handler, deliver a native
+    // click through tauri-mcp, then read the recorded classification.
+    var displayCaptureState = null;
+    function armDisplayCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== "function") {
+        displayCaptureState = { outcome: "unavailable" };
+        return { armed: false, reason: "getDisplayMedia unavailable" };
+      }
+      displayCaptureState = { outcome: "armed-waiting-for-click" };
+      document.addEventListener(
+        "click",
+        function () {
+          displayCaptureState = { outcome: "click-received" };
+          classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
+            displayCaptureState = result;
+          });
+        },
+        { capture: true, once: true },
+      );
+      return { armed: true };
+    }
+
+    function displayCaptureResultProbe() {
+      return displayCaptureState || { outcome: "never-armed" };
+    }
 
     // Aggregated resource-timing counts for verifying telemetry blocking.
     // Sanitized like privacyProbe: hosts plus digit-masked path prefixes and
