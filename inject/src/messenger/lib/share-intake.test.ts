@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  decodeSharedFiles,
   dispatchTransferEvent,
   MAX_SHARED_FILES,
   MAX_SHARED_NAME_BYTES,
@@ -8,6 +9,24 @@ import {
   sanitizeSharedFiles,
   shareIsDeliverable,
 } from "./share-intake";
+
+describe("decodeSharedFiles", () => {
+  test("reports mixed and entirely invalid base64 entries", async () => {
+    const valid = { name: "photo.png", data: "aGk=" };
+    const invalid = { name: "broken.png", data: "not base64!" };
+
+    const mixed = decodeSharedFiles([valid, invalid]);
+    expect(mixed.files.map((file) => file.name)).toEqual(["photo.png"]);
+    expect(mixed.files[0]).toBeInstanceOf(File);
+    expect(mixed.files[0]?.type).toBe("image/png");
+    expect(await mixed.files[0]?.text()).toBe("hi");
+    expect(mixed.failures).toBe(1);
+
+    const failed = decodeSharedFiles([invalid]);
+    expect(failed.files).toEqual([]);
+    expect(failed.failures).toBe(1);
+  });
+});
 
 describe("dispatchTransferEvent", () => {
   const transfer = { files: ["photo.png"] };

@@ -5184,18 +5184,6 @@
     }
     return files;
   }
-  function shareIsDeliverable(parkedAtMs, nowMs) {
-    const age = nowMs - parkedAtMs;
-    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
-  }
-  function mimeForName(name) {
-    const extension = name.toLowerCase().split(".").pop() ?? "";
-    return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
-  }
-
-  // inject/src/messenger/features/share-intake.ts
-  var COMPOSER_SELECTOR2 = '[role="main"] div[role="textbox"][contenteditable="true"]';
-  var COMPOSER_POLL_MS = 1e3;
   function decodeToFile(entry) {
     try {
       if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
@@ -5213,6 +5201,22 @@
       return null;
     }
   }
+  function decodeSharedFiles(entries) {
+    const files = entries.map(decodeToFile).filter((file) => file !== null);
+    return { files, failures: entries.length - files.length };
+  }
+  function shareIsDeliverable(parkedAtMs, nowMs) {
+    const age = nowMs - parkedAtMs;
+    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
+  }
+  function mimeForName(name) {
+    const extension = name.toLowerCase().split(".").pop() ?? "";
+    return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
+  }
+
+  // inject/src/messenger/features/share-intake.ts
+  var COMPOSER_SELECTOR2 = '[role="main"] div[role="textbox"][contenteditable="true"]';
+  var COMPOSER_POLL_MS = 1e3;
   function attachToComposer(composer2, files) {
     try {
       const transfer = new DataTransfer();
@@ -5270,7 +5274,10 @@
     Object.defineProperty(window, "__carrierShareMedia", {
       value: (payload) => {
         const entries = sanitizeSharedFiles(payload);
-        const files = entries.map(decodeToFile).filter((file) => file !== null);
+        const { files, failures } = decodeSharedFiles(entries);
+        if (failures) {
+          diag("share.partial-decode", `${failures}`);
+        }
         if (!files.length) {
           diag("share.empty-payload", "0");
           return;

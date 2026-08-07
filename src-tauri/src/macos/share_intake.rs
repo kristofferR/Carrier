@@ -145,13 +145,25 @@ fn park_share(slot: &mut Option<PendingShare>, payload: String) -> bool {
 /// The Messenger window a share should land in: the focused one when the user
 /// works in a secondary window (File → New Window), else `main`. The Settings
 /// window has no composer and is never a target.
+fn is_messenger_window(window: &tauri::WebviewWindow) -> bool {
+    window.label() != "settings"
+        && window
+            .url()
+            .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url))
+}
+
 fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     let windows = app.webview_windows();
     windows
         .values()
-        .find(|window| window.label() != "settings" && window.is_focused().unwrap_or(false))
+        .find(|window| is_messenger_window(window) && window.is_focused().unwrap_or(false))
         .cloned()
-        .or_else(|| windows.get("main").cloned())
+        .or_else(|| {
+            windows
+                .get("main")
+                .filter(|window| is_messenger_window(window))
+                .cloned()
+        })
 }
 
 /// Handle one `carrier://share-pasteboard` open: take and validate the
@@ -195,14 +207,14 @@ fn handle_share_open_on_main(app: &tauri::AppHandle, pasteboard_name: &str, mtm:
     }
     log::info!("share handoff accepted");
     crate::tray::show_main(app);
-    deliver_pending(app);
+    deliver_pending(app, None);
 }
 
 /// Deliver the parked share and consume it on success, so a later page load
 /// cannot attach the same files twice. Called from the handoff itself and
 /// from page-load (cold start, or a reload/rebuild that raced the handoff);
 /// a share that cannot be delivered stays parked until [`SHARE_INTAKE_TTL`].
-pub(crate) fn deliver_pending(app: &tauri::AppHandle) {
+pub(crate) fn deliver_pending(app: &tauri::AppHandle, preferred: Option<tauri::WebviewWindow>) {
     let state = app.state::<AppState>();
     let mut pending = state.pending_share.lock().unwrap();
     if pending
@@ -211,18 +223,15 @@ pub(crate) fn deliver_pending(app: &tauri::AppHandle) {
     {
         *pending = None;
     }
-    let Some(window) = target_window(app) else {
+    let Some(window) = preferred
+        .filter(is_messenger_window)
+        .or_else(|| target_window(app))
+    else {
         return;
     };
     // Only a loaded Messenger page has the intake hook (installed at document
-    // start); an eval into the splash or connectivity screen would consume the
-    // share into the void. Parked shares wait for the page-load call.
-    let on_messenger = window
-        .url()
-        .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url));
-    if !on_messenger {
-        return;
-    }
+    // start); invalid candidates are filtered above so the share stays parked
+    // through a splash, connectivity screen, or mid-navigation URL error.
     let Some(share) = pending.take() else {
         return;
     };

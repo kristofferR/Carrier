@@ -10,10 +10,9 @@
 // events for its own composer.
 import { diag, toast } from "../bridge";
 import {
+  decodeSharedFiles,
   dispatchTransferEvent,
   MAX_SHARED_FILES,
-  mimeForName,
-  type SharedFile,
   sanitizeSharedFiles,
   shareIsDeliverable,
 } from "../lib/share-intake";
@@ -21,24 +20,6 @@ import { firstShown } from "./conversation-actions";
 
 const COMPOSER_SELECTOR = '[role="main"] div[role="textbox"][contenteditable="true"]';
 const COMPOSER_POLL_MS = 1000;
-
-function decodeToFile(entry: SharedFile): File | null {
-  try {
-    if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
-      return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
-        type: mimeForName(entry.name),
-      });
-    }
-    const binary = atob(entry.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return new File([bytes], entry.name, { type: mimeForName(entry.name) });
-  } catch {
-    return null;
-  }
-}
 
 type AttachmentResult = "attached" | "retry" | "uncertain";
 
@@ -113,7 +94,10 @@ export function initShareIntake() {
   Object.defineProperty(window, "__carrierShareMedia", {
     value: (payload: unknown) => {
       const entries = sanitizeSharedFiles(payload);
-      const files = entries.map(decodeToFile).filter((file): file is File => file !== null);
+      const { files, failures } = decodeSharedFiles(entries);
+      if (failures) {
+        diag("share.partial-decode", `${failures}`);
+      }
       if (!files.length) {
         diag("share.empty-payload", "0");
         return;

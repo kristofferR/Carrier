@@ -125,7 +125,10 @@ pub(crate) fn build_app_window(
                 // start) is re-delivered once the page can receive it.
                 #[cfg(target_os = "macos")]
                 if window.label() != "settings" && is_messenger_web_url(payload.url()) {
-                    crate::macos::share_intake::deliver_pending(window.app_handle());
+                    crate::macos::share_intake::deliver_pending(
+                        window.app_handle(),
+                        Some(window.clone()),
+                    );
                 }
                 apply_custom_css(&window, payload.url());
             }

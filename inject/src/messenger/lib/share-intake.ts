@@ -71,6 +71,30 @@ export function sanitizeSharedFiles(
   return files;
 }
 
+function decodeToFile(entry: SharedFile): File | null {
+  try {
+    if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
+      return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
+        type: mimeForName(entry.name),
+      });
+    }
+    const binary = atob(entry.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new File([bytes], entry.name, { type: mimeForName(entry.name) });
+  } catch {
+    return null;
+  }
+}
+
+/** Decode sanitized entries while retaining a count of any field failures. */
+export function decodeSharedFiles(entries: SharedFile[]): { files: File[]; failures: number } {
+  const files = entries.map(decodeToFile).filter((file): file is File => file !== null);
+  return { files, failures: entries.length - files.length };
+}
+
 /** Whether a parked share is still fresh enough to attach. */
 export function shareIsDeliverable(parkedAtMs: number, nowMs: number): boolean {
   const age = nowMs - parkedAtMs;
