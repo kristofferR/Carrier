@@ -623,16 +623,60 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
 
-  // Keep the per-window reveal credential and the original IPC function in
-  // this initialization script's lexical scope. Facebook can emit the same
-  // event name, inspect the DOM, and replace window.__TAURI_INTERNALS__, but it
-  // cannot read this closure or forge the native authorization it carries.
-  var carrierRevealDownload = (function (invoke, authorization) {{
-    return function (url) {{
-      if (!invoke) return;
+  // Import the per-window secret as a non-extractable key. Only signed request
+  // data crosses Tauri's page-visible serializer, so a hostile inherited
+  // toJSON hook can observe or corrupt a request but cannot recover the key or
+  // create a different valid request. One-time nonces prevent replay.
+  var carrierAuthorizedEmit = (function (invoke, secret) {{
+    if (!invoke || !crypto.subtle) return;
+    var nativeArrayIsArray = Array.isArray.bind(Array);
+    var nativeDefineProperty = Object.defineProperty;
+    var nativeObjectCreate = Object.create;
+    var nativeObjectKeys = Object.keys;
+    var nativeSetPrototypeOf = Object.setPrototypeOf;
+    var nativeStringify = JSON.stringify;
+    var NativeUint8Array = Uint8Array;
+    var encoder = new TextEncoder();
+    var nativeEncode = encoder.encode.bind(encoder);
+    var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+    var nativeImportKey = crypto.subtle.importKey.bind(crypto.subtle);
+    var nativeSign = crypto.subtle.sign.bind(crypto.subtle);
+    var key = nativeImportKey(
+      'raw', nativeEncode(secret), {{ name: 'HMAC', hash: 'SHA-256' }}, false, ['sign']
+    );
+    function inertClone(value) {{
+      if (value === null || typeof value !== 'object') return value;
+      var clone = nativeArrayIsArray(value) ? [] : nativeObjectCreate(null);
+      if (nativeArrayIsArray(value)) nativeSetPrototypeOf(clone, null);
+      var keys = nativeObjectKeys(value);
+      for (var index = 0; index < keys.length; index += 1) {{
+        var name = keys[index];
+        nativeDefineProperty(clone, name, {{
+          value: inertClone(value[name]), enumerable: true, configurable: true
+        }});
+      }}
+      return clone;
+    }}
+    function hex(bytes) {{
+      var alphabet = '0123456789abcdef';
+      var output = '';
+      for (var index = 0; index < bytes.length; index += 1) {{
+        output += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];
+      }}
+      return output;
+    }}
+    return async function (event, value) {{
+      var nonceBytes = new NativeUint8Array(16);
+      nativeGetRandomValues(nonceBytes);
+      var nonce = hex(nonceBytes);
+      var message = nativeStringify(inertClone(value));
+      var authenticated = event + '\n' + nonce + '\n' + message;
+      var signature = hex(new NativeUint8Array(
+        await nativeSign('HMAC', await key, nativeEncode(authenticated))
+      ));
       return invoke('plugin:event|emit', {{
-        event: 'carrier:reveal-download',
-        payload: {{ url: url, authorization: authorization }}
+        event: event,
+        payload: {{ message: message, nonce: nonce, signature: signature }}
       }});
     }};
   }})(
@@ -642,39 +686,22 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     {reveal_token_literal}
   );
 
-  // Same credential, second action: hand a just-downloaded file to the macOS
-  // share sheet, anchored at the given viewport-fraction position.
-  var carrierShareDownload = (function (invoke, authorization) {{
-    return function (url, x, y) {{
-      if (!invoke) return;
-      return invoke('plugin:event|emit', {{
-        event: 'carrier:share-download',
-        payload: {{ url: url, authorization: authorization, x: x, y: y }}
-      }});
-    }};
-  }})(
-    window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
-      ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
-      : undefined,
-    {reveal_token_literal}
-  );
-
-  // Keep privileged media actions in an OS-owned context menu. Each opaque
-  // action id is known only to this closure and the native menu callback.
-  var carrierShowContextMenu = (function (invoke, authorization) {{
-    return function (items) {{
-      if (!invoke) return;
-      return invoke('plugin:event|emit', {{
-        event: 'carrier:context-menu',
-        payload: {{ items: items, authorization: authorization }}
-      }});
-    }};
-  }})(
-    window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
-      ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
-      : undefined,
-    {reveal_token_literal}
-  );
+  var carrierRevealDownload = function (url) {{
+    return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
+  }};
+  var carrierShareDownload = function (url, x, y, action) {{
+    return carrierAuthorizedEmit && carrierAuthorizedEmit(
+      'carrier:share-download', {{ url: url, x: x, y: y, action: action }}
+    );
+  }};
+  var carrierCopyImage = function (dataUrl, action) {{
+    return carrierAuthorizedEmit && carrierAuthorizedEmit(
+      'carrier:copy-image', {{ data_url: dataUrl, action: action }}
+    );
+  }};
+  var carrierShowContextMenu = function (items) {{
+    return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:context-menu', items);
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -882,6 +909,18 @@ mod tests {
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
+    }
+
+    #[test]
+    fn privileged_bridges_sign_without_serializing_the_window_secret() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
+        assert!(script.contains("false, ['sign']"));
+        assert!(
+            script.contains("payload: { message: message, nonce: nonce, signature: signature }")
+        );
+        assert!(!script.contains("authorization: authorization"));
     }
 
     #[cfg(all(feature = "mcp", debug_assertions))]
