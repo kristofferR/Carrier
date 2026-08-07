@@ -208,6 +208,19 @@ pub(crate) fn build_app_window(
                     .lock()
                     .unwrap()
                     .remove(&token_cleanup_label);
+                #[cfg(target_os = "macos")]
+                {
+                    state
+                        .context_menu_copy_values
+                        .lock()
+                        .unwrap()
+                        .retain(|(window, _), _| window != &token_cleanup_label);
+                    state
+                        .context_menu_activations
+                        .lock()
+                        .unwrap()
+                        .retain(|(window, _), _| window != &token_cleanup_label);
+                }
             }
         }
     });
@@ -744,7 +757,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var NativeUint8Array = Uint8Array;
   var nativeReflectApply = Reflect.apply;
-  var carrierCopyImageRequest = function () {{
+  var carrierNativeRequest = function () {{
     var bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
     var request = '';
@@ -758,15 +771,52 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
   var carrierShareDownload = function (url, x, y, action) {{
-    return carrierAuthorizedEmit && carrierAuthorizedEmit(
-      'carrier:share-download', {{ url: url, x: x, y: y, action: action }}
-    );
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return Promise.reject(new Error('native bridge unavailable'));
+    }}
+    var request = carrierNativeRequest();
+    return new Promise(function (resolve, reject) {{
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        if (detail.shared !== true && detail.shared !== false) return;
+        var shared = detail.shared;
+        var authenticated = await carrierVerifyResult(
+          'carrier:share-download-result',
+          {{ request: request, shared: shared }},
+          detail.signature
+        );
+        if (!authenticated) return;
+        cleanup();
+        if (shared) resolve();
+        else reject(new Error('native share picker failed'));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error('native share picker timed out'));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [
+          'carrier:share-download-result', finish
+        ]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [
+        'carrier:share-download-result', finish
+      ]);
+      carrierAuthorizedEmit('carrier:share-download', {{
+        url: url, x: x, y: y, action: action, request: request
+      }}).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
   }};
   var carrierCopyImage = function (dataUrl, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return Promise.reject(new Error('native bridge unavailable'));
     }}
-    var request = carrierCopyImageRequest();
+    var request = carrierNativeRequest();
     return new Promise(function (resolve, reject) {{
       var finish = async function (event) {{
         var detail = event && event.detail;
@@ -1041,6 +1091,17 @@ mod tests {
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
         assert!(script.contains("native clipboard write failed"));
+    }
+
+    #[test]
+    fn share_download_bridge_waits_for_the_native_result() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("carrier:share-download-result"));
+        assert!(script.contains("action: action, request: request"));
+        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("detail.signature"));
+        assert!(script.contains("native share picker failed"));
     }
 
     #[cfg(all(feature = "mcp", debug_assertions))]

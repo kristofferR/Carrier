@@ -71,7 +71,7 @@ declare const carrierShareDownload: (
   x: number,
   y: number,
   action: string,
-) => Promise<unknown> | undefined;
+) => Promise<void>;
 
 /** Write an image through the native pasteboard after its menu row is selected. */
 declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;

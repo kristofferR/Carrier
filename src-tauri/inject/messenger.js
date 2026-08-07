@@ -769,6 +769,7 @@
   var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
   var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeObjectAssign = Object.assign;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
@@ -781,9 +782,17 @@
   var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
   var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
-  var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var appendOwn = (items, item) => {
+    nativeReflectApply(nativeObjectDefineProperty, items, [
+      `${items.length}`,
+      { value: item, writable: true, enumerable: true, configurable: true }
+    ]);
+  };
+  var applyStyles = (style, values) => {
+    nativeReflectApply(nativeObjectAssign, void 0, [style, values]);
+  };
   var rectOf = (el) => {
     const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -829,16 +838,11 @@
       const run = () => {
         item[1](action);
       };
-      nativeReflectApply(nativeArrayPush, nativeActionHandlers, [[action, run]]);
-      nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
-        String(nativeItems.length),
-        {
-          value: item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
-          writable: true,
-          enumerable: true,
-          configurable: true
-        }
-      ]);
+      appendOwn(nativeActionHandlers, [action, run]);
+      appendOwn(
+        nativeItems,
+        item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
+      );
     }
     carrierShowContextMenu(nativeItems)?.catch(() => {
       clearNativeActionHandlers();
@@ -938,15 +942,7 @@
         const fy = e.clientY / Math.max(1, innerHeight);
         const items = [];
         const addItem = (item) => {
-          nativeReflectApply(nativeObjectDefineProperty, items, [
-            String(items.length),
-            {
-              value: item,
-              writable: true,
-              enumerable: true,
-              configurable: true
-            }
-          ]);
+          appendOwn(items, item);
         };
         if (imgSrc) {
           addItem([
@@ -999,11 +995,11 @@
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]);
         const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []);
-        Object.assign(ctxMenuStyle, {
+        applyStyles(ctxMenuStyle, {
           position: "fixed",
           left: `${e.clientX}px`,
           top: `${e.clientY}px`,
-          zIndex: 2147483647
+          zIndex: "2147483647"
         });
         const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
           { mode: "closed" }
@@ -1012,7 +1008,7 @@
         nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
         nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
         const menuStyle = nativeReflectApply(nativeGetStyle, menu, []);
-        Object.assign(menuStyle, {
+        applyStyles(menuStyle, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
           border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -1041,7 +1037,7 @@
           if (!nativeSetTabIndex) return;
           nativeReflectApply(nativeSetTabIndex, el, [-1]);
           const elStyle = nativeReflectApply(nativeGetStyle, el, []);
-          Object.assign(elStyle, {
+          applyStyles(elStyle, {
             padding: "8px 12px",
             cursor: "pointer",
             borderRadius: "6px",
@@ -1085,7 +1081,7 @@
               activate(fn);
             }
           ]);
-          nativeReflectApply(nativeArrayPush, menuItems, [el]);
+          appendOwn(menuItems, el);
           nativeReflectApply(nativeAppendChild, menu, [el]);
         }
         nativeReflectApply(nativeAppendChild, shadow, [menu]);
@@ -1095,9 +1091,7 @@
         if (r.y + r.height > innerHeight) ctxMenuStyle.top = `${innerHeight - r.height - 8}px`;
         for (let i = 0; i < menuItems.length; i += 1) {
           const row = menuItems[i];
-          nativeReflectApply(nativeArrayPush, laidOutRects, [
-            row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 }
-          ]);
+          appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
         }
         nativeReflectApply(nativeAddEventListener, ctxMenu, [
           "keydown",

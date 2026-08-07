@@ -24,11 +24,10 @@ const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] a
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeObjectAssign = Object.assign;
 const nativeObjectDefineProperty = Object.defineProperty;
 const nativeReflectApply = Reflect.apply;
-// Same reason: the menu's isolation depends on these being the real ones. A
-// replaced `push` would be handed each privileged row as an argument, which is
-// exactly the reference the closed shadow root exists to withhold.
+// Same reason: the menu's isolation depends on these being the real ones.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
 const nativeCreateElement = Document.prototype.createElement;
@@ -39,9 +38,19 @@ const nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "s
 const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
 const nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
-const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+
+const appendOwn = <T>(items: T[], item: T) => {
+  nativeReflectApply(nativeObjectDefineProperty, items, [
+    `${items.length}`,
+    { value: item, writable: true, enumerable: true, configurable: true },
+  ]);
+};
+
+const applyStyles = (style: CSSStyleDeclaration, values: Partial<CSSStyleDeclaration>) => {
+  nativeReflectApply(nativeObjectAssign, undefined, [style, values]);
+};
 
 const rectOf = (el: Element): MenuRect => {
   const r = nativeReflectApply(nativeGetBoundingClientRect, el, []) as DOMRect;
@@ -106,16 +115,11 @@ function showNativeContextMenu(items: ContextMenuItem[]) {
     const run = () => {
       item[1](action);
     };
-    nativeReflectApply(nativeArrayPush, nativeActionHandlers, [[action, run]]);
-    nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
-      String(nativeItems.length),
-      {
-        value: item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
-        writable: true,
-        enumerable: true,
-        configurable: true,
-      },
-    ]);
+    appendOwn(nativeActionHandlers, [action, run]);
+    appendOwn(
+      nativeItems,
+      item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
+    );
   }
   carrierShowContextMenu(nativeItems)?.catch(() => {
     clearNativeActionHandlers();
@@ -247,15 +251,7 @@ export function initContextMenu() {
       const addItem = (item: ContextMenuItem) => {
         // Defining an own index bypasses numeric setters Messenger could add
         // to Array.prototype before a user opens this privileged-action menu.
-        nativeReflectApply(nativeObjectDefineProperty, items, [
-          String(items.length),
-          {
-            value: item,
-            writable: true,
-            enumerable: true,
-            configurable: true,
-          },
-        ]);
+        appendOwn(items, item);
       };
       if (imgSrc) {
         addItem([
@@ -345,11 +341,11 @@ export function initContextMenu() {
       // the per-row geometry check below refuses.
       ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
       const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []) as CSSStyleDeclaration;
-      Object.assign(ctxMenuStyle, {
+      applyStyles(ctxMenuStyle, {
         position: "fixed",
         left: `${e.clientX}px`,
         top: `${e.clientY}px`,
-        zIndex: 2147483647,
+        zIndex: "2147483647",
       });
       const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
         { mode: "closed" },
@@ -358,7 +354,7 @@ export function initContextMenu() {
       nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
       nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
       const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
-      Object.assign(menuStyle, {
+      applyStyles(menuStyle, {
         background: "var(--card-background, Canvas)",
         color: "var(--primary-text, CanvasText)",
         border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -391,7 +387,7 @@ export function initContextMenu() {
         if (!nativeSetTabIndex) return;
         nativeReflectApply(nativeSetTabIndex, el, [-1]);
         const elStyle = nativeReflectApply(nativeGetStyle, el, []) as CSSStyleDeclaration;
-        Object.assign(elStyle, {
+        applyStyles(elStyle, {
           padding: "8px 12px",
           cursor: "pointer",
           borderRadius: "6px",
@@ -442,7 +438,7 @@ export function initContextMenu() {
             activate(fn);
           },
         ]);
-        nativeReflectApply(nativeArrayPush, menuItems, [el]);
+        appendOwn(menuItems, el);
         nativeReflectApply(nativeAppendChild, menu, [el]);
       }
       nativeReflectApply(nativeAppendChild, shadow, [menu]);
@@ -454,11 +450,9 @@ export function initContextMenu() {
       // Array.prototype[Symbol.iterator], handing out the rows again.
       for (let i = 0; i < menuItems.length; i += 1) {
         const row = menuItems[i];
-        // Push unconditionally so the two arrays stay index-aligned; an empty
+        // Append unconditionally so the two arrays stay index-aligned; an empty
         // rectangle matches no real row, so it refuses rather than misfires.
-        nativeReflectApply(nativeArrayPush, laidOutRects, [
-          row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 },
-        ]);
+        appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
       }
       nativeReflectApply(nativeAddEventListener, ctxMenu, [
         "keydown",
