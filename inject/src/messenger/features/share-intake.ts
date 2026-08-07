@@ -8,7 +8,7 @@
 // validated the app-group inbox. A page calling the hook itself gains
 // nothing — it can already construct File objects and synthesize paste
 // events for its own composer.
-import { toast } from "../bridge";
+import { diag, toast } from "../bridge";
 import {
   mimeForName,
   type SharedFile,
@@ -79,7 +79,12 @@ export function initShareIntake() {
     const { files, timer } = pending;
     clearTimeout(timer);
     pending = null;
-    if (!attachToComposer(composer, files)) {
+    // Counts only, never names or contents: the attach path depends on
+    // Messenger's markup, so a field failure has to be diagnosable.
+    if (attachToComposer(composer, files)) {
+      diag("share.attached", `${files.length}`);
+    } else {
+      diag("share.attach-failed", `${files.length}`);
       toast("Could not attach the shared file");
     }
     return true;
@@ -96,10 +101,14 @@ export function initShareIntake() {
     value: (payload: unknown) => {
       const entries = sanitizeSharedFiles(payload);
       const files = entries.map(decodeToFile).filter((file): file is File => file !== null);
-      if (!files.length) return;
+      if (!files.length) {
+        diag("share.empty-payload", "0");
+        return;
+      }
       if (pending) clearTimeout(pending.timer);
       pending = { files, parkedAt: Date.now() };
       if (!tryDeliver()) {
+        diag("share.waiting-for-composer", `${files.length}`);
         toast("Open a conversation to attach the shared file");
         pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
       }
