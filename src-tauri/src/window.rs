@@ -656,14 +656,17 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     var nativeObjectKeys = Object.keys;
     var nativeSetPrototypeOf = Object.setPrototypeOf;
     var nativeStringify = JSON.stringify;
+    var nativeReflectApply = Reflect.apply;
+    var nativeStringCharCodeAt = String.prototype.charCodeAt;
     var NativeUint8Array = Uint8Array;
     var encoder = new TextEncoder();
     var nativeEncode = encoder.encode.bind(encoder);
     var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
     var nativeImportKey = crypto.subtle.importKey.bind(crypto.subtle);
     var nativeSign = crypto.subtle.sign.bind(crypto.subtle);
+    var nativeVerify = crypto.subtle.verify.bind(crypto.subtle);
     var key = nativeImportKey(
-      'raw', nativeEncode(secret), {{ name: 'HMAC', hash: 'SHA-256' }}, false, ['sign']
+      'raw', nativeEncode(secret), {{ name: 'HMAC', hash: 'SHA-256' }}, false, ['sign', 'verify']
     );
     function inertClone(value) {{
       if (value === null || typeof value !== 'object') return value;
@@ -686,7 +689,20 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       }}
       return output;
     }}
-    return async function (event, value) {{
+    function unhex(value) {{
+      if (typeof value !== 'string' || value.length !== 64) return;
+      var bytes = new NativeUint8Array(32);
+      for (var index = 0; index < bytes.length; index += 1) {{
+        var high = nativeReflectApply(nativeStringCharCodeAt, value, [index * 2]);
+        var low = nativeReflectApply(nativeStringCharCodeAt, value, [index * 2 + 1]);
+        high = high >= 48 && high <= 57 ? high - 48 : high >= 97 && high <= 102 ? high - 87 : -1;
+        low = low >= 48 && low <= 57 ? low - 48 : low >= 97 && low <= 102 ? low - 87 : -1;
+        if (high < 0 || low < 0) return;
+        bytes[index] = (high << 4) | low;
+      }}
+      return bytes;
+    }}
+    var emit = async function (event, value) {{
       var nonceBytes = new NativeUint8Array(16);
       nativeGetRandomValues(nonceBytes);
       var nonce = hex(nonceBytes);
@@ -701,12 +717,24 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
         payload: {{ message: message, nonce: nonce, timestamp: timestamp, signature: signature }}
       }});
     }};
+    nativeDefineProperty(emit, 'verifyResult', {{
+      value: async function (event, value, signature) {{
+        var signatureBytes = unhex(signature);
+        if (!signatureBytes) return false;
+        var message = nativeStringify(inertClone(value));
+        return nativeVerify(
+          'HMAC', await key, signatureBytes, nativeEncode(event + '\n' + message)
+        );
+      }}
+    }});
+    return emit;
   }})(
     window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
       ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
       : undefined,
     {reveal_token_literal}
   );
+  var carrierVerifyResult = carrierAuthorizedEmit && carrierAuthorizedEmit.verifyResult;
 
   var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
   var nativeWindowDispatchEvent = EventTarget.prototype.dispatchEvent;
@@ -742,14 +770,24 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     );
   }};
   var carrierCopyImage = function (dataUrl, action) {{
-    if (!carrierAuthorizedEmit) return Promise.reject(new Error('native bridge unavailable'));
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return Promise.reject(new Error('native bridge unavailable'));
+    }}
     var request = carrierCopyImageRequest();
     return new Promise(function (resolve, reject) {{
-      var finish = function (event) {{
+      var finish = async function (event) {{
         var detail = event && event.detail;
         if (!detail || detail.request !== request) return;
+        if (detail.copied !== true && detail.copied !== false) return;
+        var copied = detail.copied;
+        var authenticated = await carrierVerifyResult(
+          'carrier:copy-image-result',
+          {{ request: request, copied: copied }},
+          detail.signature
+        );
+        if (!authenticated) return;
         cleanup();
-        if (detail.copied) resolve();
+        if (copied) resolve();
         else reject(new Error('native clipboard write failed'));
       }};
       var timeout = nativeSetTimeout(function () {{
@@ -990,7 +1028,7 @@ mod tests {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
-        assert!(script.contains("false, ['sign']"));
+        assert!(script.contains("false, ['sign', 'verify']"));
         assert!(
             script.contains(
                 "payload: { message: message, nonce: nonce, timestamp: timestamp, signature: signature }"
@@ -1009,6 +1047,8 @@ mod tests {
 
         assert!(script.contains("carrier:copy-image-result"));
         assert!(script.contains("data_url: dataUrl, action: action, request: request"));
+        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("detail.signature"));
         assert!(script.contains("native clipboard write failed"));
     }
 

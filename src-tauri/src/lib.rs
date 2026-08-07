@@ -164,11 +164,37 @@ fn signed_action_window(
     authorize_signed_action(&tokens, &mut nonces, event, signed)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn copy_image_result_signature(secret: &str, request: &str, copied: bool) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct CopyImageResult<'a> {
+        request: &'a str,
+        copied: bool,
+    }
+
+    let message = serde_json::to_string(&CopyImageResult { request, copied }).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("carrier:copy-image-result\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
 #[cfg(target_os = "macos")]
 fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, copied: bool) {
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| copy_image_result_signature(secret, request, copied))
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate macOS clipboard result");
+        return;
+    };
     let request = serde_json::to_string(request).expect("request serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:copy-image-result', {{ detail: {{ request: {request}, copied: {copied} }} }}));"
+        "window.dispatchEvent(new CustomEvent('carrier:copy-image-result', {{ detail: {{ request: {request}, copied: {copied}, signature: {signature} }} }}));"
     );
     if let Some(window) = app.get_webview_window(label) {
         if let Err(error) = window.eval(&script) {
@@ -959,6 +985,15 @@ mod tests {
         assert!(is_isolated_mcp_socket(Some(std::path::Path::new(
             "/tmp/carrier-isolated.sock"
         ))));
+    }
+
+    #[test]
+    fn copy_image_results_are_authenticated_with_the_window_secret() {
+        assert_eq!(
+            copy_image_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
+                .as_deref(),
+            Some("5e39e1320822a514ce4a811d2a6c6b9b72f0d63a1a8b59601d20fd8644872007")
+        );
     }
 
     #[test]

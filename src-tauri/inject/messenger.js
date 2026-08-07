@@ -776,6 +776,7 @@
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeCreateElement = Document.prototype.createElement;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -984,8 +985,8 @@
           { mode: "closed" }
         ]);
         const menu = nativeReflectApply(nativeCreateElement, document, ["div"]);
-        menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", "Media actions");
+        nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
+        nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
         Object.assign(menu.style, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
@@ -1010,7 +1011,7 @@
           const fn = item[1];
           const el = nativeReflectApply(nativeCreateElement, document, ["div"]);
           el.textContent = label;
-          el.setAttribute("role", "menuitem");
+          nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
           el.tabIndex = -1;
           Object.assign(el.style, {
             padding: "8px 12px",
@@ -1418,7 +1419,7 @@
   }
   function initEmojiImageLoading() {
     const sourceDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-    const nativeSetAttribute = HTMLImageElement.prototype.setAttribute;
+    const nativeSetAttribute2 = HTMLImageElement.prototype.setAttribute;
     if (!sourceDescriptor?.set) return;
     const pending = /* @__PURE__ */ new Set();
     let scanTimer;
@@ -1463,7 +1464,7 @@
       HTMLImageElement.prototype.setAttribute = function(name, value) {
         const emoji = name.toLowerCase() === "src" && isFacebookEmojiImage(value);
         if (emoji) defer(this);
-        const result = nativeSetAttribute.call(this, name, value);
+        const result = nativeSetAttribute2.call(this, name, value);
         if (emoji) scheduleScan();
         return result;
       };
