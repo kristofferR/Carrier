@@ -10,6 +10,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      notarization_smoke:
+        description: Build and notarize one macOS app without publishing a release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -23,6 +28,7 @@ jobs:
   # Rust and injected-script checks CI runs. Runs in parallel with
   # prepare_release; `build` needs both, so this adds no wall-clock time.
   check:
+    if: github.event_name != 'workflow_dispatch' || !inputs.notarization_smoke
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,11 +76,90 @@ jobs:
       - name: Generated inject bundles are fresh
         run: git diff --exit-code src-tauri/inject
 
+  # Exercise the same signing/notarization inputs without creating release
+  # assets. This makes nested-extension acceptance testable before a version tag.
+  notarization_smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.notarization_smoke
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build, sign, and notarize the macOS app
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          bun run tauri build --bundles app --ci \
+            --config src-tauri/tauri.conf.release.json \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify Gatekeeper and the stapled nested bundle
+        run: |
+          set -euo pipefail
+          APP=""
+          for candidate in src-tauri/target/release/bundle/macos/*.app; do
+            if [ -d "$candidate" ]; then
+              APP="$candidate"
+              break
+            fi
+          done
+          if [ -z "$APP" ]; then
+            echo "No notarized macOS app bundle found." >&2
+            exit 1
+          fi
+          PLIST="$APP/Contents/Info.plist"
+          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
+            echo "The Carrier Share extension is missing from $APP." >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --strict --verbose=2 "$APPEX"
+          sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
+            | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
+          if [ "$sandbox" != "true" ]; then
+            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            exit 1
+          fi
+          app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          appex_version=$(/usr/libexec/PlistBuddy \
+            -c 'Print :CFBundleShortVersionString' "$APPEX/Contents/Info.plist")
+          if [ "$appex_version" != "$app_version" ]; then
+            echo "Share extension version $appex_version does not match app $app_version." >&2
+            exit 1
+          fi
+          spctl --assess --type execute --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Carrier-notarized-smoke.zip
+
+      - name: Upload notarized smoke app
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: Carrier-notarized-smoke
+          path: Carrier-notarized-smoke.zip
+          if-no-files-found: error
+          retention-days: 1
+
   # Release notes are authored with human/agent judgment before the tag is
   # pushed, like ha-adjustable-bed. Require that curated draft and pass its body
   # to tauri-action only for latest.json; uploads target the draft by numeric id,
   # so the action cannot create or rewrite the GitHub release.
   prepare_release:
+    if: github.event_name != 'workflow_dispatch' || !inputs.notarization_smoke
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
@@ -246,7 +331,7 @@ jobs:
           # instead, then deletes the archive so the public release stays clean.
           args: --target ${{ matrix.target }} --config src-tauri/tauri.conf.release.json
 
-      - name: Verify macOS Downloads permission metadata
+      - name: Verify macOS bundle metadata and nested signature
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
@@ -263,13 +348,32 @@ jobs:
             exit 1
           fi
           PLIST="$APP/Contents/Info.plist"
+          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
+            echo "The Carrier Share extension is missing from $APP." >&2
+            exit 1
+          fi
+          codesign --verify --strict --verbose=2 "$APPEX"
+          sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
+            | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
+          if [ "$sandbox" != "true" ]; then
+            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            exit 1
+          fi
+          app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          appex_version=$(/usr/libexec/PlistBuddy \
+            -c 'Print :CFBundleShortVersionString' "$APPEX/Contents/Info.plist")
+          if [ "$appex_version" != "$app_version" ]; then
+            echo "Share extension version $appex_version does not match app $app_version." >&2
+            exit 1
+          fi
           description=$(/usr/libexec/PlistBuddy \
             -c 'Print :NSDownloadsFolderUsageDescription' "$PLIST")
           if [ -z "${description//[[:space:]]/}" ]; then
             echo "The built app has no Downloads folder usage description." >&2
             exit 1
           fi
-          echo "Verified Downloads folder permission metadata in $PLIST"
+          echo "Verified the nested share extension and Downloads metadata in $APP"
 
       # tauri-action notarizes the .app but not the .dmg, so a downloaded .dmg
       # would still prompt. Notarize + staple it and re-upload under the same
