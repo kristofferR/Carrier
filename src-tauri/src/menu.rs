@@ -206,14 +206,16 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
 }
 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
-    #[cfg(target_os = "macos")]
     if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
-        let key = (label.to_string(), action.to_string());
         let state = app.state::<AppState>();
+        #[cfg(target_os = "macos")]
+        let key = (label.to_string(), action.to_string());
+        #[cfg(target_os = "macos")]
         if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
             crate::macos::clipboard::copy_text(app, value);
             return;
         }
+        #[cfg(target_os = "macos")]
         if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
             *selected = Some(Instant::now());
         }
@@ -323,7 +325,6 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
 const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
     "Copy image",
     "Download image",
@@ -331,12 +332,16 @@ const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
     "Copy image address",
     "Open image in browser",
 ];
-#[cfg(any(target_os = "macos", test))]
 const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &["Download video", "Share…", "Copy video address"];
-#[cfg(any(target_os = "macos", test))]
 const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in browser"];
+const IMAGE_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &[
+    "Copy image",
+    "Download image",
+    "Copy image address",
+    "Open image in browser",
+];
+const VIDEO_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &["Download video", "Copy video address"];
 
-#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Deserialize)]
 pub(crate) struct NativeContextMenuItem {
     pub(crate) label: String,
@@ -344,18 +349,32 @@ pub(crate) struct NativeContextMenuItem {
     pub(crate) value: Option<String>,
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
     let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
         || labels == VIDEO_CONTEXT_MENU_LABELS
-        || labels == LINK_CONTEXT_MENU_LABELS;
+        || labels == LINK_CONTEXT_MENU_LABELS
+        || {
+            #[cfg(not(target_os = "macos"))]
+            {
+                labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE
+                    || labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE
+            }
+            #[cfg(target_os = "macos")]
+            {
+                false
+            }
+        };
     let value_index = if labels == IMAGE_CONTEXT_MENU_LABELS {
         Some(3)
     } else if labels == VIDEO_CONTEXT_MENU_LABELS {
         Some(2)
     } else if labels == LINK_CONTEXT_MENU_LABELS {
         Some(0)
+    } else if labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE {
+        Some(2)
+    } else if labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE {
+        Some(1)
     } else {
         None
     };
@@ -379,7 +398,6 @@ fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
-#[cfg(target_os = "macos")]
 pub(crate) fn show_native_context_menu(
     app: &tauri::AppHandle,
     label: &str,
@@ -420,6 +438,7 @@ pub(crate) fn show_native_context_menu(
             return;
         }
     }
+    #[cfg(target_os = "macos")]
     {
         let state = app.state::<AppState>();
         let mut copies = state.context_menu_copy_values.lock().unwrap();
@@ -445,7 +464,6 @@ pub(crate) fn show_native_context_menu(
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
 fn context_menu_action(id: &str) -> Option<(&str, &str)> {
     let (label, action) = id.strip_prefix("carrier-context:")?.rsplit_once(':')?;
     if label.is_empty()
