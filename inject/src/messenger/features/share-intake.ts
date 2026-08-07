@@ -46,8 +46,11 @@ function attachToComposer(composer: HTMLElement, files: File[]): boolean {
       cancelable: true,
       clipboardData: transfer,
     });
+    // Only Messenger cancelling the event proves the paste was taken; the
+    // DataTransfer still carries the files this code put there, so its
+    // contents say nothing about whether a handler ran.
     const handled = !composer.dispatchEvent(paste);
-    if (handled || (paste.clipboardData?.files.length ?? 0) > 0) return true;
+    if (handled) return true;
     const drop = new DragEvent("drop", {
       bubbles: true,
       cancelable: true,
