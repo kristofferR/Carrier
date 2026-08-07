@@ -25,6 +25,7 @@ const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] a
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const nativeObjectDefineProperty = Object.defineProperty;
 const nativeObjectEntries = Object.entries;
 const nativeReflectApply = Reflect.apply;
@@ -33,9 +34,16 @@ const nativeSetTimeout = window.setTimeout;
 // Same reason: the menu's isolation depends on these being the real ones.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
+const nativeContains = Node.prototype.contains;
 const nativeCreateElement = Document.prototype.createElement;
 const nativeFocus = HTMLElement.prototype.focus;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const nativeGetEventTarget = Object.getOwnPropertyDescriptor(Event.prototype, "target")?.get;
+const nativeGetMouseClientX = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientX")?.get;
+const nativeGetMouseClientY = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientY")?.get;
+const nativePreventDefault = Event.prototype.preventDefault;
+const nativeRemove = Element.prototype.remove;
+const nativeStopPropagation = Event.prototype.stopPropagation;
 const nativeGetRectX = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "x")?.get;
 const nativeGetRectY = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "y")?.get;
 const nativeGetRectWidth = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "width")?.get;
@@ -89,6 +97,14 @@ const rectOf = (el: Element): MenuRect => {
     height: nativeReflectApply(nativeGetRectHeight!, r, []) as number,
   };
 };
+
+const eventTargetOf = (event: Event) =>
+  nativeReflectApply(nativeGetEventTarget!, event, []) as EventTarget | null;
+
+const clientPointOf = (event: MouseEvent) => ({
+  x: nativeReflectApply(nativeGetMouseClientX!, event, []) as number,
+  y: nativeReflectApply(nativeGetMouseClientY!, event, []) as number,
+});
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
 // platforms have no equivalent Carrier can reach, so the item stays hidden.
@@ -260,15 +276,15 @@ let ctxMenuReturnFocus: HTMLElement | null = null;
 // click inside the menu (which retargets to the host, the rows being in a
 // closed root) is left for the row handler, which closes the menu itself.
 const closeMenuFromClick = (event: Event) => {
-  if (ctxMenu && event.target === ctxMenu) return;
+  if (ctxMenu && eventTargetOf(event) === ctxMenu) return;
   closeMenu();
 };
 const closeMenuFromScroll = () => closeMenu();
 const closeMenu = (restoreFocus = false) => {
-  ctxMenu?.remove();
+  if (ctxMenu) nativeReflectApply(nativeRemove, ctxMenu, []);
   ctxMenu = null;
-  document.removeEventListener("click", closeMenuFromClick, true);
-  document.removeEventListener("scroll", closeMenuFromScroll, true);
+  nativeReflectApply(nativeRemoveEventListener, document, ["click", closeMenuFromClick, true]);
+  nativeReflectApply(nativeRemoveEventListener, document, ["scroll", closeMenuFromScroll, true]);
   if (restoreFocus && ctxMenuReturnFocus) {
     nativeReflectApply(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
   }
@@ -281,6 +297,9 @@ export function initContextMenu() {
     !nativeGetRectY ||
     !nativeGetRectWidth ||
     !nativeGetRectHeight ||
+    !nativeGetEventTarget ||
+    !nativeGetMouseClientX ||
+    !nativeGetMouseClientY ||
     !nativeGetKeyboardKey ||
     !nativeGetStyle
   )
@@ -290,12 +309,12 @@ export function initContextMenu() {
     runNativeAction,
     true,
   ]);
-  document.addEventListener(
+  nativeReflectApply(nativeAddEventListener, document, [
     "contextmenu",
-    async (e) => {
+    async (e: MouseEvent) => {
       // Remote page code must not be able to create Carrier's native-action menu.
       if (!e.isTrusted) return;
-      const t = e.target as Element;
+      const t = eventTargetOf(e) as Element;
       const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
       const img = t.closest?.("img[alt]") as HTMLImageElement | null;
       const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
@@ -305,8 +324,9 @@ export function initContextMenu() {
 
       // Anchor for the macOS share sheet: viewport fractions survive the
       // download delay and window resizes better than raw pixels.
-      const fx = e.clientX / Math.max(1, innerWidth);
-      const fy = e.clientY / Math.max(1, innerHeight);
+      const contextPoint = clientPointOf(e);
+      const fx = contextPoint.x / Math.max(1, innerWidth);
+      const fy = contextPoint.y / Math.max(1, innerHeight);
       const items: ContextMenuItem[] = [];
       const addItem = (item: ContextMenuItem) => {
         // Defining an own index bypasses numeric setters Messenger could add
@@ -381,7 +401,7 @@ export function initContextMenu() {
         return;
       }
 
-      e.preventDefault();
+      nativeReflectApply(nativePreventDefault, e, []);
       if (nativeShowContextMenu) {
         try {
           await showNativeContextMenu(items);
@@ -403,11 +423,12 @@ export function initContextMenu() {
       // If a menu is already open and focus is inside it, closeMenu() is about
       // to detach that item — reuse the open menu's own restore target instead
       // of saving a node that .focus() can no longer reach.
-      const priorReturnFocus = ctxMenu?.contains(previouslyFocused)
-        ? ctxMenuReturnFocus
-        : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
-          ? previouslyFocused
-          : null;
+      const priorReturnFocus =
+        ctxMenu && nativeReflectApply(nativeContains, ctxMenu, [previouslyFocused])
+          ? ctxMenuReturnFocus
+          : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
+            ? previouslyFocused
+            : null;
       closeMenu();
       ctxMenuReturnFocus =
         (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
@@ -422,8 +443,8 @@ export function initContextMenu() {
       const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []) as CSSStyleDeclaration;
       applyStyles(ctxMenuStyle, {
         position: "fixed",
-        left: `${e.clientX}px`,
-        top: `${e.clientY}px`,
+        left: `${contextPoint.x}px`,
+        top: `${contextPoint.y}px`,
         zIndex: "2147483647",
       });
       const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
@@ -494,14 +515,12 @@ export function initContextMenu() {
           "click",
           (ev: MouseEvent) => {
             if (!ev.isTrusted) return;
-            ev.stopPropagation();
+            nativeReflectApply(nativeStopPropagation, ev, []);
             const expected = laidOutRects[index];
+            const point = clientPointOf(ev);
             // No recorded rectangle means the click beat layout; refuse rather
             // than run a privileged action we cannot vouch for.
-            if (
-              !expected ||
-              !pointerActivationIsSound(expected, rectOf(el), ev.clientX, ev.clientY)
-            ) {
+            if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
               closeMenu();
               toast("Menu action cancelled");
               return;
@@ -515,8 +534,8 @@ export function initContextMenu() {
             const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
             if (key !== "Enter" && key !== " ") return;
             if (!event.isTrusted) return;
-            event.preventDefault();
-            event.stopPropagation();
+            nativeReflectApply(nativePreventDefault, event, []);
+            nativeReflectApply(nativeStopPropagation, event, []);
             // Keyboard activation needs no geometry check: focus lives inside
             // the closed root, so page script cannot move it to another row.
             activate(fn);
@@ -528,8 +547,12 @@ export function initContextMenu() {
       nativeReflectApply(nativeAppendChild, shadow, [menu]);
       nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
       const r = rectOf(menu);
-      if (r.x + r.width > innerWidth) ctxMenuStyle.left = `${innerWidth - r.width - 8}px`;
-      if (r.y + r.height > innerHeight) ctxMenuStyle.top = `${innerHeight - r.height - 8}px`;
+      if (r.x + r.width > innerWidth) {
+        setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+      }
+      if (r.y + r.height > innerHeight) {
+        setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+      }
       // Index loop, not for..of: iteration would run through a page-replaceable
       // Array.prototype[Symbol.iterator], handing out the rows again.
       for (let i = 0; i < menuItems.length; i += 1) {
@@ -554,19 +577,19 @@ export function initContextMenu() {
           if (key === "Home") next = 0;
           if (key === "End") next = menuItems.length - 1;
           if (key === "Escape") {
-            event.preventDefault();
+            nativeReflectApply(nativePreventDefault, event, []);
             closeMenu(true);
             return;
           }
           if (key === "Tab") {
             // closeMenu(true) restores focus synchronously; block the browser's
             // own Tab move so focus stays on the restoration target.
-            event.preventDefault();
+            nativeReflectApply(nativePreventDefault, event, []);
             closeMenu(true);
             return;
           }
           if (next !== null) {
-            event.preventDefault();
+            nativeReflectApply(nativePreventDefault, event, []);
             focusedIndex = next;
             const nextItem = menuItems[next];
             if (nextItem) nativeReflectApply(nativeFocus, nextItem, []);
@@ -589,5 +612,5 @@ export function initContextMenu() {
       ]);
     },
     true,
-  );
+  ]);
 }
