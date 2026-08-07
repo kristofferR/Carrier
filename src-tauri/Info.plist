@@ -17,5 +17,19 @@
     <key>NSAllowsArbitraryLoads</key>
     <true/>
   </dict>
+  <!-- The share extension hands its inbox over via carrier://share-inbox/<id>
+       (Ref #213); LaunchServices delivers the open to the running instance or
+       launches the app. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>io.github.kristofferr.carrier</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>carrier</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>

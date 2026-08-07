@@ -232,6 +232,10 @@ pub(crate) struct AppState {
     /// Text captured at the genuine right-click and written to the system
     /// clipboard when its native Copy address row is selected.
     pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
+    /// A validated share-extension handoff awaiting delivery to the page
+    /// (cold start, or a reload racing the carrier:// open). See share_intake.
+    #[cfg(target_os = "macos")]
+    pub(crate) pending_share: Mutex<Option<crate::macos::share_intake::PendingShare>>,
 }
 
 #[cfg(any(target_os = "macos", test))]

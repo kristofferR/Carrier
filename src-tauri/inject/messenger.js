@@ -5136,6 +5136,180 @@
     }
   }
 
+  // inject/src/messenger/lib/share-intake.ts
+  var MAX_SHARED_FILES = 21;
+  var MAX_SHARED_NAME_BYTES = 255;
+  var MAX_SHARED_DATA_LENGTH = 140 * 1024 * 1024;
+  var SHARE_DELIVERY_TTL_MS = 2 * 60 * 1e3;
+  var MIME_BY_EXTENSION = /* @__PURE__ */ new Map([
+    ["png", "image/png"],
+    ["jpg", "image/jpeg"],
+    ["jpeg", "image/jpeg"],
+    ["gif", "image/gif"],
+    ["webp", "image/webp"],
+    ["heic", "image/heic"],
+    ["mp4", "video/mp4"],
+    ["mov", "video/quicktime"],
+    ["webm", "video/webm"],
+    ["pdf", "application/pdf"]
+  ]);
+  var utf8Length = (value) => new TextEncoder().encode(value).length;
+  function dispatchTransferEvent(target, event, property, transfer) {
+    let payloadRead = false;
+    Object.defineProperty(event, property, {
+      configurable: true,
+      get: () => {
+        payloadRead = true;
+        return transfer;
+      }
+    });
+    const cancelled = !target.dispatchEvent(event);
+    return { acknowledged: cancelled && payloadRead, payloadRead };
+  }
+  function sanitizeSharedFiles(payload, maxTotalDataLength = MAX_SHARED_DATA_LENGTH) {
+    if (!Array.isArray(payload)) return [];
+    const files = [];
+    let totalData = 0;
+    for (const entry of payload) {
+      if (files.length >= MAX_SHARED_FILES) break;
+      if (!entry || typeof entry !== "object") continue;
+      if (!Object.hasOwn(entry, "name") || !Object.hasOwn(entry, "data")) continue;
+      const { name, data } = entry;
+      if (typeof name !== "string" || typeof data !== "string") continue;
+      if (name.length === 0 || utf8Length(name) > MAX_SHARED_NAME_BYTES) continue;
+      if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
+      totalData += data.length;
+      if (totalData > maxTotalDataLength) break;
+      files.push({ name, data });
+    }
+    return files;
+  }
+  function decodeToFile(entry) {
+    try {
+      if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
+        return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
+          type: mimeForName(entry.name)
+        });
+      }
+      const binary = atob(entry.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new File([bytes], entry.name, { type: mimeForName(entry.name) });
+    } catch {
+      return null;
+    }
+  }
+  function decodeSharedFiles(entries) {
+    const files = entries.map(decodeToFile).filter((file) => file !== null);
+    return { files, failures: entries.length - files.length };
+  }
+  function shareIsDeliverable(parkedAtMs, nowMs) {
+    const age = nowMs - parkedAtMs;
+    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
+  }
+  function mimeForName(name) {
+    const extension = name.toLowerCase().split(".").pop() ?? "";
+    return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
+  }
+
+  // inject/src/messenger/features/share-intake.ts
+  var COMPOSER_SELECTOR2 = '[role="main"] div[role="textbox"][contenteditable="true"]';
+  var COMPOSER_POLL_MS = 1e3;
+  function attachToComposer(composer2, files) {
+    try {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      composer2.focus();
+      const paste = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true
+      });
+      const pasted = dispatchTransferEvent(composer2, paste, "clipboardData", transfer);
+      if (pasted.acknowledged) return "attached";
+      if (pasted.payloadRead) return "uncertain";
+      const drop = new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true
+      });
+      const dropped = dispatchTransferEvent(composer2, drop, "dataTransfer", transfer);
+      if (dropped.acknowledged) return "attached";
+      return dropped.payloadRead ? "uncertain" : "retry";
+    } catch {
+      return "retry";
+    }
+  }
+  function initShareIntake() {
+    let pending = null;
+    const tryDeliver = () => {
+      if (!pending) return true;
+      if (!shareIsDeliverable(pending.parkedAt, Date.now())) {
+        clearTimeout(pending.timer);
+        pending = null;
+        toast("Shared file expired");
+        return true;
+      }
+      const composer2 = firstShown(COMPOSER_SELECTOR2);
+      if (!composer2) return false;
+      const { files, timer } = pending;
+      const result = attachToComposer(composer2, files);
+      if (result === "retry") return false;
+      clearTimeout(timer);
+      pending = null;
+      if (result === "attached") {
+        diag("share.attached", `${files.length}`);
+      } else {
+        diag("share.attach-failed", `${files.length}`);
+        toast("Could not attach the shared file");
+      }
+      return true;
+    };
+    const poll = () => {
+      if (tryDeliver()) return;
+      if (pending) {
+        pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+      }
+    };
+    Object.defineProperty(window, "__carrierShareMedia", {
+      value: (payload) => {
+        const entries = sanitizeSharedFiles(payload);
+        const { files, failures } = decodeSharedFiles(entries);
+        if (failures) {
+          diag("share.partial-decode", `${failures}`);
+        }
+        if (!files.length) {
+          diag("share.empty-payload", "0");
+          return;
+        }
+        const receivedAt = Date.now();
+        if (pending && !shareIsDeliverable(pending.parkedAt, receivedAt)) {
+          clearTimeout(pending.timer);
+          pending = null;
+        }
+        if (pending) {
+          if (pending.files.length + files.length > MAX_SHARED_FILES) {
+            diag("share.busy", `${pending.files.length}`);
+            toast("Attach the current shared files before sharing more");
+            return;
+          }
+          clearTimeout(pending.timer);
+          pending.files.push(...files);
+          pending.parkedAt = receivedAt;
+        } else {
+          pending = { files, parkedAt: receivedAt };
+        }
+        if (!tryDeliver()) {
+          diag("share.waiting-for-composer", `${pending.files.length}`);
+          toast("Open a conversation to attach the shared file");
+          pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+        }
+      },
+      writable: false,
+      configurable: false
+    });
+  }
+
   // inject/src/messenger/lib/zoom.ts
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
@@ -6080,6 +6254,7 @@
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("notifications", initNotificationBridge);
+    initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);

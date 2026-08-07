@@ -245,6 +245,7 @@ pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<Str
 /// The signed `{ request, <field> }` payload of a boolean native result. The
 /// flatten keeps `request` first, matching the object literal the page passes
 /// to `verifyResult` — the serialization here must match it byte for byte.
+#[cfg(any(target_os = "macos", test))]
 fn native_result_signature(
     secret: &str,
     result_event: &str,
@@ -300,6 +301,7 @@ fn context_menu_result_signature(
     )
 }
 
+#[cfg(target_os = "macos")]
 fn send_native_result(
     app: &tauri::AppHandle,
     label: &str,
@@ -776,6 +778,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             download_reservations: Mutex::new(HashMap::new()),
             context_menu_copy_values: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            pending_share: Mutex::new(None),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -1360,6 +1364,18 @@ pub fn run() {
             } = event
             {
                 reopen_main_if_needed(app, has_visible_windows);
+            }
+
+            // The share extension hands its inbox over as a carrier:// open
+            // (running instance or cold start alike). See macos::share_intake.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                for url in urls
+                    .iter()
+                    .filter(|url| macos::share_intake::is_share_handoff(url.as_str()))
+                {
+                    macos::share_intake::handle_share_open(app, url.as_str());
+                }
             }
 
             // A theme switch or blank-webview recovery destroys and rebuilds

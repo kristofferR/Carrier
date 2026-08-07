@@ -32,6 +32,7 @@ import { initQuickReply } from "./features/quick-reply";
 import { initRecentThreads } from "./features/recent-threads";
 import { initSelectorHealth } from "./features/selector-health";
 import { initSettingsButton } from "./features/settings-button";
+import { initShareIntake } from "./features/share-intake";
 import { initFunctionKeys, initShortcutRegistry, initShortcuts } from "./features/shortcuts";
 import { initSpellcheck } from "./features/spellcheck";
 import { initSyncHealth } from "./features/sync-health";
@@ -72,6 +73,7 @@ function main() {
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
   initFeature("notifications", initNotificationBridge);
+  initFeature("share-intake", initShareIntake);
   initFeature("sync-health", initSyncHealth);
   initFeature("auto-refresh", initAutoRefresh);
   initFeature("force-theme", initForceTheme);
