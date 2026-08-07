@@ -412,7 +412,11 @@ export function initContextMenu() {
       }
 
       nativeReflectApply(nativePreventDefault, e, []);
-      if (nativeShowContextMenu && nativeItemsAreValid) {
+      // Copying an image through the page clipboard must remain inside the
+      // trusted right-click activation. macOS uses Carrier's native pasteboard;
+      // other platforms keep image menus in-page until they have an equivalent.
+      const nativeImageCopyIsSafe = isMac || !imgSrc;
+      if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe) {
         try {
           await showNativeContextMenu(items);
           return;

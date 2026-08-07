@@ -869,14 +869,14 @@ pub fn run() {
                     // Acknowledge at presentation time: popup_menu blocks until
                     // the menu is dismissed, and the page's result timeout must
                     // not fire while the user is still browsing the menu.
-                    let presented = std::cell::Cell::new(false);
-                    menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
-                        presented.set(true);
-                        send_context_menu_result(&popup_handle, &label, &msg.request, true);
-                    });
-                    if !presented.get() {
-                        send_context_menu_result(&popup_handle, &label, &msg.request, false);
-                    }
+                    let shown =
+                        menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
+                            // This first success is an acknowledgement. A
+                            // second result after popup_menu returns tells the
+                            // page whether presentation ultimately succeeded.
+                            send_context_menu_result(&popup_handle, &label, &msg.request, true);
+                        });
+                    send_context_menu_result(&popup_handle, &label, &msg.request, shown);
                 });
                 if let Err(error) = dispatched {
                     log::warn!(
