@@ -393,7 +393,7 @@ fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
                 && item
                     .value
                     .as_ref()
-                    .is_none_or(|value| value.len() <= 64 * 1024)
+                    .is_none_or(|value| value.encode_utf16().count() <= 64 * 1024)
                 && actions.insert(item.action.as_str())
         })
 }
