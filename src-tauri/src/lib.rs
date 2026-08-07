@@ -178,6 +178,19 @@ fn copy_image_result_signature(secret: &str, request: &str, copied: bool) -> Opt
     Some(hex::encode(mac.finalize().into_bytes()))
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ContextAction<'a> {
+        action: &'a str,
+    }
+
+    let message = serde_json::to_string(&ContextAction { action }).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("carrier:context-action\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
 #[cfg(target_os = "macos")]
 fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, copied: bool) {
     let signature = {
@@ -993,6 +1006,14 @@ mod tests {
             copy_image_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
                 .as_deref(),
             Some("5e39e1320822a514ce4a811d2a6c6b9b72f0d63a1a8b59601d20fd8644872007")
+        );
+    }
+
+    #[test]
+    fn context_actions_are_authenticated_with_the_window_secret() {
+        assert_eq!(
+            context_action_signature("test-secret", "0123456789abcdef0123456789abcdef").as_deref(),
+            Some("8a8291c9903534471b568cec36bea453a618639499d975abca0f2e8afcb34a2d")
         );
     }
 
