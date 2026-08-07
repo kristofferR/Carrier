@@ -1,0 +1,56 @@
+/**
+ * Pure logic for share-into-Carrier delivery (Ref #214): validating the
+ * native payload and deciding when a parked share is still deliverable.
+ */
+
+export type SharedFile = { name: string; data: string };
+
+const MAX_FILES = 10;
+const MAX_NAME_LENGTH = 255;
+/** Base64 of the native side's 100 MB cap, with slack for encoding overhead. */
+const MAX_TOTAL_DATA_LENGTH = 140 * 1024 * 1024;
+/** Matches the native SHARE_INTAKE_TTL: an old share must not surprise. */
+export const SHARE_DELIVERY_TTL_MS = 2 * 60 * 1000;
+
+/** The native payload, filtered down to entries this code will touch. */
+export function sanitizeSharedFiles(payload: unknown): SharedFile[] {
+  if (!Array.isArray(payload)) return [];
+  const files: SharedFile[] = [];
+  let totalData = 0;
+  for (const entry of payload) {
+    if (files.length >= MAX_FILES) break;
+    if (!entry || typeof entry !== "object") continue;
+    const { name, data } = entry as Partial<SharedFile>;
+    if (typeof name !== "string" || typeof data !== "string") continue;
+    if (name.length === 0 || name.length > MAX_NAME_LENGTH) continue;
+    if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
+    totalData += data.length;
+    if (totalData > MAX_TOTAL_DATA_LENGTH) break;
+    files.push({ name, data });
+  }
+  return files;
+}
+
+/** Whether a parked share is still fresh enough to attach. */
+export function shareIsDeliverable(parkedAtMs: number, nowMs: number): boolean {
+  const age = nowMs - parkedAtMs;
+  return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
+}
+
+/** A rough MIME guess from the file name, for the File constructor. */
+export function mimeForName(name: string): string {
+  const extension = name.toLowerCase().split(".").pop() ?? "";
+  const known: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    heic: "image/heic",
+    mp4: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm",
+    pdf: "application/pdf",
+  };
+  return known[extension] ?? "application/octet-stream";
+}
