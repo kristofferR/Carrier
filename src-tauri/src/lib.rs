@@ -58,6 +58,8 @@ use notifications::{
     NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
 };
 use settings::AppState;
+#[cfg(any(target_os = "macos", test))]
+use settings::ContextMenuActivation;
 use settings::{
     apply_settings, clamp_zoom, clear_pending_webview_data, load_settings, load_settings_early,
     save_settings, SaveOutcome,
@@ -192,6 +194,19 @@ fn share_download_result_signature(secret: &str, request: &str, shared: bool) ->
     Some(hex::encode(mac.finalize().into_bytes()))
 }
 
+fn context_menu_result_signature(secret: &str, request: &str, shown: bool) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ContextMenuResult<'a> {
+        request: &'a str,
+        shown: bool,
+    }
+
+    let message = serde_json::to_string(&ContextMenuResult { request, shown }).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("carrier:context-menu-result\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
 pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ContextAction<'a> {
@@ -254,25 +269,68 @@ fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str
     }
 }
 
+fn send_context_menu_result(app: &tauri::AppHandle, label: &str, request: &str, shown: bool) {
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| context_menu_result_signature(secret, request, shown))
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate native context-menu result");
+        return;
+    };
+    let request = serde_json::to_string(request).expect("request serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, signature: {signature} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report native context-menu result: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn claim_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -> bool {
+    let state = app.state::<AppState>();
+    let key = (label.to_string(), action.to_string());
+    let mut activations = state.context_menu_activations.lock().unwrap();
+    let Some(activation) = activations.get_mut(&key) else {
+        return false;
+    };
+    if !context_menu_activation_is_current(*activation, Instant::now()) {
+        return false;
+    }
+    *activation = ContextMenuActivation::Claimed;
+    true
+}
+
 #[cfg(target_os = "macos")]
 fn consume_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -> bool {
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
-    activations
-        .remove(&key)
-        .is_some_and(|selected_at| context_menu_activation_is_current(selected_at, Instant::now()))
+    matches!(
+        activations.remove(&key),
+        Some(ContextMenuActivation::Claimed)
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn context_menu_activation_is_current(
-    selected_at: Option<Instant>,
+    activation: ContextMenuActivation,
     now: Instant,
 ) -> bool {
-    selected_at.is_some_and(|selected_at| {
-        now.checked_duration_since(selected_at)
-            .is_some_and(|age| age <= CONTEXT_MENU_ACTIVATION_TTL)
-    })
+    match activation {
+        ContextMenuActivation::Pending => false,
+        ContextMenuActivation::Selected(selected_at) => now
+            .checked_duration_since(selected_at)
+            .is_some_and(|age| age <= CONTEXT_MENU_ACTIVATION_TTL),
+        ContextMenuActivation::Claimed => true,
+    }
 }
 
 /// The page we wrap.
@@ -449,6 +507,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Persist geometry only — NOT visibility, so the app always shows
@@ -502,7 +561,6 @@ pub fn run() {
             signed_action_nonces: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             context_menu_activations: Mutex::new(HashMap::new()),
-            #[cfg(target_os = "macos")]
             context_menu_copy_values: Mutex::new(HashMap::new()),
         })
         .menu(menu::build_menu)
@@ -623,6 +681,12 @@ pub fn run() {
             // Show a native context menu only for an authorized Messenger window.
             let context_menu_handle = app.handle().clone();
             app.listen_any("carrier:context-menu", move |event| {
+                #[derive(serde::Deserialize)]
+                struct ContextMenuMsg {
+                    items: Vec<menu::NativeContextMenuItem>,
+                    request: String,
+                }
+
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                     log::warn!("carrier:context-menu payload did not parse");
                     return;
@@ -633,17 +697,51 @@ pub fn run() {
                     log::warn!("carrier:context-menu was not authorized by a trusted click");
                     return;
                 };
-                let Ok(items) =
-                    serde_json::from_str::<Vec<menu::NativeContextMenuItem>>(&signed.message)
-                else {
+                let Ok(msg) = serde_json::from_str::<ContextMenuMsg>(&signed.message) else {
                     log::warn!("carrier:context-menu message did not parse");
                     return;
                 };
-                menu::show_native_context_menu(&context_menu_handle, &label, items);
+                if msg.request.len() != 32
+                    || !msg.request.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    log::warn!("carrier:context-menu request token was invalid");
+                    return;
+                }
+                let shown = menu::show_native_context_menu(&context_menu_handle, &label, msg.items);
+                send_context_menu_result(&context_menu_handle, &label, &msg.request, shown);
             });
 
             #[cfg(target_os = "macos")]
             {
+                let claim_handle = app.handle().clone();
+                app.listen_any("carrier:claim-context-action", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct ClaimContextActionMsg {
+                        action: String,
+                    }
+
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                        log::warn!("carrier:claim-context-action payload did not parse");
+                        return;
+                    };
+                    let Some(label) = signed_action_window(
+                        &claim_handle,
+                        "carrier:claim-context-action",
+                        &signed,
+                    ) else {
+                        log::warn!("carrier:claim-context-action was not authorized");
+                        return;
+                    };
+                    let Ok(msg) = serde_json::from_str::<ClaimContextActionMsg>(&signed.message)
+                    else {
+                        log::warn!("carrier:claim-context-action message did not parse");
+                        return;
+                    };
+                    if !claim_context_activation(&claim_handle, &label, &msg.action) {
+                        log::warn!("carrier:claim-context-action had no fresh menu selection");
+                    }
+                });
+
                 // Share a just-downloaded media file via the macOS share sheet.
                 // Same trust model as carrier:reveal-download: the per-window
                 // credential authorizes it and the file path only ever comes from
@@ -1094,6 +1192,15 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_results_are_authenticated_with_the_window_secret() {
+        assert_eq!(
+            context_menu_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
+                .as_deref(),
+            Some("e46176617a8edbc90c518ab731967ed85965c9df255eab4a0f09629a48e90f59")
+        );
+    }
+
+    #[test]
     fn context_actions_are_authenticated_with_the_window_secret() {
         assert_eq!(
             context_action_signature("test-secret", "0123456789abcdef0123456789abcdef").as_deref(),
@@ -1196,13 +1303,25 @@ mod tests {
     }
 
     #[test]
-    fn selected_context_actions_expire() {
+    fn stale_context_actions_are_pruned_without_invalidating_selected_actions() {
         let now = Instant::now();
-        assert!(context_menu_activation_is_current(Some(now), now));
-        assert!(!context_menu_activation_is_current(None, now));
+        assert!(context_menu_activation_is_current(
+            ContextMenuActivation::Selected(now),
+            now
+        ));
         assert!(!context_menu_activation_is_current(
-            Some(now - CONTEXT_MENU_ACTIVATION_TTL - Duration::from_secs(1)),
+            ContextMenuActivation::Pending,
+            now
+        ));
+        assert!(!context_menu_activation_is_current(
+            ContextMenuActivation::Selected(
+                now - CONTEXT_MENU_ACTIVATION_TTL - Duration::from_secs(1)
+            ),
             now,
+        ));
+        assert!(context_menu_activation_is_current(
+            ContextMenuActivation::Claimed,
+            now + CONTEXT_MENU_ACTIVATION_TTL + Duration::from_secs(1)
         ));
     }
 }

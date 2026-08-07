@@ -208,13 +208,13 @@ pub(crate) fn build_app_window(
                     .lock()
                     .unwrap()
                     .remove(&token_cleanup_label);
+                state
+                    .context_menu_copy_values
+                    .lock()
+                    .unwrap()
+                    .retain(|(window, _), _| window != &token_cleanup_label);
                 #[cfg(target_os = "macos")]
                 {
-                    state
-                        .context_menu_copy_values
-                        .lock()
-                        .unwrap()
-                        .retain(|(window, _), _| window != &token_cleanup_label);
                     state
                         .context_menu_activations
                         .lock()
@@ -771,6 +771,12 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   var carrierRevealDownload = function (url) {{
     return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
+  var carrierClaimContextAction = function (action) {{
+    if (!carrierAuthorizedEmit) {{
+      return Promise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
+  }};
   var carrierShareDownload = function (url, x, y, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return Promise.reject(new Error('native bridge unavailable'));
@@ -856,7 +862,46 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     }});
   }};
   var carrierShowContextMenu = function (items) {{
-    return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:context-menu', items);
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return Promise.reject(new Error('native bridge unavailable'));
+    }}
+    var request = carrierNativeRequest();
+    return new Promise(function (resolve, reject) {{
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        if (detail.shown !== true && detail.shown !== false) return;
+        var shown = detail.shown;
+        var authenticated = await carrierVerifyResult(
+          'carrier:context-menu-result',
+          {{ request: request, shown: shown }},
+          detail.signature
+        );
+        if (!authenticated) return;
+        cleanup();
+        if (shown) resolve();
+        else reject(new Error('native context menu was not shown'));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error('native context menu timed out'));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [
+          'carrier:context-menu-result', finish
+        ]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [
+        'carrier:context-menu-result', finish
+      ]);
+      carrierAuthorizedEmit('carrier:context-menu', {{
+        items: items, request: request
+      }}).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
   }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
@@ -1101,11 +1146,22 @@ mod tests {
     fn share_download_bridge_waits_for_the_native_result() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
+        assert!(script.contains("carrier:claim-context-action"));
         assert!(script.contains("carrier:share-download-result"));
         assert!(script.contains("action: action, request: request"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
         assert!(script.contains("native share picker failed"));
+    }
+
+    #[test]
+    fn context_menu_bridge_waits_for_authenticated_presentation() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("carrier:context-menu-result"));
+        assert!(script.contains("items: items, request: request"));
+        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("native context menu was not shown"));
     }
 
     #[cfg(all(feature = "mcp", debug_assertions))]

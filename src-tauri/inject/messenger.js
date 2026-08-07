@@ -884,12 +884,14 @@
         item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
       );
     }
-    nativeShowContextMenu?.(nativeItems)?.catch(() => {
+    if (!nativeShowContextMenu) return Promise.reject(new Error("native context menu unavailable"));
+    return nativeShowContextMenu(nativeItems).catch((error) => {
       clearNativeActionHandlers();
-      toast("Menu failed");
+      throw error;
     });
   }
   async function shareSrc(src, fallbackName, fx, fy, action) {
+    await carrierClaimContextAction(action);
     const href = await downloadSrc(src, fallbackName);
     await carrierShareDownload(href, fx, fy, action);
   }
@@ -923,6 +925,7 @@
     }
   }
   async function copyImageSrc(src, action) {
+    if (action) await carrierClaimContextAction(action);
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
     const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
@@ -986,7 +989,7 @@
     ]);
     document.addEventListener(
       "contextmenu",
-      (e) => {
+      async (e) => {
         if (!e.isTrusted) return;
         const t = e.target;
         const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
@@ -1053,8 +1056,11 @@
         }
         e.preventDefault();
         if (nativeShowContextMenu) {
-          showNativeContextMenu(items);
-          return;
+          try {
+            await showNativeContextMenu(items);
+            return;
+          } catch {
+          }
         }
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;

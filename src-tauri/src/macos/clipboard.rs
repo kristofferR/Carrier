@@ -1,7 +1,6 @@
 //! Native macOS pasteboard writes for media context-menu actions.
 
 use objc2::runtime::AnyObject;
-use objc2_foundation::NSString;
 
 fn with_pasteboard<T: Send + 'static>(
     app: &tauri::AppHandle,
@@ -17,21 +16,6 @@ fn with_pasteboard<T: Send + 'static>(
     })
     .ok()?;
     received.recv().ok()
-}
-
-pub(crate) fn copy_text(app: &tauri::AppHandle, text: String) {
-    let _ = with_pasteboard(app, move || unsafe {
-        use objc2::{class, msg_send};
-
-        let pasteboard: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
-        let _: isize = msg_send![pasteboard, clearContents];
-        let value = NSString::from_str(&text);
-        let kind = NSString::from_str("public.utf8-plain-text");
-        let written: bool = msg_send![pasteboard, setString: &*value, forType: &*kind];
-        if !written {
-            log::warn!("failed to write context-menu address to the macOS pasteboard");
-        }
-    });
 }
 
 pub(crate) fn copy_image(app: &tauri::AppHandle, bytes: Vec<u8>) -> bool {
