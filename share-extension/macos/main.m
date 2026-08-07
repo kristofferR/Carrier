@@ -13,13 +13,16 @@
 static NSString *const kCarrierAppGroup = @"S5Q742QZEL.io.github.kristofferr.carrier";
 static NSString *const kCarrierShareScheme = @"carrier";
 
-@interface CarrierShareViewController : NSViewController
+@interface CarrierShareViewController : NSViewController <NSExtensionRequestHandling>
+@property(atomic) BOOL started;
+@property(nonatomic, strong) NSExtensionContext *shareContext;
 @end
 
 @implementation CarrierShareViewController
 
 - (void)loadView {
-  // Never shown: the request is handled and completed from viewDidAppear.
+  // Never meaningfully shown; the request is handled from
+  // beginRequestWithExtensionContext: (the host may never present this view).
   self.view = [[NSView alloc] initWithFrame:NSZeroRect];
 }
 
@@ -63,10 +66,36 @@ static NSString *const kCarrierShareScheme = @"carrier";
   return [NSString stringWithFormat:@"%lu-%@", (unsigned long)index, base];
 }
 
+// The system calls this on the principal class when the request starts,
+// independent of whether the (empty) view is ever presented — presentation
+// never happened in practice, so this is the primary entry point.
+- (void)beginRequestWithExtensionContext:(NSExtensionContext *)context {
+  NSLog(@"Carrier Share: beginRequest");
+  self.shareContext = context;
+  [self processRequest];
+}
+
+// Backup entry in case a macOS release presents the view without calling
+// beginRequest on view-controller principals.
 - (void)viewDidAppear {
   [super viewDidAppear];
-  NSExtensionContext *context = self.extensionContext;
+  NSLog(@"Carrier Share: viewDidAppear");
+  if (!self.shareContext) {
+    self.shareContext = self.extensionContext;
+  }
+  [self processRequest];
+}
+
+- (void)processRequest {
+  @synchronized(self) {
+    if (self.started) {
+      return;
+    }
+    self.started = YES;
+  }
+  NSExtensionContext *context = self.shareContext;
   if (!context) {
+    NSLog(@"Carrier Share: no extension context");
     return;
   }
 
@@ -139,6 +168,7 @@ static NSString *const kCarrierShareScheme = @"carrier";
   }
 
   dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+    NSLog(@"Carrier Share: copied %lu attachment(s)", (unsigned long)copied);
     if (copied == 0) {
       [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
                                                           code:2
@@ -147,7 +177,8 @@ static NSString *const kCarrierShareScheme = @"carrier";
     }
     NSString *handoff =
         [NSString stringWithFormat:@"%@://share-inbox/%@", kCarrierShareScheme, inboxId];
-    [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:handoff]];
+    BOOL opened = [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:handoff]];
+    NSLog(@"Carrier Share: handoff open %@", opened ? @"succeeded" : @"FAILED");
     [context completeRequestReturningItems:@[] completionHandler:nil];
   });
 }
