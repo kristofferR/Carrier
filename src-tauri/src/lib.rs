@@ -269,6 +269,37 @@ fn native_result_signature(
     )
 }
 
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ContextMenuResultPhase {
+    Presented,
+    Complete,
+}
+
+fn context_menu_result_signature(
+    secret: &str,
+    request: &str,
+    shown: bool,
+    phase: ContextMenuResultPhase,
+) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ContextMenuResult<'a> {
+        request: &'a str,
+        shown: bool,
+        phase: ContextMenuResultPhase,
+    }
+
+    result_signature(
+        secret,
+        "carrier:context-menu-result",
+        &ContextMenuResult {
+            request,
+            shown,
+            phase,
+        },
+    )
+}
+
 fn send_native_result(
     app: &tauri::AppHandle,
     label: &str,
@@ -324,8 +355,39 @@ fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str
     );
 }
 
-fn send_context_menu_result(app: &tauri::AppHandle, label: &str, request: &str, shown: bool) {
-    send_native_result(app, label, "carrier:context-menu", "shown", request, shown);
+fn send_context_menu_result(
+    app: &tauri::AppHandle,
+    label: &str,
+    request: &str,
+    shown: bool,
+    phase: ContextMenuResultPhase,
+) {
+    if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        log::warn!("carrier:context-menu result had an invalid request token");
+        return;
+    }
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| context_menu_result_signature(secret, request, shown, phase))
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate carrier:context-menu-result");
+        return;
+    };
+    let request = serde_json::to_string(request).expect("request serializes");
+    let phase = serde_json::to_string(&phase).expect("phase serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, phase: {phase}, signature: {signature} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report carrier:context-menu-result: {error}");
+        }
+    }
 }
 
 /// Move a fresh `Selected` activation to `Claimed`. Pure over the map so the
@@ -869,14 +931,26 @@ pub fn run() {
                     // Acknowledge at presentation time: popup_menu blocks until
                     // the menu is dismissed, and the page's result timeout must
                     // not fire while the user is still browsing the menu.
-                    let presented = std::cell::Cell::new(false);
-                    menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
-                        presented.set(true);
-                        send_context_menu_result(&popup_handle, &label, &msg.request, true);
-                    });
-                    if !presented.get() {
-                        send_context_menu_result(&popup_handle, &label, &msg.request, false);
-                    }
+                    let shown =
+                        menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
+                            // This first success is an acknowledgement. A
+                            // second result after popup_menu returns tells the
+                            // page whether presentation ultimately succeeded.
+                            send_context_menu_result(
+                                &popup_handle,
+                                &label,
+                                &msg.request,
+                                true,
+                                ContextMenuResultPhase::Presented,
+                            );
+                        });
+                    send_context_menu_result(
+                        &popup_handle,
+                        &label,
+                        &msg.request,
+                        shown,
+                        ContextMenuResultPhase::Complete,
+                    );
                 });
                 if let Err(error) = dispatched {
                     log::warn!(
@@ -887,6 +961,7 @@ pub fn run() {
                         &error_label,
                         &error_request,
                         false,
+                        ContextMenuResultPhase::Complete,
                     );
                 }
             });
@@ -1425,16 +1500,26 @@ mod tests {
 
     #[test]
     fn context_menu_results_are_authenticated_with_the_window_secret() {
+        let presented = context_menu_result_signature(
+            "test-secret",
+            "0123456789abcdef0123456789abcdef",
+            true,
+            ContextMenuResultPhase::Presented,
+        );
+        let complete = context_menu_result_signature(
+            "test-secret",
+            "0123456789abcdef0123456789abcdef",
+            true,
+            ContextMenuResultPhase::Complete,
+        );
+
         assert_eq!(
-            native_result_signature(
-                "test-secret",
-                "carrier:context-menu-result",
-                "shown",
-                "0123456789abcdef0123456789abcdef",
-                true
-            )
-            .as_deref(),
-            Some("e46176617a8edbc90c518ab731967ed85965c9df255eab4a0f09629a48e90f59")
+            presented.as_deref(),
+            Some("118b9fcd3ff51202672942c2e667275c3ed6f07a63e1c02efb23c2fac82f4f7f")
+        );
+        assert_eq!(
+            complete.as_deref(),
+            Some("41ecbdff8974add7ab0bd2ff1d7a97815a2f3eb709a706d41955bfd6f63abee8")
         );
     }
 

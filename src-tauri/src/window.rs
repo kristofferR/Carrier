@@ -811,23 +811,42 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   // and emit the request with a fresh correlation token, then settle only on a
   // '<event>-result' CustomEvent that carries that token, a boolean under
   // `field`, and a signature that verifies against this window's secret.
-  var carrierNativeCall = function (requestEvent, field, failedMessage, timedOutMessage, payload) {{
+  // Blocking native UI can acknowledge presentation first, clearing the
+  // timeout, then send its final result after the blocking call returns.
+  var carrierNativeCall = function (
+    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal
+  ) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     var resultEvent = requestEvent + '-result';
     var request = carrierNativeRequest();
     return new NativePromise(function (resolve, reject) {{
+      var acknowledged = false;
       var finish = async function (event) {{
         var detail = event && event.detail;
         if (!detail || detail.request !== request) return;
         var value = detail[field];
         if (value !== true && value !== false) return;
-        // Field order matters: the native side signs '{{"request":…,"<field>":…}}'.
+        var phase;
+        if (acknowledgesBeforeFinal) {{
+          phase = detail.phase;
+          if (phase !== 'presented' && phase !== 'complete') return;
+          if (phase === 'presented' && value !== true) return;
+        }}
+        // Field order matters. Phased calls append `phase` after the result field.
         var result = {{ request: request }};
         result[field] = value;
+        if (acknowledgesBeforeFinal) result.phase = phase;
         var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
         if (!authenticated) return;
+        if (acknowledgesBeforeFinal && phase === 'presented') {{
+          if (!acknowledged) {{
+            acknowledged = true;
+            nativeClearTimeout(timeout);
+          }}
+          return;
+        }}
         cleanup();
         if (value) resolve();
         else reject(new Error(failedMessage));
@@ -885,7 +904,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return carrierNativeCall(
       'carrier:context-menu', 'shown',
       'native context menu was not shown', 'native context menu timed out',
-      {{ items: items }}
+      {{ items: items }}, true
     );
   }};
 
@@ -1154,7 +1173,7 @@ mod tests {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("'carrier:context-menu', 'shown'"));
-        assert!(script.contains("{ items: items }"));
+        assert!(script.contains("{ items: items }, true"));
         assert!(script.contains("native context menu was not shown"));
     }
 

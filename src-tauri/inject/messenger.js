@@ -1101,7 +1101,8 @@
           }
         }
         nativeReflectApply3(nativePreventDefault, e, []);
-        if (nativeShowContextMenu && nativeItemsAreValid) {
+        const nativeImageCopyIsSafe = isMac2 || !imgSrc;
+        if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe) {
           try {
             await showNativeContextMenu(items);
             return;
