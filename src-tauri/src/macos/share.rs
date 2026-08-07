@@ -17,6 +17,11 @@ static SHARE_PICKER_KEY: u8 = 0;
 
 /// Show the share sheet for `path`, anchored at the given viewport-fraction
 /// position (0..1 from the top-left) inside `label`'s webview.
+///
+/// `report(true)` means the picker was *presented* — AppKit gives no
+/// completion callback without a delegate, so whether the user then chose a
+/// service or dismissed the sheet is unknown here. Callers treat the value as
+/// "shown", nothing stronger.
 pub(crate) fn show_share_picker(
     report: impl FnOnce(bool) + Send + 'static,
     app: &tauri::AppHandle,

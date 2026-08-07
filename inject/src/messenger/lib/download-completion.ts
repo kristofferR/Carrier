@@ -3,6 +3,15 @@ export const DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
 const NativePromise = Promise;
 const nativePromiseThen = Promise.prototype.then;
 const nativeReflectApply = Reflect.apply;
+// The listener and timer paths guard the same completion flow the Promise
+// intrinsics above do: a replaced addEventListener would swallow every
+// completion, a replaced removeEventListener would keep listeners observing
+// after cleanup. `globalThis` rather than `window` so Bun tests load this
+// module too.
+const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
 
 type DownloadFinishedDetail = {
   id: string;
@@ -50,8 +59,8 @@ export function waitForNativeDownload(
   return new NativePromise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
     const cleanup = () => {
-      clearTimeout(timer);
-      target.removeEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+      nativeReflectApply(nativeClearTimeout, globalThis, [timer]);
+      nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
     };
     const onFinished: EventListener = (event) => {
       const detail = detailFor(event);
@@ -77,10 +86,13 @@ export function waitForNativeDownload(
       ]);
     };
 
-    target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
-    timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("native download timed out"));
-    }, timeoutMs);
+    nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
+    timer = nativeReflectApply(nativeSetTimeout, globalThis, [
+      () => {
+        cleanup();
+        reject(new Error("native download timed out"));
+      },
+      timeoutMs,
+    ]) as ReturnType<typeof setTimeout>;
   });
 }

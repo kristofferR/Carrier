@@ -331,17 +331,27 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
     }
 }
 
+/// The two rows that register a macOS activation when selected. Named so the
+/// activation check below cannot drift from the label arrays: a video menu's
+/// Share row must stay the same string as an image menu's.
+const COPY_IMAGE_CONTEXT_MENU_LABEL: &str = "Copy image";
+const SHARE_CONTEXT_MENU_LABEL: &str = "Share…";
+
 const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
-    "Copy image",
+    COPY_IMAGE_CONTEXT_MENU_LABEL,
     "Download image",
-    "Share…",
+    SHARE_CONTEXT_MENU_LABEL,
     "Copy image address",
     "Open image in browser",
 ];
-const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &["Download video", "Share…", "Copy video address"];
+const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Download video",
+    SHARE_CONTEXT_MENU_LABEL,
+    "Copy video address",
+];
 const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in browser"];
 const IMAGE_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &[
-    "Copy image",
+    COPY_IMAGE_CONTEXT_MENU_LABEL,
     "Download image",
     "Copy image address",
     "Open image in browser",
@@ -470,8 +480,8 @@ pub(crate) fn show_native_context_menu(
         for item in &items {
             let key = (label.to_string(), item.action.clone());
             if item.value.is_none()
-                && (item.label == IMAGE_CONTEXT_MENU_LABELS[0]
-                    || item.label == IMAGE_CONTEXT_MENU_LABELS[2])
+                && (item.label == COPY_IMAGE_CONTEXT_MENU_LABEL
+                    || item.label == SHARE_CONTEXT_MENU_LABEL)
             {
                 activations.insert(key, ContextMenuActivation::Pending);
             }
@@ -835,6 +845,23 @@ mod tests {
         ] {
             assert_eq!(injected_context_menu_labels(name), expected, "{name}");
         }
+    }
+
+    #[test]
+    fn no_share_allowlists_track_the_primary_shapes() {
+        let image: Vec<&str> = IMAGE_CONTEXT_MENU_LABELS
+            .iter()
+            .copied()
+            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
+            .collect();
+        assert_eq!(image, IMAGE_CONTEXT_MENU_LABELS_NO_SHARE);
+
+        let video: Vec<&str> = VIDEO_CONTEXT_MENU_LABELS
+            .iter()
+            .copied()
+            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
+            .collect();
+        assert_eq!(video, VIDEO_CONTEXT_MENU_LABELS_NO_SHARE);
     }
 
     #[test]

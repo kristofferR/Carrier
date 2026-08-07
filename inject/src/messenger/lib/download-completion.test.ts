@@ -59,4 +59,20 @@ describe("waitForNativeDownload", () => {
 
     await expect(pending).rejects.toThrow("native download timed out");
   });
+
+  test("ignores a completion whose verification rejects", async () => {
+    const target = new EventTarget();
+    const pending = waitForNativeDownload(
+      target,
+      "blob:carrier/expected",
+      async () => {
+        throw new Error("bridge failure");
+      },
+      20,
+    );
+
+    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+
+    await expect(pending).rejects.toThrow("native download timed out");
+  });
 });

@@ -7,7 +7,10 @@ import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
-const MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
+// Native copying base64-encodes the blob before it crosses the IPC bridge, so
+// the transferred payload is ~4/3 of this and the blob, decoded buffer, data
+// URL, and IPC copy coexist at peak. Keep the cap conservative.
+const MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
 const MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
 
 // Keep these names and arrays in sync with src-tauri/src/menu.rs. A Rust test
@@ -395,23 +398,21 @@ export function initContextMenu() {
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
-      let hasOversizedNativeValue = false;
+      // The native side rejects an oversized copied address as untrusted
+      // input, which would reject the whole menu shape. The page-rendered
+      // menu below copies through its own closure and needs no native value,
+      // so route there instead — every row keeps working.
+      let nativeItemsAreValid = true;
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
         if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
-          hasOversizedNativeValue = true;
+          nativeItemsAreValid = false;
           break;
         }
       }
-      if (hasOversizedNativeValue) {
-        // A native menu rejects an oversized copied address as untrusted input.
-        // Leave the original menu intact so its remaining actions still work.
-        clearNativeActionHandlers();
-        return;
-      }
 
       nativeReflectApply(nativePreventDefault, e, []);
-      if (nativeShowContextMenu) {
+      if (nativeShowContextMenu && nativeItemsAreValid) {
         try {
           await showNativeContextMenu(items);
           return;
@@ -480,8 +481,10 @@ export function initContextMenu() {
       // no page-replaceable method is ever handed a row.
       const laidOutRects: MenuRect[] = [];
       let focusedIndex = 0;
-      const activate = (fn: () => unknown) => {
-        closeMenu();
+      // Keyboard activation restores focus to where the user was (like Escape
+      // does); a pointer click already established a new focus context.
+      const activate = (fn: () => unknown, restoreFocus = false) => {
+        closeMenu(restoreFocus);
         fn();
       };
       for (let index = 0; index < items.length; index += 1) {
@@ -520,8 +523,12 @@ export function initContextMenu() {
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "focus",
-          () =>
-            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))"),
+          () => {
+            // WebKit focuses a tabIndex=-1 row on click; keep arrow navigation
+            // anchored to the row that actually holds focus.
+            focusedIndex = rowIndex;
+            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+          },
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "blur",
@@ -554,7 +561,7 @@ export function initContextMenu() {
             nativeReflectApply(nativeStopPropagation, event, []);
             // Keyboard activation needs no geometry check: focus lives inside
             // the closed root, so page script cannot move it to another row.
-            activate(fn);
+            activate(fn, true);
           },
         ]);
         appendOwn(menuItems, el);

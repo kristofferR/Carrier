@@ -807,8 +807,53 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return request;
   }};
 
+  // One request/response lifecycle for every result-bearing native call: sign
+  // and emit the request with a fresh correlation token, then settle only on a
+  // '<event>-result' CustomEvent that carries that token, a boolean under
+  // `field`, and a signature that verifies against this window's secret.
+  var carrierNativeCall = function (requestEvent, field, failedMessage, timedOutMessage, payload) {{
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    var resultEvent = requestEvent + '-result';
+    var request = carrierNativeRequest();
+    return new NativePromise(function (resolve, reject) {{
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        var value = detail[field];
+        if (value !== true && value !== false) return;
+        // Field order matters: the native side signs '{{"request":…,"<field>":…}}'.
+        var result = {{ request: request }};
+        result[field] = value;
+        var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
+        if (!authenticated) return;
+        cleanup();
+        if (value) resolve();
+        else reject(new Error(failedMessage));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error(timedOutMessage));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [resultEvent, finish]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
+      payload.request = request;
+      carrierAuthorizedEmit(requestEvent, payload).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
+  }};
+
   var carrierRevealDownload = function (url) {{
-    return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
   var carrierClaimContextAction = function (action) {{
     if (!carrierAuthorizedEmit) {{
@@ -823,130 +868,25 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
   }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.shared !== true && detail.shared !== false) return;
-        var shared = detail.shared;
-        var authenticated = await carrierVerifyResult(
-          'carrier:share-download-result',
-          {{ request: request, shared: shared }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (shared) resolve();
-        else reject(new Error('native share picker failed'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native share picker timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:share-download-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:share-download-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:share-download', {{
-        download_id: downloadId, x: x, y: y, action: action, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:share-download', 'shown',
+      'native share picker failed', 'native share picker timed out',
+      {{ download_id: downloadId, x: x, y: y, action: action }}
+    );
   }};
   var carrierCopyImage = function (dataUrl, action) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.copied !== true && detail.copied !== false) return;
-        var copied = detail.copied;
-        var authenticated = await carrierVerifyResult(
-          'carrier:copy-image-result',
-          {{ request: request, copied: copied }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (copied) resolve();
-        else reject(new Error('native clipboard write failed'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native clipboard write timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:copy-image-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:copy-image-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:copy-image', {{
-        data_url: dataUrl, action: action, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:copy-image', 'copied',
+      'native clipboard write failed', 'native clipboard write timed out',
+      {{ data_url: dataUrl, action: action }}
+    );
   }};
   var carrierShowContextMenu = function (items) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.shown !== true && detail.shown !== false) return;
-        var shown = detail.shown;
-        var authenticated = await carrierVerifyResult(
-          'carrier:context-menu-result',
-          {{ request: request, shown: shown }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (shown) resolve();
-        else reject(new Error('native context menu was not shown'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native context menu timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:context-menu-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:context-menu-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:context-menu', {{
-        items: items, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:context-menu', 'shown',
+      'native context menu was not shown', 'native context menu timed out',
+      {{ items: items }}
+    );
   }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
@@ -1174,41 +1114,47 @@ mod tests {
     }
 
     #[test]
-    fn copy_image_bridge_waits_for_the_native_result() {
+    fn native_call_factory_waits_for_the_authenticated_result() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script
             .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];"));
         assert!(!script.contains("bytes[index].toString(16).padStart(2, '0')"));
-        assert!(script.contains("carrier:copy-image-result"));
-        assert!(script.contains("data_url: dataUrl, action: action, request: request"));
+        // Every result-bearing bridge goes through the one factory: correlation
+        // token, '<event>-result' listener, signature verification, timeout.
+        assert!(script.contains("var resultEvent = requestEvent + '-result';"));
+        assert!(script.contains("payload.request = request;"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
+    }
+
+    #[test]
+    fn copy_image_bridge_goes_through_the_native_call_factory() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("'carrier:copy-image', 'copied'"));
+        assert!(script.contains("data_url: dataUrl, action: action"));
         assert!(script.contains("native clipboard write failed"));
     }
 
     #[test]
-    fn share_download_bridge_waits_for_the_native_result() {
+    fn share_download_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("carrier:claim-context-action"));
         assert!(script.contains("carrier:prepare-download"));
-        assert!(script.contains("download_id: downloadId"));
-        assert!(script.contains("carrier:share-download-result"));
-        assert!(script
-            .contains("download_id: downloadId, x: x, y: y, action: action, request: request"));
-        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
-        assert!(script.contains("detail.signature"));
+        // The share result reports presentation, not a completed share.
+        assert!(script.contains("'carrier:share-download', 'shown'"));
+        assert!(script.contains("download_id: downloadId, x: x, y: y, action: action"));
         assert!(script.contains("native share picker failed"));
     }
 
     #[test]
-    fn context_menu_bridge_waits_for_authenticated_presentation() {
+    fn context_menu_bridge_goes_through_the_native_call_factory() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
-        assert!(script.contains("carrier:context-menu-result"));
-        assert!(script.contains("items: items, request: request"));
-        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("'carrier:context-menu', 'shown'"));
+        assert!(script.contains("{ items: items }"));
         assert!(script.contains("native context menu was not shown"));
     }
 

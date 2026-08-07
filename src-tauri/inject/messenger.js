@@ -718,6 +718,10 @@
   var NativePromise = Promise;
   var nativePromiseThen = Promise.prototype.then;
   var nativeReflectApply = Reflect.apply;
+  var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeSetTimeout = globalThis.setTimeout;
+  var nativeClearTimeout = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -735,8 +739,8 @@
     return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        clearTimeout(timer);
-        target.removeEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+        nativeReflectApply(nativeClearTimeout, globalThis, [timer]);
+        nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
         const detail = detailFor(event);
@@ -762,11 +766,14 @@
           }
         ]);
       };
-      target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
-      timer = setTimeout(() => {
-        cleanup();
-        reject(new Error("native download timed out"));
-      }, timeoutMs);
+      nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
+      timer = nativeReflectApply(nativeSetTimeout, globalThis, [
+        () => {
+          cleanup();
+          reject(new Error("native download timed out"));
+        },
+        timeoutMs
+      ]);
     });
   }
 
@@ -796,7 +803,7 @@
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
-  var MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
+  var MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
   var MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
   var IMAGE_CONTEXT_MENU_LABELS = [
     "Copy image",
@@ -807,13 +814,13 @@
   ];
   var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
   var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
-  var nativeAddEventListener = EventTarget.prototype.addEventListener;
-  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeAddEventListener2 = EventTarget.prototype.addEventListener;
+  var nativeRemoveEventListener2 = EventTarget.prototype.removeEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout = window.setTimeout;
+  var nativeSetTimeout2 = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -986,7 +993,7 @@
         return;
       }
       const reader = new NativeFileReader();
-      nativeReflectApply3(nativeAddEventListener, reader, [
+      nativeReflectApply3(nativeAddEventListener2, reader, [
         "load",
         () => {
           const result = nativeReflectApply3(nativeGetFileReaderResult, reader, []);
@@ -995,7 +1002,7 @@
         },
         { once: true }
       ]);
-      nativeReflectApply3(nativeAddEventListener, reader, [
+      nativeReflectApply3(nativeAddEventListener2, reader, [
         "error",
         () => reject(new Error("image conversion failed")),
         { once: true }
@@ -1014,8 +1021,8 @@
   var closeMenu = (restoreFocus = false) => {
     if (ctxMenu) nativeReflectApply3(nativeRemove, ctxMenu, []);
     ctxMenu = null;
-    nativeReflectApply3(nativeRemoveEventListener, document, ["click", closeMenuFromClick, true]);
-    nativeReflectApply3(nativeRemoveEventListener, document, ["scroll", closeMenuFromScroll, true]);
+    nativeReflectApply3(nativeRemoveEventListener2, document, ["click", closeMenuFromClick, true]);
+    nativeReflectApply3(nativeRemoveEventListener2, document, ["scroll", closeMenuFromScroll, true]);
     if (restoreFocus && ctxMenuReturnFocus) {
       nativeReflectApply3(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
     }
@@ -1024,12 +1031,12 @@
   function initContextMenu() {
     if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle || !nativeSetTextContent || !nativeSetTabIndex)
       return;
-    nativeReflectApply3(nativeAddEventListener, window, [
+    nativeReflectApply3(nativeAddEventListener2, window, [
       "carrier:context-action",
       runNativeAction,
       true
     ]);
-    nativeReflectApply3(nativeAddEventListener, document, [
+    nativeReflectApply3(nativeAddEventListener2, document, [
       "contextmenu",
       async (e) => {
         if (!e.isTrusted) return;
@@ -1085,20 +1092,16 @@
           addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
         }
         if (!items.length) return;
-        let hasOversizedNativeValue = false;
+        let nativeItemsAreValid = true;
         for (let index = 0; index < items.length; index += 1) {
           const item = items[index];
           if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
-            hasOversizedNativeValue = true;
+            nativeItemsAreValid = false;
             break;
           }
         }
-        if (hasOversizedNativeValue) {
-          clearNativeActionHandlers();
-          return;
-        }
         nativeReflectApply3(nativePreventDefault, e, []);
-        if (nativeShowContextMenu) {
+        if (nativeShowContextMenu && nativeItemsAreValid) {
           try {
             await showNativeContextMenu(items);
             return;
@@ -1138,8 +1141,8 @@
         const menuItems = [];
         const laidOutRects = [];
         let focusedIndex = 0;
-        const activate = (fn) => {
-          closeMenu();
+        const activate = (fn, restoreFocus = false) => {
+          closeMenu(restoreFocus);
           fn();
         };
         for (let index = 0; index < items.length; index += 1) {
@@ -1162,23 +1165,26 @@
             borderRadius: "6px",
             outline: "none"
           });
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "mouseenter",
             () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
           ]);
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "mouseleave",
             () => setStyleProperty(elStyle, "background", "")
           ]);
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "focus",
-            () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
+            () => {
+              focusedIndex = rowIndex;
+              setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+            }
           ]);
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "blur",
             () => setStyleProperty(elStyle, "background", "")
           ]);
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "click",
             (ev) => {
               if (!ev.isTrusted) return;
@@ -1193,7 +1199,7 @@
               activate(fn);
             }
           ]);
-          nativeReflectApply3(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener2, el, [
             "keydown",
             (event) => {
               const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
@@ -1201,7 +1207,7 @@
               if (!event.isTrusted) return;
               nativeReflectApply3(nativePreventDefault, event, []);
               nativeReflectApply3(nativeStopPropagation, event, []);
-              activate(fn);
+              activate(fn, true);
             }
           ]);
           appendOwn(menuItems, el);
@@ -1220,7 +1226,7 @@
           const row = menuItems[i];
           appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
         }
-        nativeReflectApply3(nativeAddEventListener, ctxMenu, [
+        nativeReflectApply3(nativeAddEventListener2, ctxMenu, [
           "keydown",
           (event) => {
             if (!event.isTrusted) return;
@@ -1252,10 +1258,10 @@
         focusedIndex = 0;
         const firstItem = menuItems[0];
         if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout, window, [
+        nativeReflectApply3(nativeSetTimeout2, window, [
           () => {
-            nativeReflectApply3(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
-            nativeReflectApply3(nativeAddEventListener, document, [
+            nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
+            nativeReflectApply3(nativeAddEventListener2, document, [
               "scroll",
               closeMenuFromScroll,
               true

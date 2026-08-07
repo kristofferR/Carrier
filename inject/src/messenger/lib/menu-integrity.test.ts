@@ -20,6 +20,7 @@ test("cssPropertyName ignores a replaced regex hook", () => {
     expect(cssPropertyName("borderRadius")).toBe("border-radius");
   } finally {
     if (replace) Object.defineProperty(RegExp.prototype, Symbol.replace, replace);
+    else delete (RegExp.prototype as unknown as Record<symbol, unknown>)[Symbol.replace];
   }
 });
 

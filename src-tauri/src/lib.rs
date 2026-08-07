@@ -128,17 +128,22 @@ fn signed_action_message_limit(event: &str) -> usize {
     }
 }
 
-fn large_signed_action_is_available(event: &str, message_len: usize) -> bool {
+// Called only for actions whose signature already verified: an unsigned flood
+// must not be able to touch the cooldown state and starve genuine copy-image
+// actions. Keyed per window so one window's burst never blocks another.
+fn claim_large_signed_action(event: &str, message_len: usize, label: &str) -> bool {
     if event != "carrier:copy-image" || message_len <= SIGNED_ACTION_LARGE_MESSAGE_THRESHOLD {
         return true;
     }
-    static LAST_LARGE_MESSAGE: Mutex<Option<Instant>> = Mutex::new(None);
+    static LAST_LARGE_MESSAGE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
     let now = Instant::now();
     let mut last = LAST_LARGE_MESSAGE.lock().unwrap();
-    if last.is_some_and(|seen| now.duration_since(seen) < SIGNED_ACTION_LARGE_MESSAGE_COOLDOWN) {
+    if last.as_ref().is_some_and(|(seen_label, seen)| {
+        seen_label == label && now.duration_since(*seen) < SIGNED_ACTION_LARGE_MESSAGE_COOLDOWN
+    }) {
         return false;
     }
-    *last = Some(now);
+    *last = Some((label.to_string(), now));
     true
 }
 
@@ -149,7 +154,6 @@ fn authorize_signed_action(
     signed: &SignedAction,
 ) -> Option<String> {
     if signed.message.len() > signed_action_message_limit(event)
-        || !large_signed_action_is_available(event, signed.message.len())
         || signed.nonce.len() != 32
         || !signed.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
         || signed.signature.len() != 64
@@ -175,6 +179,9 @@ fn authorize_signed_action(
         mac.update(authenticated.as_bytes());
         mac.verify_slice(&signature).ok().map(|()| label.clone())
     })?;
+    if !claim_large_signed_action(event, signed.message.len(), &label) {
+        return None;
+    }
     let now = Instant::now();
     let window_nonces = used_nonces.entry(label.clone()).or_default();
     window_nonces.retain(|_, inserted| now.duration_since(*inserted) <= SIGNED_ACTION_MAX_AGE);
@@ -196,6 +203,16 @@ fn signed_action_window(
     authorize_signed_action(&tokens, &mut nonces, event, signed)
 }
 
+/// Sign a native result for the page. The struct field order must match the
+/// object literal the page passes to `verifyResult`: both sides HMAC the
+/// serialized JSON text, so key order is part of the wire contract.
+fn result_signature<T: serde::Serialize>(secret: &str, event: &str, value: &T) -> Option<String> {
+    let message = serde_json::to_string(value).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("{event}\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
 pub(crate) fn download_finished_signature(
     secret: &str,
     id: &str,
@@ -209,51 +226,11 @@ pub(crate) fn download_finished_signature(
         success: bool,
     }
 
-    let message = serde_json::to_string(&DownloadFinished { id, url, success }).ok()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(format!("carrier:download-finished\n{message}").as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn copy_image_result_signature(secret: &str, request: &str, copied: bool) -> Option<String> {
-    #[derive(serde::Serialize)]
-    struct CopyImageResult<'a> {
-        request: &'a str,
-        copied: bool,
-    }
-
-    let message = serde_json::to_string(&CopyImageResult { request, copied }).ok()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(format!("carrier:copy-image-result\n{message}").as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn share_download_result_signature(secret: &str, request: &str, shared: bool) -> Option<String> {
-    #[derive(serde::Serialize)]
-    struct ShareDownloadResult<'a> {
-        request: &'a str,
-        shared: bool,
-    }
-
-    let message = serde_json::to_string(&ShareDownloadResult { request, shared }).ok()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(format!("carrier:share-download-result\n{message}").as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
-}
-
-fn context_menu_result_signature(secret: &str, request: &str, shown: bool) -> Option<String> {
-    #[derive(serde::Serialize)]
-    struct ContextMenuResult<'a> {
-        request: &'a str,
-        shown: bool,
-    }
-
-    let message = serde_json::to_string(&ContextMenuResult { request, shown }).ok()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(format!("carrier:context-menu-result\n{message}").as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
+    result_signature(
+        secret,
+        "carrier:download-finished",
+        &DownloadFinished { id, url, success },
+    )
 }
 
 pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<String> {
@@ -262,83 +239,171 @@ pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<Str
         action: &'a str,
     }
 
-    let message = serde_json::to_string(&ContextAction { action }).ok()?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
-    mac.update(format!("carrier:context-action\n{message}").as_bytes());
-    Some(hex::encode(mac.finalize().into_bytes()))
+    result_signature(secret, "carrier:context-action", &ContextAction { action })
+}
+
+/// Report a boolean native-action outcome back to the page as a signed
+/// `<event>-result` CustomEvent. `field` names the boolean in both the signed
+/// JSON and the event detail — the page's `verifyResult` reconstructs
+/// `{ request, <field> }` in that order, so the serialization here must match.
+/// The signed `{ request, <field> }` payload of a boolean native result. The
+/// flatten keeps `request` first, matching the page's object-literal order.
+fn native_result_signature(
+    secret: &str,
+    result_event: &str,
+    field: &str,
+    request: &str,
+    value: bool,
+) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct NativeResult<'a> {
+        request: &'a str,
+        #[serde(flatten)]
+        value: HashMap<&'a str, bool>,
+    }
+
+    result_signature(
+        secret,
+        result_event,
+        &NativeResult {
+            request,
+            value: HashMap::from([(field, value)]),
+        },
+    )
+}
+
+fn send_native_result(
+    app: &tauri::AppHandle,
+    label: &str,
+    event: &str,
+    field: &str,
+    request: &str,
+    value: bool,
+) {
+    // Every result correlates to a page-generated 32-hex request token; refuse
+    // anything else before echoing it into an eval'd script.
+    if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        log::warn!("{event} result had an invalid request token");
+        return;
+    }
+    let result_event = format!("{event}-result");
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens.get(label).and_then(|secret| {
+            native_result_signature(secret, &result_event, field, request, value)
+        })
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate {result_event}");
+        return;
+    };
+    let request = serde_json::to_string(request).expect("request serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('{result_event}', {{ detail: {{ request: {request}, {field}: {value}, signature: {signature} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report {result_event}: {error}");
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
 fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, copied: bool) {
-    let signature = {
-        let state = app.state::<AppState>();
-        let tokens = state.download_reveal_tokens.lock().unwrap();
-        tokens
-            .get(label)
-            .and_then(|secret| copy_image_result_signature(secret, request, copied))
-    };
-    let Some(signature) = signature else {
-        log::warn!("failed to authenticate macOS clipboard result");
-        return;
-    };
-    let request = serde_json::to_string(request).expect("request serializes");
-    let signature = serde_json::to_string(&signature).expect("signature serializes");
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:copy-image-result', {{ detail: {{ request: {request}, copied: {copied}, signature: {signature} }} }}));"
-    );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report macOS clipboard result: {error}");
-        }
-    }
+    send_native_result(app, label, "carrier:copy-image", "copied", request, copied);
 }
 
 #[cfg(target_os = "macos")]
-fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str, shared: bool) {
-    let signature = {
-        let state = app.state::<AppState>();
-        let tokens = state.download_reveal_tokens.lock().unwrap();
-        tokens
-            .get(label)
-            .and_then(|secret| share_download_result_signature(secret, request, shared))
-    };
-    let Some(signature) = signature else {
-        log::warn!("failed to authenticate macOS share picker result");
-        return;
-    };
-    let request = serde_json::to_string(request).expect("request serializes");
-    let signature = serde_json::to_string(&signature).expect("signature serializes");
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:share-download-result', {{ detail: {{ request: {request}, shared: {shared}, signature: {signature} }} }}));"
+fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str, shown: bool) {
+    send_native_result(
+        app,
+        label,
+        "carrier:share-download",
+        "shown",
+        request,
+        shown,
     );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report macOS share picker result: {error}");
-        }
-    }
 }
 
 fn send_context_menu_result(app: &tauri::AppHandle, label: &str, request: &str, shown: bool) {
-    let signature = {
-        let state = app.state::<AppState>();
-        let tokens = state.download_reveal_tokens.lock().unwrap();
-        tokens
-            .get(label)
-            .and_then(|secret| context_menu_result_signature(secret, request, shown))
+    send_native_result(app, label, "carrier:context-menu", "shown", request, shown);
+}
+
+/// Move a fresh `Selected` activation to `Claimed`. Pure over the map so the
+/// transition is unit-testable on every platform.
+#[cfg(any(target_os = "macos", test))]
+fn claim_activation(
+    activations: &mut HashMap<(String, String), ContextMenuActivation>,
+    key: &(String, String),
+    now: Instant,
+) -> bool {
+    let Some(activation) = activations.get(key).cloned() else {
+        return false;
     };
-    let Some(signature) = signature else {
-        log::warn!("failed to authenticate native context-menu result");
-        return;
-    };
-    let request = serde_json::to_string(request).expect("request serializes");
-    let signature = serde_json::to_string(&signature).expect("signature serializes");
-    let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, signature: {signature} }} }}));"
+    if !context_menu_activation_can_be_claimed(activation, now) {
+        return false;
+    }
+    activations.insert(
+        key.clone(),
+        ContextMenuActivation::Claimed {
+            download_id: None,
+            claimed_at: now,
+        },
     );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report native context-menu result: {error}");
-        }
+    true
+}
+
+/// Bind a claimed activation to its download. Returns false when the claim is
+/// missing, already bound, or the URL is implausibly long.
+#[cfg(any(target_os = "macos", test))]
+fn bind_activation_download(
+    activations: &mut HashMap<(String, String), ContextMenuActivation>,
+    key: &(String, String),
+    url_len: usize,
+) -> bool {
+    let Some(ContextMenuActivation::Claimed {
+        download_id: bound, ..
+    }) = activations.get_mut(key)
+    else {
+        return false;
+    };
+    if bound.is_some() || url_len > 4096 {
+        return false;
+    }
+    // The reservation value becomes the download ID: `on_download` in
+    // `window.rs` consumes it through `take_download_reservation`, so a
+    // claimed share action and its download share one identifier.
+    // `consume_activation` compares the two, so keep both sides in step.
+    *bound = Some(key.1.clone());
+    true
+}
+
+/// Spend an activation. A download-bound consume (`download_id` set) requires
+/// the matching `Claimed` binding; a plain consume (`None`) also accepts a
+/// fresh `Selected` — copy-image never claims a download, the user's menu
+/// selection alone authorizes it.
+#[cfg(any(target_os = "macos", test))]
+fn consume_activation(
+    activations: &mut HashMap<(String, String), ContextMenuActivation>,
+    key: &(String, String),
+    download_id: Option<&str>,
+    now: Instant,
+) -> bool {
+    let Some(activation) = activations.get(key).cloned() else {
+        return false;
+    };
+    if !context_menu_activation_is_current(activation, now) {
+        activations.remove(key);
+        return false;
+    }
+    match activations.remove(key) {
+        Some(ContextMenuActivation::Claimed {
+            download_id: bound, ..
+        }) => download_id.is_none() || bound.as_deref() == download_id,
+        Some(ContextMenuActivation::Selected(_)) => download_id.is_none(),
+        _ => false,
     }
 }
 
@@ -347,36 +412,17 @@ fn claim_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
-    let Some(activation) = activations.get(&key).cloned() else {
-        return false;
-    };
-    if !context_menu_activation_can_be_claimed(activation, Instant::now()) {
-        return false;
-    }
-    let Some(activation) = activations.get_mut(&key) else {
-        return false;
-    };
-    *activation = ContextMenuActivation::Claimed {
-        download_id: None,
-        claimed_at: Instant::now(),
-    };
-    true
+    claim_activation(&mut activations, &key, Instant::now())
 }
 
 #[cfg(target_os = "macos")]
 fn prepare_context_download(app: &tauri::AppHandle, label: &str, action: &str, url: &str) -> bool {
     let state = app.state::<AppState>();
+    let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
-    let Some(ContextMenuActivation::Claimed {
-        download_id: bound, ..
-    }) = activations.get_mut(&(label.to_string(), action.to_string()))
-    else {
-        return false;
-    };
-    if bound.is_some() || url.len() > 4096 {
+    if !bind_activation_download(&mut activations, &key, url.len()) {
         return false;
     }
-    *bound = Some(action.to_string());
     drop(activations);
     state
         .download_reservations
@@ -409,20 +455,7 @@ fn consume_context_activation(
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
-    let Some(activation) = activations.get(&key).cloned() else {
-        return false;
-    };
-    if !context_menu_activation_is_current(activation, Instant::now()) {
-        activations.remove(&key);
-        return false;
-    }
-    matches!(
-        activations.remove(&key),
-        Some(ContextMenuActivation::Claimed {
-            download_id: bound,
-            ..
-        }) if download_id.is_none() || bound.as_deref() == download_id
-    )
+    consume_activation(&mut activations, &key, download_id, Instant::now())
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -829,8 +862,27 @@ pub fn run() {
                     log::warn!("carrier:context-menu request token was invalid");
                     return;
                 }
-                let shown = menu::show_native_context_menu(&context_menu_handle, &label, msg.items);
-                send_context_menu_result(&context_menu_handle, &label, &msg.request, shown);
+                // Popping up a native menu requires the main thread on macOS;
+                // listen_any handlers carry no such guarantee. The result is
+                // reported from the same closure once the menu call returns.
+                let popup_handle = context_menu_handle.clone();
+                let error_label = label.clone();
+                let error_request = msg.request.clone();
+                let dispatched = context_menu_handle.run_on_main_thread(move || {
+                    let shown = menu::show_native_context_menu(&popup_handle, &label, msg.items);
+                    send_context_menu_result(&popup_handle, &label, &msg.request, shown);
+                });
+                if let Err(error) = dispatched {
+                    log::warn!(
+                        "failed to dispatch native context menu to the main thread: {error}"
+                    );
+                    send_context_menu_result(
+                        &context_menu_handle,
+                        &error_label,
+                        &error_request,
+                        false,
+                    );
+                }
             });
 
             #[cfg(target_os = "macos")]
@@ -940,12 +992,12 @@ pub fn run() {
                     let result_label = label.clone();
                     let result_request = msg.request.clone();
                     if let Err(error) = macos::share::show_share_picker(
-                        move |shared| {
+                        move |shown| {
                             send_share_download_result(
                                 &result_handle,
                                 &result_label,
                                 &result_request,
-                                shared,
+                                shown,
                             );
                         },
                         &share_handle,
@@ -1327,8 +1379,14 @@ mod tests {
     #[test]
     fn copy_image_results_are_authenticated_with_the_window_secret() {
         assert_eq!(
-            copy_image_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
-                .as_deref(),
+            native_result_signature(
+                "test-secret",
+                "carrier:copy-image-result",
+                "copied",
+                "0123456789abcdef0123456789abcdef",
+                true
+            )
+            .as_deref(),
             Some("5e39e1320822a514ce4a811d2a6c6b9b72f0d63a1a8b59601d20fd8644872007")
         );
     }
@@ -1336,13 +1394,15 @@ mod tests {
     #[test]
     fn share_download_results_are_authenticated_with_the_window_secret() {
         assert_eq!(
-            share_download_result_signature(
+            native_result_signature(
                 "test-secret",
+                "carrier:share-download-result",
+                "shown",
                 "0123456789abcdef0123456789abcdef",
                 true
             )
             .as_deref(),
-            Some("0e244e1635e2753e84fec41592694292462f4030535f9ba47003bacd9ae73696")
+            Some("a24b608a14250d52d4c6d33458b54d275966b1dfdfd7f41c029a16e3df0476de")
         );
     }
 
@@ -1360,8 +1420,14 @@ mod tests {
     #[test]
     fn context_menu_results_are_authenticated_with_the_window_secret() {
         assert_eq!(
-            context_menu_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
-                .as_deref(),
+            native_result_signature(
+                "test-secret",
+                "carrier:context-menu-result",
+                "shown",
+                "0123456789abcdef0123456789abcdef",
+                true
+            )
+            .as_deref(),
             Some("e46176617a8edbc90c518ab731967ed85965c9df255eab4a0f09629a48e90f59")
         );
     }
@@ -1506,5 +1572,108 @@ mod tests {
             },
             now
         ));
+    }
+
+    fn activation_key() -> (String, String) {
+        ("main".to_string(), "abc123".to_string())
+    }
+
+    #[test]
+    fn share_activation_walks_selected_claim_bind_consume() {
+        let now = Instant::now();
+        let key = activation_key();
+        let mut activations = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+
+        assert!(claim_activation(&mut activations, &key, now));
+        assert!(bind_activation_download(&mut activations, &key, 100));
+        // The binding is the action token; a mismatched ID must not consume.
+        assert!(!consume_activation(
+            &mut activations,
+            &key,
+            Some("other-id"),
+            now
+        ));
+        // The mismatch spent the activation: nothing is left to consume.
+        assert!(!consume_activation(
+            &mut activations,
+            &key,
+            Some("abc123"),
+            now
+        ));
+    }
+
+    #[test]
+    fn share_activation_consumes_with_the_bound_download_id() {
+        let now = Instant::now();
+        let key = activation_key();
+        let mut activations = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+
+        assert!(claim_activation(&mut activations, &key, now));
+        assert!(bind_activation_download(&mut activations, &key, 100));
+        assert!(consume_activation(
+            &mut activations,
+            &key,
+            Some("abc123"),
+            now
+        ));
+        assert!(activations.is_empty());
+    }
+
+    #[test]
+    fn copy_image_consumes_a_selected_activation_without_a_claim() {
+        // Copy image never claims a download, so consume must accept a fresh
+        // Selected directly — rejecting it broke the native copy-image flow.
+        let now = Instant::now();
+        let key = activation_key();
+        let mut activations = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+
+        assert!(consume_activation(&mut activations, &key, None, now));
+        assert!(activations.is_empty());
+    }
+
+    #[test]
+    fn selected_activation_never_satisfies_a_download_bound_consume() {
+        let now = Instant::now();
+        let key = activation_key();
+        let mut activations = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+
+        assert!(!consume_activation(
+            &mut activations,
+            &key,
+            Some("abc123"),
+            now
+        ));
+    }
+
+    #[test]
+    fn pending_and_stale_activations_cannot_be_claimed_or_consumed() {
+        let now = Instant::now();
+        let key = activation_key();
+
+        let mut pending = HashMap::from([(key.clone(), ContextMenuActivation::Pending)]);
+        assert!(!claim_activation(&mut pending, &key, now));
+        assert!(!consume_activation(&mut pending, &key, None, now));
+
+        let stale_at = now - CONTEXT_MENU_ACTIVATION_TTL - Duration::from_secs(1);
+        let mut stale = HashMap::from([(key.clone(), ContextMenuActivation::Selected(stale_at))]);
+        assert!(!consume_activation(&mut stale, &key, None, now));
+        // A stale entry is pruned on the failed consume.
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn bind_requires_an_unbound_claim_and_a_plausible_url() {
+        let now = Instant::now();
+        let key = activation_key();
+
+        let mut selected = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+        assert!(!bind_activation_download(&mut selected, &key, 100));
+
+        let mut claimed = HashMap::from([(key.clone(), ContextMenuActivation::Selected(now))]);
+        assert!(claim_activation(&mut claimed, &key, now));
+        assert!(!bind_activation_download(&mut claimed, &key, 5000));
+        assert!(bind_activation_download(&mut claimed, &key, 100));
+        // Already bound: a second bind must refuse.
+        assert!(!bind_activation_download(&mut claimed, &key, 100));
     }
 }

@@ -18,7 +18,14 @@ const nativeCharCodeAt = String.prototype.charCodeAt;
 const nativeFromCharCode = String.fromCharCode;
 const nativeReflectApply = Reflect.apply;
 
-/** Convert a DOM style key without consulting page-replaceable regex hooks. */
+/**
+ * Convert a DOM style key without consulting page-replaceable regex hooks.
+ *
+ * Vendor-prefixed keys are not supported: `webkitTransform` becomes
+ * `webkit-transform`, not the `-webkit-transform` that
+ * `CSSStyleDeclaration.setProperty` requires — which would silently drop the
+ * style. No current caller passes one.
+ */
 export function cssPropertyName(property: string): string {
   let result = "";
   for (let index = 0; index < property.length; index += 1) {
