@@ -42,7 +42,8 @@ const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
 
 const appendOwn = <T>(items: T[], item: T) => {
-  nativeReflectApply(nativeObjectDefineProperty, items, [
+  nativeReflectApply(nativeObjectDefineProperty, undefined, [
+    items,
     `${items.length}`,
     { value: item, writable: true, enumerable: true, configurable: true },
   ]);
