@@ -179,6 +179,20 @@ fn copy_image_result_signature(secret: &str, request: &str, copied: bool) -> Opt
 }
 
 #[cfg(any(target_os = "macos", test))]
+fn share_download_result_signature(secret: &str, request: &str, shared: bool) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ShareDownloadResult<'a> {
+        request: &'a str,
+        shared: bool,
+    }
+
+    let message = serde_json::to_string(&ShareDownloadResult { request, shared }).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("carrier:share-download-result\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
+}
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ContextAction<'a> {
@@ -212,6 +226,31 @@ fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, co
     if let Some(window) = app.get_webview_window(label) {
         if let Err(error) = window.eval(&script) {
             log::warn!("failed to report macOS clipboard result: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str, shared: bool) {
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| share_download_result_signature(secret, request, shared))
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate macOS share picker result");
+        return;
+    };
+    let request = serde_json::to_string(request).expect("request serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:share-download-result', {{ detail: {{ request: {request}, shared: {shared}, signature: {signature} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report macOS share picker result: {error}");
         }
     }
 }
@@ -608,6 +647,7 @@ pub fn run() {
                         x: f64,
                         y: f64,
                         action: String,
+                        request: String,
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
@@ -626,13 +666,35 @@ pub fn run() {
                     };
                     if !consume_context_activation(&share_handle, &label, &msg.action) {
                         log::warn!("carrier:share-download had no selected native menu action");
+                        send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
                     }
                     let Some(path) = lookup_download(&msg.url) else {
                         log::warn!("carrier:share-download had no recent matching download");
+                        send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
                     };
-                    macos::share::show_share_picker(&share_handle, &label, path, msg.x, msg.y);
+                    let result_handle = share_handle.clone();
+                    let result_label = label.clone();
+                    let result_request = msg.request.clone();
+                    if let Err(error) = macos::share::show_share_picker(
+                        move |shared| {
+                            send_share_download_result(
+                                &result_handle,
+                                &result_label,
+                                &result_request,
+                                shared,
+                            );
+                        },
+                        &share_handle,
+                        &label,
+                        path,
+                        msg.x,
+                        msg.y,
+                    ) {
+                        log::warn!("failed to schedule macOS share picker: {error}");
+                        send_share_download_result(&share_handle, &label, &msg.request, false);
+                    }
                 });
 
                 let copy_handle = app.handle().clone();
@@ -1006,6 +1068,19 @@ mod tests {
             copy_image_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
                 .as_deref(),
             Some("5e39e1320822a514ce4a811d2a6c6b9b72f0d63a1a8b59601d20fd8644872007")
+        );
+    }
+
+    #[test]
+    fn share_download_results_are_authenticated_with_the_window_secret() {
+        assert_eq!(
+            share_download_result_signature(
+                "test-secret",
+                "0123456789abcdef0123456789abcdef",
+                true
+            )
+            .as_deref(),
+            Some("0e244e1635e2753e84fec41592694292462f4030535f9ba47003bacd9ae73696")
         );
     }
 
