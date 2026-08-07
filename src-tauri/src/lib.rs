@@ -6,7 +6,7 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -99,8 +99,6 @@ pub(crate) fn refresh_unread_indicators(
     tray_badge::update_unity_launcher_count(unread);
 }
 
-const SIGNED_ACTION_NONCE_CAP: usize = 256;
-
 #[derive(Deserialize)]
 struct SignedAction {
     message: String,
@@ -110,7 +108,7 @@ struct SignedAction {
 
 fn authorize_signed_action(
     tokens: &HashMap<String, String>,
-    used_nonces: &mut VecDeque<String>,
+    used_nonces: &mut HashMap<String, HashSet<String>>,
     event: &str,
     signed: &SignedAction,
 ) -> Option<String> {
@@ -118,7 +116,6 @@ fn authorize_signed_action(
         || signed.nonce.len() != 32
         || !signed.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
         || signed.signature.len() != 64
-        || used_nonces.contains(&signed.nonce)
     {
         return None;
     }
@@ -129,9 +126,12 @@ fn authorize_signed_action(
         mac.update(authenticated.as_bytes());
         mac.verify_slice(&signature).ok().map(|()| label.clone())
     })?;
-    used_nonces.push_back(signed.nonce.clone());
-    if used_nonces.len() > SIGNED_ACTION_NONCE_CAP {
-        used_nonces.pop_front();
+    if !used_nonces
+        .entry(label.clone())
+        .or_default()
+        .insert(signed.nonce.clone())
+    {
+        return None;
     }
     Some(label)
 }
@@ -395,7 +395,7 @@ pub fn run() {
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
             download_reveal_tokens: Mutex::new(HashMap::new()),
-            signed_action_nonces: Mutex::new(VecDeque::new()),
+            signed_action_nonces: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             context_menu_activations: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
@@ -936,7 +936,7 @@ mod tests {
             nonce: nonce.into(),
             signature: hex::encode(mac.finalize().into_bytes()),
         };
-        let mut used = VecDeque::new();
+        let mut used = HashMap::new();
         assert_eq!(
             authorize_signed_action(&tokens, &mut used, "carrier:context-menu", &signed),
             None
@@ -962,7 +962,7 @@ mod tests {
         assert_eq!(
             authorize_signed_action(
                 &tokens,
-                &mut VecDeque::new(),
+                &mut HashMap::new(),
                 "carrier:context-menu",
                 &signed
             ),

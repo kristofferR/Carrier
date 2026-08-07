@@ -218,7 +218,9 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         if let Some(window) = app.get_webview_window(label) {
             let event_name = format!("carrier:context-action:{action}");
             if let Ok(event_name) = serde_json::to_string(&event_name) {
-                let _ = window.eval(format!("window.dispatchEvent(new Event({event_name}));"));
+                let _ = window.eval(format!(
+                    "window.__carrierDispatchContextAction({event_name});"
+                ));
             }
         }
         return;

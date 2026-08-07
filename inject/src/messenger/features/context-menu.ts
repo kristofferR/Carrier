@@ -32,6 +32,7 @@ const nativeReflectApply = Reflect.apply;
 // exactly the reference the closed shadow root exists to withhold.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
+const nativeCreateElement = Document.prototype.createElement;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
 const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
@@ -308,7 +309,7 @@ export function initContextMenu() {
       // root hands out no reference, so page script cannot reach the rows at
       // all; moving the host it can still see shifts every row together, which
       // the per-row geometry check below refuses.
-      ctxMenu = document.createElement("div");
+      ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
       Object.assign(ctxMenu.style, {
         position: "fixed",
         left: `${e.clientX}px`,
@@ -318,7 +319,7 @@ export function initContextMenu() {
       const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
         { mode: "closed" },
       ]) as ShadowRoot;
-      const menu = document.createElement("div");
+      const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
       menu.setAttribute("role", "menu");
       menu.setAttribute("aria-label", "Media actions");
       Object.assign(menu.style, {
@@ -347,7 +348,7 @@ export function initContextMenu() {
         if (!item) continue;
         const label = item[0];
         const fn = item[1];
-        const el = document.createElement("div");
+        const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
         el.textContent = label;
         el.setAttribute("role", "menuitem");
         el.tabIndex = -1;
