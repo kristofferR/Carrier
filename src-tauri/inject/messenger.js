@@ -5231,7 +5231,10 @@
       const { files, timer } = pending;
       clearTimeout(timer);
       pending = null;
-      if (!attachToComposer(composer2, files)) {
+      if (attachToComposer(composer2, files)) {
+        diag("share.attached", `${files.length}`);
+      } else {
+        diag("share.attach-failed", `${files.length}`);
         toast("Could not attach the shared file");
       }
       return true;
@@ -5246,10 +5249,14 @@
       value: (payload) => {
         const entries = sanitizeSharedFiles(payload);
         const files = entries.map(decodeToFile).filter((file) => file !== null);
-        if (!files.length) return;
+        if (!files.length) {
+          diag("share.empty-payload", "0");
+          return;
+        }
         if (pending) clearTimeout(pending.timer);
         pending = { files, parkedAt: Date.now() };
         if (!tryDeliver()) {
+          diag("share.waiting-for-composer", `${files.length}`);
           toast("Open a conversation to attach the shared file");
           pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
         }
