@@ -4,7 +4,7 @@
 import { cleanSharedUrl, openUrl, toast, toastDownloadSaved } from "../bridge";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
-import { type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
+import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
@@ -29,6 +29,7 @@ const nativeObjectDefineProperty = Object.defineProperty;
 const nativeObjectEntries = Object.entries;
 const nativeReflectApply = Reflect.apply;
 const nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
+const nativeSetTimeout = window.setTimeout;
 // Same reason: the menu's isolation depends on these being the real ones.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
@@ -75,8 +76,7 @@ const applyStyles = (style: CSSStyleDeclaration, values: Partial<CSSStyleDeclara
     string,
     string,
   ][]) {
-    const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-    setStyleProperty(style, cssProperty, value);
+    setStyleProperty(style, cssPropertyName(property), value);
   }
 };
 
@@ -567,10 +567,17 @@ export function initContextMenu() {
       focusedIndex = 0;
       const firstItem = menuItems[0];
       if (firstItem) nativeReflectApply(nativeFocus, firstItem, [{ preventScroll: true }]);
-      setTimeout(() => {
-        document.addEventListener("click", closeMenuFromClick, true);
-        document.addEventListener("scroll", closeMenuFromScroll, true);
-      }, 0);
+      nativeReflectApply(nativeSetTimeout, window, [
+        () => {
+          nativeReflectApply(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
+          nativeReflectApply(nativeAddEventListener, document, [
+            "scroll",
+            closeMenuFromScroll,
+            true,
+          ]);
+        },
+        0,
+      ]);
     },
     true,
   );

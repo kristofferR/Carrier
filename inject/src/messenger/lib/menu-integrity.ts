@@ -14,6 +14,22 @@ export type MenuRect = { x: number; y: number; width: number; height: number };
 /** Sub-pixel layout jitter is normal; anything larger is a real move. */
 const RECT_TOLERANCE = 1;
 const nativeAbs = Math.abs;
+const nativeCharCodeAt = String.prototype.charCodeAt;
+const nativeFromCharCode = String.fromCharCode;
+const nativeReflectApply = Reflect.apply;
+
+/** Convert a DOM style key without consulting page-replaceable regex hooks. */
+export function cssPropertyName(property: string): string {
+  let result = "";
+  for (let index = 0; index < property.length; index += 1) {
+    const code = nativeReflectApply(nativeCharCodeAt, property, [index]) as number;
+    result +=
+      code >= 65 && code <= 90
+        ? `-${nativeReflectApply(nativeFromCharCode, undefined, [code + 32])}`
+        : (property[index] ?? "");
+  }
+  return result;
+}
 
 export function rectsMatch(a: MenuRect, b: MenuRect, tolerance = RECT_TOLERANCE): boolean {
   return (
