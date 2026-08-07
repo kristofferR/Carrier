@@ -746,8 +746,9 @@
 
   // inject/src/messenger/lib/menu-integrity.ts
   var RECT_TOLERANCE = 1;
+  var nativeAbs = Math.abs;
   function rectsMatch(a, b, tolerance = RECT_TOLERANCE) {
-    return Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance && Math.abs(a.width - b.width) <= tolerance && Math.abs(a.height - b.height) <= tolerance;
+    return nativeAbs(a.x - b.x) <= tolerance && nativeAbs(a.y - b.y) <= tolerance && nativeAbs(a.width - b.width) <= tolerance && nativeAbs(a.height - b.height) <= tolerance;
   }
   function pointInRect(rect, x, y) {
     return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
@@ -793,10 +794,13 @@
       { value: item, writable: true, enumerable: true, configurable: true }
     ]);
   };
+  var setStyleProperty = (style, property, value) => {
+    nativeReflectApply(nativeSetStyleProperty, style, [property, value]);
+  };
   var applyStyles = (style, values) => {
     for (const [property, value] of nativeReflectApply(nativeObjectEntries, void 0, [values])) {
       const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-      nativeReflectApply(nativeSetStyleProperty, style, [cssProperty, value]);
+      setStyleProperty(style, cssProperty, value);
     }
   };
   var rectOf = (el) => {
@@ -988,7 +992,15 @@
           addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
         }
         if (!items.length) return;
-        if (isMac2 && items.some((item) => item[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE)) {
+        let hasOversizedNativeValue = false;
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
+            hasOversizedNativeValue = true;
+            break;
+          }
+        }
+        if (isMac2 && hasOversizedNativeValue) {
           clearNativeActionHandlers();
           return;
         }
@@ -1055,17 +1067,20 @@
           });
           nativeReflectApply(nativeAddEventListener, el, [
             "mouseenter",
-            () => elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"
+            () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
           ]);
           nativeReflectApply(nativeAddEventListener, el, [
             "mouseleave",
-            () => elStyle.background = ""
+            () => setStyleProperty(elStyle, "background", "")
           ]);
           nativeReflectApply(nativeAddEventListener, el, [
             "focus",
-            () => elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"
+            () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
           ]);
-          nativeReflectApply(nativeAddEventListener, el, ["blur", () => elStyle.background = ""]);
+          nativeReflectApply(nativeAddEventListener, el, [
+            "blur",
+            () => setStyleProperty(elStyle, "background", "")
+          ]);
           nativeReflectApply(nativeAddEventListener, el, [
             "click",
             (ev) => {

@@ -13,13 +13,14 @@ export type MenuRect = { x: number; y: number; width: number; height: number };
 
 /** Sub-pixel layout jitter is normal; anything larger is a real move. */
 const RECT_TOLERANCE = 1;
+const nativeAbs = Math.abs;
 
 export function rectsMatch(a: MenuRect, b: MenuRect, tolerance = RECT_TOLERANCE): boolean {
   return (
-    Math.abs(a.x - b.x) <= tolerance &&
-    Math.abs(a.y - b.y) <= tolerance &&
-    Math.abs(a.width - b.width) <= tolerance &&
-    Math.abs(a.height - b.height) <= tolerance
+    nativeAbs(a.x - b.x) <= tolerance &&
+    nativeAbs(a.y - b.y) <= tolerance &&
+    nativeAbs(a.width - b.width) <= tolerance &&
+    nativeAbs(a.height - b.height) <= tolerance
   );
 }
 

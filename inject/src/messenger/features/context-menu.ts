@@ -51,13 +51,17 @@ const appendOwn = <T>(items: T[], item: T) => {
   ]);
 };
 
+const setStyleProperty = (style: CSSStyleDeclaration, property: string, value: string) => {
+  nativeReflectApply(nativeSetStyleProperty, style, [property, value]);
+};
+
 const applyStyles = (style: CSSStyleDeclaration, values: Partial<CSSStyleDeclaration>) => {
   for (const [property, value] of nativeReflectApply(nativeObjectEntries, undefined, [values]) as [
     string,
     string,
   ][]) {
     const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-    nativeReflectApply(nativeSetStyleProperty, style, [cssProperty, value]);
+    setStyleProperty(style, cssProperty, value);
   }
 };
 
@@ -315,7 +319,15 @@ export function initContextMenu() {
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
-      if (isMac && items.some((item) => item[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE)) {
+      let hasOversizedNativeValue = false;
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
+          hasOversizedNativeValue = true;
+          break;
+        }
+      }
+      if (isMac && hasOversizedNativeValue) {
         // A native menu rejects an oversized copied address as untrusted input.
         // Leave the original menu intact so its remaining actions still work.
         clearNativeActionHandlers();
@@ -410,17 +422,22 @@ export function initContextMenu() {
         });
         nativeReflectApply(nativeAddEventListener, el, [
           "mouseenter",
-          () => (elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+          () =>
+            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))"),
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "mouseleave",
-          () => (elStyle.background = ""),
+          () => setStyleProperty(elStyle, "background", ""),
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "focus",
-          () => (elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+          () =>
+            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))"),
         ]);
-        nativeReflectApply(nativeAddEventListener, el, ["blur", () => (elStyle.background = "")]);
+        nativeReflectApply(nativeAddEventListener, el, [
+          "blur",
+          () => setStyleProperty(elStyle, "background", ""),
+        ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "click",
           (ev: MouseEvent) => {
