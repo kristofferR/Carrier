@@ -714,6 +714,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             download_reservations: Mutex::new(HashMap::new()),
             context_menu_copy_values: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            pending_share: Mutex::new(None),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -1270,6 +1272,7 @@ pub fn run() {
                     // The Dock-menu delegate hook also needs the app fully
                     // launched (tao installs its NSApplication delegate by now).
                     install_dock_menu_provider();
+                    macos::share_intake::sweep_stale_inboxes();
                 }
             }
 
@@ -1285,6 +1288,15 @@ pub fn run() {
             } = event
             {
                 reopen_main_if_needed(app, has_visible_windows);
+            }
+
+            // The share extension hands its inbox over as a carrier:// open
+            // (running instance or cold start alike). See macos::share_intake.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                for url in urls {
+                    macos::share_intake::handle_share_open(app, url.as_str());
+                }
             }
 
             // A theme switch or blank-webview recovery destroys and rebuilds

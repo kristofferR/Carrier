@@ -5135,6 +5135,130 @@
     }
   }
 
+  // inject/src/messenger/lib/share-intake.ts
+  var MAX_FILES = 10;
+  var MAX_NAME_LENGTH = 255;
+  var MAX_TOTAL_DATA_LENGTH = 140 * 1024 * 1024;
+  var SHARE_DELIVERY_TTL_MS = 2 * 60 * 1e3;
+  function sanitizeSharedFiles(payload) {
+    if (!Array.isArray(payload)) return [];
+    const files = [];
+    let totalData = 0;
+    for (const entry of payload) {
+      if (files.length >= MAX_FILES) break;
+      if (!entry || typeof entry !== "object") continue;
+      const { name, data } = entry;
+      if (typeof name !== "string" || typeof data !== "string") continue;
+      if (name.length === 0 || name.length > MAX_NAME_LENGTH) continue;
+      if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
+      totalData += data.length;
+      if (totalData > MAX_TOTAL_DATA_LENGTH) break;
+      files.push({ name, data });
+    }
+    return files;
+  }
+  function shareIsDeliverable(parkedAtMs, nowMs) {
+    const age = nowMs - parkedAtMs;
+    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
+  }
+  function mimeForName(name) {
+    const extension = name.toLowerCase().split(".").pop() ?? "";
+    const known = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      heic: "image/heic",
+      mp4: "video/mp4",
+      mov: "video/quicktime",
+      webm: "video/webm",
+      pdf: "application/pdf"
+    };
+    return known[extension] ?? "application/octet-stream";
+  }
+
+  // inject/src/messenger/features/share-intake.ts
+  var COMPOSER_SELECTOR2 = 'div[role="textbox"][contenteditable="true"]';
+  var COMPOSER_POLL_MS = 1e3;
+  function decodeToFile(entry) {
+    try {
+      const binary = atob(entry.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new File([bytes], entry.name, { type: mimeForName(entry.name) });
+    } catch {
+      return null;
+    }
+  }
+  function attachToComposer(composer2, files) {
+    try {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      composer2.focus();
+      const paste = new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer
+      });
+      const handled = !composer2.dispatchEvent(paste);
+      if (handled || (paste.clipboardData?.files.length ?? 0) > 0) return true;
+      const drop = new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: transfer
+      });
+      composer2.dispatchEvent(drop);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function initShareIntake() {
+    let pending = null;
+    const tryDeliver = () => {
+      if (!pending) return true;
+      if (!shareIsDeliverable(pending.parkedAt, Date.now())) {
+        clearTimeout(pending.timer);
+        pending = null;
+        toast("Shared file expired");
+        return true;
+      }
+      const composer2 = document.querySelector(COMPOSER_SELECTOR2);
+      if (!composer2) return false;
+      const { files, timer } = pending;
+      clearTimeout(timer);
+      pending = null;
+      if (!attachToComposer(composer2, files)) {
+        toast("Could not attach the shared file");
+      }
+      return true;
+    };
+    const poll = () => {
+      if (tryDeliver()) return;
+      if (pending) {
+        pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+      }
+    };
+    Object.defineProperty(window, "__carrierShareMedia", {
+      value: (payload) => {
+        const entries = sanitizeSharedFiles(payload);
+        const files = entries.map(decodeToFile).filter((file) => file !== null);
+        if (!files.length) return;
+        if (pending) clearTimeout(pending.timer);
+        pending = { files, parkedAt: Date.now() };
+        if (!tryDeliver()) {
+          toast("Open a conversation to attach the shared file");
+          pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
+        }
+      },
+      writable: false,
+      configurable: false
+    });
+  }
+
   // inject/src/messenger/lib/zoom.ts
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
@@ -6079,6 +6203,7 @@
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("notifications", initNotificationBridge);
+    initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);
