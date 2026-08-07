@@ -759,6 +759,7 @@
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
+  var MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
   var IMAGE_CONTEXT_MENU_LABELS = [
     "Copy image",
     "Download image",
@@ -769,9 +770,10 @@
   var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
   var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
-  var nativeObjectAssign = Object.assign;
   var nativeObjectDefineProperty = Object.defineProperty;
+  var nativeObjectEntries = Object.entries;
   var nativeReflectApply = Reflect.apply;
+  var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeCreateElement = Document.prototype.createElement;
@@ -792,7 +794,10 @@
     ]);
   };
   var applyStyles = (style, values) => {
-    nativeReflectApply(nativeObjectAssign, void 0, [style, values]);
+    for (const [property, value] of nativeReflectApply(nativeObjectEntries, void 0, [values])) {
+      const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      nativeReflectApply(nativeSetStyleProperty, style, [cssProperty, value]);
+    }
   };
   var rectOf = (el) => {
     const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
@@ -983,6 +988,10 @@
           addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
         }
         if (!items.length) return;
+        if (isMac2 && items.some((item) => item[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE)) {
+          clearNativeActionHandlers();
+          return;
+        }
         e.preventDefault();
         if (isMac2) {
           closeMenu();

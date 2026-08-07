@@ -1,6 +1,8 @@
 //! The native menu bar: construction and the menu-event handler.
 
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use serde::Deserialize;
 use tauri::{
@@ -213,7 +215,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             return;
         }
         if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
-            *selected = true;
+            *selected = Some(Instant::now());
         }
         let signature = state
             .download_reveal_tokens
@@ -423,7 +425,10 @@ pub(crate) fn show_native_context_menu(
         let mut copies = state.context_menu_copy_values.lock().unwrap();
         copies.retain(|(window, _), _| window != label);
         let mut activations = state.context_menu_activations.lock().unwrap();
-        activations.retain(|(window, _), selected| window != label || *selected);
+        let now = Instant::now();
+        activations.retain(|(window, _), selected_at| {
+            window != label || crate::context_menu_activation_is_current(*selected_at, now)
+        });
         for item in &items {
             let key = (label.to_string(), item.action.clone());
             if let Some(value) = &item.value {
@@ -431,7 +436,7 @@ pub(crate) fn show_native_context_menu(
             } else if item.label == IMAGE_CONTEXT_MENU_LABELS[0]
                 || item.label == IMAGE_CONTEXT_MENU_LABELS[2]
             {
-                activations.insert(key, false);
+                activations.insert(key, None);
             }
         }
     }
