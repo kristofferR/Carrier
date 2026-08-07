@@ -56,6 +56,7 @@ const nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "s
 const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
 const nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
+const NativePromise = Promise;
 const NativeFileReader = FileReader;
 const nativeReadAsDataURL = FileReader.prototype.readAsDataURL;
 const nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
@@ -170,7 +171,8 @@ function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
       item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
     );
   }
-  if (!nativeShowContextMenu) return Promise.reject(new Error("native context menu unavailable"));
+  if (!nativeShowContextMenu)
+    return NativePromise.reject(new Error("native context menu unavailable"));
   return nativeShowContextMenu(nativeItems).catch((error: unknown) => {
     clearNativeActionHandlers();
     throw error;
@@ -249,7 +251,7 @@ async function copyImageSrc(src: string, action?: string) {
     await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
     return;
   }
-  const dataUrl = await new Promise<string>((resolve, reject) => {
+  const dataUrl = await new NativePromise<string>((resolve, reject) => {
     if (!nativeGetFileReaderResult) {
       reject(new Error("native FileReader result getter unavailable"));
       return;

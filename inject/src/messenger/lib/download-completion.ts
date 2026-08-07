@@ -1,5 +1,9 @@
 export const DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
 
+const NativePromise = Promise;
+const nativePromiseThen = Promise.prototype.then;
+const nativeReflectApply = Reflect.apply;
+
 type DownloadFinishedDetail = {
   id: string;
   url: string;
@@ -43,7 +47,7 @@ export function waitForNativeDownload(
     | undefined,
   timeoutMs = 120_000,
 ): Promise<NativeDownload> {
-  return new Promise((resolve, reject) => {
+  return new NativePromise((resolve, reject) => {
     let timer: ReturnType<typeof setTimeout>;
     const cleanup = () => {
       clearTimeout(timer);
@@ -57,18 +61,20 @@ export function waitForNativeDownload(
         reject(new Error("native download bridge unavailable"));
         return;
       }
-      void verifyResult(
+      const verification = verifyResult(
         DOWNLOAD_FINISHED_EVENT,
         { id: detail.id, url: detail.url, success: detail.success },
         detail.signature,
-      )
-        .then((authenticated) => {
+      );
+      nativeReflectApply(nativePromiseThen, verification, [
+        (authenticated: boolean) => {
           if (!authenticated) return;
           cleanup();
           if (detail.success) resolve({ id: detail.id, url: detail.url });
           else reject(new Error("native download failed"));
-        })
-        .catch(() => {});
+        },
+        () => {},
+      ]);
     };
 
     target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);

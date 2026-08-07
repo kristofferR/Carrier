@@ -114,6 +114,33 @@ struct SignedAction {
 const SIGNED_ACTION_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 const SIGNED_ACTION_FUTURE_SKEW: Duration = Duration::from_secs(30);
 const SIGNED_ACTION_NONCE_CAP: usize = 4_096;
+const SIGNED_ACTION_CONTROL_MESSAGE_MAX: usize = 64 * 1024;
+const SIGNED_ACTION_CONTEXT_MENU_MESSAGE_MAX: usize = 512 * 1024;
+const SIGNED_ACTION_COPY_IMAGE_MESSAGE_MAX: usize = 48 * 1024 * 1024;
+const SIGNED_ACTION_LARGE_MESSAGE_THRESHOLD: usize = 1024 * 1024;
+const SIGNED_ACTION_LARGE_MESSAGE_COOLDOWN: Duration = Duration::from_secs(1);
+
+fn signed_action_message_limit(event: &str) -> usize {
+    match event {
+        "carrier:context-menu" => SIGNED_ACTION_CONTEXT_MENU_MESSAGE_MAX,
+        "carrier:copy-image" => SIGNED_ACTION_COPY_IMAGE_MESSAGE_MAX,
+        _ => SIGNED_ACTION_CONTROL_MESSAGE_MAX,
+    }
+}
+
+fn large_signed_action_is_available(event: &str, message_len: usize) -> bool {
+    if event != "carrier:copy-image" || message_len <= SIGNED_ACTION_LARGE_MESSAGE_THRESHOLD {
+        return true;
+    }
+    static LAST_LARGE_MESSAGE: Mutex<Option<Instant>> = Mutex::new(None);
+    let now = Instant::now();
+    let mut last = LAST_LARGE_MESSAGE.lock().unwrap();
+    if last.is_some_and(|seen| now.duration_since(seen) < SIGNED_ACTION_LARGE_MESSAGE_COOLDOWN) {
+        return false;
+    }
+    *last = Some(now);
+    true
+}
 
 fn authorize_signed_action(
     tokens: &HashMap<String, String>,
@@ -121,7 +148,8 @@ fn authorize_signed_action(
     event: &str,
     signed: &SignedAction,
 ) -> Option<String> {
-    if signed.message.len() > 48 * 1024 * 1024
+    if signed.message.len() > signed_action_message_limit(event)
+        || !large_signed_action_is_available(event, signed.message.len())
         || signed.nonce.len() != 32
         || !signed.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
         || signed.signature.len() != 64
