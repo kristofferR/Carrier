@@ -773,6 +773,7 @@
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
+  var nativeAppendChild = Node.prototype.appendChild;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
   var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
@@ -1045,10 +1046,10 @@
             }
           ]);
           nativeReflectApply(nativeArrayPush, menuItems, [el]);
-          menu.appendChild(el);
+          nativeReflectApply(nativeAppendChild, menu, [el]);
         }
-        shadow.appendChild(menu);
-        document.body.appendChild(ctxMenu);
+        nativeReflectApply(nativeAppendChild, shadow, [menu]);
+        nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
         const r = rectOf(menu);
         if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
         if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;

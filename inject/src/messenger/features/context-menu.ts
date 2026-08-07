@@ -31,6 +31,7 @@ const nativeReflectApply = Reflect.apply;
 // replaced `push` would be handed each privileged row as an argument, which is
 // exactly the reference the closed shadow root exists to withhold.
 const nativeAttachShadow = Element.prototype.attachShadow;
+const nativeAppendChild = Node.prototype.appendChild;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
 const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
@@ -393,10 +394,10 @@ export function initContextMenu() {
           },
         ]);
         nativeReflectApply(nativeArrayPush, menuItems, [el]);
-        menu.appendChild(el);
+        nativeReflectApply(nativeAppendChild, menu, [el]);
       }
-      shadow.appendChild(menu);
-      document.body.appendChild(ctxMenu);
+      nativeReflectApply(nativeAppendChild, shadow, [menu]);
+      nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
       const r = rectOf(menu);
       if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
       if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;

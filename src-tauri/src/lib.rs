@@ -148,6 +148,19 @@ fn signed_action_window(
 }
 
 #[cfg(target_os = "macos")]
+fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, copied: bool) {
+    let request = serde_json::to_string(request).expect("request serializes");
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:copy-image-result', {{ detail: {{ request: {request}, copied: {copied} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report macOS clipboard result: {error}");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn consume_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -> bool {
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
@@ -574,6 +587,7 @@ pub fn run() {
                     struct CopyImageMsg {
                         data_url: String,
                         action: String,
+                        request: String,
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
@@ -592,10 +606,12 @@ pub fn run() {
                     };
                     if !consume_context_activation(&copy_handle, &label, &msg.action) {
                         log::warn!("carrier:copy-image had no selected native menu action");
+                        send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
                     let Some((header, encoded)) = msg.data_url.split_once(',') else {
                         log::warn!("carrier:copy-image data URL did not parse");
+                        send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     };
                     if !header.starts_with("data:image/")
@@ -603,18 +619,22 @@ pub fn run() {
                         || encoded.len() > 44 * 1024 * 1024
                     {
                         log::warn!("carrier:copy-image data URL was invalid or too large");
+                        send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
                     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)
                     else {
                         log::warn!("carrier:copy-image base64 did not decode");
+                        send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     };
                     if bytes.len() > 32 * 1024 * 1024 {
                         log::warn!("carrier:copy-image exceeded the clipboard size cap");
+                        send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
-                    macos::clipboard::copy_image(&copy_handle, &label, bytes);
+                    let copied = macos::clipboard::copy_image(&copy_handle, &label, bytes);
+                    send_copy_image_result(&copy_handle, &label, &msg.request, copied);
                 });
             }
 

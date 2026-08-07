@@ -4,15 +4,19 @@ use objc2::runtime::AnyObject;
 use objc2_foundation::NSString;
 use tauri::Manager;
 
-fn with_pasteboard(app: &tauri::AppHandle, label: &str, write: impl FnOnce() + Send + 'static) {
+fn with_pasteboard<T: Send + 'static>(
+    app: &tauri::AppHandle,
+    label: &str,
+    write: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     let Some(window) = app.get_webview_window(label) else {
-        return;
+        return None;
     };
-    let _ = window.with_webview(move |_| write());
+    window.with_webview(move |_| write()).ok()
 }
 
 pub(crate) fn copy_text(app: &tauri::AppHandle, label: &str, text: String) {
-    with_pasteboard(app, label, move || unsafe {
+    let _ = with_pasteboard(app, label, move || unsafe {
         use objc2::{class, msg_send};
 
         let pasteboard: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
@@ -26,7 +30,7 @@ pub(crate) fn copy_text(app: &tauri::AppHandle, label: &str, text: String) {
     });
 }
 
-pub(crate) fn copy_image(app: &tauri::AppHandle, label: &str, bytes: Vec<u8>) {
+pub(crate) fn copy_image(app: &tauri::AppHandle, label: &str, bytes: Vec<u8>) -> bool {
     with_pasteboard(app, label, move || unsafe {
         use objc2::{class, msg_send};
 
@@ -36,7 +40,7 @@ pub(crate) fn copy_image(app: &tauri::AppHandle, label: &str, bytes: Vec<u8>) {
         let image: *mut AnyObject = msg_send![image, initWithData: data];
         if image.is_null() {
             log::warn!("context-menu image was not a format AppKit could copy");
-            return;
+            return false;
         }
         let pasteboard: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
         let _: isize = msg_send![pasteboard, clearContents];
@@ -46,5 +50,7 @@ pub(crate) fn copy_image(app: &tauri::AppHandle, label: &str, bytes: Vec<u8>) {
         if !written {
             log::warn!("failed to write context-menu image to the macOS pasteboard");
         }
-    });
+        written
+    })
+    .unwrap_or(false)
 }
