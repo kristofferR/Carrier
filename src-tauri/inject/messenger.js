@@ -748,7 +748,7 @@
   var MAX_BLOB = 512 * 1024 * 1024;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeArrayIndexOf = Array.prototype.indexOf;
-  var nativeArrayPush = Array.prototype.push;
+  var nativeObjectDefineProperty = Object.defineProperty;
   var nativeReflectApply = Reflect.apply;
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   async function shareSrc(src, fallbackName, fx, fy) {
@@ -819,7 +819,15 @@
         const fy = e.clientY / Math.max(1, innerHeight);
         const items = [];
         const addItem = (item) => {
-          nativeReflectApply(nativeArrayPush, items, [item]);
+          nativeReflectApply(nativeObjectDefineProperty, items, [
+            String(items.length),
+            {
+              value: item,
+              writable: true,
+              enumerable: true,
+              configurable: true
+            }
+          ]);
         };
         if (imgSrc) {
           addItem([
