@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const repoAsset = (path: string) =>
-  Bun.file(new URL(`../../../../${path}`, import.meta.url)).text();
+const repoUrl = (path: string) => new URL(`../../../../${path}`, import.meta.url);
+const repoAsset = (path: string) => Bun.file(repoUrl(path)).text();
 
 describe("hand-maintained injected assets", () => {
   test("the MCP bridge contains no raw NUL bytes", async () => {
@@ -102,6 +106,55 @@ describe("hand-maintained injected assets", () => {
 
     expect(info).toContain("<key>NSDownloadsFolderUsageDescription</key>");
     expect(info).toContain("Carrier saves photos, videos, and files");
+  });
+
+  test("release builds bundle the pre-signed macOS share extension", async () => {
+    const release = JSON.parse(await repoAsset("src-tauri/tauri.conf.release.json")) as {
+      build: { beforeBundleCommand: string };
+      bundle: {
+        createUpdaterArtifacts: boolean;
+        macOS: { files: Record<string, string> };
+      };
+    };
+    const [buildEntrypoint, buildScript] = await Promise.all([
+      repoAsset("share-extension/macos/build.ts"),
+      repoAsset("share-extension/macos/build.sh"),
+    ]);
+    const packageJson = JSON.parse(await repoAsset("package.json")) as {
+      scripts: Record<string, string>;
+    };
+
+    expect(release.build.beforeBundleCommand).toBe("bun run build:share-extension");
+    expect(packageJson.scripts["build:share-extension"]).toBe("bun share-extension/macos/build.ts");
+    expect(release.bundle.macOS.files["PlugIns/Carrier Share.appex"]).toBe(
+      "target/share-extension/Carrier Share.appex",
+    );
+    expect(release.bundle.createUpdaterArtifacts).toBe(true);
+    expect(buildEntrypoint).toContain('if (process.platform !== "darwin")');
+    expect(buildEntrypoint).toContain("process.env.APPLE_SIGNING_IDENTITY?.trim()");
+    expect(buildEntrypoint).not.toContain('|| "-"');
+    expect(buildScript).toContain('codesign --force --options runtime "$TIMESTAMP_OPTION"');
+    expect(buildScript).toContain('--entitlements "$SCRIPT_DIR/entitlements.plist"');
+    expect(buildScript).toContain('--sign "$IDENTITY"');
+  });
+
+  test("the share extension build rejects multiline bundle versions", async () => {
+    const outputDir = await mkdtemp(join(tmpdir(), "carrier-share-version-"));
+    try {
+      const result = Bun.spawnSync([
+        "sh",
+        fileURLToPath(repoUrl("share-extension/macos/build.sh")),
+        outputDir,
+        "arm64",
+        "-",
+        "1.2.3\nextra",
+      ]);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(new TextDecoder().decode(result.stderr)).toContain("invalid bundle version");
+    } finally {
+      await rm(outputDir, { force: true, recursive: true });
+    }
   });
 
   test("Settings loads the generated update consent controller", async () => {
