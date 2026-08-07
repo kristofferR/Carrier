@@ -299,6 +299,11 @@ export function initContextMenu() {
       nativeReflectApply(nativeAddEventListener, ctxMenu, [
         "keydown",
         (event: KeyboardEvent) => {
+          // The host stays reachable from the page, so a synthetic ArrowDown or
+          // End dispatched on it would otherwise move focus onto a row of the
+          // page's choosing — inside the closed root, where it cannot reach
+          // directly — and the user's next real Enter would activate it.
+          if (!event.isTrusted) return;
           const current = focusedIndex;
           let next: number | null = null;
           if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;

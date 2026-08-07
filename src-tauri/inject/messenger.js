@@ -971,6 +971,7 @@
         nativeReflectApply(nativeAddEventListener, ctxMenu, [
           "keydown",
           (event) => {
+            if (!event.isTrusted) return;
             const current = focusedIndex;
             let next = null;
             if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
