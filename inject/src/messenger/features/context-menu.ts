@@ -8,6 +8,18 @@ import { type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 
+// Keep these names and arrays in sync with src-tauri/src/menu.rs. A Rust test
+// reads these declarations so the native allowlist cannot drift silently.
+const IMAGE_CONTEXT_MENU_LABELS = [
+  "Copy image",
+  "Download image",
+  "Share…",
+  "Copy image address",
+  "Open image in browser",
+] as const;
+const VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"] as const;
+const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] as const;
+
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
@@ -47,20 +59,26 @@ function contextActionToken() {
 
 function showNativeContextMenu(items: [string, () => unknown][]) {
   const nativeItems: { label: string; action: string }[] = [];
+  const removeListeners: (() => void)[] = [];
+  const removeAllListeners = () => {
+    for (let index = 0; index < removeListeners.length; index += 1) {
+      removeListeners[index]?.();
+    }
+  };
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (!item) continue;
     const action = contextActionToken();
     const eventName = `carrier:context-action:${action}`;
-    const run = () => {
+    const removeListener = () =>
       nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
+    const run = () => {
+      removeAllListeners();
       item[1]();
     };
     nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
-    nativeSetTimeout(
-      () => nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]),
-      120_000,
-    );
+    nativeReflectApply(nativeArrayPush, removeListeners, [removeListener]);
+    nativeSetTimeout(removeListener, 120_000);
     nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
       String(nativeItems.length),
       {
@@ -191,14 +209,14 @@ export function initContextMenu() {
       };
       if (imgSrc) {
         addItem([
-          "Copy image",
+          IMAGE_CONTEXT_MENU_LABELS[0],
           () =>
             copyImageSrc(imgSrc)
               .then(() => toast("Image copied"))
               .catch(() => toast("Copy failed")),
         ]);
         addItem([
-          "Download image",
+          IMAGE_CONTEXT_MENU_LABELS[1],
           () =>
             downloadSrc(imgSrc, "image")
               .then(toastDownloadSaved)
@@ -206,15 +224,15 @@ export function initContextMenu() {
         ]);
         if (isMac) {
           addItem([
-            "Share…",
+            IMAGE_CONTEXT_MENU_LABELS[2],
             () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
-        addItem(["Copy image address", () => copyAddress(imgSrc)]);
-        addItem(["Open image in browser", () => openUrl(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
       } else if (vidSrc) {
         addItem([
-          "Download video",
+          VIDEO_CONTEXT_MENU_LABELS[0],
           () =>
             downloadSrc(vidSrc, "video")
               .then(toastDownloadSaved)
@@ -222,14 +240,14 @@ export function initContextMenu() {
         ]);
         if (isMac) {
           addItem([
-            "Share…",
+            VIDEO_CONTEXT_MENU_LABELS[1],
             () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
           ]);
         }
-        addItem(["Copy video address", () => copyAddress(vidSrc)]);
+        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        addItem(["Copy link address", () => copyAddress(linkHref)]);
-        addItem(["Open link in browser", () => openUrl(linkHref)]);
+        addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref)]);
+        addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
 

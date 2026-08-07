@@ -301,6 +301,19 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
 }
 
 #[cfg(any(target_os = "macos", test))]
+const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Copy image",
+    "Download image",
+    "Share…",
+    "Copy image address",
+    "Open image in browser",
+];
+#[cfg(any(target_os = "macos", test))]
+const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &["Download video", "Share…", "Copy video address"];
+#[cfg(any(target_os = "macos", test))]
+const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in browser"];
+
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Deserialize)]
 pub(crate) struct NativeContextMenuItem {
     pub(crate) label: String,
@@ -309,18 +322,10 @@ pub(crate) struct NativeContextMenuItem {
 
 #[cfg(any(target_os = "macos", test))]
 fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
-    const IMAGE: &[&str] = &[
-        "Copy image",
-        "Download image",
-        "Share…",
-        "Copy image address",
-        "Open image in browser",
-    ];
-    const VIDEO: &[&str] = &["Download video", "Share…", "Copy video address"];
-    const LINK: &[&str] = &["Copy link address", "Open link in browser"];
-
     let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
-    let labels_valid = labels == IMAGE || labels == VIDEO || labels == LINK;
+    let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
+        || labels == VIDEO_CONTEXT_MENU_LABELS
+        || labels == LINK_CONTEXT_MENU_LABELS;
     let mut actions = std::collections::HashSet::new();
     labels_valid
         && items.iter().all(|item| {
@@ -341,17 +346,33 @@ pub(crate) fn show_native_context_menu(
         return;
     }
     let Some(window) = app.get_webview_window(label) else {
+        log::warn!("carrier:context-menu target window {label:?} is gone");
         return;
     };
-    let Ok(menu) = Menu::new(app) else {
-        return;
+    let menu = match Menu::new(app) {
+        Ok(menu) => menu,
+        Err(error) => {
+            log::warn!("failed to create native media context menu: {error}");
+            return;
+        }
     };
     for item in items {
         let id = format!("carrier-context:{label}:{}", item.action);
-        let Ok(menu_item) = MenuItemBuilder::new(item.label).id(id).build(app) else {
-            return;
+        let menu_item = match MenuItemBuilder::new(item.label).id(id).build(app) {
+            Ok(menu_item) => menu_item,
+            Err(error) => {
+                log::warn!(
+                    "failed to build native media context menu item for action {}: {error}",
+                    item.action
+                );
+                return;
+            }
         };
-        if menu.append(&menu_item).is_err() {
+        if let Err(error) = menu.append(&menu_item) {
+            log::warn!(
+                "failed to append native media context menu item for action {}: {error}",
+                item.action
+            );
             return;
         }
     }
@@ -556,6 +577,19 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
 
+    fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
+        let source = include_str!("../../inject/src/messenger/features/context-menu.ts");
+        let declaration = format!("const {name} = [");
+        let body = source
+            .split_once(&declaration)
+            .unwrap_or_else(|| panic!("missing injected label declaration {name}"))
+            .1
+            .split_once("] as const;")
+            .unwrap_or_else(|| panic!("unterminated injected label declaration {name}"))
+            .0;
+        body.split('"').skip(1).step_by(2).collect()
+    }
+
     fn context_item(label: &str, action: char) -> NativeContextMenuItem {
         NativeContextMenuItem {
             label: label.into(),
@@ -667,6 +701,17 @@ mod tests {
             context_item("Open link in browser", 'a'),
         ];
         assert!(!valid_context_menu_items(&duplicate));
+    }
+
+    #[test]
+    fn native_context_menu_allowlist_matches_injected_labels() {
+        for (name, expected) in [
+            ("IMAGE_CONTEXT_MENU_LABELS", IMAGE_CONTEXT_MENU_LABELS),
+            ("VIDEO_CONTEXT_MENU_LABELS", VIDEO_CONTEXT_MENU_LABELS),
+            ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
+        ] {
+            assert_eq!(injected_context_menu_labels(name), expected, "{name}");
+        }
     }
 
     #[test]
