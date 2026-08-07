@@ -1098,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn privileged_bridges_sign_without_serializing_the_window_secret() {
+    fn privileged_bridges_emit_signed_payloads_instead_of_raw_tokens() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
