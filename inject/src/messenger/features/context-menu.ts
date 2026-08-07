@@ -32,7 +32,10 @@ const nativeReflectApply = Reflect.apply;
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
 const nativeCreateElement = Document.prototype.createElement;
+const nativeFocus = HTMLElement.prototype.focus;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const nativeGetKeyboardKey = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, "key")?.get;
+const nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "style")?.get;
 const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
 const nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
@@ -210,11 +213,14 @@ const closeMenu = (restoreFocus = false) => {
   ctxMenu = null;
   document.removeEventListener("click", closeMenuFromClick, true);
   document.removeEventListener("scroll", closeMenuFromScroll, true);
-  if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+  if (restoreFocus && ctxMenuReturnFocus) {
+    nativeReflectApply(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
+  }
   ctxMenuReturnFocus = null;
 };
 
 export function initContextMenu() {
+  if (!nativeGetKeyboardKey || !nativeGetStyle) return;
   nativeReflectApply(nativeAddEventListener, window, [
     "carrier:context-action",
     runNativeAction,
@@ -338,7 +344,8 @@ export function initContextMenu() {
       // all; moving the host it can still see shifts every row together, which
       // the per-row geometry check below refuses.
       ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-      Object.assign(ctxMenu.style, {
+      const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []) as CSSStyleDeclaration;
+      Object.assign(ctxMenuStyle, {
         position: "fixed",
         left: `${e.clientX}px`,
         top: `${e.clientY}px`,
@@ -350,7 +357,8 @@ export function initContextMenu() {
       const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
       nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
       nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
-      Object.assign(menu.style, {
+      const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
+      Object.assign(menuStyle, {
         background: "var(--card-background, Canvas)",
         color: "var(--primary-text, CanvasText)",
         border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -382,7 +390,8 @@ export function initContextMenu() {
         nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
         if (!nativeSetTabIndex) return;
         nativeReflectApply(nativeSetTabIndex, el, [-1]);
-        Object.assign(el.style, {
+        const elStyle = nativeReflectApply(nativeGetStyle, el, []) as CSSStyleDeclaration;
+        Object.assign(elStyle, {
           padding: "8px 12px",
           cursor: "pointer",
           borderRadius: "6px",
@@ -390,17 +399,17 @@ export function initContextMenu() {
         });
         nativeReflectApply(nativeAddEventListener, el, [
           "mouseenter",
-          () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+          () => (elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "mouseleave",
-          () => (el.style.background = ""),
+          () => (elStyle.background = ""),
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
           "focus",
-          () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+          () => (elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
         ]);
-        nativeReflectApply(nativeAddEventListener, el, ["blur", () => (el.style.background = "")]);
+        nativeReflectApply(nativeAddEventListener, el, ["blur", () => (elStyle.background = "")]);
         nativeReflectApply(nativeAddEventListener, el, [
           "click",
           (ev: MouseEvent) => {
@@ -423,7 +432,8 @@ export function initContextMenu() {
         nativeReflectApply(nativeAddEventListener, el, [
           "keydown",
           (event: KeyboardEvent) => {
-            if (event.key !== "Enter" && event.key !== " ") return;
+            const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
+            if (key !== "Enter" && key !== " ") return;
             if (!event.isTrusted) return;
             event.preventDefault();
             event.stopPropagation();
@@ -438,8 +448,8 @@ export function initContextMenu() {
       nativeReflectApply(nativeAppendChild, shadow, [menu]);
       nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
       const r = rectOf(menu);
-      if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
-      if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+      if (r.x + r.width > innerWidth) ctxMenuStyle.left = `${innerWidth - r.width - 8}px`;
+      if (r.y + r.height > innerHeight) ctxMenuStyle.top = `${innerHeight - r.height - 8}px`;
       // Index loop, not for..of: iteration would run through a page-replaceable
       // Array.prototype[Symbol.iterator], handing out the rows again.
       for (let i = 0; i < menuItems.length; i += 1) {
@@ -458,18 +468,19 @@ export function initContextMenu() {
           // page's choosing — inside the closed root, where it cannot reach
           // directly — and the user's next real Enter would activate it.
           if (!event.isTrusted) return;
+          const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
           const current = focusedIndex;
           let next: number | null = null;
-          if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
-          if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-          if (event.key === "Home") next = 0;
-          if (event.key === "End") next = menuItems.length - 1;
-          if (event.key === "Escape") {
+          if (key === "ArrowDown") next = (current + 1) % menuItems.length;
+          if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (key === "Home") next = 0;
+          if (key === "End") next = menuItems.length - 1;
+          if (key === "Escape") {
             event.preventDefault();
             closeMenu(true);
             return;
           }
-          if (event.key === "Tab") {
+          if (key === "Tab") {
             // closeMenu(true) restores focus synchronously; block the browser's
             // own Tab move so focus stays on the restoration target.
             event.preventDefault();
@@ -479,12 +490,14 @@ export function initContextMenu() {
           if (next !== null) {
             event.preventDefault();
             focusedIndex = next;
-            menuItems[next]?.focus();
+            const nextItem = menuItems[next];
+            if (nextItem) nativeReflectApply(nativeFocus, nextItem, []);
           }
         },
       ]);
       focusedIndex = 0;
-      menuItems[0]?.focus({ preventScroll: true });
+      const firstItem = menuItems[0];
+      if (firstItem) nativeReflectApply(nativeFocus, firstItem, [{ preventScroll: true }]);
       setTimeout(() => {
         document.addEventListener("click", closeMenuFromClick, true);
         document.addEventListener("scroll", closeMenuFromScroll, true);

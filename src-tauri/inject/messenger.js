@@ -774,7 +774,10 @@
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeCreateElement = Document.prototype.createElement;
+  var nativeFocus = HTMLElement.prototype.focus;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeGetKeyboardKey = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, "key")?.get;
+  var nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "style")?.get;
   var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
   var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
@@ -908,10 +911,13 @@
     ctxMenu = null;
     document.removeEventListener("click", closeMenuFromClick, true);
     document.removeEventListener("scroll", closeMenuFromScroll, true);
-    if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+    if (restoreFocus && ctxMenuReturnFocus) {
+      nativeReflectApply(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
+    }
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
+    if (!nativeGetKeyboardKey || !nativeGetStyle) return;
     nativeReflectApply(nativeAddEventListener, window, [
       "carrier:context-action",
       runNativeAction,
@@ -992,7 +998,8 @@
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]);
-        Object.assign(ctxMenu.style, {
+        const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []);
+        Object.assign(ctxMenuStyle, {
           position: "fixed",
           left: `${e.clientX}px`,
           top: `${e.clientY}px`,
@@ -1004,7 +1011,8 @@
         const menu = nativeReflectApply(nativeCreateElement, document, ["div"]);
         nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
         nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
-        Object.assign(menu.style, {
+        const menuStyle = nativeReflectApply(nativeGetStyle, menu, []);
+        Object.assign(menuStyle, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
           border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -1032,7 +1040,8 @@
           nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
           if (!nativeSetTabIndex) return;
           nativeReflectApply(nativeSetTabIndex, el, [-1]);
-          Object.assign(el.style, {
+          const elStyle = nativeReflectApply(nativeGetStyle, el, []);
+          Object.assign(elStyle, {
             padding: "8px 12px",
             cursor: "pointer",
             borderRadius: "6px",
@@ -1040,17 +1049,17 @@
           });
           nativeReflectApply(nativeAddEventListener, el, [
             "mouseenter",
-            () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"
+            () => elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"
           ]);
           nativeReflectApply(nativeAddEventListener, el, [
             "mouseleave",
-            () => el.style.background = ""
+            () => elStyle.background = ""
           ]);
           nativeReflectApply(nativeAddEventListener, el, [
             "focus",
-            () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"
+            () => elStyle.background = "var(--hover-overlay, rgba(127,127,127,.18))"
           ]);
-          nativeReflectApply(nativeAddEventListener, el, ["blur", () => el.style.background = ""]);
+          nativeReflectApply(nativeAddEventListener, el, ["blur", () => elStyle.background = ""]);
           nativeReflectApply(nativeAddEventListener, el, [
             "click",
             (ev) => {
@@ -1068,7 +1077,8 @@
           nativeReflectApply(nativeAddEventListener, el, [
             "keydown",
             (event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
+              const key = nativeReflectApply(nativeGetKeyboardKey, event, []);
+              if (key !== "Enter" && key !== " ") return;
               if (!event.isTrusted) return;
               event.preventDefault();
               event.stopPropagation();
@@ -1081,8 +1091,8 @@
         nativeReflectApply(nativeAppendChild, shadow, [menu]);
         nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
         const r = rectOf(menu);
-        if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
-        if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+        if (r.x + r.width > innerWidth) ctxMenuStyle.left = `${innerWidth - r.width - 8}px`;
+        if (r.y + r.height > innerHeight) ctxMenuStyle.top = `${innerHeight - r.height - 8}px`;
         for (let i = 0; i < menuItems.length; i += 1) {
           const row = menuItems[i];
           nativeReflectApply(nativeArrayPush, laidOutRects, [
@@ -1093,18 +1103,19 @@
           "keydown",
           (event) => {
             if (!event.isTrusted) return;
+            const key = nativeReflectApply(nativeGetKeyboardKey, event, []);
             const current = focusedIndex;
             let next = null;
-            if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
-            if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-            if (event.key === "Home") next = 0;
-            if (event.key === "End") next = menuItems.length - 1;
-            if (event.key === "Escape") {
+            if (key === "ArrowDown") next = (current + 1) % menuItems.length;
+            if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+            if (key === "Home") next = 0;
+            if (key === "End") next = menuItems.length - 1;
+            if (key === "Escape") {
               event.preventDefault();
               closeMenu(true);
               return;
             }
-            if (event.key === "Tab") {
+            if (key === "Tab") {
               event.preventDefault();
               closeMenu(true);
               return;
@@ -1112,12 +1123,14 @@
             if (next !== null) {
               event.preventDefault();
               focusedIndex = next;
-              menuItems[next]?.focus();
+              const nextItem = menuItems[next];
+              if (nextItem) nativeReflectApply(nativeFocus, nextItem, []);
             }
           }
         ]);
         focusedIndex = 0;
-        menuItems[0]?.focus({ preventScroll: true });
+        const firstItem = menuItems[0];
+        if (firstItem) nativeReflectApply(nativeFocus, firstItem, [{ preventScroll: true }]);
         setTimeout(() => {
           document.addEventListener("click", closeMenuFromClick, true);
           document.addEventListener("scroll", closeMenuFromScroll, true);
