@@ -938,6 +938,10 @@ mod tests {
         };
         let mut used = VecDeque::new();
         assert_eq!(
+            authorize_signed_action(&tokens, &mut used, "carrier:context-menu", &signed),
+            None
+        );
+        assert_eq!(
             authorize_signed_action(&tokens, &mut used, event, &signed).as_deref(),
             Some("win-2")
         );

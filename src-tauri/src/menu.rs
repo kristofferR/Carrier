@@ -416,7 +416,9 @@ pub(crate) fn show_native_context_menu(
             let key = (label.to_string(), item.action.clone());
             if let Some(value) = &item.value {
                 copies.insert(key, value.clone());
-            } else if item.label == "Copy image" || item.label == "Share…" {
+            } else if item.label == IMAGE_CONTEXT_MENU_LABELS[0]
+                || item.label == IMAGE_CONTEXT_MENU_LABELS[2]
+            {
                 activations.insert(key, false);
             }
         }
