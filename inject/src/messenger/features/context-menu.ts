@@ -34,6 +34,7 @@ const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
 const nativeCreateElement = Document.prototype.createElement;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -320,8 +321,8 @@ export function initContextMenu() {
         { mode: "closed" },
       ]) as ShadowRoot;
       const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-      menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", "Media actions");
+      nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
+      nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
       Object.assign(menu.style, {
         background: "var(--card-background, Canvas)",
         color: "var(--primary-text, CanvasText)",
@@ -350,7 +351,7 @@ export function initContextMenu() {
         const fn = item[1];
         const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
         el.textContent = label;
-        el.setAttribute("role", "menuitem");
+        nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
         el.tabIndex = -1;
         Object.assign(el.style, {
           padding: "8px 12px",
