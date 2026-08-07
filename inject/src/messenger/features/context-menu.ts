@@ -35,6 +35,7 @@ const nativeCreateElement = Document.prototype.createElement;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
 const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
+const nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
 const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -379,7 +380,8 @@ export function initContextMenu() {
         if (!nativeSetTextContent) return;
         nativeReflectApply(nativeSetTextContent, el, [label]);
         nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
-        el.tabIndex = -1;
+        if (!nativeSetTabIndex) return;
+        nativeReflectApply(nativeSetTabIndex, el, [-1]);
         Object.assign(el.style, {
           padding: "8px 12px",
           cursor: "pointer",
