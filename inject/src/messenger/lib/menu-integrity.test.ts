@@ -1,7 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { pointerActivationIsSound, pointInRect, rectsMatch } from "./menu-integrity";
+import {
+  cssPropertyName,
+  pointerActivationIsSound,
+  pointInRect,
+  rectsMatch,
+} from "./menu-integrity";
 
 const row = { x: 100, y: 200, width: 170, height: 34 };
+
+test("cssPropertyName ignores a replaced regex hook", () => {
+  const replace = Object.getOwnPropertyDescriptor(RegExp.prototype, Symbol.replace);
+  Object.defineProperty(RegExp.prototype, Symbol.replace, {
+    configurable: true,
+    value: () => {
+      throw new Error("page regex hook called");
+    },
+  });
+  try {
+    expect(cssPropertyName("borderRadius")).toBe("border-radius");
+  } finally {
+    if (replace) Object.defineProperty(RegExp.prototype, Symbol.replace, replace);
+  }
+});
 
 describe("rectsMatch", () => {
   test("accepts sub-pixel layout jitter", () => {
