@@ -770,17 +770,16 @@
   var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
-  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeCreateElement = Document.prototype.createElement;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
   var nativeSetAttribute = Element.prototype.setAttribute;
+  var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
   var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
-  var nativeSetTimeout = window.setTimeout.bind(window);
   var rectOf = (el) => {
     const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -797,27 +796,36 @@
     }
     return token;
   }
+  var nativeActionHandlers = [];
+  var clearNativeActionHandlers = () => {
+    nativeActionHandlers = [];
+  };
+  async function runNativeAction(event) {
+    const detail = event.detail;
+    if (!detail || typeof detail !== "object") return;
+    const { action, signature } = detail;
+    if (typeof action !== "string" || !carrierVerifyResult) return;
+    if (!await carrierVerifyResult("carrier:context-action", { action }, signature)) return;
+    const handlers = nativeActionHandlers;
+    for (let index = 0; index < handlers.length; index += 1) {
+      const handler = handlers[index];
+      if (!handler || handler[0] !== action) continue;
+      clearNativeActionHandlers();
+      handler[1]();
+      return;
+    }
+  }
   function showNativeContextMenu(items) {
     const nativeItems = [];
-    const removeListeners = [];
-    const removeAllListeners = () => {
-      for (let index = 0; index < removeListeners.length; index += 1) {
-        removeListeners[index]?.();
-      }
-    };
+    clearNativeActionHandlers();
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
       if (!item) continue;
       const action = contextActionToken();
-      const eventName = `carrier:context-action:${action}`;
-      const removeListener = () => nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
       const run = () => {
-        removeAllListeners();
         item[1](action);
       };
-      nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
-      nativeReflectApply(nativeArrayPush, removeListeners, [removeListener]);
-      nativeSetTimeout(removeListener, 12e4);
+      nativeReflectApply(nativeArrayPush, nativeActionHandlers, [[action, run]]);
       nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
         String(nativeItems.length),
         {
@@ -828,7 +836,10 @@
         }
       ]);
     }
-    carrierShowContextMenu(nativeItems)?.catch(() => toast("Menu failed"));
+    carrierShowContextMenu(nativeItems)?.catch(() => {
+      clearNativeActionHandlers();
+      toast("Menu failed");
+    });
   }
   async function shareSrc(src, fallbackName, fx, fy, action) {
     const href = await downloadSrc(src, fallbackName);
@@ -900,6 +911,11 @@
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
+    nativeReflectApply(nativeAddEventListener, window, [
+      "carrier:context-action",
+      runNativeAction,
+      true
+    ]);
     document.addEventListener(
       "contextmenu",
       (e) => {
@@ -1010,7 +1026,8 @@
           const label = item[0];
           const fn = item[1];
           const el = nativeReflectApply(nativeCreateElement, document, ["div"]);
-          el.textContent = label;
+          if (!nativeSetTextContent) return;
+          nativeReflectApply(nativeSetTextContent, el, [label]);
           nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
           el.tabIndex = -1;
           Object.assign(el.style, {

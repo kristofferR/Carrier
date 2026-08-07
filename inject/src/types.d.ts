@@ -81,6 +81,11 @@ declare const carrierShowContextMenu: (
   items: { label: string; action: string; value?: string }[],
 ) => Promise<unknown> | undefined;
 
+/** Verify the native context-menu selection without exposing the window secret. */
+declare const carrierVerifyResult:
+  | ((event: string, value: unknown, signature: unknown) => Promise<boolean>)
+  | undefined;
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {

@@ -25,7 +25,6 @@ const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] a
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
 const nativeObjectDefineProperty = Object.defineProperty;
-const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const nativeReflectApply = Reflect.apply;
 // Same reason: the menu's isolation depends on these being the real ones. A
 // replaced `push` would be handed each privileged row as an argument, which is
@@ -35,10 +34,10 @@ const nativeAppendChild = Node.prototype.appendChild;
 const nativeCreateElement = Document.prototype.createElement;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
 const nativeSetAttribute = Element.prototype.setAttribute;
+const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
 const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
-const nativeSetTimeout = window.setTimeout.bind(window);
 
 const rectOf = (el: Element): MenuRect => {
   const r = nativeReflectApply(nativeGetBoundingClientRect, el, []) as DOMRect;
@@ -63,28 +62,47 @@ function contextActionToken() {
 
 type ContextMenuItem = [label: string, run: (action?: string) => unknown, value?: string];
 
+type NativeActionHandler = [action: string, run: () => void];
+
+// The opaque actions never leave this closure. The native side signs a selected
+// action before evaluating its event, so page code can neither forge a choice
+// nor swap it for another menu row.
+let nativeActionHandlers: NativeActionHandler[] = [];
+
+const clearNativeActionHandlers = () => {
+  nativeActionHandlers = [];
+};
+
+async function runNativeAction(event: Event) {
+  const detail = (event as CustomEvent<unknown>).detail;
+  if (!detail || typeof detail !== "object") return;
+  const { action, signature } = detail as { action?: unknown; signature?: unknown };
+  if (typeof action !== "string" || !carrierVerifyResult) return;
+  if (!(await carrierVerifyResult("carrier:context-action", { action }, signature))) return;
+
+  const handlers = nativeActionHandlers;
+  for (let index = 0; index < handlers.length; index += 1) {
+    const handler = handlers[index];
+    if (!handler || handler[0] !== action) continue;
+    clearNativeActionHandlers();
+    handler[1]();
+    return;
+  }
+}
+
 function showNativeContextMenu(items: ContextMenuItem[]) {
   const nativeItems: { label: string; action: string; value?: string }[] = [];
-  const removeListeners: (() => void)[] = [];
-  const removeAllListeners = () => {
-    for (let index = 0; index < removeListeners.length; index += 1) {
-      removeListeners[index]?.();
-    }
-  };
+  // Replacing a menu makes any still-open native rows stale. Keep handlers
+  // until native selection or replacement instead of expiring a live menu.
+  clearNativeActionHandlers();
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
     if (!item) continue;
     const action = contextActionToken();
-    const eventName = `carrier:context-action:${action}`;
-    const removeListener = () =>
-      nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
     const run = () => {
-      removeAllListeners();
       item[1](action);
     };
-    nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
-    nativeReflectApply(nativeArrayPush, removeListeners, [removeListener]);
-    nativeSetTimeout(removeListener, 120_000);
+    nativeReflectApply(nativeArrayPush, nativeActionHandlers, [[action, run]]);
     nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
       String(nativeItems.length),
       {
@@ -95,7 +113,10 @@ function showNativeContextMenu(items: ContextMenuItem[]) {
       },
     ]);
   }
-  carrierShowContextMenu(nativeItems)?.catch(() => toast("Menu failed"));
+  carrierShowContextMenu(nativeItems)?.catch(() => {
+    clearNativeActionHandlers();
+    toast("Menu failed");
+  });
 }
 
 // Save the media through the trusted download flow (the sheet needs a real
@@ -193,6 +214,11 @@ const closeMenu = (restoreFocus = false) => {
 };
 
 export function initContextMenu() {
+  nativeReflectApply(nativeAddEventListener, window, [
+    "carrier:context-action",
+    runNativeAction,
+    true,
+  ]);
   document.addEventListener(
     "contextmenu",
     (e) => {
@@ -350,7 +376,8 @@ export function initContextMenu() {
         const label = item[0];
         const fn = item[1];
         const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-        el.textContent = label;
+        if (!nativeSetTextContent) return;
+        nativeReflectApply(nativeSetTextContent, el, [label]);
         nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
         el.tabIndex = -1;
         Object.assign(el.style, {

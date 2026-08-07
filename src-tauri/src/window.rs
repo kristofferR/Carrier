@@ -737,20 +737,13 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   var carrierVerifyResult = carrierAuthorizedEmit && carrierAuthorizedEmit.verifyResult;
 
   var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
-  var nativeWindowDispatchEvent = EventTarget.prototype.dispatchEvent;
   var nativeWindowRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeSetTimeout = window.setTimeout.bind(window);
   var nativeClearTimeout = window.clearTimeout.bind(window);
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var NativeUint8Array = Uint8Array;
-  var NativeEvent = Event;
   var nativeReflectApply = Reflect.apply;
-  nativeObjectDefineProperty(window, '__carrierDispatchContextAction', {{
-    value: function (eventName) {{
-      nativeReflectApply(nativeWindowDispatchEvent, window, [new NativeEvent(eventName)]);
-    }}
-  }});
   var carrierCopyImageRequest = function () {{
     var bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
@@ -1036,9 +1029,7 @@ mod tests {
         );
         assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
         assert!(!script.contains("authorization: authorization"));
-        assert!(script.contains("EventTarget.prototype.dispatchEvent"));
-        assert!(script.contains("new NativeEvent(eventName)"));
-        assert!(script.contains("'__carrierDispatchContextAction'"));
+        assert!(!script.contains("__carrierDispatchContextAction"));
     }
 
     #[test]

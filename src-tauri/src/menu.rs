@@ -215,11 +215,21 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
             *selected = true;
         }
+        let signature = state
+            .download_reveal_tokens
+            .lock()
+            .unwrap()
+            .get(label)
+            .and_then(|secret| crate::context_action_signature(secret, action));
+        let Some(signature) = signature else {
+            log::warn!("failed to authenticate native media context action");
+            return;
+        };
         if let Some(window) = app.get_webview_window(label) {
-            let event_name = format!("carrier:context-action:{action}");
-            if let Ok(event_name) = serde_json::to_string(&event_name) {
+            let detail = serde_json::json!({ "action": action, "signature": signature });
+            if let Ok(detail) = serde_json::to_string(&detail) {
                 let _ = window.eval(format!(
-                    "window.__carrierDispatchContextAction({event_name});"
+                    "window.dispatchEvent(new CustomEvent('carrier:context-action', {{ detail: {detail} }}));"
                 ));
             }
         }
