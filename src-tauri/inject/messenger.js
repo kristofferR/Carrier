@@ -792,8 +792,15 @@
   var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
   var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
+  var NativeFileReader = FileReader;
+  var nativeReadAsDataURL = FileReader.prototype.readAsDataURL;
+  var nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
+    FileReader.prototype,
+    "result"
+  )?.get;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var nativeShowContextMenu = typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : void 0;
   var appendOwn = (items, item) => {
     nativeReflectApply(nativeObjectDefineProperty, void 0, [
       items,
@@ -858,7 +865,7 @@
       if (!item) continue;
       const action = contextActionToken();
       const run = () => {
-        item[1](action);
+        item[1](isMac2 ? action : void 0);
       };
       appendOwn(nativeActionHandlers, [action, run]);
       appendOwn(
@@ -866,7 +873,7 @@
         item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
       );
     }
-    carrierShowContextMenu(nativeItems)?.catch(() => {
+    nativeShowContextMenu?.(nativeItems)?.catch(() => {
       clearNativeActionHandlers();
       toast("Menu failed");
     });
@@ -918,10 +925,26 @@
       return;
     }
     const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
-      reader.addEventListener("error", () => reject(reader.error), { once: true });
-      reader.readAsDataURL(blob);
+      if (!nativeGetFileReaderResult) {
+        reject(new Error("native FileReader result getter unavailable"));
+        return;
+      }
+      const reader = new NativeFileReader();
+      nativeReflectApply(nativeAddEventListener, reader, [
+        "load",
+        () => {
+          const result = nativeReflectApply(nativeGetFileReaderResult, reader, []);
+          if (typeof result === "string") resolve(result);
+          else reject(new Error("image conversion failed"));
+        },
+        { once: true }
+      ]);
+      nativeReflectApply(nativeAddEventListener, reader, [
+        "error",
+        () => reject(new Error("image conversion failed")),
+        { once: true }
+      ]);
+      nativeReflectApply(nativeReadAsDataURL, reader, [blob]);
     });
     await carrierCopyImage(dataUrl, action);
   }
@@ -1013,13 +1036,12 @@
             break;
           }
         }
-        if (isMac2 && hasOversizedNativeValue) {
+        if (hasOversizedNativeValue) {
           clearNativeActionHandlers();
           return;
         }
         e.preventDefault();
-        if (isMac2) {
-          closeMenu();
+        if (nativeShowContextMenu) {
           showNativeContextMenu(items);
           return;
         }

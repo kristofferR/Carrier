@@ -47,8 +47,16 @@ const nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "s
 const nativeSetAttribute = Element.prototype.setAttribute;
 const nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
 const nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
+const NativeFileReader = FileReader;
+const nativeReadAsDataURL = FileReader.prototype.readAsDataURL;
+const nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
+  FileReader.prototype,
+  "result",
+)?.get;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+const nativeShowContextMenu =
+  typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : undefined;
 
 const appendOwn = <T>(items: T[], item: T) => {
   nativeReflectApply(nativeObjectDefineProperty, undefined, [
@@ -138,7 +146,7 @@ function showNativeContextMenu(items: ContextMenuItem[]) {
     if (!item) continue;
     const action = contextActionToken();
     const run = () => {
-      item[1](action);
+      item[1](isMac ? action : undefined);
     };
     appendOwn(nativeActionHandlers, [action, run]);
     appendOwn(
@@ -146,7 +154,7 @@ function showNativeContextMenu(items: ContextMenuItem[]) {
       item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
     );
   }
-  carrierShowContextMenu(nativeItems)?.catch(() => {
+  nativeShowContextMenu?.(nativeItems)?.catch(() => {
     clearNativeActionHandlers();
     toast("Menu failed");
   });
@@ -218,10 +226,26 @@ async function copyImageSrc(src: string, action?: string) {
     return;
   }
   const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
-    reader.addEventListener("error", () => reject(reader.error), { once: true });
-    reader.readAsDataURL(blob);
+    if (!nativeGetFileReaderResult) {
+      reject(new Error("native FileReader result getter unavailable"));
+      return;
+    }
+    const reader = new NativeFileReader();
+    nativeReflectApply(nativeAddEventListener, reader, [
+      "load",
+      () => {
+        const result = nativeReflectApply(nativeGetFileReaderResult, reader, []);
+        if (typeof result === "string") resolve(result);
+        else reject(new Error("image conversion failed"));
+      },
+      { once: true },
+    ]);
+    nativeReflectApply(nativeAddEventListener, reader, [
+      "error",
+      () => reject(new Error("image conversion failed")),
+      { once: true },
+    ]);
+    nativeReflectApply(nativeReadAsDataURL, reader, [blob]);
   });
   await carrierCopyImage(dataUrl, action);
 }
@@ -347,7 +371,7 @@ export function initContextMenu() {
           break;
         }
       }
-      if (isMac && hasOversizedNativeValue) {
+      if (hasOversizedNativeValue) {
         // A native menu rejects an oversized copied address as untrusted input.
         // Leave the original menu intact so its remaining actions still work.
         clearNativeActionHandlers();
@@ -355,8 +379,7 @@ export function initContextMenu() {
       }
 
       e.preventDefault();
-      if (isMac) {
-        closeMenu();
+      if (nativeShowContextMenu) {
         showNativeContextMenu(items);
         return;
       }

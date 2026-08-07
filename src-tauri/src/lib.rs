@@ -192,7 +192,6 @@ fn share_download_result_signature(secret: &str, request: &str, shared: bool) ->
     Some(hex::encode(mac.finalize().into_bytes()))
 }
 
-#[cfg(any(target_os = "macos", test))]
 pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ContextAction<'a> {
@@ -621,30 +620,30 @@ pub fn run() {
                 });
             });
 
+            // Show a native context menu only for an authorized Messenger window.
+            let context_menu_handle = app.handle().clone();
+            app.listen_any("carrier:context-menu", move |event| {
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                    log::warn!("carrier:context-menu payload did not parse");
+                    return;
+                };
+                let Some(label) =
+                    signed_action_window(&context_menu_handle, "carrier:context-menu", &signed)
+                else {
+                    log::warn!("carrier:context-menu was not authorized by a trusted click");
+                    return;
+                };
+                let Ok(items) =
+                    serde_json::from_str::<Vec<menu::NativeContextMenuItem>>(&signed.message)
+                else {
+                    log::warn!("carrier:context-menu message did not parse");
+                    return;
+                };
+                menu::show_native_context_menu(&context_menu_handle, &label, items);
+            });
+
             #[cfg(target_os = "macos")]
             {
-                // Show a native context menu only for an authorized Messenger window.
-                let context_menu_handle = app.handle().clone();
-                app.listen_any("carrier:context-menu", move |event| {
-                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                        log::warn!("carrier:context-menu payload did not parse");
-                        return;
-                    };
-                    let Some(label) =
-                        signed_action_window(&context_menu_handle, "carrier:context-menu", &signed)
-                    else {
-                        log::warn!("carrier:context-menu was not authorized by a trusted click");
-                        return;
-                    };
-                    let Ok(items) =
-                        serde_json::from_str::<Vec<menu::NativeContextMenuItem>>(&signed.message)
-                    else {
-                        log::warn!("carrier:context-menu message did not parse");
-                        return;
-                    };
-                    menu::show_native_context_menu(&context_menu_handle, &label, items);
-                });
-
                 // Share a just-downloaded media file via the macOS share sheet.
                 // Same trust model as carrier:reveal-download: the per-window
                 // credential authorizes it and the file path only ever comes from
