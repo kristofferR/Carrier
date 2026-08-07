@@ -10,5 +10,11 @@
   <!-- Allow loading the bundled WebView/runtime libraries. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+  <!-- Hardened Runtime blocks camera/mic outright (no TCC prompt) without
+       these, so Messenger calls can't get devices in signed builds. -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>
