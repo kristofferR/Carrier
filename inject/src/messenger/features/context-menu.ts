@@ -35,6 +35,13 @@ const nativeAppendChild = Node.prototype.appendChild;
 const nativeCreateElement = Document.prototype.createElement;
 const nativeFocus = HTMLElement.prototype.focus;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const nativeGetRectX = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "x")?.get;
+const nativeGetRectY = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "y")?.get;
+const nativeGetRectWidth = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "width")?.get;
+const nativeGetRectHeight = Object.getOwnPropertyDescriptor(
+  DOMRectReadOnly.prototype,
+  "height",
+)?.get;
 const nativeGetKeyboardKey = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, "key")?.get;
 const nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "style")?.get;
 const nativeSetAttribute = Element.prototype.setAttribute;
@@ -67,7 +74,12 @@ const applyStyles = (style: CSSStyleDeclaration, values: Partial<CSSStyleDeclara
 
 const rectOf = (el: Element): MenuRect => {
   const r = nativeReflectApply(nativeGetBoundingClientRect, el, []) as DOMRect;
-  return { x: r.x, y: r.y, width: r.width, height: r.height };
+  return {
+    x: nativeReflectApply(nativeGetRectX!, r, []) as number,
+    y: nativeReflectApply(nativeGetRectY!, r, []) as number,
+    width: nativeReflectApply(nativeGetRectWidth!, r, []) as number,
+    height: nativeReflectApply(nativeGetRectHeight!, r, []) as number,
+  };
 };
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
@@ -237,7 +249,15 @@ const closeMenu = (restoreFocus = false) => {
 };
 
 export function initContextMenu() {
-  if (!nativeGetKeyboardKey || !nativeGetStyle) return;
+  if (
+    !nativeGetRectX ||
+    !nativeGetRectY ||
+    !nativeGetRectWidth ||
+    !nativeGetRectHeight ||
+    !nativeGetKeyboardKey ||
+    !nativeGetStyle
+  )
+    return;
   nativeReflectApply(nativeAddEventListener, window, [
     "carrier:context-action",
     runNativeAction,

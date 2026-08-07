@@ -780,6 +780,13 @@
   var nativeCreateElement = Document.prototype.createElement;
   var nativeFocus = HTMLElement.prototype.focus;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeGetRectX = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "x")?.get;
+  var nativeGetRectY = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "y")?.get;
+  var nativeGetRectWidth = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "width")?.get;
+  var nativeGetRectHeight = Object.getOwnPropertyDescriptor(
+    DOMRectReadOnly.prototype,
+    "height"
+  )?.get;
   var nativeGetKeyboardKey = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, "key")?.get;
   var nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "style")?.get;
   var nativeSetAttribute = Element.prototype.setAttribute;
@@ -805,7 +812,12 @@
   };
   var rectOf = (el) => {
     const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
+    return {
+      x: nativeReflectApply(nativeGetRectX, r, []),
+      y: nativeReflectApply(nativeGetRectY, r, []),
+      width: nativeReflectApply(nativeGetRectWidth, r, []),
+      height: nativeReflectApply(nativeGetRectHeight, r, [])
+    };
   };
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   function contextActionToken() {
@@ -931,7 +943,8 @@
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
-    if (!nativeGetKeyboardKey || !nativeGetStyle) return;
+    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetKeyboardKey || !nativeGetStyle)
+      return;
     nativeReflectApply(nativeAddEventListener, window, [
       "carrier:context-action",
       runNativeAction,
