@@ -5,22 +5,30 @@
 // the share waits until one is, and expires quietly after two minutes.
 //
 // Trust: the payload only ever comes from a native eval after the Rust side
-// validated the app-group inbox. A page calling the hook itself gains
-// nothing — it can already construct File objects and synthesize paste
+// validated the one-time pasteboard handoff. A page calling the hook itself
+// gains nothing — it can already construct File objects and synthesize paste
 // events for its own composer.
 import { diag, toast } from "../bridge";
 import {
+  dispatchTransferEvent,
+  MAX_SHARED_FILES,
   mimeForName,
   type SharedFile,
   sanitizeSharedFiles,
   shareIsDeliverable,
 } from "../lib/share-intake";
+import { firstShown } from "./conversation-actions";
 
-const COMPOSER_SELECTOR = 'div[role="textbox"][contenteditable="true"]';
+const COMPOSER_SELECTOR = '[role="main"] div[role="textbox"][contenteditable="true"]';
 const COMPOSER_POLL_MS = 1000;
 
 function decodeToFile(entry: SharedFile): File | null {
   try {
+    if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
+      return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
+        type: mimeForName(entry.name),
+      });
+    }
     const binary = atob(entry.data);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -32,7 +40,9 @@ function decodeToFile(entry: SharedFile): File | null {
   }
 }
 
-function attachToComposer(composer: HTMLElement, files: File[]): boolean {
+type AttachmentResult = "attached" | "retry" | "uncertain";
+
+function attachToComposer(composer: HTMLElement, files: File[]): AttachmentResult {
   try {
     const transfer = new DataTransfer();
     for (const file of files) transfer.items.add(file);
@@ -44,22 +54,23 @@ function attachToComposer(composer: HTMLElement, files: File[]): boolean {
     const paste = new ClipboardEvent("paste", {
       bubbles: true,
       cancelable: true,
-      clipboardData: transfer,
     });
-    // Only Messenger cancelling the event proves the paste was taken; the
-    // DataTransfer still carries the files this code put there, so its
-    // contents say nothing about whether a handler ran.
-    const handled = !composer.dispatchEvent(paste);
-    if (handled) return true;
+    // Cancellation alone could come from an unrelated delegated listener. The
+    // handler must also inspect this exact transfer before it counts as an ack.
+    const pasted = dispatchTransferEvent(composer, paste, "clipboardData", transfer);
+    if (pasted.acknowledged) return "attached";
+    // Once a handler has read the payload, delivery is ambiguous. Do not send
+    // it a second time and risk duplicate composer attachments.
+    if (pasted.payloadRead) return "uncertain";
     const drop = new DragEvent("drop", {
       bubbles: true,
       cancelable: true,
-      dataTransfer: transfer,
     });
-    composer.dispatchEvent(drop);
-    return true;
+    const dropped = dispatchTransferEvent(composer, drop, "dataTransfer", transfer);
+    if (dropped.acknowledged) return "attached";
+    return dropped.payloadRead ? "uncertain" : "retry";
   } catch {
-    return false;
+    return "retry";
   }
 }
 
@@ -74,14 +85,16 @@ export function initShareIntake() {
       toast("Shared file expired");
       return true;
     }
-    const composer = document.querySelector<HTMLElement>(COMPOSER_SELECTOR);
+    const composer = firstShown<HTMLElement>(COMPOSER_SELECTOR);
     if (!composer) return false;
     const { files, timer } = pending;
+    const result = attachToComposer(composer, files);
+    if (result === "retry") return false;
     clearTimeout(timer);
     pending = null;
     // Counts only, never names or contents: the attach path depends on
     // Messenger's markup, so a field failure has to be diagnosable.
-    if (attachToComposer(composer, files)) {
+    if (result === "attached") {
       diag("share.attached", `${files.length}`);
     } else {
       diag("share.attach-failed", `${files.length}`);
@@ -105,10 +118,25 @@ export function initShareIntake() {
         diag("share.empty-payload", "0");
         return;
       }
-      if (pending) clearTimeout(pending.timer);
-      pending = { files, parkedAt: Date.now() };
+      const receivedAt = Date.now();
+      if (pending && !shareIsDeliverable(pending.parkedAt, receivedAt)) {
+        clearTimeout(pending.timer);
+        pending = null;
+      }
+      if (pending) {
+        if (pending.files.length + files.length > MAX_SHARED_FILES) {
+          diag("share.busy", `${pending.files.length}`);
+          toast("Attach the current shared files before sharing more");
+          return;
+        }
+        clearTimeout(pending.timer);
+        pending.files.push(...files);
+        pending.parkedAt = receivedAt;
+      } else {
+        pending = { files, parkedAt: receivedAt };
+      }
       if (!tryDeliver()) {
-        diag("share.waiting-for-composer", `${files.length}`);
+        diag("share.waiting-for-composer", `${pending.files.length}`);
         toast("Open a conversation to attach the shared file");
         pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
       }

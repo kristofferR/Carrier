@@ -7,27 +7,65 @@ export type SharedFile = { name: string; data: string };
 
 // The extension's activation rule allows 10 images + 1 movie + 10 files in
 // one mixed selection; every advertised selection must survive sanitizing.
-const MAX_FILES = 21;
-const MAX_NAME_LENGTH = 255;
+export const MAX_SHARED_FILES = 21;
+export const MAX_SHARED_NAME_BYTES = 255;
 /** Base64 of the native side's 100 MB cap, with slack for encoding overhead. */
-const MAX_TOTAL_DATA_LENGTH = 140 * 1024 * 1024;
+export const MAX_SHARED_DATA_LENGTH = 140 * 1024 * 1024;
 /** Matches the native SHARE_INTAKE_TTL: an old share must not surprise. */
 export const SHARE_DELIVERY_TTL_MS = 2 * 60 * 1000;
 
+const MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
+  ["png", "image/png"],
+  ["jpg", "image/jpeg"],
+  ["jpeg", "image/jpeg"],
+  ["gif", "image/gif"],
+  ["webp", "image/webp"],
+  ["heic", "image/heic"],
+  ["mp4", "video/mp4"],
+  ["mov", "video/quicktime"],
+  ["webm", "video/webm"],
+  ["pdf", "application/pdf"],
+]);
+
+const utf8Length = (value: string) => new TextEncoder().encode(value).length;
+
+/** Dispatch a synthetic file-transfer event and prove a handler inspected it. */
+export function dispatchTransferEvent(
+  target: Pick<EventTarget, "dispatchEvent">,
+  event: Event,
+  property: "clipboardData" | "dataTransfer",
+  transfer: unknown,
+): { acknowledged: boolean; payloadRead: boolean } {
+  let payloadRead = false;
+  Object.defineProperty(event, property, {
+    configurable: true,
+    get: () => {
+      payloadRead = true;
+      return transfer;
+    },
+  });
+  const cancelled = !target.dispatchEvent(event);
+  return { acknowledged: cancelled && payloadRead, payloadRead };
+}
+
 /** The native payload, filtered down to entries this code will touch. */
-export function sanitizeSharedFiles(payload: unknown): SharedFile[] {
+export function sanitizeSharedFiles(
+  payload: unknown,
+  maxTotalDataLength = MAX_SHARED_DATA_LENGTH,
+): SharedFile[] {
   if (!Array.isArray(payload)) return [];
   const files: SharedFile[] = [];
   let totalData = 0;
   for (const entry of payload) {
-    if (files.length >= MAX_FILES) break;
+    if (files.length >= MAX_SHARED_FILES) break;
     if (!entry || typeof entry !== "object") continue;
+    if (!Object.hasOwn(entry, "name") || !Object.hasOwn(entry, "data")) continue;
     const { name, data } = entry as Partial<SharedFile>;
     if (typeof name !== "string" || typeof data !== "string") continue;
-    if (name.length === 0 || name.length > MAX_NAME_LENGTH) continue;
+    if (name.length === 0 || utf8Length(name) > MAX_SHARED_NAME_BYTES) continue;
     if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
     totalData += data.length;
-    if (totalData > MAX_TOTAL_DATA_LENGTH) break;
+    if (totalData > maxTotalDataLength) break;
     files.push({ name, data });
   }
   return files;
@@ -42,17 +80,5 @@ export function shareIsDeliverable(parkedAtMs: number, nowMs: number): boolean {
 /** A rough MIME guess from the file name, for the File constructor. */
 export function mimeForName(name: string): string {
   const extension = name.toLowerCase().split(".").pop() ?? "";
-  const known: Record<string, string> = {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    gif: "image/gif",
-    webp: "image/webp",
-    heic: "image/heic",
-    mp4: "video/mp4",
-    mov: "video/quicktime",
-    webm: "video/webm",
-    pdf: "application/pdf",
-  };
-  return known[extension] ?? "application/octet-stream";
+  return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
 }

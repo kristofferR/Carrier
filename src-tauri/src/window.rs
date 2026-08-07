@@ -124,7 +124,7 @@ pub(crate) fn build_app_window(
                 // A share handed over while the page was still loading (cold
                 // start) is re-delivered once the page can receive it.
                 #[cfg(target_os = "macos")]
-                if window.label() == "main" && is_messenger_web_url(payload.url()) {
+                if window.label() != "settings" && is_messenger_web_url(payload.url()) {
                     crate::macos::share_intake::deliver_pending(window.app_handle());
                 }
                 apply_custom_css(&window, payload.url());
