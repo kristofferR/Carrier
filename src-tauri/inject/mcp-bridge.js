@@ -552,6 +552,69 @@
           reply(notificationRowProbe());
           return;
         }
+        // Media-capture plumbing checks for call/screen-share verification.
+        if (code === "__carrier_mcp_media_capture_probe__") {
+          reply(mediaCaptureProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_mic_capture_probe__") {
+          micCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.name) || "Error"),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_camera_capture_probe__") {
+          cameraCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.name) || "Error"),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_video_call_capture_probe__") {
+          videoCallCaptureProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.name) || "Error"),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_capture_permission_state__") {
+          capturePermissionStateProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.name) || "Error"),
+            });
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_arm__") {
+          reply(armDisplayCaptureProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_result__") {
+          reply(displayCaptureResultProbe());
+          return;
+        }
+        if (code === "__carrier_mcp_display_capture_now__") {
+          displayCaptureNowProbe().then(reply, function (e) {
+            respond("execute-js-response", cid, {
+              result: null,
+              type: "error",
+              error: String((e && e.name) || "Error"),
+            });
+          });
+          return;
+        }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
         if (code === "__carrier_mcp_network_probe__") {
           reply(networkProbe());
@@ -875,6 +938,165 @@
         });
       }
     });
+
+    // Media-capture plumbing probes for call/screen-share verification.
+    // Content-blind: they report API presence, outcome classifications, error
+    // names, and elapsed ms only — never streams, frames, or device labels.
+    function mediaCaptureProbe() {
+      var md = navigator.mediaDevices;
+      return {
+        hasMediaDevices: !!md,
+        getUserMedia: typeof (md && md.getUserMedia),
+        getDisplayMedia: typeof (md && md.getDisplayMedia),
+        isSecureContext: !!window.isSecureContext,
+      };
+    }
+
+    // Classify one capture attempt: "granted" (stream returned, tracks stopped
+    // immediately), "pending" (no answer before the timeout — an OS prompt or
+    // picker is up, i.e. the permission path engaged), or "rejected" with the
+    // error name and elapsed ms (an instant NotAllowedError means the request
+    // was auto-denied before any UI could appear).
+    function classifyCapture(promise, timeoutMs) {
+      var t0 = performance.now();
+      return new Promise(function (resolve) {
+        var settled = false;
+        var done = function (outcome) {
+          if (settled) return;
+          settled = true;
+          outcome.ms = Math.round(performance.now() - t0);
+          resolve(outcome);
+        };
+        setTimeout(function () {
+          done({ outcome: "pending" });
+        }, timeoutMs);
+        promise.then(
+          function (stream) {
+            try {
+              stream.getTracks().forEach(function (t) {
+                t.stop();
+              });
+            } catch (e) {}
+            done({ outcome: "granted" });
+          },
+          function (err) {
+            done({ outcome: "rejected", name: String(err && err.name) });
+          },
+        );
+      });
+    }
+
+    function micCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ audio: true }), 4000);
+    }
+
+    function cameraCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ video: true }), 4000);
+    }
+
+    // What a Messenger video call actually asks for: camera and mic together.
+    function videoCallCaptureProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getUserMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getUserMedia({ audio: true, video: true }), 4000);
+    }
+
+    // Whether the OS already holds a decision, without triggering capture:
+    // "prompt" means no grant yet, "granted"/"denied" a recorded answer.
+    function capturePermissionStateProbe() {
+      if (!navigator.permissions || typeof navigator.permissions.query !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      var ask = function (name) {
+        return navigator.permissions.query({ name: name }).then(
+          function (status) {
+            return status.state;
+          },
+          function (err) {
+            return "error:" + String(err && err.name);
+          },
+        );
+      };
+      return Promise.all([ask("camera"), ask("microphone")]).then(function (states) {
+        return { camera: states[0], microphone: states[1] };
+      });
+    }
+
+    // getDisplayMedia demands transient user activation, so the probe is
+    // two-step: arm a one-shot capture-phase click handler, use tauri-mcp's
+    // native click input, then read the recorded classification.
+    var displayCaptureState = null;
+    var displayCaptureHandler = null;
+    var displayCaptureTimeout = null;
+    var displayCaptureGeneration = 0;
+    function armDisplayCaptureProbe() {
+      var generation = ++displayCaptureGeneration;
+      if (displayCaptureHandler) {
+        document.removeEventListener("click", displayCaptureHandler, true);
+        displayCaptureHandler = null;
+      }
+      if (displayCaptureTimeout) {
+        clearTimeout(displayCaptureTimeout);
+        displayCaptureTimeout = null;
+      }
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== "function") {
+        displayCaptureState = { outcome: "unavailable" };
+        return { armed: false, reason: "getDisplayMedia unavailable" };
+      }
+      displayCaptureState = { outcome: "armed-waiting-for-click" };
+      displayCaptureHandler = function (event) {
+        if (!event.isTrusted) return;
+        document.removeEventListener("click", displayCaptureHandler, true);
+        displayCaptureHandler = null;
+        clearTimeout(displayCaptureTimeout);
+        displayCaptureTimeout = null;
+        displayCaptureState = { outcome: "click-received" };
+        classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
+          if (generation === displayCaptureGeneration) {
+            displayCaptureState = result;
+          }
+        });
+      };
+      document.addEventListener(
+        "click",
+        displayCaptureHandler,
+        true,
+      );
+      displayCaptureTimeout = setTimeout(function () {
+        if (generation !== displayCaptureGeneration || !displayCaptureHandler) return;
+        document.removeEventListener("click", displayCaptureHandler, true);
+        displayCaptureHandler = null;
+        displayCaptureTimeout = null;
+        displayCaptureState = { outcome: "arm-expired" };
+      }, 10000);
+      return { armed: true };
+    }
+
+    function displayCaptureResultProbe() {
+      return displayCaptureState || { outcome: "never-armed" };
+    }
+
+    // Call getDisplayMedia with no gesture at all: distinguishes gesture
+    // enforcement (InvalidAccessError-style rejection) from permission-layer
+    // failures (instant NotAllowedError) and from the picker appearing.
+    function displayCaptureNowProbe() {
+      var md = navigator.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== "function") {
+        return Promise.resolve({ outcome: "unavailable" });
+      }
+      return classifyCapture(md.getDisplayMedia({ video: true }), 6000);
+    }
 
     // Aggregated resource-timing counts for verifying telemetry blocking.
     // Sanitized like privacyProbe: hosts plus digit-masked path prefixes and

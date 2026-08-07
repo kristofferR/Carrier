@@ -715,40 +715,237 @@
 
   // inject/src/messenger/lib/download-completion.ts
   var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+  var NativePromise = Promise;
+  var nativePromiseThen = Promise.prototype.then;
+  var nativeReflectApply = Reflect.apply;
+  var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeSetTimeout = globalThis.setTimeout;
+  var nativeClearTimeout = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
     const candidate = detail;
-    if (typeof candidate.url !== "string" || typeof candidate.success !== "boolean") return null;
-    return { url: candidate.url, success: candidate.success };
+    if (typeof candidate.id !== "string" || typeof candidate.url !== "string" || typeof candidate.success !== "boolean" || typeof candidate.signature !== "string")
+      return null;
+    return {
+      id: candidate.id,
+      url: candidate.url,
+      success: candidate.success,
+      signature: candidate.signature
+    };
   }
-  function waitForNativeDownload(target, expectedUrl, timeoutMs = 12e4) {
-    return new Promise((resolve, reject) => {
+  function waitForNativeDownload(target, expectedUrl, verifyResult, timeoutMs = 12e4) {
+    return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        clearTimeout(timer);
-        target.removeEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
+        nativeReflectApply(nativeClearTimeout, globalThis, [timer]);
+        nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
         const detail = detailFor(event);
         if (!detail || detail.url !== expectedUrl) return;
-        cleanup();
-        if (detail.success) resolve(expectedUrl);
-        else reject(new Error("native download failed"));
+        if (!verifyResult) {
+          cleanup();
+          reject(new Error("native download bridge unavailable"));
+          return;
+        }
+        const verification = verifyResult(
+          DOWNLOAD_FINISHED_EVENT,
+          { id: detail.id, url: detail.url, success: detail.success },
+          detail.signature
+        );
+        nativeReflectApply(nativePromiseThen, verification, [
+          (authenticated) => {
+            if (!authenticated) return;
+            cleanup();
+            if (detail.success) resolve({ id: detail.id, url: detail.url });
+            else reject(new Error("native download failed"));
+          },
+          () => {
+          }
+        ]);
       };
-      target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
-      timer = setTimeout(() => {
-        cleanup();
-        reject(new Error("native download timed out"));
-      }, timeoutMs);
+      nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
+      timer = nativeReflectApply(nativeSetTimeout, globalThis, [
+        () => {
+          cleanup();
+          reject(new Error("native download timed out"));
+        },
+        timeoutMs
+      ]);
     });
+  }
+
+  // inject/src/messenger/lib/menu-integrity.ts
+  var RECT_TOLERANCE = 1;
+  var nativeAbs = Math.abs;
+  var nativeCharCodeAt = String.prototype.charCodeAt;
+  var nativeFromCharCode = String.fromCharCode;
+  var nativeReflectApply2 = Reflect.apply;
+  function cssPropertyName(property) {
+    let result = "";
+    for (let index = 0; index < property.length; index += 1) {
+      const code = nativeReflectApply2(nativeCharCodeAt, property, [index]);
+      result += code >= 65 && code <= 90 ? `-${nativeReflectApply2(nativeFromCharCode, void 0, [code + 32])}` : property[index] ?? "";
+    }
+    return result;
+  }
+  function rectsMatch(a, b, tolerance = RECT_TOLERANCE) {
+    return nativeAbs(a.x - b.x) <= tolerance && nativeAbs(a.y - b.y) <= tolerance && nativeAbs(a.width - b.width) <= tolerance && nativeAbs(a.height - b.height) <= tolerance;
+  }
+  function pointInRect(rect, x, y) {
+    return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+  }
+  function pointerActivationIsSound(expected, current, x, y) {
+    return rectsMatch(expected, current) && pointInRect(current, x, y);
   }
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
+  var MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
+  var MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
+  var IMAGE_CONTEXT_MENU_LABELS = [
+    "Copy image",
+    "Download image",
+    "Share…",
+    "Copy image address",
+    "Open image in browser"
+  ];
+  var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
+  var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
+  var nativeAddEventListener2 = EventTarget.prototype.addEventListener;
+  var nativeRemoveEventListener2 = EventTarget.prototype.removeEventListener;
+  var nativeObjectDefineProperty = Object.defineProperty;
+  var nativeObjectEntries = Object.entries;
+  var nativeReflectApply3 = Reflect.apply;
+  var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
+  var nativeSetTimeout2 = window.setTimeout;
+  var nativeAttachShadow = Element.prototype.attachShadow;
+  var nativeAppendChild = Node.prototype.appendChild;
+  var nativeContains = Node.prototype.contains;
+  var nativeCreateElement = Document.prototype.createElement;
+  var nativeFocus = HTMLElement.prototype.focus;
+  var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeGetEventTarget = Object.getOwnPropertyDescriptor(Event.prototype, "target")?.get;
+  var nativeGetMouseClientX = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientX")?.get;
+  var nativeGetMouseClientY = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientY")?.get;
+  var nativePreventDefault = Event.prototype.preventDefault;
+  var nativeRemove = Element.prototype.remove;
+  var nativeStopPropagation = Event.prototype.stopPropagation;
+  var nativeGetRectX = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "x")?.get;
+  var nativeGetRectY = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "y")?.get;
+  var nativeGetRectWidth = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "width")?.get;
+  var nativeGetRectHeight = Object.getOwnPropertyDescriptor(
+    DOMRectReadOnly.prototype,
+    "height"
+  )?.get;
+  var nativeGetKeyboardKey = Object.getOwnPropertyDescriptor(KeyboardEvent.prototype, "key")?.get;
+  var nativeGetStyle = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "style")?.get;
+  var nativeSetAttribute = Element.prototype.setAttribute;
+  var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
+  var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
+  var NativePromise2 = Promise;
+  var NativeFileReader = FileReader;
+  var nativeReadAsDataURL = FileReader.prototype.readAsDataURL;
+  var nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
+    FileReader.prototype,
+    "result"
+  )?.get;
+  var NativeUint8Array = Uint8Array;
+  var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var nativeShowContextMenu = typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : void 0;
+  var appendOwn = (items, item) => {
+    nativeReflectApply3(nativeObjectDefineProperty, void 0, [
+      items,
+      `${items.length}`,
+      { value: item, writable: true, enumerable: true, configurable: true }
+    ]);
+  };
+  var setStyleProperty = (style, property, value) => {
+    nativeReflectApply3(nativeSetStyleProperty, style, [property, value]);
+  };
+  var applyStyles = (style, values) => {
+    for (const [property, value] of nativeReflectApply3(nativeObjectEntries, void 0, [values])) {
+      setStyleProperty(style, cssPropertyName(property), value);
+    }
+  };
+  var rectOf = (el) => {
+    const r = nativeReflectApply3(nativeGetBoundingClientRect, el, []);
+    return {
+      x: nativeReflectApply3(nativeGetRectX, r, []),
+      y: nativeReflectApply3(nativeGetRectY, r, []),
+      width: nativeReflectApply3(nativeGetRectWidth, r, []),
+      height: nativeReflectApply3(nativeGetRectHeight, r, [])
+    };
+  };
+  var eventTargetOf = (event) => nativeReflectApply3(nativeGetEventTarget, event, []);
+  var clientPointOf = (event) => ({
+    x: nativeReflectApply3(nativeGetMouseClientX, event, []),
+    y: nativeReflectApply3(nativeGetMouseClientY, event, [])
+  });
+  var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  function contextActionToken() {
+    const bytes = new NativeUint8Array(16);
+    nativeGetRandomValues(bytes);
+    const hex = "0123456789abcdef";
+    let token = "";
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index] ?? 0;
+      token += (hex[byte >> 4] ?? "") + (hex[byte & 15] ?? "");
+    }
+    return token;
+  }
+  var nativeActionHandlers = [];
+  var clearNativeActionHandlers = () => {
+    nativeActionHandlers = [];
+  };
+  async function runNativeAction(event) {
+    const detail = event.detail;
+    if (!detail || typeof detail !== "object") return;
+    const { action, signature } = detail;
+    if (typeof action !== "string" || !carrierVerifyResult) return;
+    if (!await carrierVerifyResult("carrier:context-action", { action }, signature)) return;
+    const handlers = nativeActionHandlers;
+    for (let index = 0; index < handlers.length; index += 1) {
+      const handler = handlers[index];
+      if (!handler || handler[0] !== action) continue;
+      clearNativeActionHandlers();
+      handler[1]();
+      return;
+    }
+  }
+  function showNativeContextMenu(items) {
+    const nativeItems = [];
+    clearNativeActionHandlers();
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item) continue;
+      const action = contextActionToken();
+      const run = () => {
+        item[1](isMac2 ? action : void 0);
+      };
+      appendOwn(nativeActionHandlers, [action, run]);
+      appendOwn(
+        nativeItems,
+        item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
+      );
+    }
+    if (!nativeShowContextMenu)
+      return NativePromise2.reject(new Error("native context menu unavailable"));
+    return nativeShowContextMenu(nativeItems).catch((error) => {
+      clearNativeActionHandlers();
+      throw error;
+    });
+  }
+  async function shareSrc(src, fallbackName, fx, fy, action) {
+    await carrierClaimContextAction(action);
+    const { id } = await downloadSrc(src, fallbackName, action);
+    await carrierShareDownload(id, fx, fy, action);
+  }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
-  async function downloadSrc(src, fallbackName) {
+  async function downloadSrc(src, fallbackName, action) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
     if (oversizeByHeader(res)) throw new Error("file too large");
@@ -767,7 +964,8 @@
     a.style.display = "none";
     document.body.appendChild(a);
     try {
-      const completion = waitForNativeDownload(window, href);
+      if (action) await carrierPrepareDownload(action, href);
+      const completion = waitForNativeDownload(window, href, carrierVerifyResult);
       a.click();
       return await completion;
     } finally {
@@ -775,73 +973,163 @@
       URL.revokeObjectURL(href);
     }
   }
-  async function copyImageSrc(src) {
+  async function copyImageSrc(src, action) {
+    if (action) await carrierClaimContextAction(action);
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    if (oversizeByHeader(res)) throw new Error("image too large");
+    const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
+    if (Number(res.headers.get("content-length")) > maxSize) {
+      throw new Error("image too large");
+    }
     const blob = await res.blob();
-    if (blob.size > MAX_BLOB) throw new Error("image too large");
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    if (blob.size > maxSize) throw new Error("image too large");
+    if (!action) {
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      return;
+    }
+    const dataUrl = await new NativePromise2((resolve, reject) => {
+      if (!nativeGetFileReaderResult) {
+        reject(new Error("native FileReader result getter unavailable"));
+        return;
+      }
+      const reader = new NativeFileReader();
+      nativeReflectApply3(nativeAddEventListener2, reader, [
+        "load",
+        () => {
+          const result = nativeReflectApply3(nativeGetFileReaderResult, reader, []);
+          if (typeof result === "string") resolve(result);
+          else reject(new Error("image conversion failed"));
+        },
+        { once: true }
+      ]);
+      nativeReflectApply3(nativeAddEventListener2, reader, [
+        "error",
+        () => reject(new Error("image conversion failed")),
+        { once: true }
+      ]);
+      nativeReflectApply3(nativeReadAsDataURL, reader, [blob]);
+    });
+    await carrierCopyImage(dataUrl, action);
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
-  var closeMenuFromPointer = () => closeMenu();
+  var closeMenuFromClick = (event) => {
+    if (ctxMenu && eventTargetOf(event) === ctxMenu) return;
+    closeMenu();
+  };
+  var closeMenuFromScroll = () => closeMenu();
   var closeMenu = (restoreFocus = false) => {
-    ctxMenu?.remove();
+    if (ctxMenu) nativeReflectApply3(nativeRemove, ctxMenu, []);
     ctxMenu = null;
-    document.removeEventListener("click", closeMenuFromPointer, true);
-    document.removeEventListener("scroll", closeMenuFromPointer, true);
-    if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
+    nativeReflectApply3(nativeRemoveEventListener2, document, ["click", closeMenuFromClick, true]);
+    nativeReflectApply3(nativeRemoveEventListener2, document, ["scroll", closeMenuFromScroll, true]);
+    if (restoreFocus && ctxMenuReturnFocus) {
+      nativeReflectApply3(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
+    }
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
-    document.addEventListener(
+    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle || !nativeSetTextContent || !nativeSetTabIndex)
+      return;
+    nativeReflectApply3(nativeAddEventListener2, window, [
+      "carrier:context-action",
+      runNativeAction,
+      true
+    ]);
+    nativeReflectApply3(nativeAddEventListener2, document, [
       "contextmenu",
-      (e) => {
-        const t = e.target;
+      async (e) => {
+        if (!e.isTrusted) return;
+        const t = eventTargetOf(e);
         const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
         const img = t.closest?.("img[alt]");
         const anchor = t.closest?.("a[href]");
         const imgSrc = img && (img.currentSrc || img.src);
         const vidSrc = video && (video.currentSrc || video.src);
         const linkHref = anchor?.href;
+        const contextPoint = clientPointOf(e);
+        const fx = contextPoint.x / Math.max(1, innerWidth);
+        const fy = contextPoint.y / Math.max(1, innerHeight);
         const items = [];
+        const addItem = (item) => {
+          appendOwn(items, item);
+        };
         if (imgSrc) {
-          items.push([
-            "Copy image",
-            () => copyImageSrc(imgSrc).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
+          addItem([
+            IMAGE_CONTEXT_MENU_LABELS[0],
+            (action) => copyImageSrc(imgSrc, action).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
           ]);
-          items.push([
-            "Download image",
-            () => downloadSrc(imgSrc, "image").then(toastDownloadSaved).catch(() => toast("Download failed"))
+          addItem([
+            IMAGE_CONTEXT_MENU_LABELS[1],
+            () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
           ]);
-          items.push(["Copy image address", () => copyAddress(imgSrc)]);
-          items.push(["Open image in browser", () => openUrl(imgSrc)]);
+          if (isMac2) {
+            addItem([
+              IMAGE_CONTEXT_MENU_LABELS[2],
+              (action) => action ? shareSrc(imgSrc, "image", fx, fy, action).catch(() => toast("Share failed")) : void 0
+            ]);
+          }
+          addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
+          addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
         } else if (vidSrc) {
-          items.push([
-            "Download video",
-            () => downloadSrc(vidSrc, "video").then(toastDownloadSaved).catch(() => toast("Download failed"))
+          addItem([
+            VIDEO_CONTEXT_MENU_LABELS[0],
+            () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
           ]);
-          items.push(["Copy video address", () => copyAddress(vidSrc)]);
+          if (isMac2) {
+            addItem([
+              VIDEO_CONTEXT_MENU_LABELS[1],
+              (action) => action ? shareSrc(vidSrc, "video", fx, fy, action).catch(() => toast("Share failed")) : void 0
+            ]);
+          }
+          addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
         } else if (linkHref && !linkHref.startsWith("javascript:")) {
-          items.push(["Copy link address", () => copyAddress(linkHref)]);
-          items.push(["Open link in browser", () => openUrl(linkHref)]);
+          addItem([
+            LINK_CONTEXT_MENU_LABELS[0],
+            () => copyAddress(linkHref),
+            cleanSharedUrl(linkHref)
+          ]);
+          addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
         }
         if (!items.length) return;
-        e.preventDefault();
+        let nativeItemsAreValid = true;
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
+            nativeItemsAreValid = false;
+            break;
+          }
+        }
+        nativeReflectApply3(nativePreventDefault, e, []);
+        const nativeImageCopyIsSafe = isMac2 || !imgSrc;
+        if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe) {
+          try {
+            await showNativeContextMenu(items);
+            return;
+          } catch {
+          }
+        }
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;
-        const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
+        const priorReturnFocus = ctxMenu && nativeReflectApply3(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
-        ctxMenu = document.createElement("div");
-        ctxMenu.setAttribute("role", "menu");
-        ctxMenu.setAttribute("aria-label", "Media actions");
-        Object.assign(ctxMenu.style, {
+        ctxMenu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+        const ctxMenuStyle = nativeReflectApply3(nativeGetStyle, ctxMenu, []);
+        applyStyles(ctxMenuStyle, {
           position: "fixed",
-          left: `${e.clientX}px`,
-          top: `${e.clientY}px`,
-          zIndex: 2147483647,
+          left: `${contextPoint.x}px`,
+          top: `${contextPoint.y}px`,
+          zIndex: "2147483647"
+        });
+        const shadow = nativeReflectApply3(nativeAttachShadow, ctxMenu, [
+          { mode: "closed" }
+        ]);
+        const menu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+        nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
+        nativeReflectApply3(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
+        const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
+        applyStyles(menuStyle, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
           border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -851,68 +1139,140 @@
           minWidth: "170px",
           font: "13px -apple-system, system-ui, sans-serif"
         });
-        for (const [label, fn] of items) {
-          const el = document.createElement("div");
-          el.textContent = label;
-          el.setAttribute("role", "menuitem");
-          el.tabIndex = -1;
-          Object.assign(el.style, {
+        const menuItems = [];
+        const laidOutRects = [];
+        let focusedIndex = 0;
+        const activate = (fn, restoreFocus = false) => {
+          closeMenu(restoreFocus);
+          fn();
+        };
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (!item) continue;
+          const label = item[0];
+          if (isMac2 && (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])) {
+            continue;
+          }
+          const fn = item[1];
+          const rowIndex = menuItems.length;
+          const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+          nativeReflectApply3(nativeSetTextContent, el, [label]);
+          nativeReflectApply3(nativeSetAttribute, el, ["role", "menuitem"]);
+          nativeReflectApply3(nativeSetTabIndex, el, [-1]);
+          const elStyle = nativeReflectApply3(nativeGetStyle, el, []);
+          applyStyles(elStyle, {
             padding: "8px 12px",
             cursor: "pointer",
             borderRadius: "6px",
             outline: "none"
           });
-          el.onmouseenter = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
-          el.onmouseleave = () => el.style.background = "";
-          el.onfocus = () => el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))";
-          el.onblur = () => el.style.background = "";
-          el.onclick = (ev) => {
-            ev.stopPropagation();
-            closeMenu();
-            fn();
-          };
-          ctxMenu.appendChild(el);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "mouseenter",
+            () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
+          ]);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "mouseleave",
+            () => setStyleProperty(elStyle, "background", "")
+          ]);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "focus",
+            () => {
+              focusedIndex = rowIndex;
+              setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+            }
+          ]);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "blur",
+            () => setStyleProperty(elStyle, "background", "")
+          ]);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "click",
+            (ev) => {
+              if (!ev.isTrusted) return;
+              nativeReflectApply3(nativeStopPropagation, ev, []);
+              const expected = laidOutRects[rowIndex];
+              const point = clientPointOf(ev);
+              if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
+                closeMenu();
+                toast("Menu action cancelled");
+                return;
+              }
+              activate(fn);
+            }
+          ]);
+          nativeReflectApply3(nativeAddEventListener2, el, [
+            "keydown",
+            (event) => {
+              const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
+              if (key !== "Enter" && key !== " ") return;
+              if (!event.isTrusted) return;
+              nativeReflectApply3(nativePreventDefault, event, []);
+              nativeReflectApply3(nativeStopPropagation, event, []);
+              activate(fn, true);
+            }
+          ]);
+          appendOwn(menuItems, el);
+          nativeReflectApply3(nativeAppendChild, menu, [el]);
         }
-        document.body.appendChild(ctxMenu);
-        const r = ctxMenu.getBoundingClientRect();
-        if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
-        if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
-        const menuItems = [...ctxMenu.querySelectorAll('[role="menuitem"]')];
-        ctxMenu.addEventListener("keydown", (event) => {
-          const current = Math.max(0, menuItems.indexOf(document.activeElement));
-          let next = null;
-          if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
-          if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-          if (event.key === "Home") next = 0;
-          if (event.key === "End") next = menuItems.length - 1;
-          if (event.key === "Escape") {
-            event.preventDefault();
-            closeMenu(true);
-            return;
+        nativeReflectApply3(nativeAppendChild, shadow, [menu]);
+        nativeReflectApply3(nativeAppendChild, document.body, [ctxMenu]);
+        const r = rectOf(menu);
+        if (r.x + r.width > innerWidth) {
+          setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+        }
+        if (r.y + r.height > innerHeight) {
+          setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+        }
+        for (let i = 0; i < menuItems.length; i += 1) {
+          const row = menuItems[i];
+          appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
+        }
+        nativeReflectApply3(nativeAddEventListener2, ctxMenu, [
+          "keydown",
+          (event) => {
+            if (!event.isTrusted) return;
+            const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
+            const current = focusedIndex;
+            let next = null;
+            if (key === "ArrowDown") next = (current + 1) % menuItems.length;
+            if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+            if (key === "Home") next = 0;
+            if (key === "End") next = menuItems.length - 1;
+            if (key === "Escape") {
+              nativeReflectApply3(nativePreventDefault, event, []);
+              closeMenu(true);
+              return;
+            }
+            if (key === "Tab") {
+              nativeReflectApply3(nativePreventDefault, event, []);
+              closeMenu(true);
+              return;
+            }
+            if (next !== null) {
+              nativeReflectApply3(nativePreventDefault, event, []);
+              focusedIndex = next;
+              const nextItem = menuItems[next];
+              if (nextItem) nativeReflectApply3(nativeFocus, nextItem, []);
+            }
           }
-          if (event.key === "Tab") {
-            event.preventDefault();
-            closeMenu(true);
-            return;
-          }
-          if ((event.key === "Enter" || event.key === " ") && document.activeElement) {
-            event.preventDefault();
-            document.activeElement.click();
-            return;
-          }
-          if (next !== null) {
-            event.preventDefault();
-            menuItems[next]?.focus();
-          }
-        });
-        menuItems[0]?.focus({ preventScroll: true });
-        setTimeout(() => {
-          document.addEventListener("click", closeMenuFromPointer, true);
-          document.addEventListener("scroll", closeMenuFromPointer, true);
-        }, 0);
+        ]);
+        focusedIndex = 0;
+        const firstItem = menuItems[0];
+        if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
+        nativeReflectApply3(nativeSetTimeout2, window, [
+          () => {
+            nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
+            nativeReflectApply3(nativeAddEventListener2, document, [
+              "scroll",
+              closeMenuFromScroll,
+              true
+            ]);
+          },
+          0
+        ]);
       },
       true
-    );
+    ]);
   }
 
   // inject/src/messenger/lib/color.ts
@@ -1174,7 +1534,7 @@
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
-        downloadSrc(href, a.getAttribute("download") || "download").then(toastDownloadSaved).catch(() => toast("Download failed"));
+        downloadSrc(href, a.getAttribute("download") || "download").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"));
       },
       true
     );
@@ -1209,7 +1569,7 @@
   // inject/src/messenger/features/emoji-images.ts
   var PREFETCH_MARGIN = 80;
   var SCAN_DELAY_MS = 50;
-  function rectOf(element) {
+  function rectOf2(element) {
     const rect = element.getBoundingClientRect();
     return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
   }
@@ -1222,11 +1582,11 @@
     };
     const dialog = image.closest('[role="dialog"]');
     if (!dialog) return clip;
-    clip = intersectImageClips(clip, expandedImageClip(rectOf(dialog), PREFETCH_MARGIN));
+    clip = intersectImageClips(clip, expandedImageClip(rectOf2(dialog), PREFETCH_MARGIN));
     let ancestor = image.parentElement;
     while (ancestor && ancestor !== dialog) {
       if (ancestor.scrollHeight > ancestor.clientHeight + 2) {
-        clip = intersectImageClips(clip, expandedImageClip(rectOf(ancestor), PREFETCH_MARGIN));
+        clip = intersectImageClips(clip, expandedImageClip(rectOf2(ancestor), PREFETCH_MARGIN));
         break;
       }
       ancestor = ancestor.parentElement;
@@ -1235,7 +1595,7 @@
   }
   function initEmojiImageLoading() {
     const sourceDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
-    const nativeSetAttribute = HTMLImageElement.prototype.setAttribute;
+    const nativeSetAttribute2 = HTMLImageElement.prototype.setAttribute;
     if (!sourceDescriptor?.set) return;
     const pending = /* @__PURE__ */ new Set();
     let scanTimer;
@@ -1252,7 +1612,7 @@
           pending.delete(image);
           continue;
         }
-        const imageRect = rectOf(image);
+        const imageRect = rectOf2(image);
         if (hasImageArea(imageRect) && intersectsImageClip(imageRect, visibleClipFor(image))) {
           promote(image);
         }
@@ -1280,7 +1640,7 @@
       HTMLImageElement.prototype.setAttribute = function(name, value) {
         const emoji = name.toLowerCase() === "src" && isFacebookEmojiImage(value);
         if (emoji) defer(this);
-        const result = nativeSetAttribute.call(this, name, value);
+        const result = nativeSetAttribute2.call(this, name, value);
         if (emoji) scheduleScan();
         return result;
       };
@@ -4847,8 +5207,8 @@
   }
 
   // inject/src/messenger/features/shortcuts.ts
-  var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-  var accel = (e) => !e.altKey && (isMac2 ? e.metaKey : e.ctrlKey);
+  var isMac3 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  var accel = (e) => !e.altKey && (isMac3 ? e.metaKey : e.ctrlKey);
   var shortcuts = {
     "[": () => stepConversation(-1),
     "]": () => stepConversation(1),

@@ -57,10 +57,40 @@ interface CarrierToastAction {
 }
 
 /**
- * Closure-scoped bridge supplied by the Rust initialization wrapper. It holds
- * the native reveal authorization and is deliberately not a Window property.
+ * Closure-scoped bridge supplied by the Rust initialization wrapper. It signs
+ * the request without serializing its non-extractable native authorization.
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
+
+/** Claim a selected native context action before starting its asynchronous work. */
+declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
+
+/** Reserve the exact blob URL produced by a claimed native share action. */
+declare const carrierPrepareDownload: (action: string, url: string) => Promise<unknown>;
+
+/**
+ * Same closure-scoped credential, second action: open the macOS share sheet
+ * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
+ */
+declare const carrierShareDownload: (
+  downloadId: string,
+  x: number,
+  y: number,
+  action: string,
+) => Promise<void>;
+
+/** Write an image through the native pasteboard after its menu row is selected. */
+declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;
+
+/** Show Carrier's media actions in a native context menu. */
+declare const carrierShowContextMenu: (
+  items: { label: string; action: string; value?: string }[],
+) => Promise<void>;
+
+/** Verify the native context-menu selection without exposing the window secret. */
+declare const carrierVerifyResult:
+  | ((event: string, value: unknown, signature: unknown) => Promise<boolean>)
+  | undefined;
 
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */

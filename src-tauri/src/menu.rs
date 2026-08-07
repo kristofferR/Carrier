@@ -1,17 +1,22 @@
 //! The native menu bar: construction and the menu-event handler.
 
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use serde::Deserialize;
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::cli::NEW_CONVERSATION_JS;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
+#[cfg(target_os = "macos")]
+use crate::settings::ContextMenuActivation;
 use crate::settings::{
     apply_settings, save_settings, schedule_webview_data_clear, AppState, SaveOutcome, Settings,
 };
@@ -204,6 +209,48 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
 }
 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
+    if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
+        let state = app.state::<AppState>();
+        let key = (label.to_string(), action.to_string());
+        if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
+            // Match the page-rendered menu's feedback in both directions.
+            let toast = match app.clipboard().write_text(value) {
+                Ok(()) => "window.__carrierToast?.('Address copied')",
+                Err(error) => {
+                    log::warn!("failed to write context-menu address to the clipboard: {error}");
+                    "window.__carrierToast?.('Copy failed')"
+                }
+            };
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.eval(toast);
+            }
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
+            *selected = ContextMenuActivation::Selected(Instant::now());
+        }
+        let signature = state
+            .download_reveal_tokens
+            .lock()
+            .unwrap()
+            .get(label)
+            .and_then(|secret| crate::context_action_signature(secret, action));
+        let Some(signature) = signature else {
+            log::warn!("failed to authenticate native media context action");
+            return;
+        };
+        if let Some(window) = app.get_webview_window(label) {
+            let detail = serde_json::json!({ "action": action, "signature": signature });
+            if let Ok(detail) = serde_json::to_string(&detail) {
+                let _ = window.eval(format!(
+                    "window.dispatchEvent(new CustomEvent('carrier:context-action', {{ detail: {detail} }}));"
+                ));
+            }
+        }
+        return;
+    }
+
     let eval = |js: &str| {
         if let Some(w) = target_window(app) {
             let _ = w.eval(js);
@@ -287,6 +334,202 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
         _ => {}
     }
+}
+
+/// The two rows that register a macOS activation when selected. Named so the
+/// activation check below cannot drift from the label arrays: a video menu's
+/// Share row must stay the same string as an image menu's.
+const COPY_IMAGE_CONTEXT_MENU_LABEL: &str = "Copy image";
+const SHARE_CONTEXT_MENU_LABEL: &str = "Share…";
+
+const IMAGE_CONTEXT_MENU_LABELS: &[&str] = &[
+    COPY_IMAGE_CONTEXT_MENU_LABEL,
+    "Download image",
+    SHARE_CONTEXT_MENU_LABEL,
+    "Copy image address",
+    "Open image in browser",
+];
+const VIDEO_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Download video",
+    SHARE_CONTEXT_MENU_LABEL,
+    "Copy video address",
+];
+const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in browser"];
+const IMAGE_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &[
+    COPY_IMAGE_CONTEXT_MENU_LABEL,
+    "Download image",
+    "Copy image address",
+    "Open image in browser",
+];
+const VIDEO_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &["Download video", "Copy video address"];
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct NativeContextMenuItem {
+    pub(crate) label: String,
+    pub(crate) action: String,
+    pub(crate) value: Option<String>,
+}
+
+fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
+        || labels == VIDEO_CONTEXT_MENU_LABELS
+        || labels == LINK_CONTEXT_MENU_LABELS
+        || {
+            #[cfg(not(target_os = "macos"))]
+            {
+                labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE
+                    || labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE
+            }
+            #[cfg(target_os = "macos")]
+            {
+                false
+            }
+        };
+    let value_index = if labels == IMAGE_CONTEXT_MENU_LABELS {
+        Some(3)
+    } else if labels == VIDEO_CONTEXT_MENU_LABELS {
+        Some(2)
+    } else if labels == LINK_CONTEXT_MENU_LABELS {
+        Some(0)
+    } else if labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE {
+        Some(2)
+    } else if labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE {
+        Some(1)
+    } else {
+        None
+    };
+    let values_valid = value_index.is_some_and(|expected| {
+        items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.value.is_some() == (index == expected))
+    });
+    let mut actions = std::collections::HashSet::new();
+    labels_valid
+        && values_valid
+        && items.iter().all(|item| {
+            item.action.len() == 32
+                && item.action.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && item
+                    .value
+                    .as_ref()
+                    .is_none_or(|value| value.encode_utf16().count() <= 64 * 1024)
+                && actions.insert(item.action.as_str())
+        })
+}
+
+/// Build, validate, and pop up the native media context menu.
+///
+/// `on_presented` fires after every fallible setup step but *before*
+/// `popup_menu`, which blocks until the menu is dismissed — the page must
+/// receive its "shown" acknowledgment while the user is still browsing the
+/// menu, or its result timeout tears the action handlers down mid-use.
+pub(crate) fn show_native_context_menu(
+    app: &tauri::AppHandle,
+    label: &str,
+    items: Vec<NativeContextMenuItem>,
+    on_presented: impl FnOnce(),
+) -> bool {
+    if !valid_context_menu_items(&items) {
+        log::warn!("carrier:context-menu payload was invalid");
+        return false;
+    }
+    let Some(window) = app.get_webview_window(label) else {
+        log::warn!("carrier:context-menu target window {label:?} is gone");
+        return false;
+    };
+    let menu = match Menu::new(app) {
+        Ok(menu) => menu,
+        Err(error) => {
+            log::warn!("failed to create native media context menu: {error}");
+            return false;
+        }
+    };
+    for item in &items {
+        let id = format!("carrier-context:{label}:{}", item.action);
+        let menu_item = match MenuItemBuilder::new(&item.label).id(id).build(app) {
+            Ok(menu_item) => menu_item,
+            Err(error) => {
+                log::warn!(
+                    "failed to build native media context menu item for action {}: {error}",
+                    item.action
+                );
+                return false;
+            }
+        };
+        if let Err(error) = menu.append(&menu_item) {
+            log::warn!(
+                "failed to append native media context menu item for action {}: {error}",
+                item.action
+            );
+            return false;
+        }
+    }
+    {
+        let state = app.state::<AppState>();
+        let mut copies = state.context_menu_copy_values.lock().unwrap();
+        copies.retain(|(window, _), _| window != label);
+        for item in &items {
+            if let Some(value) = &item.value {
+                copies.insert((label.to_string(), item.action.clone()), value.clone());
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let state = app.state::<AppState>();
+        state
+            .download_reservations
+            .lock()
+            .unwrap()
+            .retain(|(window, _), _| window != label);
+        let mut activations = state.context_menu_activations.lock().unwrap();
+        let now = Instant::now();
+        activations.retain(|(window, _), activation| {
+            window != label || crate::context_menu_activation_is_current(activation.clone(), now)
+        });
+        for item in &items {
+            let key = (label.to_string(), item.action.clone());
+            if item.value.is_none()
+                && (item.label == COPY_IMAGE_CONTEXT_MENU_LABEL
+                    || item.label == SHARE_CONTEXT_MENU_LABEL)
+            {
+                activations.insert(key, ContextMenuActivation::Pending);
+            }
+        }
+    }
+    on_presented();
+    match window.popup_menu(&menu) {
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!("failed to show native media context menu: {error}");
+            let state = app.state::<AppState>();
+            state
+                .context_menu_copy_values
+                .lock()
+                .unwrap()
+                .retain(|(window, _), _| window != label);
+            #[cfg(target_os = "macos")]
+            state
+                .context_menu_activations
+                .lock()
+                .unwrap()
+                .retain(|(window, _), _| window != label);
+            false
+        }
+    }
+}
+
+fn context_menu_action(id: &str) -> Option<(&str, &str)> {
+    let (label, action) = id.strip_prefix("carrier-context:")?.rsplit_once(':')?;
+    if label.is_empty()
+        || action.len() != 32
+        || !action.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    Some((label, action))
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +716,27 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
 
+    fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
+        let source = include_str!("../../inject/src/messenger/features/context-menu.ts");
+        let declaration = format!("const {name} = [");
+        let body = source
+            .split_once(&declaration)
+            .unwrap_or_else(|| panic!("missing injected label declaration {name}"))
+            .1
+            .split_once("] as const;")
+            .unwrap_or_else(|| panic!("unterminated injected label declaration {name}"))
+            .0;
+        body.split('"').skip(1).step_by(2).collect()
+    }
+
+    fn context_item(label: &str, action: char) -> NativeContextMenuItem {
+        NativeContextMenuItem {
+            label: label.into(),
+            action: action.to_string().repeat(32),
+            value: None,
+        }
+    }
+
     fn thread(name: &str, href: &str) -> RecentThread {
         RecentThread {
             name: name.into(),
@@ -555,5 +819,72 @@ mod tests {
                 DockEntry::Settings,
             ]
         );
+    }
+
+    #[test]
+    fn native_context_menu_accepts_only_known_shapes_and_unique_tokens() {
+        let mut image = vec![
+            context_item("Copy image", '1'),
+            context_item("Download image", '2'),
+            context_item("Share…", '3'),
+            context_item("Copy image address", '4'),
+            context_item("Open image in browser", '5'),
+        ];
+        image[3].value = Some("https://example.com/image.png".into());
+        assert!(valid_context_menu_items(&image));
+
+        image[0].value = image[3].value.take();
+        assert!(!valid_context_menu_items(&image));
+        image[3].value = image[0].value.take();
+
+        let mut spoofed = image;
+        spoofed[2].label = "Allow microphone".into();
+        assert!(!valid_context_menu_items(&spoofed));
+
+        let mut duplicate = vec![
+            context_item("Copy link address", 'a'),
+            context_item("Open link in browser", 'a'),
+        ];
+        duplicate[0].value = Some("https://example.com".into());
+        assert!(!valid_context_menu_items(&duplicate));
+    }
+
+    #[test]
+    fn native_context_menu_allowlist_matches_injected_labels() {
+        for (name, expected) in [
+            ("IMAGE_CONTEXT_MENU_LABELS", IMAGE_CONTEXT_MENU_LABELS),
+            ("VIDEO_CONTEXT_MENU_LABELS", VIDEO_CONTEXT_MENU_LABELS),
+            ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
+        ] {
+            assert_eq!(injected_context_menu_labels(name), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn no_share_allowlists_track_the_primary_shapes() {
+        let image: Vec<&str> = IMAGE_CONTEXT_MENU_LABELS
+            .iter()
+            .copied()
+            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
+            .collect();
+        assert_eq!(image, IMAGE_CONTEXT_MENU_LABELS_NO_SHARE);
+
+        let video: Vec<&str> = VIDEO_CONTEXT_MENU_LABELS
+            .iter()
+            .copied()
+            .filter(|label| *label != SHARE_CONTEXT_MENU_LABEL)
+            .collect();
+        assert_eq!(video, VIDEO_CONTEXT_MENU_LABELS_NO_SHARE);
+    }
+
+    #[test]
+    fn native_context_action_ids_bind_the_window_and_opaque_action() {
+        let token = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            context_menu_action(&format!("carrier-context:win-2:{token}")),
+            Some(("win-2", token))
+        );
+        assert_eq!(context_menu_action("carrier-context:win-2:share"), None);
+        assert_eq!(context_menu_action(&format!("other:win-2:{token}")), None);
     }
 }

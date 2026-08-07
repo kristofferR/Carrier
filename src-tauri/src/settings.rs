@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -213,9 +214,36 @@ pub(crate) struct AppState {
     /// In memory only — never persisted (see `carrier:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,
     /// Per-window secrets that authenticate reveal-download requests from
-    /// Carrier's injected click handler. Remote page scripts can emit events,
-    /// but cannot read these closure-scoped tokens.
+    /// Carrier's injected click handler. They are imported as non-extractable
+    /// HMAC keys in the page and are never included in an IPC payload.
     pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
+    /// Recently consumed signed-action nonces and their insertion times. The
+    /// authenticated action timestamp lets old entries expire without allowing
+    /// a captured action to be replayed.
+    pub(crate) signed_action_nonces: Mutex<HashMap<String, HashMap<String, Instant>>>,
+    /// Native context actions become usable only after AppKit reports that the
+    /// corresponding menu row was selected.
+    #[cfg(target_os = "macos")]
+    pub(crate) context_menu_activations: Mutex<HashMap<(String, String), ContextMenuActivation>>,
+    /// Download reservations bind a claimed share action to its exact blob URL
+    /// before the WebView starts the download.
+    #[cfg(target_os = "macos")]
+    pub(crate) download_reservations: Mutex<HashMap<(String, String), String>>,
+    /// Text captured at the genuine right-click and written to the system
+    /// clipboard when its native Copy address row is selected.
+    pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) enum ContextMenuActivation {
+    Pending,
+    Selected(Instant),
+    Claimed {
+        download_id: Option<String>,
+        claimed_at: Instant,
+    },
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";

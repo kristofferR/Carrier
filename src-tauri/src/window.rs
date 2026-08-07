@@ -11,8 +11,8 @@ use url::Url;
 
 use crate::custom_css::apply_custom_css;
 use crate::download::{
-    downloads_dir, filename_from_url, forget_download, is_allowed_download, is_unsafe_download,
-    remember_download, sanitize_filename, unique_path,
+    complete_download, downloads_dir, filename_from_url, forget_download, is_allowed_download,
+    is_unsafe_download, remember_download, sanitize_filename, unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -23,10 +23,28 @@ use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
-fn notify_download_finished(webview: &tauri::Webview, url: &Url, success: bool) {
+fn notify_download_finished(
+    app: &tauri::AppHandle,
+    webview: &tauri::Webview,
+    id: &str,
+    url: &Url,
+    success: bool,
+) {
+    let signature = app
+        .state::<AppState>()
+        .download_reveal_tokens
+        .lock()
+        .unwrap()
+        .get(webview.label())
+        .and_then(|secret| crate::download_finished_signature(secret, id, url.as_str(), success));
+    let Some(signature) = signature else {
+        return;
+    };
     let detail = serde_json::json!({
+        "id": id,
         "url": url.as_str(),
         "success": success,
+        "signature": signature,
     });
     let script = format!(
         "window.dispatchEvent(new CustomEvent('carrier:download-finished', {{ detail: {detail} }}));"
@@ -82,6 +100,9 @@ pub(crate) fn build_app_window(
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
+    let download_handle = app.clone();
+    #[cfg(target_os = "macos")]
+    let download_label = label.to_string();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -121,8 +142,19 @@ pub(crate) fn build_app_window(
             }
             false
         })
-        .on_download(|webview, event| match event {
+        .on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
+                #[cfg(target_os = "macos")]
+                let reserved_download_id = crate::take_download_reservation(
+                    &download_handle,
+                    &download_label,
+                    url.as_str(),
+                );
+                #[cfg(target_os = "macos")]
+                let download_id = reserved_download_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+                #[cfg(not(target_os = "macos"))]
+                let download_id = uuid::Uuid::new_v4().simple().to_string();
                 // Only accept downloads of Messenger's own media or page-generated
                 // blob:/data: content; refuse anything else a remote page might try
                 // to write to the user's Downloads folder.
@@ -137,34 +169,37 @@ pub(crate) fn build_app_window(
                     .unwrap_or_else(|| filename_from_url(&url));
                 let name = sanitize_filename(&suggested);
                 if !is_allowed_download(&url, &name) {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 // Don't silently save an executable a page might push to Downloads.
                 if is_unsafe_download(&name) {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 // Fail closed: if we can't resolve/create the Downloads folder we
                 // can't enforce where the file lands, so refuse rather than let the
                 // WebView write to its own chosen destination.
                 let Some(dir) = downloads_dir() else {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 };
                 if std::fs::create_dir_all(&dir).is_err() {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 *destination = unique_path(dir.join(name));
-                remember_download(&url, destination.clone());
+                remember_download(&url, download_id.clone(), destination.clone());
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
-                if !success {
-                    forget_download(&url);
+                let download_id = if success {
+                    complete_download(&url)
+                } else {
+                    forget_download(&url)
                 }
-                notify_download_finished(&webview, &url, success);
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+                notify_download_finished(&download_handle, &webview, &download_id, &url, success);
                 true
             }
             _ => true,
@@ -183,11 +218,50 @@ pub(crate) fn build_app_window(
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
         })?;
-    app.state::<AppState>()
-        .download_reveal_tokens
-        .lock()
-        .unwrap()
-        .insert(label.to_string(), download_reveal_token);
+    let token_cleanup_value = download_reveal_token.clone();
+    {
+        let state = app.state::<AppState>();
+        state
+            .download_reveal_tokens
+            .lock()
+            .unwrap()
+            .insert(label.to_string(), download_reveal_token);
+        state.signed_action_nonces.lock().unwrap().remove(label);
+    }
+    let token_cleanup_handle = app.clone();
+    let token_cleanup_label = label.to_string();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            let state = token_cleanup_handle.state::<AppState>();
+            let mut tokens = state.download_reveal_tokens.lock().unwrap();
+            if tokens.get(&token_cleanup_label) == Some(&token_cleanup_value) {
+                tokens.remove(&token_cleanup_label);
+                state
+                    .signed_action_nonces
+                    .lock()
+                    .unwrap()
+                    .remove(&token_cleanup_label);
+                state
+                    .context_menu_copy_values
+                    .lock()
+                    .unwrap()
+                    .retain(|(window, _), _| window != &token_cleanup_label);
+                #[cfg(target_os = "macos")]
+                {
+                    state
+                        .context_menu_activations
+                        .lock()
+                        .unwrap()
+                        .retain(|(window, _), _| window != &token_cleanup_label);
+                    state
+                        .download_reservations
+                        .lock()
+                        .unwrap()
+                        .retain(|(window, _), _| window != &token_cleanup_label);
+                }
+            }
+        }
+    });
     install_app_window_runtime_handler(app, &window);
     watchdog.install(&window);
     Ok(window)
@@ -621,24 +695,218 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
 
-  // Keep the per-window reveal credential and the original IPC function in
-  // this initialization script's lexical scope. Facebook can emit the same
-  // event name, inspect the DOM, and replace window.__TAURI_INTERNALS__, but it
-  // cannot read this closure or forge the native authorization it carries.
-  var carrierRevealDownload = (function (invoke, authorization) {{
-    return function (url) {{
-      if (!invoke) return;
+  // Import the per-window secret as a non-extractable key. Only signed request
+  // data crosses Tauri's page-visible serializer, so a hostile inherited
+  // toJSON hook can observe or corrupt a request but cannot recover the key or
+  // create a different valid request. One-time nonces prevent replay.
+  var carrierAuthorizedEmit = (function (invoke, secret) {{
+    if (!invoke || !crypto.subtle) return;
+    var nativeArrayIsArray = Array.isArray.bind(Array);
+    var nativeDefineProperty = Object.defineProperty;
+    var nativeObjectCreate = Object.create;
+    var nativeObjectKeys = Object.keys;
+    var nativeSetPrototypeOf = Object.setPrototypeOf;
+    var nativeStringify = JSON.stringify;
+    var nativeReflectApply = Reflect.apply;
+    var nativeStringCharCodeAt = String.prototype.charCodeAt;
+    var NativeUint8Array = Uint8Array;
+    var encoder = new TextEncoder();
+    var nativeEncode = encoder.encode.bind(encoder);
+    var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+    var nativeImportKey = crypto.subtle.importKey.bind(crypto.subtle);
+    var nativeSign = crypto.subtle.sign.bind(crypto.subtle);
+    var nativeVerify = crypto.subtle.verify.bind(crypto.subtle);
+    var key = nativeImportKey(
+      'raw', nativeEncode(secret), {{ name: 'HMAC', hash: 'SHA-256' }}, false, ['sign', 'verify']
+    );
+    function inertClone(value) {{
+      if (value === null || typeof value !== 'object') return value;
+      var clone = nativeArrayIsArray(value) ? [] : nativeObjectCreate(null);
+      if (nativeArrayIsArray(value)) nativeSetPrototypeOf(clone, null);
+      var keys = nativeObjectKeys(value);
+      for (var index = 0; index < keys.length; index += 1) {{
+        var name = keys[index];
+        nativeDefineProperty(clone, name, {{
+          value: inertClone(value[name]), enumerable: true, configurable: true
+        }});
+      }}
+      return clone;
+    }}
+    function hex(bytes) {{
+      var alphabet = '0123456789abcdef';
+      var output = '';
+      for (var index = 0; index < bytes.length; index += 1) {{
+        output += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];
+      }}
+      return output;
+    }}
+    function unhex(value) {{
+      if (typeof value !== 'string' || value.length !== 64) return;
+      var bytes = new NativeUint8Array(32);
+      for (var index = 0; index < bytes.length; index += 1) {{
+        var high = nativeReflectApply(nativeStringCharCodeAt, value, [index * 2]);
+        var low = nativeReflectApply(nativeStringCharCodeAt, value, [index * 2 + 1]);
+        high = high >= 48 && high <= 57 ? high - 48 : high >= 97 && high <= 102 ? high - 87 : -1;
+        low = low >= 48 && low <= 57 ? low - 48 : low >= 97 && low <= 102 ? low - 87 : -1;
+        if (high < 0 || low < 0) return;
+        bytes[index] = (high << 4) | low;
+      }}
+      return bytes;
+    }}
+    var emit = async function (event, value) {{
+      var nonceBytes = new NativeUint8Array(16);
+      nativeGetRandomValues(nonceBytes);
+      var nonce = hex(nonceBytes);
+      var timestamp = Date.now();
+      var message = nativeStringify(inertClone(value));
+      var authenticated = event + '\n' + timestamp + '\n' + nonce + '\n' + message;
+      var signature = hex(new NativeUint8Array(
+        await nativeSign('HMAC', await key, nativeEncode(authenticated))
+      ));
       return invoke('plugin:event|emit', {{
-        event: 'carrier:reveal-download',
-        payload: {{ url: url, authorization: authorization }}
+        event: event,
+        payload: {{ message: message, nonce: nonce, timestamp: timestamp, signature: signature }}
       }});
     }};
+    nativeDefineProperty(emit, 'verifyResult', {{
+      value: async function (event, value, signature) {{
+        var signatureBytes = unhex(signature);
+        if (!signatureBytes) return false;
+        var message = nativeStringify(inertClone(value));
+        return nativeVerify(
+          'HMAC', await key, signatureBytes, nativeEncode(event + '\n' + message)
+        );
+      }}
+    }});
+    return emit;
   }})(
     window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke
       ? window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)
       : undefined,
     {reveal_token_literal}
   );
+  var carrierVerifyResult = carrierAuthorizedEmit && carrierAuthorizedEmit.verifyResult;
+
+  var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeWindowRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeObjectDefineProperty = Object.defineProperty;
+  var nativeSetTimeout = window.setTimeout.bind(window);
+  var nativeClearTimeout = window.clearTimeout.bind(window);
+  var NativePromise = Promise;
+  var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var NativeUint8Array = Uint8Array;
+  var nativeReflectApply = Reflect.apply;
+  var carrierNativeRequest = function () {{
+    var bytes = new NativeUint8Array(16);
+    nativeGetRandomValues(bytes);
+    var alphabet = '0123456789abcdef';
+    var request = '';
+    for (var index = 0; index < bytes.length; index += 1) {{
+      request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];
+    }}
+    return request;
+  }};
+
+  // One request/response lifecycle for every result-bearing native call: sign
+  // and emit the request with a fresh correlation token, then settle only on a
+  // '<event>-result' CustomEvent that carries that token, a boolean under
+  // `field`, and a signature that verifies against this window's secret.
+  // Blocking native UI can acknowledge presentation first, clearing the
+  // timeout, then send its final result after the blocking call returns.
+  var carrierNativeCall = function (
+    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal
+  ) {{
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    var resultEvent = requestEvent + '-result';
+    var request = carrierNativeRequest();
+    return new NativePromise(function (resolve, reject) {{
+      var acknowledged = false;
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        var value = detail[field];
+        if (value !== true && value !== false) return;
+        var phase;
+        if (acknowledgesBeforeFinal) {{
+          phase = detail.phase;
+          if (phase !== 'presented' && phase !== 'complete') return;
+          if (phase === 'presented' && value !== true) return;
+        }}
+        // Field order matters. Phased calls append `phase` after the result field.
+        var result = {{ request: request }};
+        result[field] = value;
+        if (acknowledgesBeforeFinal) result.phase = phase;
+        var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
+        if (!authenticated) return;
+        if (acknowledgesBeforeFinal && phase === 'presented') {{
+          if (!acknowledged) {{
+            acknowledged = true;
+            nativeClearTimeout(timeout);
+          }}
+          return;
+        }}
+        cleanup();
+        if (value) resolve();
+        else reject(new Error(failedMessage));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error(timedOutMessage));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [resultEvent, finish]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
+      payload.request = request;
+      carrierAuthorizedEmit(requestEvent, payload).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
+  }};
+
+  var carrierRevealDownload = function (url) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
+  }};
+  var carrierClaimContextAction = function (action) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
+  }};
+  var carrierPrepareDownload = function (action, url) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
+  }};
+  var carrierShareDownload = function (downloadId, x, y, action) {{
+    return carrierNativeCall(
+      'carrier:share-download', 'shown',
+      'native share picker failed', 'native share picker timed out',
+      {{ download_id: downloadId, x: x, y: y, action: action }}
+    );
+  }};
+  var carrierCopyImage = function (dataUrl, action) {{
+    return carrierNativeCall(
+      'carrier:copy-image', 'copied',
+      'native clipboard write failed', 'native clipboard write timed out',
+      {{ data_url: dataUrl, action: action }}
+    );
+  }};
+  var carrierShowContextMenu = function (items) {{
+    return carrierNativeCall(
+      'carrier:context-menu', 'shown',
+      'native context menu was not shown', 'native context menu timed out',
+      {{ items: items }}, true
+    );
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -846,6 +1114,67 @@ mod tests {
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
+    }
+
+    #[test]
+    fn privileged_bridges_emit_signed_payloads_instead_of_raw_tokens() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
+        assert!(script.contains("false, ['sign', 'verify']"));
+        assert!(
+            script.contains(
+                "payload: { message: message, nonce: nonce, timestamp: timestamp, signature: signature }"
+            )
+        );
+        assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
+        assert!(!script.contains("authorization: authorization"));
+        assert!(!script.contains("__carrierDispatchContextAction"));
+    }
+
+    #[test]
+    fn native_call_factory_waits_for_the_authenticated_result() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script
+            .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];"));
+        assert!(!script.contains("bytes[index].toString(16).padStart(2, '0')"));
+        // Every result-bearing bridge goes through the one factory: correlation
+        // token, '<event>-result' listener, signature verification, timeout.
+        assert!(script.contains("var resultEvent = requestEvent + '-result';"));
+        assert!(script.contains("payload.request = request;"));
+        assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
+        assert!(script.contains("detail.signature"));
+    }
+
+    #[test]
+    fn copy_image_bridge_goes_through_the_native_call_factory() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("'carrier:copy-image', 'copied'"));
+        assert!(script.contains("data_url: dataUrl, action: action"));
+        assert!(script.contains("native clipboard write failed"));
+    }
+
+    #[test]
+    fn share_download_bridge_goes_through_the_native_call_factory() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("carrier:claim-context-action"));
+        assert!(script.contains("carrier:prepare-download"));
+        // The share result reports presentation, not a completed share.
+        assert!(script.contains("'carrier:share-download', 'shown'"));
+        assert!(script.contains("download_id: downloadId, x: x, y: y, action: action"));
+        assert!(script.contains("native share picker failed"));
+    }
+
+    #[test]
+    fn context_menu_bridge_goes_through_the_native_call_factory() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("'carrier:context-menu', 'shown'"));
+        assert!(script.contains("{ items: items }, true"));
+        assert!(script.contains("native context menu was not shown"));
     }
 
     #[cfg(all(feature = "mcp", debug_assertions))]

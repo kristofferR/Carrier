@@ -15,12 +15,22 @@ use crate::url_rules::percent_decode;
 
 const MAX_RECENT_DOWNLOADS: usize = 32;
 const RECENT_DOWNLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+/// A download that never reports completion must not hold one of the
+/// [`MAX_RECENT_DOWNLOADS`] slots forever — abandoned requests would evict
+/// completed entries the reveal/share flows still need. Far above the page's
+/// 120 s completion wait so no live download is ever dropped mid-transfer.
+const PENDING_DOWNLOAD_TTL: Duration = RECENT_DOWNLOAD_TTL.saturating_mul(4);
 const MAX_DOWNLOAD_URL_LEN: usize = 4096;
+/// Download IDs are 32-char UUID simple forms or 32-hex context action tokens.
+#[cfg(target_os = "macos")]
+const MAX_DOWNLOAD_ID_LEN: usize = 32;
 
 struct RecentDownload {
     url: String,
+    id: String,
     path: PathBuf,
     at: Instant,
+    completed: bool,
 }
 
 #[derive(Default)]
@@ -30,16 +40,17 @@ struct RecentDownloads {
 
 impl RecentDownloads {
     fn prune(&mut self, now: Instant) {
-        while self
-            .entries
-            .front()
-            .is_some_and(|entry| now.saturating_duration_since(entry.at) > RECENT_DOWNLOAD_TTL)
-        {
-            self.entries.pop_front();
-        }
+        self.entries.retain(|entry| {
+            let ttl = if entry.completed {
+                RECENT_DOWNLOAD_TTL
+            } else {
+                PENDING_DOWNLOAD_TTL
+            };
+            now.saturating_duration_since(entry.at) <= ttl
+        });
     }
 
-    fn remember_at(&mut self, url: &str, path: PathBuf, now: Instant) {
+    fn remember_at(&mut self, url: &str, id: String, path: PathBuf, now: Instant) {
         if url.is_empty() || url.len() > MAX_DOWNLOAD_URL_LEN {
             return;
         }
@@ -47,8 +58,10 @@ impl RecentDownloads {
         self.entries.retain(|entry| entry.url != url);
         self.entries.push_back(RecentDownload {
             url: url.to_string(),
+            id,
             path,
             at: now,
+            completed: false,
         });
         while self.entries.len() > MAX_RECENT_DOWNLOADS {
             self.entries.pop_front();
@@ -62,12 +75,42 @@ impl RecentDownloads {
         self.prune(now);
         self.entries
             .iter()
-            .find(|entry| entry.url == url)
+            .find(|entry| entry.url == url && entry.completed)
             .map(|entry| entry.path.clone())
     }
 
-    fn forget(&mut self, url: &str) {
+    #[cfg(target_os = "macos")]
+    fn lookup_id_at(&mut self, id: &str, now: Instant) -> Option<PathBuf> {
+        if id.is_empty() || id.len() > MAX_DOWNLOAD_ID_LEN {
+            return None;
+        }
+        self.prune(now);
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id && entry.completed)
+            .map(|entry| entry.path.clone())
+    }
+
+    fn complete_at(&mut self, url: &str, now: Instant) -> Option<String> {
+        if let Some(index) = self.entries.iter().position(|entry| entry.url == url) {
+            let mut entry = self.entries.remove(index).expect("entry index is valid");
+            entry.completed = true;
+            entry.at = now;
+            let id = entry.id.clone();
+            self.entries.push_back(entry);
+            return Some(id);
+        }
+        None
+    }
+
+    fn forget(&mut self, url: &str) -> Option<String> {
+        let id = self
+            .entries
+            .iter()
+            .find(|entry| entry.url == url)
+            .map(|entry| entry.id.clone());
         self.entries.retain(|entry| entry.url != url);
+        id
     }
 }
 
@@ -78,16 +121,24 @@ fn recent_downloads() -> &'static Mutex<RecentDownloads> {
 }
 
 /// Remember a destination chosen by the trusted WebView download hook. The
-/// remote page receives only the URL key and can never supply a filesystem path.
-pub(crate) fn remember_download(url: &Url, path: PathBuf) {
+/// remote page receives only opaque URL/identity keys and can never supply a
+/// filesystem path.
+pub(crate) fn remember_download(url: &Url, id: String, path: PathBuf) {
     recent_downloads()
         .lock()
         .unwrap()
-        .remember_at(url.as_str(), path, Instant::now());
+        .remember_at(url.as_str(), id, path, Instant::now());
 }
 
-pub(crate) fn forget_download(url: &Url) {
-    recent_downloads().lock().unwrap().forget(url.as_str());
+pub(crate) fn forget_download(url: &Url) -> Option<String> {
+    recent_downloads().lock().unwrap().forget(url.as_str())
+}
+
+pub(crate) fn complete_download(url: &Url) -> Option<String> {
+    recent_downloads()
+        .lock()
+        .unwrap()
+        .complete_at(url.as_str(), Instant::now())
 }
 
 /// Non-consuming lookup so repeated clicks on the toast action keep working.
@@ -96,6 +147,14 @@ pub(crate) fn lookup_download(url: &str) -> Option<PathBuf> {
         .lock()
         .unwrap()
         .lookup_at(url, Instant::now())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn lookup_download_id(id: &str) -> Option<PathBuf> {
+    recent_downloads()
+        .lock()
+        .unwrap()
+        .lookup_id_at(id, Instant::now())
 }
 
 /// Only the commands that fetch a URL (copy/download image & video) are exposed
@@ -416,9 +475,11 @@ mod tests {
         for n in 0..=MAX_RECENT_DOWNLOADS {
             downloads.remember_at(
                 &format!("blob:carrier/{n}"),
+                format!("download-{n}"),
                 PathBuf::from(format!("download-{n}.png")),
                 now,
             );
+            downloads.complete_at(&format!("blob:carrier/{n}"), now);
         }
 
         assert_eq!(downloads.entries.len(), MAX_RECENT_DOWNLOADS);
@@ -438,7 +499,13 @@ mod tests {
     fn recent_downloads_expire_and_failed_entries_can_be_forgotten() {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
-        downloads.remember_at("blob:carrier/expired", PathBuf::from("expired.png"), now);
+        downloads.remember_at(
+            "blob:carrier/expired",
+            "expired-id".into(),
+            PathBuf::from("expired.png"),
+            now,
+        );
+        downloads.complete_at("blob:carrier/expired", now);
         assert_eq!(
             downloads.lookup_at(
                 "blob:carrier/expired",
@@ -447,9 +514,72 @@ mod tests {
             None
         );
 
-        downloads.remember_at("blob:carrier/failed", PathBuf::from("failed.png"), now);
+        downloads.remember_at(
+            "blob:carrier/failed",
+            "failed-id".into(),
+            PathBuf::from("failed.png"),
+            now,
+        );
         downloads.forget("blob:carrier/failed");
         assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
+    }
+
+    #[test]
+    fn recent_downloads_are_hidden_until_completed() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("pending.png");
+        downloads.remember_at(
+            "blob:carrier/pending",
+            "pending-id".into(),
+            path.clone(),
+            now,
+        );
+        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), None);
+
+        downloads.complete_at("blob:carrier/pending", now);
+        assert_eq!(downloads.lookup_at("blob:carrier/pending", now), Some(path));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn download_ids_resolve_only_for_completed_entries() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("shared.png");
+        downloads.remember_at("blob:carrier/shared", "shared-id".into(), path.clone(), now);
+        assert_eq!(downloads.lookup_id_at("shared-id", now), None);
+        downloads.complete_at("blob:carrier/shared", now);
+        assert_eq!(downloads.lookup_id_at("shared-id", now), Some(path));
+        assert_eq!(downloads.lookup_id_at("unknown-id", now), None);
+    }
+
+    #[test]
+    fn recent_downloads_expire_from_completion_time() {
+        let started = Instant::now();
+        let completed = started + RECENT_DOWNLOAD_TTL + Duration::from_secs(1);
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("slow.png");
+        downloads.remember_at("blob:carrier/slow", "slow-id".into(), path.clone(), started);
+        downloads.remember_at(
+            "blob:carrier/new",
+            "new-id".into(),
+            PathBuf::from("new.png"),
+            completed,
+        );
+        downloads.complete_at("blob:carrier/slow", completed);
+
+        assert_eq!(
+            downloads.lookup_at("blob:carrier/slow", completed),
+            Some(path)
+        );
+        assert_eq!(
+            downloads.lookup_at(
+                "blob:carrier/slow",
+                completed + RECENT_DOWNLOAD_TTL + Duration::from_millis(1)
+            ),
+            None
+        );
     }
 
     #[test]
@@ -457,7 +587,12 @@ mod tests {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
         let oversized = "x".repeat(MAX_DOWNLOAD_URL_LEN + 1);
-        downloads.remember_at(&oversized, PathBuf::from("ignored.png"), now);
+        downloads.remember_at(
+            &oversized,
+            "ignored-id".into(),
+            PathBuf::from("ignored.png"),
+            now,
+        );
         assert!(downloads.entries.is_empty());
         assert_eq!(downloads.lookup_at(&oversized, now), None);
     }

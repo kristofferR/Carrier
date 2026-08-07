@@ -94,7 +94,7 @@ export function initDownloadAnchors() {
       e.preventDefault();
       e.stopImmediatePropagation();
       downloadSrc(href, a.getAttribute("download") || "download")
-        .then(toastDownloadSaved)
+        .then(({ url }) => toastDownloadSaved(url))
         .catch(() => toast("Download failed"));
     },
     true,
