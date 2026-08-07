@@ -1,10 +1,47 @@
 import { describe, expect, test } from "bun:test";
 import {
+  dispatchTransferEvent,
+  MAX_SHARED_FILES,
+  MAX_SHARED_NAME_BYTES,
   mimeForName,
   SHARE_DELIVERY_TTL_MS,
   sanitizeSharedFiles,
   shareIsDeliverable,
 } from "./share-intake";
+
+describe("dispatchTransferEvent", () => {
+  const transfer = { files: ["photo.png"] };
+
+  test("requires both payload inspection and cancellation", () => {
+    const target = {
+      dispatchEvent(dispatched: Event) {
+        void (dispatched as Event & { clipboardData: unknown }).clipboardData;
+        return false;
+      },
+    };
+    expect(dispatchTransferEvent(target, {} as Event, "clipboardData", transfer)).toEqual({
+      acknowledged: true,
+      payloadRead: true,
+    });
+  });
+
+  test("does not accept unrelated cancellation or inspection alone", () => {
+    expect(
+      dispatchTransferEvent({ dispatchEvent: () => false }, {} as Event, "dataTransfer", transfer),
+    ).toEqual({ acknowledged: false, payloadRead: false });
+
+    const target = {
+      dispatchEvent(dispatched: Event) {
+        void (dispatched as Event & { dataTransfer: unknown }).dataTransfer;
+        return true;
+      },
+    };
+    expect(dispatchTransferEvent(target, {} as Event, "dataTransfer", transfer)).toEqual({
+      acknowledged: false,
+      payloadRead: true,
+    });
+  });
+});
 
 describe("sanitizeSharedFiles", () => {
   test("keeps well-formed entries and drops the rest", () => {
@@ -30,7 +67,29 @@ describe("sanitizeSharedFiles", () => {
       name: `file-${index}.png`,
       data: "aGk=",
     }));
-    expect(sanitizeSharedFiles(many)).toHaveLength(21);
+    expect(sanitizeSharedFiles(many)).toHaveLength(MAX_SHARED_FILES);
+  });
+
+  test("enforces the aggregate encoded-data cap", () => {
+    const payload = [
+      { name: "one.png", data: "1234" },
+      { name: "two.png", data: "5678" },
+    ];
+    expect(sanitizeSharedFiles(payload, 7)).toEqual([{ name: "one.png", data: "1234" }]);
+    expect(sanitizeSharedFiles(payload, 8)).toEqual(payload);
+  });
+
+  test("measures attachment names as UTF-8 bytes", () => {
+    const atLimit = `${"a".repeat(MAX_SHARED_NAME_BYTES - 4)}.png`;
+    const overLimit = `é${"a".repeat(MAX_SHARED_NAME_BYTES - 5)}.png`;
+    expect(overLimit).toHaveLength(MAX_SHARED_NAME_BYTES);
+    expect(sanitizeSharedFiles([{ name: atLimit, data: "aGk=" }])).toHaveLength(1);
+    expect(sanitizeSharedFiles([{ name: overLimit, data: "aGk=" }])).toEqual([]);
+  });
+
+  test("does not accept inherited payload fields", () => {
+    const inherited = Object.create({ name: "photo.png", data: "aGk=" });
+    expect(sanitizeSharedFiles([inherited])).toEqual([]);
   });
 });
 
@@ -48,5 +107,6 @@ describe("mimeForName", () => {
     expect(mimeForName("IMG_4649.PNG")).toBe("image/png");
     expect(mimeForName("clip.mov")).toBe("video/quicktime");
     expect(mimeForName("archive.zip")).toBe("application/octet-stream");
+    expect(mimeForName("payload.__proto__")).toBe("application/octet-stream");
   });
 });

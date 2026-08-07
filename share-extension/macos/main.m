@@ -2,9 +2,9 @@
 //
 // The share sheet only lists apps that bundle an .appex, so this tiny
 // sandboxed extension is what puts Carrier in the menu. It presents no UI:
-// the attachments are serialized onto a private named pasteboard, the main
-// app is told to take over via carrier://share-pasteboard, and the request
-// completes.
+// the attachments are serialized onto a one-time, unguessable named
+// pasteboard, the main app is told to take over via a capability URL, and the
+// request completes.
 //
 // Why the pasteboard and not an app-group container: a group container is
 // only reachable with a signature whose team matches the group prefix, so it
@@ -16,8 +16,8 @@
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
-static NSString *const kCarrierPasteboard = @"io.github.kristofferr.carrier.share";
-static NSString *const kCarrierHandoffURL = @"carrier://share-pasteboard";
+static NSString *const kCarrierPasteboardPrefix = @"io.github.kristofferr.carrier.share.";
+static NSString *const kCarrierHandoffURLPrefix = @"carrier://share-pasteboard";
 /// Mirrors the intake's cap; a larger selection is refused here so the sheet
 /// reports the failure instead of the app silently dropping it.
 static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
@@ -73,6 +73,16 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
       base = [base stringByAppendingPathExtension:fallbackExtension] ?: base;
     }
   }
+  // Backslashes are ordinary filename characters on macOS, but the receiver
+  // rejects them so the same payload remains traversal-free on every platform.
+  base = [base stringByReplacingOccurrencesOfString:@"\\" withString:@"_"];
+  unichar nullCharacter = 0;
+  NSString *nullString = [NSString stringWithCharacters:&nullCharacter length:1];
+  base = [base stringByReplacingOccurrencesOfString:nullString withString:@""];
+  while ([base lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 255 && base.length > 0) {
+    NSRange lastCharacter = [base rangeOfComposedCharacterSequenceAtIndex:base.length - 1];
+    base = [base substringToIndex:lastCharacter.location];
+  }
   return base;
 }
 
@@ -92,6 +102,7 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
   // Index-keyed so the payload keeps the order the user selected in, even
   // though the providers complete out of order.
   NSMutableDictionary<NSNumber *, NSDictionary *> *collected = [NSMutableDictionary dictionary];
+  NSMutableSet<NSNumber *> *failed = [NSMutableSet set];
   dispatch_group_t group = dispatch_group_create();
   NSUInteger index = 0;
 
@@ -99,8 +110,13 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
     for (NSItemProvider *provider in item.attachments) {
       NSNumber *slot = @(index++);
       dispatch_group_enter(group);
+      void (^fail)(void) = ^{
+        @synchronized(collected) {
+          [failed addObject:slot];
+        }
+      };
       void (^collect)(NSString *, NSData *) = ^(NSString *name, NSData *data) {
-        if (name.length > 0 && data.length > 0) {
+        if (name.length > 0 && data.length > 0 && data.length <= kCarrierMaxBytes) {
           @synchronized(collected) {
             collected[slot] = @{
               @"name" : name,
@@ -108,6 +124,8 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
               @"bytes" : @(data.length),
             };
           }
+        } else {
+          fail();
         }
       };
 
@@ -123,13 +141,45 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                                           relativeToURL:nil];
                             }
                             if (source.isFileURL) {
-                              NSData *data = [NSData dataWithContentsOfURL:source];
-                              collect([self nameForIndex:slot.unsignedIntegerValue
-                                           suggestedName:source.lastPathComponent
-                                                fallback:nil],
-                                      data);
-                            } else if (error) {
+                              BOOL scoped = [source startAccessingSecurityScopedResource];
+                              @try {
+                                NSNumber *fileSize = nil;
+                                NSError *metadataError = nil;
+                                if (![source getResourceValue:&fileSize
+                                                       forKey:NSURLFileSizeKey
+                                                        error:&metadataError] ||
+                                    fileSize.unsignedLongLongValue > kCarrierMaxBytes) {
+                                  NSLog(@"Carrier Share: refused file before reading: %@",
+                                        metadataError ?: @"over the size cap");
+                                  fail();
+                                } else {
+                                  NSError *readError = nil;
+                                  NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:source
+                                                                                            error:&readError];
+                                  NSData *data = [handle readDataUpToLength:kCarrierMaxBytes + 1
+                                                                     error:&readError];
+                                  [handle closeFile];
+                                  if (!handle || !data) {
+                                    NSLog(@"Carrier Share: file read failed: %@", readError);
+                                    fail();
+                                  } else if (data.length > kCarrierMaxBytes) {
+                                    NSLog(@"Carrier Share: file grew beyond the size cap while reading");
+                                    fail();
+                                  } else {
+                                    collect([self nameForIndex:slot.unsignedIntegerValue
+                                                 suggestedName:source.lastPathComponent
+                                                      fallback:nil],
+                                            data);
+                                  }
+                                }
+                              } @finally {
+                                if (scoped) {
+                                  [source stopAccessingSecurityScopedResource];
+                                }
+                              }
+                            } else {
                               NSLog(@"Carrier Share: file-url load failed: %@", error);
+                              fail();
                             }
                             dispatch_group_leave(group);
                           }];
@@ -144,12 +194,14 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
                                            suggestedName:nil
                                                 fallback:extension],
                                       (NSData *)loaded);
-                            } else if (error) {
+                            } else {
                               NSLog(@"Carrier Share: data load failed: %@", error);
+                              fail();
                             }
                             dispatch_group_leave(group);
                           }];
       } else {
+        fail();
         dispatch_group_leave(group);
       }
     }
@@ -171,7 +223,9 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
       [payload addObject:@{@"name" : entry[@"name"], @"data" : entry[@"data"]}];
     }
     NSLog(@"Carrier Share: collected %lu attachment(s)", (unsigned long)payload.count);
-    if (payload.count == 0) {
+    if (payload.count == 0 || failed.count > 0 || payload.count != index) {
+      NSLog(@"Carrier Share: refusing partial selection (%lu attachment(s) failed)",
+            (unsigned long)failed.count);
       [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
                                                           code:2
                                                       userInfo:nil]];
@@ -190,12 +244,22 @@ static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;
       return;
     }
 
-    NSPasteboard *pasteboard = [NSPasteboard pasteboardWithName:kCarrierPasteboard];
+    NSString *token = [NSUUID.UUID.UUIDString lowercaseString];
+    NSString *pasteboardName = [kCarrierPasteboardPrefix stringByAppendingString:token];
+    NSString *handoffURL = [NSString stringWithFormat:@"%@/%@", kCarrierHandoffURLPrefix, token];
+    NSPasteboard *pasteboard = [NSPasteboard pasteboardWithName:pasteboardName];
     [pasteboard clearContents];
     BOOL wrote = [pasteboard setString:serialized forType:NSPasteboardTypeString];
-    BOOL opened = [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:kCarrierHandoffURL]];
+    BOOL opened = wrote && [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:handoffURL]];
     NSLog(@"Carrier Share: pasteboard %@, handoff %@", wrote ? @"written" : @"FAILED",
           opened ? @"opened" : @"FAILED");
+    if (!wrote || !opened) {
+      [pasteboard clearContents];
+      [context cancelRequestWithError:[NSError errorWithDomain:@"carrier.share"
+                                                          code:5
+                                                      userInfo:nil]];
+      return;
+    }
     [context completeRequestReturningItems:@[] completionHandler:nil];
   });
 }

@@ -1368,7 +1368,10 @@ pub fn run() {
             // (running instance or cold start alike). See macos::share_intake.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &event {
-                for url in urls {
+                for url in urls
+                    .iter()
+                    .filter(|url| macos::share_intake::is_share_handoff(url.as_str()))
+                {
                     macos::share_intake::handle_share_open(app, url.as_str());
                 }
             }
