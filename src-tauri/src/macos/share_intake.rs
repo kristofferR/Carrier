@@ -15,8 +15,10 @@ use tauri::Manager;
 use crate::settings::AppState;
 
 const APP_GROUP: &str = "S5Q742QZEL.io.github.kristofferr.carrier";
-/// Matches the extension's activation rule (10 files) with headroom.
-const MAX_SHARED_FILES: usize = 10;
+/// The extension's activation rule allows up to 10 images + 1 movie + 10
+/// files in one mixed selection, so the intake must accept every selection
+/// the sheet can produce.
+const MAX_SHARED_FILES: usize = 21;
 /// Total payload cap across all shared files.
 const MAX_SHARED_BYTES: u64 = 100 * 1024 * 1024;
 /// An undelivered share expires rather than surprising the user minutes later.
@@ -59,16 +61,19 @@ fn take_inbox_payload(id: &str) -> Option<String> {
         if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Ok(bytes) = std::fs::read(entry.path()) else {
-            continue;
-        };
-        total = total.saturating_add(bytes.len() as u64);
+        // Enforce the caps from metadata before reading: a multi-gigabyte
+        // movie must be rejected without ever being loaded into memory.
+        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(u64::MAX);
+        total = total.saturating_add(size);
         if total > MAX_SHARED_BYTES || files.len() >= MAX_SHARED_FILES {
             log::warn!("share intake over size or count cap; dropping the handoff");
             let _ = std::fs::remove_dir_all(&dir);
             return None;
         }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Ok(bytes) = std::fs::read(entry.path()) else {
+            continue;
+        };
         files.push((name, bytes));
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -117,20 +122,22 @@ pub(crate) fn sweep_stale_inboxes() {
     }
 }
 
-/// Deliver the pending share to the main window's page, if any is live.
-/// Returns true when the eval was issued (the page hook buffers until the
-/// composer can take the files).
-fn deliver(app: &tauri::AppHandle, payload: &str) -> bool {
-    let Some(window) = app.get_webview_window("main") else {
-        return false;
-    };
-    let script = format!("window.__carrierShareMedia?.({payload});");
-    window.eval(&script).is_ok()
+/// The Messenger window a share should land in: the focused one when the user
+/// works in a secondary window (File → New Window), else `main`. The Settings
+/// window has no composer and is never a target.
+fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    let windows = app.webview_windows();
+    windows
+        .values()
+        .find(|window| window.label() != "settings" && window.is_focused().unwrap_or(false))
+        .cloned()
+        .or_else(|| windows.get("main").cloned())
 }
 
-/// Handle one `carrier://share-inbox/<id>` open: read the inbox, focus the
-/// window, and deliver — or park the payload for `deliver_pending` if the
-/// page is not up yet (cold start).
+/// Handle one `carrier://share-inbox/<id>` open: read and clear the inbox,
+/// park the payload, surface the window, and attempt delivery. Parking comes
+/// first — the inbox is gone by now, so this in-memory copy must survive a
+/// missing window (e.g. a theme rebuild in flight).
 pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
     let Some(id) = share_inbox_id(url) else {
         log::warn!("ignoring malformed carrier:// open");
@@ -140,38 +147,48 @@ pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
         log::warn!("share inbox {id} was empty or invalid");
         return;
     };
-    crate::tray::show_main(app);
-    if !deliver(app, &payload) {
-        return;
-    }
-    // Also park it: a page mid-reload evals into the void, and the page-load
-    // hook below re-delivers. The page hook dedupes by taking the composer
-    // path only once per payload id.
     let state = app.state::<AppState>();
     *state.pending_share.lock().unwrap() = Some(PendingShare {
         payload,
         received_at: Instant::now(),
     });
+    crate::tray::show_main(app);
+    deliver_pending(app);
 }
 
-/// Re-deliver a parked share after a page load (cold start, or a reload that
-/// raced the handoff). Drops anything older than [`SHARE_INTAKE_TTL`].
+/// Deliver the parked share and consume it on success, so a later page load
+/// cannot attach the same files twice. Called from the handoff itself and
+/// from page-load (cold start, or a reload/rebuild that raced the handoff);
+/// a share that cannot be delivered stays parked until [`SHARE_INTAKE_TTL`].
 pub(crate) fn deliver_pending(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let mut pending = state.pending_share.lock().unwrap();
+    if pending
+        .as_ref()
+        .is_some_and(|share| share.received_at.elapsed() > SHARE_INTAKE_TTL)
+    {
+        *pending = None;
+    }
+    let Some(window) = target_window(app) else {
+        return;
+    };
+    // Only a loaded Messenger page has the intake hook (installed at document
+    // start); an eval into the splash or connectivity screen would consume the
+    // share into the void. Parked shares wait for the page-load call.
+    let on_messenger = window
+        .url()
+        .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url));
+    if !on_messenger {
+        return;
+    }
     let Some(share) = pending.take() else {
         return;
     };
-    if share.received_at.elapsed() > SHARE_INTAKE_TTL {
-        return;
+    let script = format!("window.__carrierShareMedia?.({});", share.payload);
+    if window.eval(&script).is_err() {
+        // The webview died mid-flight; keep the share for the next page load.
+        *pending = Some(share);
     }
-    let payload = share.payload;
-    *pending = Some(PendingShare {
-        payload: payload.clone(),
-        received_at: share.received_at,
-    });
-    drop(pending);
-    deliver(app, &payload);
 }
 
 #[cfg(test)]

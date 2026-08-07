@@ -5136,7 +5136,7 @@
   }
 
   // inject/src/messenger/lib/share-intake.ts
-  var MAX_FILES = 10;
+  var MAX_FILES = 21;
   var MAX_NAME_LENGTH = 255;
   var MAX_TOTAL_DATA_LENGTH = 140 * 1024 * 1024;
   var SHARE_DELIVERY_TTL_MS = 2 * 60 * 1e3;
@@ -5204,7 +5204,7 @@
         clipboardData: transfer
       });
       const handled = !composer2.dispatchEvent(paste);
-      if (handled || (paste.clipboardData?.files.length ?? 0) > 0) return true;
+      if (handled) return true;
       const drop = new DragEvent("drop", {
         bubbles: true,
         cancelable: true,

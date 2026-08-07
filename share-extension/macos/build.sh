@@ -14,6 +14,12 @@ OUT_DIR="${1:?output directory required}"
 ARCH="${2:-$(uname -m)}"
 IDENTITY="${3:--}"
 
+# Match the app's minimum macOS (tauri.conf.json: 10.15); arm64 begins at 11.
+case "$ARCH" in
+  arm64) MIN_MACOS="11.0" ;;
+  *) MIN_MACOS="10.15" ;;
+esac
+
 APPEX="$OUT_DIR/Carrier Share.appex"
 rm -rf "$APPEX"
 mkdir -p "$APPEX/Contents/MacOS"
@@ -23,7 +29,7 @@ cp "$SCRIPT_DIR/Info.plist" "$APPEX/Contents/Info.plist"
 xcrun clang \
   -fobjc-arc \
   -fapplication-extension \
-  -target "$ARCH-apple-macos12.0" \
+  -target "$ARCH-apple-macos$MIN_MACOS" \
   -framework Foundation \
   -framework AppKit \
   -framework CoreServices \

@@ -5,7 +5,9 @@
 
 export type SharedFile = { name: string; data: string };
 
-const MAX_FILES = 10;
+// The extension's activation rule allows 10 images + 1 movie + 10 files in
+// one mixed selection; every advertised selection must survive sanitizing.
+const MAX_FILES = 21;
 const MAX_NAME_LENGTH = 255;
 /** Base64 of the native side's 100 MB cap, with slack for encoding overhead. */
 const MAX_TOTAL_DATA_LENGTH = 140 * 1024 * 1024;
