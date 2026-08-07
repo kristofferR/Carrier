@@ -5,10 +5,5 @@
   <!-- App extensions must run in the App Sandbox. -->
   <key>com.apple.security.app-sandbox</key>
   <true/>
-  <!-- The handoff inbox the main (non-sandboxed) app reads. -->
-  <key>com.apple.security.application-groups</key>
-  <array>
-    <string>S5Q742QZEL.io.github.kristofferr.carrier</string>
-  </array>
 </dict>
 </plist>

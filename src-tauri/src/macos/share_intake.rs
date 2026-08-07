@@ -1,26 +1,32 @@
-//! Share-into-Carrier intake (Ref #213): the share extension copies the
-//! shared files into the app-group inbox and opens `carrier://share-inbox/<id>`;
-//! this module validates that handoff and delivers the bytes to the page.
+//! Share-into-Carrier intake (Ref #213): the share extension serializes the
+//! shared files onto a private named pasteboard and opens
+//! `carrier://share-pasteboard`; this module validates that handoff and
+//! delivers the files to the page.
 //!
-//! Trust model: the URL only ever names an inbox *id* — the filesystem paths
-//! are derived here, from the app-group container this app owns. The page
-//! receives validated bytes and names, never a path.
+//! Trust model: anything local can write that pasteboard and fire the URL, so
+//! nothing read here is trusted — the payload must parse as the expected
+//! shape, within count and size caps, with traversal-free names, before a
+//! single byte reaches the page. Even then it only becomes a composer
+//! attachment the user still has to send.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use base64::Engine;
+use objc2::runtime::AnyObject;
+use objc2::{class, msg_send};
+use objc2_foundation::NSString;
 use tauri::Manager;
 
 use crate::settings::AppState;
 
-const APP_GROUP: &str = "S5Q742QZEL.io.github.kristofferr.carrier";
+const PASTEBOARD_NAME: &str = "io.github.kristofferr.carrier.share";
+pub(crate) const SHARE_HANDOFF_URL: &str = "carrier://share-pasteboard";
 /// The extension's activation rule allows up to 10 images + 1 movie + 10
 /// files in one mixed selection, so the intake must accept every selection
 /// the sheet can produce.
 const MAX_SHARED_FILES: usize = 21;
-/// Total payload cap across all shared files.
-const MAX_SHARED_BYTES: u64 = 100 * 1024 * 1024;
+/// Base64 of the extension's 100 MB cap, with slack for encoding overhead.
+const MAX_PAYLOAD_LEN: usize = 140 * 1024 * 1024;
+const MAX_NAME_LEN: usize = 255;
 /// An undelivered share expires rather than surprising the user minutes later.
 pub(crate) const SHARE_INTAKE_TTL: Duration = Duration::from_secs(2 * 60);
 
@@ -29,96 +35,68 @@ pub(crate) struct PendingShare {
     received_at: Instant,
 }
 
-/// `carrier://share-inbox/<32-hex id>` → the inbox id.
-pub(crate) fn share_inbox_id(url: &str) -> Option<&str> {
-    let id = url
-        .strip_prefix("carrier://share-inbox/")?
-        .trim_end_matches('/');
-    (id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(id)
+#[derive(serde::Deserialize, serde::Serialize)]
+struct SharedFile {
+    name: String,
+    data: String,
 }
 
-fn inbox_dir(id: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    // The group container path is fixed for a non-sandboxed app; going through
-    // NSFileManager would resolve to the same place.
-    let dir = PathBuf::from(home)
-        .join("Library/Group Containers")
-        .join(APP_GROUP)
-        .join("Library/Caches/share-inbox")
-        .join(id);
-    dir.is_dir().then_some(dir)
+/// Whether this open is the share handoff (the only `carrier://` URL Carrier
+/// answers).
+pub(crate) fn is_share_handoff(url: &str) -> bool {
+    url.trim_end_matches('/') == SHARE_HANDOFF_URL
 }
 
-/// Read, validate, and clear one inbox; returns the JSON payload for the page
-/// hook: `[{ "name": …, "data": <base64> }, …]`.
-fn take_inbox_payload(id: &str) -> Option<String> {
-    let dir = inbox_dir(id)?;
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut total: u64 = 0;
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
-        // Regular files only — the extension writes flat names, so anything
-        // else in here is not ours to touch.
-        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-            continue;
-        }
-        // Enforce the caps from metadata before reading: a multi-gigabyte
-        // movie must be rejected without ever being loaded into memory.
-        let size = entry.metadata().map(|meta| meta.len()).unwrap_or(u64::MAX);
-        total = total.saturating_add(size);
-        if total > MAX_SHARED_BYTES || files.len() >= MAX_SHARED_FILES {
-            log::warn!("share intake over size or count cap; dropping the handoff");
-            let _ = std::fs::remove_dir_all(&dir);
-            return None;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Ok(bytes) = std::fs::read(entry.path()) else {
-            continue;
-        };
-        files.push((name, bytes));
-    }
-    let _ = std::fs::remove_dir_all(&dir);
-    if files.is_empty() {
+/// A name is only ever used as a composer attachment's file name: no path
+/// separators, no traversal, no dotfiles, nothing unbounded.
+fn name_is_safe(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_NAME_LEN
+        && !name.starts_with('.')
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+}
+
+/// Validate the raw pasteboard string into the JSON the page hook receives.
+pub(crate) fn validate_payload(raw: &str) -> Option<String> {
+    if raw.is_empty() || raw.len() > MAX_PAYLOAD_LEN {
         return None;
     }
-    // Names are sorted so multi-file shares arrive in the extension's
-    // "<index>-<name>" order.
-    files.sort_by(|a, b| a.0.cmp(&b.0));
-    let entries: Vec<serde_json::Value> = files
-        .into_iter()
-        .map(|(name, bytes)| {
-            // Strip the extension's ordering prefix for the user-visible name.
-            let display = name.split_once('-').map_or(name.as_str(), |(_, rest)| rest);
-            serde_json::json!({
-                "name": display,
-                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
-            })
-        })
-        .collect();
-    serde_json::to_string(&entries).ok()
+    let files: Vec<SharedFile> = serde_json::from_str(raw).ok()?;
+    if files.is_empty() || files.len() > MAX_SHARED_FILES {
+        return None;
+    }
+    if !files
+        .iter()
+        .all(|file| name_is_safe(&file.name) && !file.data.is_empty())
+    {
+        return None;
+    }
+    serde_json::to_string(&files).ok()
 }
 
-/// Sweep abandoned inboxes (a share the user cancelled mid-flight, or a
-/// handoff the app never received). Called once at startup.
-pub(crate) fn sweep_stale_inboxes() {
-    let Some(home) = std::env::var_os("HOME") else {
-        return;
-    };
-    let root = PathBuf::from(home)
-        .join("Library/Group Containers")
-        .join(APP_GROUP)
-        .join("Library/Caches/share-inbox");
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return;
-    };
-    let cutoff = std::time::SystemTime::now() - Duration::from_secs(60 * 60);
-    for entry in entries.flatten() {
-        let stale = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .is_ok_and(|modified| modified < cutoff);
-        if stale {
-            let _ = std::fs::remove_dir_all(entry.path());
+/// Read and clear the handoff pasteboard. Must run on the main thread.
+fn take_pasteboard_payload() -> Option<String> {
+    // SAFETY: standard NSPasteboard reads on the main thread; every value is
+    // checked for null before use and the string is copied out immediately.
+    unsafe {
+        let name = NSString::from_str(PASTEBOARD_NAME);
+        let pasteboard: *mut AnyObject =
+            msg_send![class!(NSPasteboard), pasteboardWithName: &*name];
+        if pasteboard.is_null() {
+            return None;
         }
+        let string_type = NSString::from_str("public.utf8-plain-string");
+        let value: *mut AnyObject = msg_send![pasteboard, stringForType: &*string_type];
+        let raw = (!value.is_null()).then(|| {
+            let value = &*(value as *mut NSString);
+            value.to_string()
+        });
+        // Clear either way: a payload we refuse must not linger for the next
+        // handoff to pick up.
+        let _: isize = msg_send![pasteboard, clearContents];
+        raw
     }
 }
 
@@ -134,17 +112,20 @@ fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         .or_else(|| windows.get("main").cloned())
 }
 
-/// Handle one `carrier://share-inbox/<id>` open: read and clear the inbox,
-/// park the payload, surface the window, and attempt delivery. Parking comes
-/// first — the inbox is gone by now, so this in-memory copy must survive a
-/// missing window (e.g. a theme rebuild in flight).
+/// Handle one `carrier://share-pasteboard` open: take and validate the
+/// payload, park it, surface the window, and attempt delivery. Parking comes
+/// first — the pasteboard is cleared by now, so this in-memory copy must
+/// survive a missing window (e.g. a theme rebuild in flight).
 pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
-    let Some(id) = share_inbox_id(url) else {
-        log::warn!("ignoring malformed carrier:// open");
+    if !is_share_handoff(url) {
+        log::warn!("ignoring unknown carrier:// open");
         return;
-    };
-    let Some(payload) = take_inbox_payload(id) else {
-        log::warn!("share inbox {id} was empty or invalid");
+    }
+    let Some(payload) = take_pasteboard_payload()
+        .as_deref()
+        .and_then(validate_payload)
+    else {
+        log::warn!("share handoff carried no valid payload");
         return;
     };
     let state = app.state::<AppState>();
@@ -152,6 +133,7 @@ pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
         payload,
         received_at: Instant::now(),
     });
+    log::info!("share handoff accepted");
     crate::tray::show_main(app);
     deliver_pending(app);
 }
@@ -195,28 +177,59 @@ pub(crate) fn deliver_pending(app: &tauri::AppHandle) {
 mod tests {
     use super::*;
 
+    fn payload(files: &[(&str, &str)]) -> String {
+        let entries: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(name, data)| serde_json::json!({ "name": name, "data": data }))
+            .collect();
+        serde_json::to_string(&entries).expect("payload serializes")
+    }
+
     #[test]
-    fn share_inbox_ids_are_strict_32_hex() {
-        assert_eq!(
-            share_inbox_id("carrier://share-inbox/0123456789abcdef0123456789abcdef"),
-            Some("0123456789abcdef0123456789abcdef")
-        );
-        assert_eq!(
-            share_inbox_id("carrier://share-inbox/0123456789abcdef0123456789abcdef/"),
-            Some("0123456789abcdef0123456789abcdef")
-        );
-        assert_eq!(share_inbox_id("carrier://share-inbox/short"), None);
-        assert_eq!(
-            share_inbox_id("carrier://share-inbox/../../etc/passwd"),
-            None
-        );
-        assert_eq!(
-            share_inbox_id("carrier://other/0123456789abcdef0123456789abcdef"),
-            None
-        );
-        assert_eq!(
-            share_inbox_id("https://share-inbox/0123456789abcdef0123456789abcdef"),
-            None
-        );
+    fn only_the_share_handoff_url_is_answered() {
+        assert!(is_share_handoff("carrier://share-pasteboard"));
+        assert!(is_share_handoff("carrier://share-pasteboard/"));
+        assert!(!is_share_handoff("carrier://share-pasteboard/extra"));
+        assert!(!is_share_handoff("carrier://something-else"));
+        assert!(!is_share_handoff("https://share-pasteboard"));
+    }
+
+    #[test]
+    fn a_well_formed_payload_survives_validation() {
+        let raw = payload(&[("photo.png", "aGk="), ("clip.mov", "aGk=")]);
+        let validated = validate_payload(&raw).expect("payload is valid");
+        assert!(validated.contains("photo.png"));
+        assert!(validated.contains("clip.mov"));
+    }
+
+    #[test]
+    fn payloads_with_unsafe_names_are_refused_whole() {
+        for name in [
+            "../escape.png",
+            "dir/photo.png",
+            ".hidden",
+            "",
+            "back\\slash.png",
+        ] {
+            assert_eq!(
+                validate_payload(&payload(&[("ok.png", "aGk="), (name, "aGk=")])),
+                None,
+                "{name} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_empty_and_oversized_payloads_are_refused() {
+        assert_eq!(validate_payload(""), None);
+        assert_eq!(validate_payload("not json"), None);
+        assert_eq!(validate_payload("[]"), None);
+        assert_eq!(validate_payload(r#"[{"name":"a.png"}]"#), None);
+        assert_eq!(validate_payload(&payload(&[("a.png", "")])), None);
+
+        let too_many: Vec<(&str, &str)> = (0..MAX_SHARED_FILES + 1)
+            .map(|_| ("a.png", "aGk="))
+            .collect();
+        assert_eq!(validate_payload(&payload(&too_many)), None);
     }
 }
