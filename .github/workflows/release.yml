@@ -93,10 +93,36 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build, sign, and notarize the macOS app
+      # The share-extension hook runs before Tauri imports APPLE_CERTIFICATE
+      # for outer-app signing, so make the identity available to codesign now.
+      - name: Import the Developer ID certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/carrier-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          CERTIFICATE_PATH="$RUNNER_TEMP/carrier-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Build, sign, and notarize the macOS app
+        env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -153,6 +179,12 @@ jobs:
           path: Carrier-notarized-smoke.zip
           if-no-files-found: error
           retention-days: 1
+
+      - name: Remove the temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/carrier-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/carrier-signing.p12"
 
   # Release notes are authored with human/agent judgment before the tag is
   # pushed, like ha-adjustable-bed. Require that curated draft and pass its body
