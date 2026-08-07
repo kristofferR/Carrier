@@ -213,11 +213,16 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         let state = app.state::<AppState>();
         let key = (label.to_string(), action.to_string());
         if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
-            if let Err(error) = app.clipboard().write_text(value) {
-                log::warn!("failed to write context-menu address to the clipboard: {error}");
-                if let Some(window) = app.get_webview_window(label) {
-                    let _ = window.eval("window.__carrierToast?.('Copy failed')");
+            // Match the page-rendered menu's feedback in both directions.
+            let toast = match app.clipboard().write_text(value) {
+                Ok(()) => "window.__carrierToast?.('Address copied')",
+                Err(error) => {
+                    log::warn!("failed to write context-menu address to the clipboard: {error}");
+                    "window.__carrierToast?.('Copy failed')"
                 }
+            };
+            if let Some(window) = app.get_webview_window(label) {
+                let _ = window.eval(toast);
             }
             return;
         }
