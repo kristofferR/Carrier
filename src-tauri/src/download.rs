@@ -15,7 +15,14 @@ use crate::url_rules::percent_decode;
 
 const MAX_RECENT_DOWNLOADS: usize = 32;
 const RECENT_DOWNLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+/// A download that never reports completion must not hold one of the
+/// [`MAX_RECENT_DOWNLOADS`] slots forever — abandoned requests would evict
+/// completed entries the reveal/share flows still need. Far above the page's
+/// 120 s completion wait so no live download is ever dropped mid-transfer.
+const PENDING_DOWNLOAD_TTL: Duration = RECENT_DOWNLOAD_TTL.saturating_mul(4);
 const MAX_DOWNLOAD_URL_LEN: usize = 4096;
+/// Download IDs are 32-char UUID simple forms or 32-hex context action tokens.
+const MAX_DOWNLOAD_ID_LEN: usize = 32;
 
 struct RecentDownload {
     url: String,
@@ -33,7 +40,12 @@ struct RecentDownloads {
 impl RecentDownloads {
     fn prune(&mut self, now: Instant) {
         self.entries.retain(|entry| {
-            !entry.completed || now.saturating_duration_since(entry.at) <= RECENT_DOWNLOAD_TTL
+            let ttl = if entry.completed {
+                RECENT_DOWNLOAD_TTL
+            } else {
+                PENDING_DOWNLOAD_TTL
+            };
+            now.saturating_duration_since(entry.at) <= ttl
         });
     }
 
@@ -68,7 +80,7 @@ impl RecentDownloads {
 
     #[cfg(target_os = "macos")]
     fn lookup_id_at(&mut self, id: &str, now: Instant) -> Option<PathBuf> {
-        if id.is_empty() || id.len() > MAX_DOWNLOAD_URL_LEN {
+        if id.is_empty() || id.len() > MAX_DOWNLOAD_ID_LEN {
             return None;
         }
         self.prune(now);

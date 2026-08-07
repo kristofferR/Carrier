@@ -807,8 +807,53 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return request;
   }};
 
+  // One request/response lifecycle for every result-bearing native call: sign
+  // and emit the request with a fresh correlation token, then settle only on a
+  // '<event>-result' CustomEvent that carries that token, a boolean under
+  // `field`, and a signature that verifies against this window's secret.
+  var carrierNativeCall = function (requestEvent, field, failedMessage, timedOutMessage, payload) {{
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    var resultEvent = requestEvent + '-result';
+    var request = carrierNativeRequest();
+    return new NativePromise(function (resolve, reject) {{
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        var value = detail[field];
+        if (value !== true && value !== false) return;
+        // Field order matters: the native side signs '{{"request":…,"<field>":…}}'.
+        var result = {{ request: request }};
+        result[field] = value;
+        var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
+        if (!authenticated) return;
+        cleanup();
+        if (value) resolve();
+        else reject(new Error(failedMessage));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error(timedOutMessage));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [resultEvent, finish]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
+      payload.request = request;
+      carrierAuthorizedEmit(requestEvent, payload).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
+  }};
+
   var carrierRevealDownload = function (url) {{
-    return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
   var carrierClaimContextAction = function (action) {{
     if (!carrierAuthorizedEmit) {{
@@ -823,130 +868,25 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
   }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.shared !== true && detail.shared !== false) return;
-        var shared = detail.shared;
-        var authenticated = await carrierVerifyResult(
-          'carrier:share-download-result',
-          {{ request: request, shared: shared }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (shared) resolve();
-        else reject(new Error('native share picker failed'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native share picker timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:share-download-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:share-download-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:share-download', {{
-        download_id: downloadId, x: x, y: y, action: action, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:share-download', 'shown',
+      'native share picker failed', 'native share picker timed out',
+      {{ download_id: downloadId, x: x, y: y, action: action }}
+    );
   }};
   var carrierCopyImage = function (dataUrl, action) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.copied !== true && detail.copied !== false) return;
-        var copied = detail.copied;
-        var authenticated = await carrierVerifyResult(
-          'carrier:copy-image-result',
-          {{ request: request, copied: copied }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (copied) resolve();
-        else reject(new Error('native clipboard write failed'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native clipboard write timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:copy-image-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:copy-image-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:copy-image', {{
-        data_url: dataUrl, action: action, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:copy-image', 'copied',
+      'native clipboard write failed', 'native clipboard write timed out',
+      {{ data_url: dataUrl, action: action }}
+    );
   }};
   var carrierShowContextMenu = function (items) {{
-    if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return NativePromise.reject(new Error('native bridge unavailable'));
-    }}
-    var request = carrierNativeRequest();
-    return new NativePromise(function (resolve, reject) {{
-      var finish = async function (event) {{
-        var detail = event && event.detail;
-        if (!detail || detail.request !== request) return;
-        if (detail.shown !== true && detail.shown !== false) return;
-        var shown = detail.shown;
-        var authenticated = await carrierVerifyResult(
-          'carrier:context-menu-result',
-          {{ request: request, shown: shown }},
-          detail.signature
-        );
-        if (!authenticated) return;
-        cleanup();
-        if (shown) resolve();
-        else reject(new Error('native context menu was not shown'));
-      }};
-      var timeout = nativeSetTimeout(function () {{
-        cleanup();
-        reject(new Error('native context menu timed out'));
-      }}, 15000);
-      var cleanup = function () {{
-        nativeClearTimeout(timeout);
-        nativeReflectApply(nativeWindowRemoveEventListener, window, [
-          'carrier:context-menu-result', finish
-        ]);
-      }};
-      nativeReflectApply(nativeWindowAddEventListener, window, [
-        'carrier:context-menu-result', finish
-      ]);
-      carrierAuthorizedEmit('carrier:context-menu', {{
-        items: items, request: request
-      }}).catch(function (error) {{
-        cleanup();
-        reject(error);
-      }});
-    }});
+    return carrierNativeCall(
+      'carrier:context-menu', 'shown',
+      'native context menu was not shown', 'native context menu timed out',
+      {{ items: items }}
+    );
   }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
