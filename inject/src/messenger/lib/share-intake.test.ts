@@ -25,12 +25,12 @@ describe("sanitizeSharedFiles", () => {
     expect(sanitizeSharedFiles(null)).toEqual([]);
   });
 
-  test("caps the file count", () => {
-    const many = Array.from({ length: 20 }, (_, index) => ({
+  test("caps the file count at the largest advertised selection", () => {
+    const many = Array.from({ length: 30 }, (_, index) => ({
       name: `file-${index}.png`,
       data: "aGk=",
     }));
-    expect(sanitizeSharedFiles(many)).toHaveLength(10);
+    expect(sanitizeSharedFiles(many)).toHaveLength(21);
   });
 });
 

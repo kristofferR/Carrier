@@ -20,8 +20,10 @@
   <string>1.0.0</string>
   <key>CFBundleVersion</key>
   <string>1</string>
+  <!-- Matches the app's own minimum (tauri.conf.json); arm64 slices load on
+       11.0+ anyway, this covers Intel installs back to Catalina. -->
   <key>LSMinimumSystemVersion</key>
-  <string>12.0</string>
+  <string>10.15</string>
   <key>NSExtension</key>
   <dict>
     <key>NSExtensionPointIdentifier</key>
