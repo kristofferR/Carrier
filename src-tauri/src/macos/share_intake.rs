@@ -87,7 +87,9 @@ fn take_pasteboard_payload() -> Option<String> {
         if pasteboard.is_null() {
             return None;
         }
-        let string_type = NSString::from_str("public.utf8-plain-string");
+        // The UTI behind NSPasteboardTypeString. Note "-text", not "-string":
+        // the latter is not a real type and silently reads back as nil.
+        let string_type = NSString::from_str("public.utf8-plain-text");
         let value: *mut AnyObject = msg_send![pasteboard, stringForType: &*string_type];
         let raw = (!value.is_null()).then(|| {
             let value = &*(value as *mut NSString);
