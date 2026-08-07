@@ -414,10 +414,17 @@ fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
+/// Build, validate, and pop up the native media context menu.
+///
+/// `on_presented` fires after every fallible setup step but *before*
+/// `popup_menu`, which blocks until the menu is dismissed — the page must
+/// receive its "shown" acknowledgment while the user is still browsing the
+/// menu, or its result timeout tears the action handlers down mid-use.
 pub(crate) fn show_native_context_menu(
     app: &tauri::AppHandle,
     label: &str,
     items: Vec<NativeContextMenuItem>,
+    on_presented: impl FnOnce(),
 ) -> bool {
     if !valid_context_menu_items(&items) {
         log::warn!("carrier:context-menu payload was invalid");
@@ -487,6 +494,7 @@ pub(crate) fn show_native_context_menu(
             }
         }
     }
+    on_presented();
     match window.popup_menu(&menu) {
         Ok(()) => true,
         Err(error) => {

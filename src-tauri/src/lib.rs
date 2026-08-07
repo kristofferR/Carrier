@@ -242,12 +242,9 @@ pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<Str
     result_signature(secret, "carrier:context-action", &ContextAction { action })
 }
 
-/// Report a boolean native-action outcome back to the page as a signed
-/// `<event>-result` CustomEvent. `field` names the boolean in both the signed
-/// JSON and the event detail — the page's `verifyResult` reconstructs
-/// `{ request, <field> }` in that order, so the serialization here must match.
 /// The signed `{ request, <field> }` payload of a boolean native result. The
-/// flatten keeps `request` first, matching the page's object-literal order.
+/// flatten keeps `request` first, matching the object literal the page passes
+/// to `verifyResult` — the serialization here must match it byte for byte.
 fn native_result_signature(
     secret: &str,
     result_event: &str,
@@ -869,8 +866,17 @@ pub fn run() {
                 let error_label = label.clone();
                 let error_request = msg.request.clone();
                 let dispatched = context_menu_handle.run_on_main_thread(move || {
-                    let shown = menu::show_native_context_menu(&popup_handle, &label, msg.items);
-                    send_context_menu_result(&popup_handle, &label, &msg.request, shown);
+                    // Acknowledge at presentation time: popup_menu blocks until
+                    // the menu is dismissed, and the page's result timeout must
+                    // not fire while the user is still browsing the menu.
+                    let presented = std::cell::Cell::new(false);
+                    menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
+                        presented.set(true);
+                        send_context_menu_result(&popup_handle, &label, &msg.request, true);
+                    });
+                    if !presented.get() {
+                        send_context_menu_result(&popup_handle, &label, &msg.request, false);
+                    }
                 });
                 if let Err(error) = dispatched {
                     log::warn!(
