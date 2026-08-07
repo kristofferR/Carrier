@@ -260,12 +260,20 @@ fn consume_context_activation(app: &tauri::AppHandle, label: &str, action: &str)
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
-    if activations.get(&key) == Some(&true) {
-        activations.remove(&key);
-        true
-    } else {
-        false
-    }
+    activations
+        .remove(&key)
+        .is_some_and(|selected_at| context_menu_activation_is_current(selected_at, Instant::now()))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn context_menu_activation_is_current(
+    selected_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    selected_at.is_some_and(|selected_at| {
+        now.checked_duration_since(selected_at)
+            .is_some_and(|age| age <= CONTEXT_MENU_ACTIVATION_TTL)
+    })
 }
 
 /// The page we wrap.
@@ -273,6 +281,8 @@ const HOME_URL: &str = "https://www.facebook.com/messages";
 const HOME_HOST: &str = "www.facebook.com";
 const HOME_PORT: u16 = 443;
 const MESSENGER_DNS_TIMEOUT: Duration = Duration::from_millis(1500);
+#[cfg(any(target_os = "macos", test))]
+const CONTEXT_MENU_ACTIVATION_TTL: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_MCP_SOCKET: &str = "/tmp/tauri-mcp.sock";
 
 /// Window/app title. Debug builds are marked so a dev build (e.g. the
@@ -1184,5 +1194,16 @@ mod tests {
             None
         );
         assert_eq!(used["main"].len(), SIGNED_ACTION_NONCE_CAP);
+    }
+
+    #[test]
+    fn selected_context_actions_expire() {
+        let now = Instant::now();
+        assert!(context_menu_activation_is_current(Some(now), now));
+        assert!(!context_menu_activation_is_current(None, now));
+        assert!(!context_menu_activation_is_current(
+            Some(now - CONTEXT_MENU_ACTIVATION_TTL - Duration::from_secs(1)),
+            now,
+        ));
     }
 }

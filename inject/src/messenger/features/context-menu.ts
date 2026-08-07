@@ -8,6 +8,7 @@ import { type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
+const MAX_NATIVE_CONTEXT_VALUE = 64 * 1024;
 
 // Keep these names and arrays in sync with src-tauri/src/menu.rs. A Rust test
 // reads these declarations so the native allowlist cannot drift silently.
@@ -24,9 +25,10 @@ const LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"] a
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
-const nativeObjectAssign = Object.assign;
 const nativeObjectDefineProperty = Object.defineProperty;
+const nativeObjectEntries = Object.entries;
 const nativeReflectApply = Reflect.apply;
+const nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
 // Same reason: the menu's isolation depends on these being the real ones.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeAppendChild = Node.prototype.appendChild;
@@ -50,7 +52,13 @@ const appendOwn = <T>(items: T[], item: T) => {
 };
 
 const applyStyles = (style: CSSStyleDeclaration, values: Partial<CSSStyleDeclaration>) => {
-  nativeReflectApply(nativeObjectAssign, undefined, [style, values]);
+  for (const [property, value] of nativeReflectApply(nativeObjectEntries, undefined, [values]) as [
+    string,
+    string,
+  ][]) {
+    const cssProperty = property.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+    nativeReflectApply(nativeSetStyleProperty, style, [cssProperty, value]);
+  }
 };
 
 const rectOf = (el: Element): MenuRect => {
@@ -307,6 +315,12 @@ export function initContextMenu() {
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)
+      if (isMac && items.some((item) => item[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE)) {
+        // A native menu rejects an oversized copied address as untrusted input.
+        // Leave the original menu intact so its remaining actions still work.
+        clearNativeActionHandlers();
+        return;
+      }
 
       e.preventDefault();
       if (isMac) {

@@ -1037,12 +1037,17 @@
     // native click input, then read the recorded classification.
     var displayCaptureState = null;
     var displayCaptureHandler = null;
+    var displayCaptureTimeout = null;
     var displayCaptureGeneration = 0;
     function armDisplayCaptureProbe() {
       var generation = ++displayCaptureGeneration;
       if (displayCaptureHandler) {
         document.removeEventListener("click", displayCaptureHandler, true);
         displayCaptureHandler = null;
+      }
+      if (displayCaptureTimeout) {
+        clearTimeout(displayCaptureTimeout);
+        displayCaptureTimeout = null;
       }
       var md = navigator.mediaDevices;
       if (!md || typeof md.getDisplayMedia !== "function") {
@@ -1054,6 +1059,8 @@
         if (!event.isTrusted) return;
         document.removeEventListener("click", displayCaptureHandler, true);
         displayCaptureHandler = null;
+        clearTimeout(displayCaptureTimeout);
+        displayCaptureTimeout = null;
         displayCaptureState = { outcome: "click-received" };
         classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
           if (generation === displayCaptureGeneration) {
@@ -1066,6 +1073,13 @@
         displayCaptureHandler,
         true,
       );
+      displayCaptureTimeout = setTimeout(function () {
+        if (generation !== displayCaptureGeneration || !displayCaptureHandler) return;
+        document.removeEventListener("click", displayCaptureHandler, true);
+        displayCaptureHandler = null;
+        displayCaptureTimeout = null;
+        displayCaptureState = { outcome: "arm-expired" };
+      }, 10000);
       return { armed: true };
     }
 
