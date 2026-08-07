@@ -1189,7 +1189,8 @@ mod tests {
         assert!(script.contains("carrier:prepare-download"));
         assert!(script.contains("download_id: downloadId"));
         assert!(script.contains("carrier:share-download-result"));
-        assert!(script.contains("action: action, request: request"));
+        assert!(script
+            .contains("download_id: downloadId, x: x, y: y, action: action, request: request"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
         assert!(script.contains("native share picker failed"));

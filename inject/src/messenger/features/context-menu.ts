@@ -306,7 +306,9 @@ export function initContextMenu() {
     !nativeGetMouseClientX ||
     !nativeGetMouseClientY ||
     !nativeGetKeyboardKey ||
-    !nativeGetStyle
+    !nativeGetStyle ||
+    !nativeSetTextContent ||
+    !nativeSetTabIndex
   )
     return;
   nativeReflectApply(nativeAddEventListener, window, [
@@ -486,10 +488,8 @@ export function initContextMenu() {
         const label = item[0];
         const fn = item[1];
         const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-        if (!nativeSetTextContent) return;
         nativeReflectApply(nativeSetTextContent, el, [label]);
         nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
-        if (!nativeSetTabIndex) return;
         nativeReflectApply(nativeSetTabIndex, el, [-1]);
         const elStyle = nativeReflectApply(nativeGetStyle, el, []) as CSSStyleDeclaration;
         applyStyles(elStyle, {

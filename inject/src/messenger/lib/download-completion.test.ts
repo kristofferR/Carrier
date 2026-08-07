@@ -41,4 +41,22 @@ describe("waitForNativeDownload", () => {
       waitForNativeDownload(target, "blob:carrier/missing", acceptCompletion, 1),
     ).rejects.toThrow("native download timed out");
   });
+
+  test("rejects when the verification bridge is unavailable", async () => {
+    const target = new EventTarget();
+    const pending = waitForNativeDownload(target, "blob:carrier/expected", undefined, 100);
+
+    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+
+    await expect(pending).rejects.toThrow("native download bridge unavailable");
+  });
+
+  test("ignores an unauthenticated completion", async () => {
+    const target = new EventTarget();
+    const pending = waitForNativeDownload(target, "blob:carrier/expected", async () => false, 20);
+
+    target.dispatchEvent(completionEvent("blob:carrier/expected", true));
+
+    await expect(pending).rejects.toThrow("native download timed out");
+  });
 });

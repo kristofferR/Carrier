@@ -319,12 +319,15 @@ fn claim_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
+    let Some(activation) = activations.get(&key).cloned() else {
+        return false;
+    };
+    if !context_menu_activation_can_be_claimed(activation, Instant::now()) {
+        return false;
+    }
     let Some(activation) = activations.get_mut(&key) else {
         return false;
     };
-    if !context_menu_activation_is_current(activation.clone(), Instant::now()) {
-        return false;
-    }
     *activation = ContextMenuActivation::Claimed {
         download_id: None,
         claimed_at: Instant::now(),
@@ -378,6 +381,13 @@ fn consume_context_activation(
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
+    let Some(activation) = activations.get(&key).cloned() else {
+        return false;
+    };
+    if !context_menu_activation_is_current(activation, Instant::now()) {
+        activations.remove(&key);
+        return false;
+    }
     matches!(
         activations.remove(&key),
         Some(ContextMenuActivation::Claimed {
@@ -385,6 +395,16 @@ fn consume_context_activation(
             ..
         }) if download_id.is_none() || bound.as_deref() == download_id
     )
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn context_menu_activation_can_be_claimed(activation: ContextMenuActivation, now: Instant) -> bool {
+    match activation {
+        ContextMenuActivation::Selected(selected_at) => {
+            context_menu_activation_is_current(ContextMenuActivation::Selected(selected_at), now)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -397,7 +417,9 @@ pub(crate) fn context_menu_activation_is_current(
         ContextMenuActivation::Selected(selected_at) => now
             .checked_duration_since(selected_at)
             .is_some_and(|age| age <= CONTEXT_MENU_ACTIVATION_TTL),
-        ContextMenuActivation::Claimed { .. } => true,
+        ContextMenuActivation::Claimed { claimed_at, .. } => !now
+            .checked_duration_since(claimed_at)
+            .is_some_and(|age| age > CONTEXT_MENU_CLAIM_TTL),
     }
 }
 
@@ -408,6 +430,8 @@ const HOME_PORT: u16 = 443;
 const MESSENGER_DNS_TIMEOUT: Duration = Duration::from_millis(1500);
 #[cfg(any(target_os = "macos", test))]
 const CONTEXT_MENU_ACTIVATION_TTL: Duration = Duration::from_secs(10 * 60);
+#[cfg(any(target_os = "macos", test))]
+const CONTEXT_MENU_CLAIM_TTL: Duration = Duration::from_secs(15 * 60);
 const DEFAULT_MCP_SOCKET: &str = "/tmp/tauri-mcp.sock";
 
 /// Window/app title. Debug builds are marked so a dev build (e.g. the
@@ -1298,7 +1322,10 @@ mod tests {
     fn download_finished_results_bind_the_native_identity() {
         let first = download_finished_signature("test-secret", "download-1", "blob:one", true);
         let second = download_finished_signature("test-secret", "download-2", "blob:one", true);
-        assert!(first.is_some());
+        assert_eq!(
+            first.as_deref(),
+            Some("a78b039568c100b2dcf4c7d1030481696bf0fb715f9b7d65fb89f45837f9422e")
+        );
         assert_ne!(first, second);
     }
 
@@ -1435,7 +1462,21 @@ mod tests {
                 download_id: None,
                 claimed_at: now,
             },
-            now + CONTEXT_MENU_ACTIVATION_TTL + Duration::from_secs(1)
+            now + CONTEXT_MENU_CLAIM_TTL
+        ));
+        assert!(!context_menu_activation_is_current(
+            ContextMenuActivation::Claimed {
+                download_id: None,
+                claimed_at: now,
+            },
+            now + CONTEXT_MENU_CLAIM_TTL + Duration::from_secs(1)
+        ));
+        assert!(!context_menu_activation_can_be_claimed(
+            ContextMenuActivation::Claimed {
+                download_id: None,
+                claimed_at: now,
+            },
+            now
         ));
     }
 }
