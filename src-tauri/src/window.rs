@@ -185,11 +185,23 @@ pub(crate) fn build_app_window(
             #[cfg(target_os = "macos")]
             make_webview_transparent(window);
         })?;
+    let token_cleanup_value = download_reveal_token.clone();
     app.state::<AppState>()
         .download_reveal_tokens
         .lock()
         .unwrap()
         .insert(label.to_string(), download_reveal_token);
+    let token_cleanup_handle = app.clone();
+    let token_cleanup_label = label.to_string();
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::Destroyed) {
+            let state = token_cleanup_handle.state::<AppState>();
+            let mut tokens = state.download_reveal_tokens.lock().unwrap();
+            if tokens.get(&token_cleanup_label) == Some(&token_cleanup_value) {
+                tokens.remove(&token_cleanup_label);
+            }
+        }
+    });
     install_app_window_runtime_handler(app, &window);
     watchdog.install(&window);
     Ok(window)
@@ -686,6 +698,23 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     {reveal_token_literal}
   );
 
+  var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeWindowRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeSetTimeout = window.setTimeout.bind(window);
+  var nativeClearTimeout = window.clearTimeout.bind(window);
+  var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var NativeUint8Array = Uint8Array;
+  var nativeReflectApply = Reflect.apply;
+  var carrierCopyImageRequest = function () {{
+    var bytes = new NativeUint8Array(16);
+    nativeGetRandomValues(bytes);
+    var request = '';
+    for (var index = 0; index < bytes.length; index += 1) {{
+      request += bytes[index].toString(16).padStart(2, '0');
+    }}
+    return request;
+  }};
+
   var carrierRevealDownload = function (url) {{
     return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
@@ -695,9 +724,36 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     );
   }};
   var carrierCopyImage = function (dataUrl, action) {{
-    return carrierAuthorizedEmit && carrierAuthorizedEmit(
-      'carrier:copy-image', {{ data_url: dataUrl, action: action }}
-    );
+    if (!carrierAuthorizedEmit) return Promise.reject(new Error('native bridge unavailable'));
+    var request = carrierCopyImageRequest();
+    return new Promise(function (resolve, reject) {{
+      var finish = function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request) return;
+        cleanup();
+        if (detail.copied) resolve();
+        else reject(new Error('native clipboard write failed'));
+      }};
+      var timeout = nativeSetTimeout(function () {{
+        cleanup();
+        reject(new Error('native clipboard write timed out'));
+      }}, 15000);
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [
+          'carrier:copy-image-result', finish
+        ]);
+      }};
+      nativeReflectApply(nativeWindowAddEventListener, window, [
+        'carrier:copy-image-result', finish
+      ]);
+      carrierAuthorizedEmit('carrier:copy-image', {{
+        data_url: dataUrl, action: action, request: request
+      }}).catch(function (error) {{
+        cleanup();
+        reject(error);
+      }});
+    }});
   }};
   var carrierShowContextMenu = function (items) {{
     return carrierAuthorizedEmit && carrierAuthorizedEmit('carrier:context-menu', items);
@@ -921,6 +977,15 @@ mod tests {
             script.contains("payload: { message: message, nonce: nonce, signature: signature }")
         );
         assert!(!script.contains("authorization: authorization"));
+    }
+
+    #[test]
+    fn copy_image_bridge_waits_for_the_native_result() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("carrier:copy-image-result"));
+        assert!(script.contains("data_url: dataUrl, action: action, request: request"));
+        assert!(script.contains("native clipboard write failed"));
     }
 
     #[cfg(all(feature = "mcp", debug_assertions))]
