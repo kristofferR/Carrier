@@ -792,6 +792,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeSetTimeout = window.setTimeout.bind(window);
   var nativeClearTimeout = window.clearTimeout.bind(window);
+  var NativePromise = Promise;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var NativeUint8Array = Uint8Array;
   var nativeReflectApply = Reflect.apply;
@@ -811,22 +812,22 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   }};
   var carrierClaimContextAction = function (action) {{
     if (!carrierAuthorizedEmit) {{
-      return Promise.reject(new Error('native bridge unavailable'));
+      return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
   }};
   var carrierPrepareDownload = function (action, url) {{
     if (!carrierAuthorizedEmit) {{
-      return Promise.reject(new Error('native bridge unavailable'));
+      return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
   }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return Promise.reject(new Error('native bridge unavailable'));
+      return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     var request = carrierNativeRequest();
-    return new Promise(function (resolve, reject) {{
+    return new NativePromise(function (resolve, reject) {{
       var finish = async function (event) {{
         var detail = event && event.detail;
         if (!detail || detail.request !== request) return;
@@ -865,10 +866,10 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   }};
   var carrierCopyImage = function (dataUrl, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return Promise.reject(new Error('native bridge unavailable'));
+      return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     var request = carrierNativeRequest();
-    return new Promise(function (resolve, reject) {{
+    return new NativePromise(function (resolve, reject) {{
       var finish = async function (event) {{
         var detail = event && event.detail;
         if (!detail || detail.request !== request) return;
@@ -907,10 +908,10 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   }};
   var carrierShowContextMenu = function (items) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
-      return Promise.reject(new Error('native bridge unavailable'));
+      return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     var request = carrierNativeRequest();
-    return new Promise(function (resolve, reject) {{
+    return new NativePromise(function (resolve, reject) {{
       var finish = async function (event) {{
         var detail = event && event.detail;
         if (!detail || detail.request !== request) return;
