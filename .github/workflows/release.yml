@@ -16,6 +16,10 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -325,6 +329,35 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      # beforeBundleCommand signs the nested appex before tauri-action reaches
+      # Tauri's outer-app certificate import.
+      - name: Import the Developer ID certificate
+        if: startsWith(matrix.os, 'macos')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/carrier-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          CERTIFICATE_PATH="$RUNNER_TEMP/carrier-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
       - name: Build and release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -362,6 +395,12 @@ jobs:
           # notarization step below rewrites latest.json to use the stapled .dmg
           # instead, then deletes the archive so the public release stays clean.
           args: --target ${{ matrix.target }} --config src-tauri/tauri.conf.release.json
+
+      - name: Remove the temporary signing keychain
+        if: always() && startsWith(matrix.os, 'macos')
+        run: |
+          security delete-keychain "$RUNNER_TEMP/carrier-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/carrier-signing.p12"
 
       - name: Verify macOS bundle metadata and nested signature
         if: startsWith(matrix.os, 'macos')
