@@ -715,6 +715,9 @@
 
   // inject/src/messenger/lib/download-completion.ts
   var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+  var NativePromise = Promise;
+  var nativePromiseThen = Promise.prototype.then;
+  var nativeReflectApply = Reflect.apply;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -729,7 +732,7 @@
     };
   }
   function waitForNativeDownload(target, expectedUrl, verifyResult, timeoutMs = 12e4) {
-    return new Promise((resolve, reject) => {
+    return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
         clearTimeout(timer);
@@ -743,17 +746,21 @@
           reject(new Error("native download bridge unavailable"));
           return;
         }
-        void verifyResult(
+        const verification = verifyResult(
           DOWNLOAD_FINISHED_EVENT,
           { id: detail.id, url: detail.url, success: detail.success },
           detail.signature
-        ).then((authenticated) => {
-          if (!authenticated) return;
-          cleanup();
-          if (detail.success) resolve({ id: detail.id, url: detail.url });
-          else reject(new Error("native download failed"));
-        }).catch(() => {
-        });
+        );
+        nativeReflectApply(nativePromiseThen, verification, [
+          (authenticated) => {
+            if (!authenticated) return;
+            cleanup();
+            if (detail.success) resolve({ id: detail.id, url: detail.url });
+            else reject(new Error("native download failed"));
+          },
+          () => {
+          }
+        ]);
       };
       target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
       timer = setTimeout(() => {
@@ -768,12 +775,12 @@
   var nativeAbs = Math.abs;
   var nativeCharCodeAt = String.prototype.charCodeAt;
   var nativeFromCharCode = String.fromCharCode;
-  var nativeReflectApply = Reflect.apply;
+  var nativeReflectApply2 = Reflect.apply;
   function cssPropertyName(property) {
     let result = "";
     for (let index = 0; index < property.length; index += 1) {
-      const code = nativeReflectApply(nativeCharCodeAt, property, [index]);
-      result += code >= 65 && code <= 90 ? `-${nativeReflectApply(nativeFromCharCode, void 0, [code + 32])}` : property[index] ?? "";
+      const code = nativeReflectApply2(nativeCharCodeAt, property, [index]);
+      result += code >= 65 && code <= 90 ? `-${nativeReflectApply2(nativeFromCharCode, void 0, [code + 32])}` : property[index] ?? "";
     }
     return result;
   }
@@ -804,7 +811,7 @@
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeObjectEntries = Object.entries;
-  var nativeReflectApply2 = Reflect.apply;
+  var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
   var nativeSetTimeout = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
@@ -831,6 +838,7 @@
   var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
   var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
+  var NativePromise2 = Promise;
   var NativeFileReader = FileReader;
   var nativeReadAsDataURL = FileReader.prototype.readAsDataURL;
   var nativeGetFileReaderResult = Object.getOwnPropertyDescriptor(
@@ -841,33 +849,33 @@
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var nativeShowContextMenu = typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : void 0;
   var appendOwn = (items, item) => {
-    nativeReflectApply2(nativeObjectDefineProperty, void 0, [
+    nativeReflectApply3(nativeObjectDefineProperty, void 0, [
       items,
       `${items.length}`,
       { value: item, writable: true, enumerable: true, configurable: true }
     ]);
   };
   var setStyleProperty = (style, property, value) => {
-    nativeReflectApply2(nativeSetStyleProperty, style, [property, value]);
+    nativeReflectApply3(nativeSetStyleProperty, style, [property, value]);
   };
   var applyStyles = (style, values) => {
-    for (const [property, value] of nativeReflectApply2(nativeObjectEntries, void 0, [values])) {
+    for (const [property, value] of nativeReflectApply3(nativeObjectEntries, void 0, [values])) {
       setStyleProperty(style, cssPropertyName(property), value);
     }
   };
   var rectOf = (el) => {
-    const r = nativeReflectApply2(nativeGetBoundingClientRect, el, []);
+    const r = nativeReflectApply3(nativeGetBoundingClientRect, el, []);
     return {
-      x: nativeReflectApply2(nativeGetRectX, r, []),
-      y: nativeReflectApply2(nativeGetRectY, r, []),
-      width: nativeReflectApply2(nativeGetRectWidth, r, []),
-      height: nativeReflectApply2(nativeGetRectHeight, r, [])
+      x: nativeReflectApply3(nativeGetRectX, r, []),
+      y: nativeReflectApply3(nativeGetRectY, r, []),
+      width: nativeReflectApply3(nativeGetRectWidth, r, []),
+      height: nativeReflectApply3(nativeGetRectHeight, r, [])
     };
   };
-  var eventTargetOf = (event) => nativeReflectApply2(nativeGetEventTarget, event, []);
+  var eventTargetOf = (event) => nativeReflectApply3(nativeGetEventTarget, event, []);
   var clientPointOf = (event) => ({
-    x: nativeReflectApply2(nativeGetMouseClientX, event, []),
-    y: nativeReflectApply2(nativeGetMouseClientY, event, [])
+    x: nativeReflectApply3(nativeGetMouseClientX, event, []),
+    y: nativeReflectApply3(nativeGetMouseClientY, event, [])
   });
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   function contextActionToken() {
@@ -916,7 +924,8 @@
         item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
       );
     }
-    if (!nativeShowContextMenu) return Promise.reject(new Error("native context menu unavailable"));
+    if (!nativeShowContextMenu)
+      return NativePromise2.reject(new Error("native context menu unavailable"));
     return nativeShowContextMenu(nativeItems).catch((error) => {
       clearNativeActionHandlers();
       throw error;
@@ -971,27 +980,27 @@
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       return;
     }
-    const dataUrl = await new Promise((resolve, reject) => {
+    const dataUrl = await new NativePromise2((resolve, reject) => {
       if (!nativeGetFileReaderResult) {
         reject(new Error("native FileReader result getter unavailable"));
         return;
       }
       const reader = new NativeFileReader();
-      nativeReflectApply2(nativeAddEventListener, reader, [
+      nativeReflectApply3(nativeAddEventListener, reader, [
         "load",
         () => {
-          const result = nativeReflectApply2(nativeGetFileReaderResult, reader, []);
+          const result = nativeReflectApply3(nativeGetFileReaderResult, reader, []);
           if (typeof result === "string") resolve(result);
           else reject(new Error("image conversion failed"));
         },
         { once: true }
       ]);
-      nativeReflectApply2(nativeAddEventListener, reader, [
+      nativeReflectApply3(nativeAddEventListener, reader, [
         "error",
         () => reject(new Error("image conversion failed")),
         { once: true }
       ]);
-      nativeReflectApply2(nativeReadAsDataURL, reader, [blob]);
+      nativeReflectApply3(nativeReadAsDataURL, reader, [blob]);
     });
     await carrierCopyImage(dataUrl, action);
   }
@@ -1003,24 +1012,24 @@
   };
   var closeMenuFromScroll = () => closeMenu();
   var closeMenu = (restoreFocus = false) => {
-    if (ctxMenu) nativeReflectApply2(nativeRemove, ctxMenu, []);
+    if (ctxMenu) nativeReflectApply3(nativeRemove, ctxMenu, []);
     ctxMenu = null;
-    nativeReflectApply2(nativeRemoveEventListener, document, ["click", closeMenuFromClick, true]);
-    nativeReflectApply2(nativeRemoveEventListener, document, ["scroll", closeMenuFromScroll, true]);
+    nativeReflectApply3(nativeRemoveEventListener, document, ["click", closeMenuFromClick, true]);
+    nativeReflectApply3(nativeRemoveEventListener, document, ["scroll", closeMenuFromScroll, true]);
     if (restoreFocus && ctxMenuReturnFocus) {
-      nativeReflectApply2(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
+      nativeReflectApply3(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
     }
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
     if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle || !nativeSetTextContent || !nativeSetTabIndex)
       return;
-    nativeReflectApply2(nativeAddEventListener, window, [
+    nativeReflectApply3(nativeAddEventListener, window, [
       "carrier:context-action",
       runNativeAction,
       true
     ]);
-    nativeReflectApply2(nativeAddEventListener, document, [
+    nativeReflectApply3(nativeAddEventListener, document, [
       "contextmenu",
       async (e) => {
         if (!e.isTrusted) return;
@@ -1088,7 +1097,7 @@
           clearNativeActionHandlers();
           return;
         }
-        nativeReflectApply2(nativePreventDefault, e, []);
+        nativeReflectApply3(nativePreventDefault, e, []);
         if (nativeShowContextMenu) {
           try {
             await showNativeContextMenu(items);
@@ -1098,24 +1107,24 @@
         }
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;
-        const priorReturnFocus = ctxMenu && nativeReflectApply2(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
+        const priorReturnFocus = ctxMenu && nativeReflectApply3(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
-        ctxMenu = nativeReflectApply2(nativeCreateElement, document, ["div"]);
-        const ctxMenuStyle = nativeReflectApply2(nativeGetStyle, ctxMenu, []);
+        ctxMenu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+        const ctxMenuStyle = nativeReflectApply3(nativeGetStyle, ctxMenu, []);
         applyStyles(ctxMenuStyle, {
           position: "fixed",
           left: `${contextPoint.x}px`,
           top: `${contextPoint.y}px`,
           zIndex: "2147483647"
         });
-        const shadow = nativeReflectApply2(nativeAttachShadow, ctxMenu, [
+        const shadow = nativeReflectApply3(nativeAttachShadow, ctxMenu, [
           { mode: "closed" }
         ]);
-        const menu = nativeReflectApply2(nativeCreateElement, document, ["div"]);
-        nativeReflectApply2(nativeSetAttribute, menu, ["role", "menu"]);
-        nativeReflectApply2(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
-        const menuStyle = nativeReflectApply2(nativeGetStyle, menu, []);
+        const menu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+        nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
+        nativeReflectApply3(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
+        const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
         applyStyles(menuStyle, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
@@ -1142,38 +1151,38 @@
           }
           const fn = item[1];
           const rowIndex = menuItems.length;
-          const el = nativeReflectApply2(nativeCreateElement, document, ["div"]);
-          nativeReflectApply2(nativeSetTextContent, el, [label]);
-          nativeReflectApply2(nativeSetAttribute, el, ["role", "menuitem"]);
-          nativeReflectApply2(nativeSetTabIndex, el, [-1]);
-          const elStyle = nativeReflectApply2(nativeGetStyle, el, []);
+          const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+          nativeReflectApply3(nativeSetTextContent, el, [label]);
+          nativeReflectApply3(nativeSetAttribute, el, ["role", "menuitem"]);
+          nativeReflectApply3(nativeSetTabIndex, el, [-1]);
+          const elStyle = nativeReflectApply3(nativeGetStyle, el, []);
           applyStyles(elStyle, {
             padding: "8px 12px",
             cursor: "pointer",
             borderRadius: "6px",
             outline: "none"
           });
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "mouseenter",
             () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
           ]);
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "mouseleave",
             () => setStyleProperty(elStyle, "background", "")
           ]);
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "focus",
             () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
           ]);
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "blur",
             () => setStyleProperty(elStyle, "background", "")
           ]);
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "click",
             (ev) => {
               if (!ev.isTrusted) return;
-              nativeReflectApply2(nativeStopPropagation, ev, []);
+              nativeReflectApply3(nativeStopPropagation, ev, []);
               const expected = laidOutRects[rowIndex];
               const point = clientPointOf(ev);
               if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
@@ -1184,22 +1193,22 @@
               activate(fn);
             }
           ]);
-          nativeReflectApply2(nativeAddEventListener, el, [
+          nativeReflectApply3(nativeAddEventListener, el, [
             "keydown",
             (event) => {
-              const key = nativeReflectApply2(nativeGetKeyboardKey, event, []);
+              const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
               if (key !== "Enter" && key !== " ") return;
               if (!event.isTrusted) return;
-              nativeReflectApply2(nativePreventDefault, event, []);
-              nativeReflectApply2(nativeStopPropagation, event, []);
+              nativeReflectApply3(nativePreventDefault, event, []);
+              nativeReflectApply3(nativeStopPropagation, event, []);
               activate(fn);
             }
           ]);
           appendOwn(menuItems, el);
-          nativeReflectApply2(nativeAppendChild, menu, [el]);
+          nativeReflectApply3(nativeAppendChild, menu, [el]);
         }
-        nativeReflectApply2(nativeAppendChild, shadow, [menu]);
-        nativeReflectApply2(nativeAppendChild, document.body, [ctxMenu]);
+        nativeReflectApply3(nativeAppendChild, shadow, [menu]);
+        nativeReflectApply3(nativeAppendChild, document.body, [ctxMenu]);
         const r = rectOf(menu);
         if (r.x + r.width > innerWidth) {
           setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
@@ -1211,11 +1220,11 @@
           const row = menuItems[i];
           appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
         }
-        nativeReflectApply2(nativeAddEventListener, ctxMenu, [
+        nativeReflectApply3(nativeAddEventListener, ctxMenu, [
           "keydown",
           (event) => {
             if (!event.isTrusted) return;
-            const key = nativeReflectApply2(nativeGetKeyboardKey, event, []);
+            const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
             const current = focusedIndex;
             let next = null;
             if (key === "ArrowDown") next = (current + 1) % menuItems.length;
@@ -1223,30 +1232,30 @@
             if (key === "Home") next = 0;
             if (key === "End") next = menuItems.length - 1;
             if (key === "Escape") {
-              nativeReflectApply2(nativePreventDefault, event, []);
+              nativeReflectApply3(nativePreventDefault, event, []);
               closeMenu(true);
               return;
             }
             if (key === "Tab") {
-              nativeReflectApply2(nativePreventDefault, event, []);
+              nativeReflectApply3(nativePreventDefault, event, []);
               closeMenu(true);
               return;
             }
             if (next !== null) {
-              nativeReflectApply2(nativePreventDefault, event, []);
+              nativeReflectApply3(nativePreventDefault, event, []);
               focusedIndex = next;
               const nextItem = menuItems[next];
-              if (nextItem) nativeReflectApply2(nativeFocus, nextItem, []);
+              if (nextItem) nativeReflectApply3(nativeFocus, nextItem, []);
             }
           }
         ]);
         focusedIndex = 0;
         const firstItem = menuItems[0];
-        if (firstItem) nativeReflectApply2(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply2(nativeSetTimeout, window, [
+        if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
+        nativeReflectApply3(nativeSetTimeout, window, [
           () => {
-            nativeReflectApply2(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
-            nativeReflectApply2(nativeAddEventListener, document, [
+            nativeReflectApply3(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
+            nativeReflectApply3(nativeAddEventListener, document, [
               "scroll",
               closeMenuFromScroll,
               true
