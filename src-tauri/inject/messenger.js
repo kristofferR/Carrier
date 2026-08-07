@@ -777,6 +777,7 @@
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
   var nativeSetAttribute = Element.prototype.setAttribute;
   var nativeSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")?.set;
+  var nativeSetTabIndex = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "tabIndex")?.set;
   var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
@@ -1029,7 +1030,8 @@
           if (!nativeSetTextContent) return;
           nativeReflectApply(nativeSetTextContent, el, [label]);
           nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
-          el.tabIndex = -1;
+          if (!nativeSetTabIndex) return;
+          nativeReflectApply(nativeSetTabIndex, el, [-1]);
           Object.assign(el.style, {
             padding: "8px 12px",
             cursor: "pointer",
