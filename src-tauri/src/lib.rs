@@ -6,10 +6,10 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
@@ -103,12 +103,17 @@ pub(crate) fn refresh_unread_indicators(
 struct SignedAction {
     message: String,
     nonce: String,
+    timestamp: u64,
     signature: String,
 }
 
+const SIGNED_ACTION_MAX_AGE: Duration = Duration::from_secs(5 * 60);
+const SIGNED_ACTION_FUTURE_SKEW: Duration = Duration::from_secs(30);
+const SIGNED_ACTION_NONCE_CAP: usize = 4_096;
+
 fn authorize_signed_action(
     tokens: &HashMap<String, String>,
-    used_nonces: &mut HashMap<String, HashSet<String>>,
+    used_nonces: &mut HashMap<String, HashMap<String, Instant>>,
     event: &str,
     signed: &SignedAction,
 ) -> Option<String> {
@@ -119,20 +124,32 @@ fn authorize_signed_action(
     {
         return None;
     }
+    let issued_at = UNIX_EPOCH.checked_add(Duration::from_millis(signed.timestamp))?;
+    let wall_now = SystemTime::now();
+    if issued_at > wall_now.checked_add(SIGNED_ACTION_FUTURE_SKEW)?
+        || wall_now
+            .duration_since(issued_at)
+            .is_ok_and(|age| age > SIGNED_ACTION_MAX_AGE)
+    {
+        return None;
+    }
     let signature = hex::decode(&signed.signature).ok()?;
-    let authenticated = format!("{event}\n{}\n{}", signed.nonce, signed.message);
+    let authenticated = format!(
+        "{event}\n{}\n{}\n{}",
+        signed.timestamp, signed.nonce, signed.message
+    );
     let label = tokens.iter().find_map(|(label, token)| {
         let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).ok()?;
         mac.update(authenticated.as_bytes());
         mac.verify_slice(&signature).ok().map(|()| label.clone())
     })?;
-    if !used_nonces
-        .entry(label.clone())
-        .or_default()
-        .insert(signed.nonce.clone())
-    {
+    let now = Instant::now();
+    let window_nonces = used_nonces.entry(label.clone()).or_default();
+    window_nonces.retain(|_, inserted| now.duration_since(*inserted) <= SIGNED_ACTION_MAX_AGE);
+    if window_nonces.contains_key(&signed.nonce) || window_nonces.len() >= SIGNED_ACTION_NONCE_CAP {
         return None;
     }
+    window_nonces.insert(signed.nonce.clone(), now);
     Some(label)
 }
 
@@ -633,7 +650,7 @@ pub fn run() {
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
-                    let copied = macos::clipboard::copy_image(&copy_handle, &label, bytes);
+                    let copied = macos::clipboard::copy_image(&copy_handle, bytes);
                     send_copy_image_result(&copy_handle, &label, &msg.request, copied);
                 });
             }
@@ -867,6 +884,30 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    fn timestamp_now() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    fn signed_action(
+        secret: &str,
+        event: &str,
+        message: &str,
+        nonce: &str,
+        timestamp: u64,
+    ) -> SignedAction {
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(format!("{event}\n{timestamp}\n{nonce}\n{message}").as_bytes());
+        SignedAction {
+            message: message.into(),
+            nonce: nonce.into(),
+            timestamp,
+            signature: hex::encode(mac.finalize().into_bytes()),
+        }
+    }
+
     #[test]
     fn webkit_dmabuf_renderer_is_disabled_only_for_wayland_without_override() {
         assert!(should_disable_webkit_dmabuf_renderer(true, false));
@@ -929,13 +970,7 @@ mod tests {
         let event = "carrier:share-download";
         let message = r#"{"url":"blob:test","action":"abc"}"#;
         let nonce = "0123456789abcdef0123456789abcdef";
-        let mut mac = Hmac::<Sha256>::new_from_slice(b"second-secret").unwrap();
-        mac.update(format!("{event}\n{nonce}\n{message}").as_bytes());
-        let signed = SignedAction {
-            message: message.into(),
-            nonce: nonce.into(),
-            signature: hex::encode(mac.finalize().into_bytes()),
-        };
+        let signed = signed_action("second-secret", event, message, nonce, timestamp_now());
         let mut used = HashMap::new();
         assert_eq!(
             authorize_signed_action(&tokens, &mut used, "carrier:context-menu", &signed),
@@ -957,6 +992,7 @@ mod tests {
         let signed = SignedAction {
             message: "tampered".into(),
             nonce: "0123456789abcdef0123456789abcdef".into(),
+            timestamp: timestamp_now(),
             signature: "00".repeat(32),
         };
         assert_eq!(
@@ -968,5 +1004,54 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn signed_actions_expire_and_nonce_retention_is_bounded() {
+        let tokens = HashMap::from([("main".to_string(), "main-secret".to_string())]);
+        let event = "carrier:context-menu";
+        let message = "[]";
+        let timestamp = timestamp_now();
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let signed = signed_action("main-secret", event, message, nonce, timestamp);
+        let stale = Instant::now() - SIGNED_ACTION_MAX_AGE - Duration::from_secs(1);
+        let mut used = HashMap::from([(
+            "main".to_string(),
+            HashMap::from([(nonce.to_string(), stale)]),
+        )]);
+        assert_eq!(
+            authorize_signed_action(&tokens, &mut used, event, &signed).as_deref(),
+            Some("main")
+        );
+
+        let expired_timestamp = timestamp - SIGNED_ACTION_MAX_AGE.as_millis() as u64 - 1;
+        let expired = signed_action(
+            "main-secret",
+            event,
+            message,
+            "fedcba9876543210fedcba9876543210",
+            expired_timestamp,
+        );
+        assert_eq!(
+            authorize_signed_action(&tokens, &mut used, event, &expired),
+            None
+        );
+
+        let full = (0..SIGNED_ACTION_NONCE_CAP)
+            .map(|index| (format!("{index:032x}"), Instant::now()))
+            .collect();
+        let mut used = HashMap::from([("main".to_string(), full)]);
+        let overflow = signed_action(
+            "main-secret",
+            event,
+            message,
+            "ffffffffffffffffffffffffffffffff",
+            timestamp,
+        );
+        assert_eq!(
+            authorize_signed_action(&tokens, &mut used, event, &overflow),
+            None
+        );
+        assert_eq!(used["main"].len(), SIGNED_ACTION_NONCE_CAP);
     }
 }

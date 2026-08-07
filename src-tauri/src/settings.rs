@@ -2,12 +2,13 @@
 //! [`AppState`], applying settings at runtime, and the webview-data
 //! ("Clear Cache") machinery.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -216,9 +217,10 @@ pub(crate) struct AppState {
     /// Carrier's injected click handler. They are imported as non-extractable
     /// HMAC keys in the page and are never included in an IPC payload.
     pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
-    /// Consumed signed-action nonces, retained for the lifetime of the
-    /// corresponding per-window signing key to prevent replay.
-    pub(crate) signed_action_nonces: Mutex<HashMap<String, HashSet<String>>>,
+    /// Recently consumed signed-action nonces and their insertion times. The
+    /// authenticated action timestamp lets old entries expire without allowing
+    /// a captured action to be replayed.
+    pub(crate) signed_action_nonces: Mutex<HashMap<String, HashMap<String, Instant>>>,
     /// Native context actions become usable only after AppKit reports that the
     /// corresponding menu row was selected.
     #[cfg(target_os = "macos")]

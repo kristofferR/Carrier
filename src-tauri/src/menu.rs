@@ -209,7 +209,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         let key = (label.to_string(), action.to_string());
         let state = app.state::<AppState>();
         if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
-            crate::macos::clipboard::copy_text(app, label, value);
+            crate::macos::clipboard::copy_text(app, value);
             return;
         }
         if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
@@ -338,21 +338,21 @@ fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
         || labels == VIDEO_CONTEXT_MENU_LABELS
         || labels == LINK_CONTEXT_MENU_LABELS;
-    let values_valid = match labels.as_slice() {
-        IMAGE_CONTEXT_MENU_LABELS => items
-            .iter()
-            .enumerate()
-            .all(|(index, item)| item.value.is_some() == (index == 3)),
-        VIDEO_CONTEXT_MENU_LABELS => items
-            .iter()
-            .enumerate()
-            .all(|(index, item)| item.value.is_some() == (index == 2)),
-        LINK_CONTEXT_MENU_LABELS => items
-            .iter()
-            .enumerate()
-            .all(|(index, item)| item.value.is_some() == (index == 0)),
-        _ => false,
+    let value_index = if labels == IMAGE_CONTEXT_MENU_LABELS {
+        Some(3)
+    } else if labels == VIDEO_CONTEXT_MENU_LABELS {
+        Some(2)
+    } else if labels == LINK_CONTEXT_MENU_LABELS {
+        Some(0)
+    } else {
+        None
     };
+    let values_valid = value_index.is_some_and(|expected| {
+        items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.value.is_some() == (index == expected))
+    });
     let mut actions = std::collections::HashSet::new();
     labels_valid
         && values_valid
@@ -742,6 +742,10 @@ mod tests {
         ];
         image[3].value = Some("https://example.com/image.png".into());
         assert!(valid_context_menu_items(&image));
+
+        image[0].value = image[3].value.take();
+        assert!(!valid_context_menu_items(&image));
+        image[3].value = image[0].value.take();
 
         let mut spoofed = image;
         spoofed[2].label = "Allow microphone".into();
