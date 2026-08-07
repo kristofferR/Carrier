@@ -253,6 +253,11 @@ pub(crate) fn build_app_window(
                         .lock()
                         .unwrap()
                         .retain(|(window, _), _| window != &token_cleanup_label);
+                    state
+                        .download_reservations
+                        .lock()
+                        .unwrap()
+                        .retain(|(window, _), _| window != &token_cleanup_label);
                 }
             }
         }
