@@ -457,7 +457,7 @@ pub(crate) fn show_native_context_menu(
         let mut activations = state.context_menu_activations.lock().unwrap();
         let now = Instant::now();
         activations.retain(|(window, _), activation| {
-            window != label || crate::context_menu_activation_is_current(*activation, now)
+            window != label || crate::context_menu_activation_is_current(activation.clone(), now)
         });
         for item in &items {
             let key = (label.to_string(), item.action.clone());

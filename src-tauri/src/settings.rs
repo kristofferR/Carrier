@@ -231,11 +231,15 @@ pub(crate) struct AppState {
 }
 
 #[cfg(any(target_os = "macos", test))]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) enum ContextMenuActivation {
     Pending,
     Selected(Instant),
-    Claimed,
+    Claimed {
+        download_id: Option<String>,
+        claimed_at: Instant,
+    },
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";

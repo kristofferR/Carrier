@@ -719,10 +719,16 @@
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
     const candidate = detail;
-    if (typeof candidate.url !== "string" || typeof candidate.success !== "boolean") return null;
-    return { url: candidate.url, success: candidate.success };
+    if (typeof candidate.id !== "string" || typeof candidate.url !== "string" || typeof candidate.success !== "boolean" || typeof candidate.signature !== "string")
+      return null;
+    return {
+      id: candidate.id,
+      url: candidate.url,
+      success: candidate.success,
+      signature: candidate.signature
+    };
   }
-  function waitForNativeDownload(target, expectedUrl, timeoutMs = 12e4) {
+  function waitForNativeDownload(target, expectedUrl, verifyResult, timeoutMs = 12e4) {
     return new Promise((resolve, reject) => {
       let timer;
       const cleanup = () => {
@@ -732,9 +738,22 @@
       const onFinished = (event) => {
         const detail = detailFor(event);
         if (!detail || detail.url !== expectedUrl) return;
-        cleanup();
-        if (detail.success) resolve(expectedUrl);
-        else reject(new Error("native download failed"));
+        if (!verifyResult) {
+          cleanup();
+          reject(new Error("native download bridge unavailable"));
+          return;
+        }
+        void verifyResult(
+          DOWNLOAD_FINISHED_EVENT,
+          { id: detail.id, url: detail.url, success: detail.success },
+          detail.signature
+        ).then((authenticated) => {
+          if (!authenticated) return;
+          cleanup();
+          if (detail.success) resolve({ id: detail.id, url: detail.url });
+          else reject(new Error("native download failed"));
+        }).catch(() => {
+        });
       };
       target.addEventListener(DOWNLOAD_FINISHED_EVENT, onFinished);
       timer = setTimeout(() => {
@@ -905,8 +924,8 @@
   }
   async function shareSrc(src, fallbackName, fx, fy, action) {
     await carrierClaimContextAction(action);
-    const href = await downloadSrc(src, fallbackName);
-    await carrierShareDownload(href, fx, fy, action);
+    const { id } = await downloadSrc(src, fallbackName);
+    await carrierShareDownload(id, fx, fy, action);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
@@ -929,7 +948,7 @@
     a.style.display = "none";
     document.body.appendChild(a);
     try {
-      const completion = waitForNativeDownload(window, href);
+      const completion = waitForNativeDownload(window, href, carrierVerifyResult);
       a.click();
       return await completion;
     } finally {
@@ -1025,7 +1044,7 @@
           ]);
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[1],
-            () => downloadSrc(imgSrc, "image").then(toastDownloadSaved).catch(() => toast("Download failed"))
+            () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
           ]);
           if (isMac2) {
             addItem([
@@ -1038,7 +1057,7 @@
         } else if (vidSrc) {
           addItem([
             VIDEO_CONTEXT_MENU_LABELS[0],
-            () => downloadSrc(vidSrc, "video").then(toastDownloadSaved).catch(() => toast("Download failed"))
+            () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
           ]);
           if (isMac2) {
             addItem([
@@ -1496,7 +1515,7 @@
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
-        downloadSrc(href, a.getAttribute("download") || "download").then(toastDownloadSaved).catch(() => toast("Download failed"));
+        downloadSrc(href, a.getAttribute("download") || "download").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"));
       },
       true
     );

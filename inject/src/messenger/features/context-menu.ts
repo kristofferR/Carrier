@@ -181,8 +181,8 @@ function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
 // file), then ask the native side to share it, anchored at the click point.
 async function shareSrc(src: string, fallbackName: string, fx: number, fy: number, action: string) {
   await carrierClaimContextAction(action);
-  const href = await downloadSrc(src, fallbackName);
-  await carrierShareDownload(href, fx, fy, action);
+  const { id } = await downloadSrc(src, fallbackName);
+  await carrierShareDownload(id, fx, fy, action);
 }
 
 // True when the response advertises a Content-Length over the cap. Absent or
@@ -198,7 +198,10 @@ const copyAddress = (text: string) =>
 // Download a media src by letting the WebView initiate the download, which the
 // Rust `on_download` handler then writes to Downloads. (Custom commands can't
 // be called from the remote Facebook origin, only plugins / WebView hooks.)
-export async function downloadSrc(src: string, fallbackName: string): Promise<string> {
+export async function downloadSrc(
+  src: string,
+  fallbackName: string,
+): Promise<{ id: string; url: string }> {
   // Fetch into a same-origin blob so the `download` attribute is honoured (it's
   // ignored for cross-origin URLs) and so we can derive the real extension.
   const res = await fetch(src);
@@ -221,7 +224,7 @@ export async function downloadSrc(src: string, fallbackName: string): Promise<st
   a.style.display = "none";
   document.body.appendChild(a);
   try {
-    const completion = waitForNativeDownload(window, href);
+    const completion = waitForNativeDownload(window, href, carrierVerifyResult);
     a.click();
     return await completion;
   } finally {
@@ -345,7 +348,7 @@ export function initContextMenu() {
           IMAGE_CONTEXT_MENU_LABELS[1],
           () =>
             downloadSrc(imgSrc, "image")
-              .then(toastDownloadSaved)
+              .then(({ url }) => toastDownloadSaved(url))
               .catch(() => toast("Download failed")),
         ]);
         if (isMac) {
@@ -364,7 +367,7 @@ export function initContextMenu() {
           VIDEO_CONTEXT_MENU_LABELS[0],
           () =>
             downloadSrc(vidSrc, "video")
-              .then(toastDownloadSaved)
+              .then(({ url }) => toastDownloadSaved(url))
               .catch(() => toast("Download failed")),
         ]);
         if (isMac) {
