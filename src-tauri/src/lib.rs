@@ -455,6 +455,30 @@ pub fn run() {
             // the trusted download map, never from the page.
             #[cfg(target_os = "macos")]
             {
+                let context_menu_handle = app.handle().clone();
+                app.listen_any("carrier:context-menu", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct ContextMenuMsg {
+                        authorization: String,
+                        items: Vec<menu::NativeContextMenuItem>,
+                    }
+
+                    let Ok(msg) = serde_json::from_str::<ContextMenuMsg>(event.payload()) else {
+                        log::warn!("carrier:context-menu payload did not parse");
+                        return;
+                    };
+                    let label = {
+                        let state = context_menu_handle.state::<AppState>();
+                        let tokens = state.download_reveal_tokens.lock().unwrap();
+                        download_token_window(&tokens, &msg.authorization)
+                    };
+                    let Some(label) = label else {
+                        log::warn!("carrier:context-menu was not authorized by a trusted click");
+                        return;
+                    };
+                    menu::show_native_context_menu(&context_menu_handle, &label, msg.items);
+                });
+
                 let share_handle = app.handle().clone();
                 app.listen_any("carrier:share-download", move |event| {
                     #[derive(serde::Deserialize)]

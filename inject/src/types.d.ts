@@ -72,6 +72,11 @@ declare const carrierShareDownload: (
   y: number,
 ) => Promise<unknown> | undefined;
 
+/** Show Carrier's media actions in a native context menu. */
+declare const carrierShowContextMenu: (
+  items: { label: string; action: string }[],
+) => Promise<unknown> | undefined;
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {
