@@ -388,11 +388,19 @@ export function initContextMenu() {
           borderRadius: "6px",
           outline: "none",
         });
-        el.onmouseenter = () =>
-          (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
-        el.onmouseleave = () => (el.style.background = "");
-        el.onfocus = () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))");
-        el.onblur = () => (el.style.background = "");
+        nativeReflectApply(nativeAddEventListener, el, [
+          "mouseenter",
+          () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+        ]);
+        nativeReflectApply(nativeAddEventListener, el, [
+          "mouseleave",
+          () => (el.style.background = ""),
+        ]);
+        nativeReflectApply(nativeAddEventListener, el, [
+          "focus",
+          () => (el.style.background = "var(--hover-overlay, rgba(127,127,127,.18))"),
+        ]);
+        nativeReflectApply(nativeAddEventListener, el, ["blur", () => (el.style.background = "")]);
         nativeReflectApply(nativeAddEventListener, el, [
           "click",
           (ev: MouseEvent) => {
