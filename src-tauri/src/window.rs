@@ -760,9 +760,10 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   var carrierNativeRequest = function () {{
     var bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
+    var alphabet = '0123456789abcdef';
     var request = '';
     for (var index = 0; index < bytes.length; index += 1) {{
-      request += bytes[index].toString(16).padStart(2, '0');
+      request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];
     }}
     return request;
   }};
@@ -1086,6 +1087,9 @@ mod tests {
     fn copy_image_bridge_waits_for_the_native_result() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
+        assert!(script
+            .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];"));
+        assert!(!script.contains("bytes[index].toString(16).padStart(2, '0')"));
         assert!(script.contains("carrier:copy-image-result"));
         assert!(script.contains("data_url: dataUrl, action: action, request: request"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
