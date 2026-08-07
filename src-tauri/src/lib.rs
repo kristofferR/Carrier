@@ -449,12 +449,9 @@ pub fn run() {
                 });
             });
 
-            // Share a just-downloaded media file via the macOS share sheet.
-            // Same trust model as carrier:reveal-download: the per-window
-            // credential authorizes it and the file path only ever comes from
-            // the trusted download map, never from the page.
             #[cfg(target_os = "macos")]
             {
+                // Show a native context menu only for an authorized Messenger window.
                 let context_menu_handle = app.handle().clone();
                 app.listen_any("carrier:context-menu", move |event| {
                     #[derive(serde::Deserialize)]
@@ -479,6 +476,10 @@ pub fn run() {
                     menu::show_native_context_menu(&context_menu_handle, &label, msg.items);
                 });
 
+                // Share a just-downloaded media file via the macOS share sheet.
+                // Same trust model as carrier:reveal-download: the per-window
+                // credential authorizes it and the file path only ever comes from
+                // the trusted download map, never from the page.
                 let share_handle = app.handle().clone();
                 app.listen_any("carrier:share-download", move |event| {
                     #[derive(serde::Deserialize)]
