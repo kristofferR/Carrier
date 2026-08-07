@@ -11,7 +11,7 @@ const MAX_BLOB = 512 * 1024 * 1024;
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
 const nativeArrayIndexOf = Array.prototype.indexOf;
-const nativeArrayPush = Array.prototype.push;
+const nativeObjectDefineProperty = Object.defineProperty;
 const nativeReflectApply = Reflect.apply;
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
@@ -113,7 +113,17 @@ export function initContextMenu() {
       const fy = e.clientY / Math.max(1, innerHeight);
       const items: [string, () => unknown][] = [];
       const addItem = (item: [string, () => unknown]) => {
-        nativeReflectApply(nativeArrayPush, items, [item]);
+        // Defining an own index bypasses numeric setters Messenger could add
+        // to Array.prototype before a user opens this privileged-action menu.
+        nativeReflectApply(nativeObjectDefineProperty, items, [
+          String(items.length),
+          {
+            value: item,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+          },
+        ]);
       };
       if (imgSrc) {
         addItem([
