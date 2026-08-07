@@ -782,6 +782,7 @@
   var VIDEO_CONTEXT_MENU_LABELS = ["Download video", "Share…", "Copy video address"];
   var LINK_CONTEXT_MENU_LABELS = ["Copy link address", "Open link in browser"];
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply2 = Reflect.apply;
@@ -789,9 +790,16 @@
   var nativeSetTimeout = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
+  var nativeContains = Node.prototype.contains;
   var nativeCreateElement = Document.prototype.createElement;
   var nativeFocus = HTMLElement.prototype.focus;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeGetEventTarget = Object.getOwnPropertyDescriptor(Event.prototype, "target")?.get;
+  var nativeGetMouseClientX = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientX")?.get;
+  var nativeGetMouseClientY = Object.getOwnPropertyDescriptor(MouseEvent.prototype, "clientY")?.get;
+  var nativePreventDefault = Event.prototype.preventDefault;
+  var nativeRemove = Element.prototype.remove;
+  var nativeStopPropagation = Event.prototype.stopPropagation;
   var nativeGetRectX = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "x")?.get;
   var nativeGetRectY = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "y")?.get;
   var nativeGetRectWidth = Object.getOwnPropertyDescriptor(DOMRectReadOnly.prototype, "width")?.get;
@@ -837,6 +845,11 @@
       height: nativeReflectApply2(nativeGetRectHeight, r, [])
     };
   };
+  var eventTargetOf = (event) => nativeReflectApply2(nativeGetEventTarget, event, []);
+  var clientPointOf = (event) => ({
+    x: nativeReflectApply2(nativeGetMouseClientX, event, []),
+    y: nativeReflectApply2(nativeGetMouseClientY, event, [])
+  });
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   function contextActionToken() {
     const bytes = new NativeUint8Array(16);
@@ -965,41 +978,42 @@
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
   var closeMenuFromClick = (event) => {
-    if (ctxMenu && event.target === ctxMenu) return;
+    if (ctxMenu && eventTargetOf(event) === ctxMenu) return;
     closeMenu();
   };
   var closeMenuFromScroll = () => closeMenu();
   var closeMenu = (restoreFocus = false) => {
-    ctxMenu?.remove();
+    if (ctxMenu) nativeReflectApply2(nativeRemove, ctxMenu, []);
     ctxMenu = null;
-    document.removeEventListener("click", closeMenuFromClick, true);
-    document.removeEventListener("scroll", closeMenuFromScroll, true);
+    nativeReflectApply2(nativeRemoveEventListener, document, ["click", closeMenuFromClick, true]);
+    nativeReflectApply2(nativeRemoveEventListener, document, ["scroll", closeMenuFromScroll, true]);
     if (restoreFocus && ctxMenuReturnFocus) {
       nativeReflectApply2(nativeFocus, ctxMenuReturnFocus, [{ preventScroll: true }]);
     }
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
-    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetKeyboardKey || !nativeGetStyle)
+    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle)
       return;
     nativeReflectApply2(nativeAddEventListener, window, [
       "carrier:context-action",
       runNativeAction,
       true
     ]);
-    document.addEventListener(
+    nativeReflectApply2(nativeAddEventListener, document, [
       "contextmenu",
       async (e) => {
         if (!e.isTrusted) return;
-        const t = e.target;
+        const t = eventTargetOf(e);
         const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
         const img = t.closest?.("img[alt]");
         const anchor = t.closest?.("a[href]");
         const imgSrc = img && (img.currentSrc || img.src);
         const vidSrc = video && (video.currentSrc || video.src);
         const linkHref = anchor?.href;
-        const fx = e.clientX / Math.max(1, innerWidth);
-        const fy = e.clientY / Math.max(1, innerHeight);
+        const contextPoint = clientPointOf(e);
+        const fx = contextPoint.x / Math.max(1, innerWidth);
+        const fy = contextPoint.y / Math.max(1, innerHeight);
         const items = [];
         const addItem = (item) => {
           appendOwn(items, item);
@@ -1054,7 +1068,7 @@
           clearNativeActionHandlers();
           return;
         }
-        e.preventDefault();
+        nativeReflectApply2(nativePreventDefault, e, []);
         if (nativeShowContextMenu) {
           try {
             await showNativeContextMenu(items);
@@ -1064,15 +1078,15 @@
         }
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;
-        const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
+        const priorReturnFocus = ctxMenu && nativeReflectApply2(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = nativeReflectApply2(nativeCreateElement, document, ["div"]);
         const ctxMenuStyle = nativeReflectApply2(nativeGetStyle, ctxMenu, []);
         applyStyles(ctxMenuStyle, {
           position: "fixed",
-          left: `${e.clientX}px`,
-          top: `${e.clientY}px`,
+          left: `${contextPoint.x}px`,
+          top: `${contextPoint.y}px`,
           zIndex: "2147483647"
         });
         const shadow = nativeReflectApply2(nativeAttachShadow, ctxMenu, [
@@ -1137,9 +1151,10 @@
             "click",
             (ev) => {
               if (!ev.isTrusted) return;
-              ev.stopPropagation();
+              nativeReflectApply2(nativeStopPropagation, ev, []);
               const expected = laidOutRects[index];
-              if (!expected || !pointerActivationIsSound(expected, rectOf(el), ev.clientX, ev.clientY)) {
+              const point = clientPointOf(ev);
+              if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
                 closeMenu();
                 toast("Menu action cancelled");
                 return;
@@ -1153,8 +1168,8 @@
               const key = nativeReflectApply2(nativeGetKeyboardKey, event, []);
               if (key !== "Enter" && key !== " ") return;
               if (!event.isTrusted) return;
-              event.preventDefault();
-              event.stopPropagation();
+              nativeReflectApply2(nativePreventDefault, event, []);
+              nativeReflectApply2(nativeStopPropagation, event, []);
               activate(fn);
             }
           ]);
@@ -1164,8 +1179,12 @@
         nativeReflectApply2(nativeAppendChild, shadow, [menu]);
         nativeReflectApply2(nativeAppendChild, document.body, [ctxMenu]);
         const r = rectOf(menu);
-        if (r.x + r.width > innerWidth) ctxMenuStyle.left = `${innerWidth - r.width - 8}px`;
-        if (r.y + r.height > innerHeight) ctxMenuStyle.top = `${innerHeight - r.height - 8}px`;
+        if (r.x + r.width > innerWidth) {
+          setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+        }
+        if (r.y + r.height > innerHeight) {
+          setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+        }
         for (let i = 0; i < menuItems.length; i += 1) {
           const row = menuItems[i];
           appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
@@ -1182,17 +1201,17 @@
             if (key === "Home") next = 0;
             if (key === "End") next = menuItems.length - 1;
             if (key === "Escape") {
-              event.preventDefault();
+              nativeReflectApply2(nativePreventDefault, event, []);
               closeMenu(true);
               return;
             }
             if (key === "Tab") {
-              event.preventDefault();
+              nativeReflectApply2(nativePreventDefault, event, []);
               closeMenu(true);
               return;
             }
             if (next !== null) {
-              event.preventDefault();
+              nativeReflectApply2(nativePreventDefault, event, []);
               focusedIndex = next;
               const nextItem = menuItems[next];
               if (nextItem) nativeReflectApply2(nativeFocus, nextItem, []);
@@ -1215,7 +1234,7 @@
         ]);
       },
       true
-    );
+    ]);
   }
 
   // inject/src/messenger/lib/color.ts
