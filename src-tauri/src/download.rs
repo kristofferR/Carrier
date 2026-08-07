@@ -31,13 +31,9 @@ struct RecentDownloads {
 
 impl RecentDownloads {
     fn prune(&mut self, now: Instant) {
-        while self
-            .entries
-            .front()
-            .is_some_and(|entry| now.saturating_duration_since(entry.at) > RECENT_DOWNLOAD_TTL)
-        {
-            self.entries.pop_front();
-        }
+        self.entries.retain(|entry| {
+            !entry.completed || now.saturating_duration_since(entry.at) <= RECENT_DOWNLOAD_TTL
+        });
     }
 
     fn remember_at(&mut self, url: &str, path: PathBuf, now: Instant) {
@@ -68,9 +64,12 @@ impl RecentDownloads {
             .map(|entry| entry.path.clone())
     }
 
-    fn complete(&mut self, url: &str) {
-        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.url == url) {
+    fn complete_at(&mut self, url: &str, now: Instant) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.url == url) {
+            let mut entry = self.entries.remove(index).expect("entry index is valid");
             entry.completed = true;
+            entry.at = now;
+            self.entries.push_back(entry);
         }
     }
 
@@ -99,7 +98,10 @@ pub(crate) fn forget_download(url: &Url) {
 }
 
 pub(crate) fn complete_download(url: &Url) {
-    recent_downloads().lock().unwrap().complete(url.as_str());
+    recent_downloads()
+        .lock()
+        .unwrap()
+        .complete_at(url.as_str(), Instant::now());
 }
 
 /// Non-consuming lookup so repeated clicks on the toast action keep working.
@@ -431,7 +433,7 @@ mod tests {
                 PathBuf::from(format!("download-{n}.png")),
                 now,
             );
-            downloads.complete(&format!("blob:carrier/{n}"));
+            downloads.complete_at(&format!("blob:carrier/{n}"), now);
         }
 
         assert_eq!(downloads.entries.len(), MAX_RECENT_DOWNLOADS);
@@ -452,7 +454,7 @@ mod tests {
         let now = Instant::now();
         let mut downloads = RecentDownloads::default();
         downloads.remember_at("blob:carrier/expired", PathBuf::from("expired.png"), now);
-        downloads.complete("blob:carrier/expired");
+        downloads.complete_at("blob:carrier/expired", now);
         assert_eq!(
             downloads.lookup_at(
                 "blob:carrier/expired",
@@ -474,8 +476,31 @@ mod tests {
         downloads.remember_at("blob:carrier/pending", path.clone(), now);
         assert_eq!(downloads.lookup_at("blob:carrier/pending", now), None);
 
-        downloads.complete("blob:carrier/pending");
+        downloads.complete_at("blob:carrier/pending", now);
         assert_eq!(downloads.lookup_at("blob:carrier/pending", now), Some(path));
+    }
+
+    #[test]
+    fn recent_downloads_expire_from_completion_time() {
+        let started = Instant::now();
+        let completed = started + RECENT_DOWNLOAD_TTL + Duration::from_secs(1);
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("slow.png");
+        downloads.remember_at("blob:carrier/slow", path.clone(), started);
+        downloads.remember_at("blob:carrier/new", PathBuf::from("new.png"), completed);
+        downloads.complete_at("blob:carrier/slow", completed);
+
+        assert_eq!(
+            downloads.lookup_at("blob:carrier/slow", completed),
+            Some(path)
+        );
+        assert_eq!(
+            downloads.lookup_at(
+                "blob:carrier/slow",
+                completed + RECENT_DOWNLOAD_TTL + Duration::from_millis(1)
+            ),
+            None
+        );
     }
 
     #[test]

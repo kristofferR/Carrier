@@ -774,6 +774,7 @@
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
+  var nativeCreateElement = Document.prototype.createElement;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
   var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
@@ -972,7 +973,7 @@
         const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
-        ctxMenu = document.createElement("div");
+        ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]);
         Object.assign(ctxMenu.style, {
           position: "fixed",
           left: `${e.clientX}px`,
@@ -982,7 +983,7 @@
         const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
           { mode: "closed" }
         ]);
-        const menu = document.createElement("div");
+        const menu = nativeReflectApply(nativeCreateElement, document, ["div"]);
         menu.setAttribute("role", "menu");
         menu.setAttribute("aria-label", "Media actions");
         Object.assign(menu.style, {
@@ -1007,7 +1008,7 @@
           if (!item) continue;
           const label = item[0];
           const fn = item[1];
-          const el = document.createElement("div");
+          const el = nativeReflectApply(nativeCreateElement, document, ["div"]);
           el.textContent = label;
           el.setAttribute("role", "menuitem");
           el.tabIndex = -1;

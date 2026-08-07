@@ -186,11 +186,15 @@ pub(crate) fn build_app_window(
             make_webview_transparent(window);
         })?;
     let token_cleanup_value = download_reveal_token.clone();
-    app.state::<AppState>()
-        .download_reveal_tokens
-        .lock()
-        .unwrap()
-        .insert(label.to_string(), download_reveal_token);
+    {
+        let state = app.state::<AppState>();
+        state
+            .download_reveal_tokens
+            .lock()
+            .unwrap()
+            .insert(label.to_string(), download_reveal_token);
+        state.signed_action_nonces.lock().unwrap().remove(label);
+    }
     let token_cleanup_handle = app.clone();
     let token_cleanup_label = label.to_string();
     window.on_window_event(move |event| {
@@ -199,6 +203,11 @@ pub(crate) fn build_app_window(
             let mut tokens = state.download_reveal_tokens.lock().unwrap();
             if tokens.get(&token_cleanup_label) == Some(&token_cleanup_value) {
                 tokens.remove(&token_cleanup_label);
+                state
+                    .signed_action_nonces
+                    .lock()
+                    .unwrap()
+                    .remove(&token_cleanup_label);
             }
         }
     });
@@ -699,12 +708,20 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   );
 
   var nativeWindowAddEventListener = EventTarget.prototype.addEventListener;
+  var nativeWindowDispatchEvent = EventTarget.prototype.dispatchEvent;
   var nativeWindowRemoveEventListener = EventTarget.prototype.removeEventListener;
+  var nativeObjectDefineProperty = Object.defineProperty;
   var nativeSetTimeout = window.setTimeout.bind(window);
   var nativeClearTimeout = window.clearTimeout.bind(window);
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var NativeUint8Array = Uint8Array;
+  var NativeEvent = Event;
   var nativeReflectApply = Reflect.apply;
+  nativeObjectDefineProperty(window, '__carrierDispatchContextAction', {{
+    value: function (eventName) {{
+      nativeReflectApply(nativeWindowDispatchEvent, window, [new NativeEvent(eventName)]);
+    }}
+  }});
   var carrierCopyImageRequest = function () {{
     var bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
@@ -977,6 +994,9 @@ mod tests {
             script.contains("payload: { message: message, nonce: nonce, signature: signature }")
         );
         assert!(!script.contains("authorization: authorization"));
+        assert!(script.contains("EventTarget.prototype.dispatchEvent"));
+        assert!(script.contains("new NativeEvent(eventName)"));
+        assert!(script.contains("'__carrierDispatchContextAction'"));
     }
 
     #[test]
