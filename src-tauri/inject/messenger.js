@@ -744,12 +744,29 @@
     });
   }
 
+  // inject/src/messenger/lib/menu-integrity.ts
+  var RECT_TOLERANCE = 1;
+  function rectsMatch(a, b, tolerance = RECT_TOLERANCE) {
+    return Math.abs(a.x - b.x) <= tolerance && Math.abs(a.y - b.y) <= tolerance && Math.abs(a.width - b.width) <= tolerance && Math.abs(a.height - b.height) <= tolerance;
+  }
+  function pointInRect(rect, x, y) {
+    return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+  }
+  function pointerActivationIsSound(expected, current, x, y) {
+    return rectsMatch(expected, current) && pointInRect(current, x, y);
+  }
+
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
-  var nativeArrayIndexOf = Array.prototype.indexOf;
   var nativeObjectDefineProperty = Object.defineProperty;
   var nativeReflectApply = Reflect.apply;
+  var nativeAttachShadow = Element.prototype.attachShadow;
+  var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var rectOf = (el) => {
+    const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
+    return { x: r.x, y: r.y, width: r.width, height: r.height };
+  };
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   async function shareSrc(src, fallbackName, fx, fy) {
     const href = await downloadSrc(src, fallbackName);
@@ -870,13 +887,19 @@
         closeMenu();
         ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
         ctxMenu = document.createElement("div");
-        ctxMenu.setAttribute("role", "menu");
-        ctxMenu.setAttribute("aria-label", "Media actions");
         Object.assign(ctxMenu.style, {
           position: "fixed",
           left: `${e.clientX}px`,
           top: `${e.clientY}px`,
-          zIndex: 2147483647,
+          zIndex: 2147483647
+        });
+        const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
+          { mode: "closed" }
+        ]);
+        const menu = document.createElement("div");
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Media actions");
+        Object.assign(menu.style, {
           background: "var(--card-background, Canvas)",
           color: "var(--primary-text, CanvasText)",
           border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -886,6 +909,13 @@
           minWidth: "170px",
           font: "13px -apple-system, system-ui, sans-serif"
         });
+        const menuItems = [];
+        const laidOutRects = /* @__PURE__ */ new Map();
+        let focusedIndex = 0;
+        const activate = (fn) => {
+          closeMenu();
+          fn();
+        };
         for (let index = 0; index < items.length; index += 1) {
           const item = items[index];
           if (!item) continue;
@@ -910,8 +940,13 @@
             (ev) => {
               if (!ev.isTrusted) return;
               ev.stopPropagation();
-              closeMenu();
-              fn();
+              const expected = laidOutRects.get(el);
+              if (!expected || !pointerActivationIsSound(expected, rectOf(el), ev.clientX, ev.clientY)) {
+                closeMenu();
+                toast("Menu action cancelled");
+                return;
+              }
+              activate(fn);
             }
           ]);
           nativeReflectApply(nativeAddEventListener, el, [
@@ -921,24 +956,22 @@
               if (!event.isTrusted) return;
               event.preventDefault();
               event.stopPropagation();
-              closeMenu();
-              fn();
+              activate(fn);
             }
           ]);
-          ctxMenu.appendChild(el);
+          menuItems.push(el);
+          menu.appendChild(el);
         }
+        shadow.appendChild(menu);
         document.body.appendChild(ctxMenu);
-        const r = ctxMenu.getBoundingClientRect();
-        if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
-        if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
-        const menuItems = [...ctxMenu.querySelectorAll('[role="menuitem"]')];
+        const r = rectOf(menu);
+        if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
+        if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+        for (const el of menuItems) laidOutRects.set(el, rectOf(el));
         nativeReflectApply(nativeAddEventListener, ctxMenu, [
           "keydown",
           (event) => {
-            const current = Math.max(
-              0,
-              nativeReflectApply(nativeArrayIndexOf, menuItems, [document.activeElement])
-            );
+            const current = focusedIndex;
             let next = null;
             if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
             if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
@@ -956,10 +989,12 @@
             }
             if (next !== null) {
               event.preventDefault();
+              focusedIndex = next;
               menuItems[next]?.focus();
             }
           }
         ]);
+        focusedIndex = 0;
         menuItems[0]?.focus({ preventScroll: true });
         setTimeout(() => {
           document.addEventListener("click", closeMenuFromPointer, true);
@@ -1264,7 +1299,7 @@
   // inject/src/messenger/features/emoji-images.ts
   var PREFETCH_MARGIN = 80;
   var SCAN_DELAY_MS = 50;
-  function rectOf(element) {
+  function rectOf2(element) {
     const rect = element.getBoundingClientRect();
     return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
   }
@@ -1277,11 +1312,11 @@
     };
     const dialog = image.closest('[role="dialog"]');
     if (!dialog) return clip;
-    clip = intersectImageClips(clip, expandedImageClip(rectOf(dialog), PREFETCH_MARGIN));
+    clip = intersectImageClips(clip, expandedImageClip(rectOf2(dialog), PREFETCH_MARGIN));
     let ancestor = image.parentElement;
     while (ancestor && ancestor !== dialog) {
       if (ancestor.scrollHeight > ancestor.clientHeight + 2) {
-        clip = intersectImageClips(clip, expandedImageClip(rectOf(ancestor), PREFETCH_MARGIN));
+        clip = intersectImageClips(clip, expandedImageClip(rectOf2(ancestor), PREFETCH_MARGIN));
         break;
       }
       ancestor = ancestor.parentElement;
@@ -1307,7 +1342,7 @@
           pending.delete(image);
           continue;
         }
-        const imageRect = rectOf(image);
+        const imageRect = rectOf2(image);
         if (hasImageArea(imageRect) && intersectsImageClip(imageRect, visibleClipFor(image))) {
           promote(image);
         }

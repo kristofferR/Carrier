@@ -4,15 +4,23 @@
 import { cleanSharedUrl, openUrl, toast, toastDownloadSaved } from "../bridge";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
+import { type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 
 // Capture the native registrar at document start. Messenger code runs in the
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
-const nativeArrayIndexOf = Array.prototype.indexOf;
 const nativeObjectDefineProperty = Object.defineProperty;
 const nativeReflectApply = Reflect.apply;
+// Same reason: the menu's isolation depends on this being the real one.
+const nativeAttachShadow = Element.prototype.attachShadow;
+const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+
+const rectOf = (el: Element): MenuRect => {
+  const r = nativeReflectApply(nativeGetBoundingClientRect, el, []) as DOMRect;
+  return { x: r.x, y: r.y, width: r.width, height: r.height };
+};
 
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
 // platforms have no equivalent Carrier can reach, so the item stays hidden.
@@ -189,14 +197,27 @@ export function initContextMenu() {
       closeMenu();
       ctxMenuReturnFocus =
         (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
+      // The rows carry privileged actions, so they live in a *closed* shadow
+      // root: Messenger shares this JS world and would otherwise be able to
+      // find a row by its label and slide it under the pointer, turning the
+      // user's genuine click into one for an action they never chose. A closed
+      // root hands out no reference, so page script cannot reach the rows at
+      // all; moving the host it can still see shifts every row together, which
+      // the per-row geometry check below refuses.
       ctxMenu = document.createElement("div");
-      ctxMenu.setAttribute("role", "menu");
-      ctxMenu.setAttribute("aria-label", "Media actions");
       Object.assign(ctxMenu.style, {
         position: "fixed",
         left: `${e.clientX}px`,
         top: `${e.clientY}px`,
         zIndex: 2147483647,
+      });
+      const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
+        { mode: "closed" },
+      ]) as ShadowRoot;
+      const menu = document.createElement("div");
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", "Media actions");
+      Object.assign(menu.style, {
         background: "var(--card-background, Canvas)",
         color: "var(--primary-text, CanvasText)",
         border: "1px solid var(--divider, rgba(127,127,127,.3))",
@@ -206,6 +227,15 @@ export function initContextMenu() {
         minWidth: "170px",
         font: "13px -apple-system, system-ui, sans-serif",
       });
+      const menuItems: HTMLElement[] = [];
+      // Filled once the menu has been laid out; a row whose rectangle no longer
+      // matches its entry here is not the row the user aimed at.
+      const laidOutRects = new Map<HTMLElement, MenuRect>();
+      let focusedIndex = 0;
+      const activate = (fn: () => unknown) => {
+        closeMenu();
+        fn();
+      };
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
         if (!item) continue;
@@ -231,8 +261,18 @@ export function initContextMenu() {
           (ev: MouseEvent) => {
             if (!ev.isTrusted) return;
             ev.stopPropagation();
-            closeMenu();
-            fn();
+            const expected = laidOutRects.get(el);
+            // No recorded rectangle means the click beat layout; refuse rather
+            // than run a privileged action we cannot vouch for.
+            if (
+              !expected ||
+              !pointerActivationIsSound(expected, rectOf(el), ev.clientX, ev.clientY)
+            ) {
+              closeMenu();
+              toast("Menu action cancelled");
+              return;
+            }
+            activate(fn);
           },
         ]);
         nativeReflectApply(nativeAddEventListener, el, [
@@ -242,24 +282,24 @@ export function initContextMenu() {
             if (!event.isTrusted) return;
             event.preventDefault();
             event.stopPropagation();
-            closeMenu();
-            fn();
+            // Keyboard activation needs no geometry check: focus lives inside
+            // the closed root, so page script cannot move it to another row.
+            activate(fn);
           },
         ]);
-        ctxMenu.appendChild(el);
+        menuItems.push(el);
+        menu.appendChild(el);
       }
+      shadow.appendChild(menu);
       document.body.appendChild(ctxMenu);
-      const r = ctxMenu.getBoundingClientRect();
-      if (r.right > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
-      if (r.bottom > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
-      const menuItems = [...ctxMenu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+      const r = rectOf(menu);
+      if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
+      if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
+      for (const el of menuItems) laidOutRects.set(el, rectOf(el));
       nativeReflectApply(nativeAddEventListener, ctxMenu, [
         "keydown",
         (event: KeyboardEvent) => {
-          const current = Math.max(
-            0,
-            nativeReflectApply(nativeArrayIndexOf, menuItems, [document.activeElement]),
-          );
+          const current = focusedIndex;
           let next: number | null = null;
           if (event.key === "ArrowDown") next = (current + 1) % menuItems.length;
           if (event.key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
@@ -279,10 +319,12 @@ export function initContextMenu() {
           }
           if (next !== null) {
             event.preventDefault();
+            focusedIndex = next;
             menuItems[next]?.focus();
           }
         },
       ]);
+      focusedIndex = 0;
       menuItems[0]?.focus({ preventScroll: true });
       setTimeout(() => {
         document.addEventListener("click", closeMenuFromPointer, true);
