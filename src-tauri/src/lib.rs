@@ -245,6 +245,7 @@ pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<Str
 /// The signed `{ request, <field> }` payload of a boolean native result. The
 /// flatten keeps `request` first, matching the object literal the page passes
 /// to `verifyResult` — the serialization here must match it byte for byte.
+#[cfg(any(target_os = "macos", test))]
 fn native_result_signature(
     secret: &str,
     result_event: &str,
@@ -300,6 +301,7 @@ fn context_menu_result_signature(
     )
 }
 
+#[cfg(target_os = "macos")]
 fn send_native_result(
     app: &tauri::AppHandle,
     label: &str,
