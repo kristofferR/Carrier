@@ -7,6 +7,7 @@ import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
 
 const MAX_BLOB = 512 * 1024 * 1024;
+const MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
 
 // Keep these names and arrays in sync with src-tauri/src/menu.rs. A Rust test
 // reads these declarations so the native allowlist cannot drift silently.
@@ -57,8 +58,10 @@ function contextActionToken() {
   return token;
 }
 
-function showNativeContextMenu(items: [string, () => unknown][]) {
-  const nativeItems: { label: string; action: string }[] = [];
+type ContextMenuItem = [label: string, run: (action?: string) => unknown, value?: string];
+
+function showNativeContextMenu(items: ContextMenuItem[]) {
+  const nativeItems: { label: string; action: string; value?: string }[] = [];
   const removeListeners: (() => void)[] = [];
   const removeAllListeners = () => {
     for (let index = 0; index < removeListeners.length; index += 1) {
@@ -74,7 +77,7 @@ function showNativeContextMenu(items: [string, () => unknown][]) {
       nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
     const run = () => {
       removeAllListeners();
-      item[1]();
+      item[1](action);
     };
     nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
     nativeReflectApply(nativeArrayPush, removeListeners, [removeListener]);
@@ -82,7 +85,7 @@ function showNativeContextMenu(items: [string, () => unknown][]) {
     nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
       String(nativeItems.length),
       {
-        value: { label: item[0], action },
+        value: item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
         writable: true,
         enumerable: true,
         configurable: true,
@@ -94,17 +97,15 @@ function showNativeContextMenu(items: [string, () => unknown][]) {
 
 // Save the media through the trusted download flow (the sheet needs a real
 // file), then ask the native side to share it, anchored at the click point.
-async function shareSrc(src: string, fallbackName: string, fx: number, fy: number) {
+async function shareSrc(src: string, fallbackName: string, fx: number, fy: number, action: string) {
   const href = await downloadSrc(src, fallbackName);
-  await carrierShareDownload(href, fx, fy);
+  await carrierShareDownload(href, fx, fy, action);
 }
 
 // True when the response advertises a Content-Length over the cap. Absent or
 // unparseable headers yield 0 (falsy), so callers fall back to the blob check.
 const oversizeByHeader = (res: Response) => Number(res.headers.get("content-length")) > MAX_BLOB;
 
-// Copy a URL to the clipboard with the same success/failure toasting the
-// download actions use (writeText can reject on a denied clipboard grant).
 const copyAddress = (text: string) =>
   navigator.clipboard
     ?.writeText(cleanSharedUrl(text))
@@ -146,13 +147,26 @@ export async function downloadSrc(src: string, fallbackName: string): Promise<st
   }
 }
 
-async function copyImageSrc(src: string) {
+async function copyImageSrc(src: string, action?: string) {
   const res = await fetch(src);
   if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-  if (oversizeByHeader(res)) throw new Error("image too large");
+  const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
+  if (Number(res.headers.get("content-length")) > maxSize) {
+    throw new Error("image too large");
+  }
   const blob = await res.blob();
-  if (blob.size > MAX_BLOB) throw new Error("image too large");
-  await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+  if (blob.size > maxSize) throw new Error("image too large");
+  if (!action) {
+    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    return;
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
+    reader.addEventListener("error", () => reject(reader.error), { once: true });
+    reader.readAsDataURL(blob);
+  });
+  await carrierCopyImage(dataUrl, action);
 }
 
 let ctxMenu: HTMLDivElement | null = null;
@@ -193,8 +207,8 @@ export function initContextMenu() {
       // download delay and window resizes better than raw pixels.
       const fx = e.clientX / Math.max(1, innerWidth);
       const fy = e.clientY / Math.max(1, innerHeight);
-      const items: [string, () => unknown][] = [];
-      const addItem = (item: [string, () => unknown]) => {
+      const items: ContextMenuItem[] = [];
+      const addItem = (item: ContextMenuItem) => {
         // Defining an own index bypasses numeric setters Messenger could add
         // to Array.prototype before a user opens this privileged-action menu.
         nativeReflectApply(nativeObjectDefineProperty, items, [
@@ -210,8 +224,8 @@ export function initContextMenu() {
       if (imgSrc) {
         addItem([
           IMAGE_CONTEXT_MENU_LABELS[0],
-          () =>
-            copyImageSrc(imgSrc)
+          (action) =>
+            copyImageSrc(imgSrc, action)
               .then(() => toast("Image copied"))
               .catch(() => toast("Copy failed")),
         ]);
@@ -225,10 +239,13 @@ export function initContextMenu() {
         if (isMac) {
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[2],
-            () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed")),
+            (action) =>
+              action
+                ? shareSrc(imgSrc, "image", fx, fy, action).catch(() => toast("Share failed"))
+                : undefined,
           ]);
         }
-        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
         addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
       } else if (vidSrc) {
         addItem([
@@ -241,12 +258,19 @@ export function initContextMenu() {
         if (isMac) {
           addItem([
             VIDEO_CONTEXT_MENU_LABELS[1],
-            () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed")),
+            (action) =>
+              action
+                ? shareSrc(vidSrc, "video", fx, fy, action).catch(() => toast("Share failed"))
+                : undefined,
           ]);
         }
-        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc)]);
+        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref)]);
+        addItem([
+          LINK_CONTEXT_MENU_LABELS[0],
+          () => copyAddress(linkHref),
+          cleanSharedUrl(linkHref),
+        ]);
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       if (!items.length) return; // fall through to the native menu (text etc.)

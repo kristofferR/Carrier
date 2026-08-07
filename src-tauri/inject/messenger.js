@@ -758,6 +758,7 @@
 
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
+  var MAX_CLIPBOARD_IMAGE = 32 * 1024 * 1024;
   var IMAGE_CONTEXT_MENU_LABELS = [
     "Copy image",
     "Download image",
@@ -809,7 +810,7 @@
       const removeListener = () => nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
       const run = () => {
         removeAllListeners();
-        item[1]();
+        item[1](action);
       };
       nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
       nativeReflectApply(nativeArrayPush, removeListeners, [removeListener]);
@@ -817,7 +818,7 @@
       nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
         String(nativeItems.length),
         {
-          value: { label: item[0], action },
+          value: item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
           writable: true,
           enumerable: true,
           configurable: true
@@ -826,9 +827,9 @@
     }
     carrierShowContextMenu(nativeItems)?.catch(() => toast("Menu failed"));
   }
-  async function shareSrc(src, fallbackName, fx, fy) {
+  async function shareSrc(src, fallbackName, fx, fy, action) {
     const href = await downloadSrc(src, fallbackName);
-    await carrierShareDownload(href, fx, fy);
+    await carrierShareDownload(href, fx, fy, action);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
@@ -859,13 +860,26 @@
       URL.revokeObjectURL(href);
     }
   }
-  async function copyImageSrc(src) {
+  async function copyImageSrc(src, action) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    if (oversizeByHeader(res)) throw new Error("image too large");
+    const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
+    if (Number(res.headers.get("content-length")) > maxSize) {
+      throw new Error("image too large");
+    }
     const blob = await res.blob();
-    if (blob.size > MAX_BLOB) throw new Error("image too large");
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+    if (blob.size > maxSize) throw new Error("image too large");
+    if (!action) {
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      return;
+    }
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
+      reader.addEventListener("error", () => reject(reader.error), { once: true });
+      reader.readAsDataURL(blob);
+    });
+    await carrierCopyImage(dataUrl, action);
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
@@ -911,7 +925,7 @@
         if (imgSrc) {
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[0],
-            () => copyImageSrc(imgSrc).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
+            (action) => copyImageSrc(imgSrc, action).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
           ]);
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[1],
@@ -920,10 +934,10 @@
           if (isMac2) {
             addItem([
               IMAGE_CONTEXT_MENU_LABELS[2],
-              () => shareSrc(imgSrc, "image", fx, fy).catch(() => toast("Share failed"))
+              (action) => action ? shareSrc(imgSrc, "image", fx, fy, action).catch(() => toast("Share failed")) : void 0
             ]);
           }
-          addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc)]);
+          addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
           addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
         } else if (vidSrc) {
           addItem([
@@ -933,12 +947,16 @@
           if (isMac2) {
             addItem([
               VIDEO_CONTEXT_MENU_LABELS[1],
-              () => shareSrc(vidSrc, "video", fx, fy).catch(() => toast("Share failed"))
+              (action) => action ? shareSrc(vidSrc, "video", fx, fy, action).catch(() => toast("Share failed")) : void 0
             ]);
           }
-          addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc)]);
+          addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
         } else if (linkHref && !linkHref.startsWith("javascript:")) {
-          addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref)]);
+          addItem([
+            LINK_CONTEXT_MENU_LABELS[0],
+            () => copyAddress(linkHref),
+            cleanSharedUrl(linkHref)
+          ]);
           addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
         }
         if (!items.length) return;

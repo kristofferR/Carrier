@@ -206,6 +206,15 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     #[cfg(target_os = "macos")]
     if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
+        let key = (label.to_string(), action.to_string());
+        let state = app.state::<AppState>();
+        if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
+            crate::macos::clipboard::copy_text(app, label, value);
+            return;
+        }
+        if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
+            *selected = true;
+        }
         if let Some(window) = app.get_webview_window(label) {
             let event_name = format!("carrier:context-action:{action}");
             if let Ok(event_name) = serde_json::to_string(&event_name) {
@@ -318,6 +327,7 @@ const LINK_CONTEXT_MENU_LABELS: &[&str] = &["Copy link address", "Open link in b
 pub(crate) struct NativeContextMenuItem {
     pub(crate) label: String,
     pub(crate) action: String,
+    pub(crate) value: Option<String>,
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -326,11 +336,31 @@ fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
         || labels == VIDEO_CONTEXT_MENU_LABELS
         || labels == LINK_CONTEXT_MENU_LABELS;
+    let values_valid = match labels.as_slice() {
+        IMAGE_CONTEXT_MENU_LABELS => items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.value.is_some() == (index == 3)),
+        VIDEO_CONTEXT_MENU_LABELS => items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.value.is_some() == (index == 2)),
+        LINK_CONTEXT_MENU_LABELS => items
+            .iter()
+            .enumerate()
+            .all(|(index, item)| item.value.is_some() == (index == 0)),
+        _ => false,
+    };
     let mut actions = std::collections::HashSet::new();
     labels_valid
+        && values_valid
         && items.iter().all(|item| {
             item.action.len() == 32
                 && item.action.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && item
+                    .value
+                    .as_ref()
+                    .is_none_or(|value| value.len() <= 64 * 1024)
                 && actions.insert(item.action.as_str())
         })
 }
@@ -356,9 +386,9 @@ pub(crate) fn show_native_context_menu(
             return;
         }
     };
-    for item in items {
+    for item in &items {
         let id = format!("carrier-context:{label}:{}", item.action);
-        let menu_item = match MenuItemBuilder::new(item.label).id(id).build(app) {
+        let menu_item = match MenuItemBuilder::new(&item.label).id(id).build(app) {
             Ok(menu_item) => menu_item,
             Err(error) => {
                 log::warn!(
@@ -374,6 +404,21 @@ pub(crate) fn show_native_context_menu(
                 item.action
             );
             return;
+        }
+    }
+    {
+        let state = app.state::<AppState>();
+        let mut copies = state.context_menu_copy_values.lock().unwrap();
+        copies.retain(|(window, _), _| window != label);
+        let mut activations = state.context_menu_activations.lock().unwrap();
+        activations.retain(|(window, _), selected| window != label || *selected);
+        for item in &items {
+            let key = (label.to_string(), item.action.clone());
+            if let Some(value) = &item.value {
+                copies.insert(key, value.clone());
+            } else if item.label == "Copy image" || item.label == "Share…" {
+                activations.insert(key, false);
+            }
         }
     }
     if let Err(error) = window.popup_menu(&menu) {
@@ -594,6 +639,7 @@ mod tests {
         NativeContextMenuItem {
             label: label.into(),
             action: action.to_string().repeat(32),
+            value: None,
         }
     }
 
@@ -683,23 +729,25 @@ mod tests {
 
     #[test]
     fn native_context_menu_accepts_only_known_shapes_and_unique_tokens() {
-        let image = vec![
+        let mut image = vec![
             context_item("Copy image", '1'),
             context_item("Download image", '2'),
             context_item("Share…", '3'),
             context_item("Copy image address", '4'),
             context_item("Open image in browser", '5'),
         ];
+        image[3].value = Some("https://example.com/image.png".into());
         assert!(valid_context_menu_items(&image));
 
         let mut spoofed = image;
         spoofed[2].label = "Allow microphone".into();
         assert!(!valid_context_menu_items(&spoofed));
 
-        let duplicate = vec![
+        let mut duplicate = vec![
             context_item("Copy link address", 'a'),
             context_item("Open link in browser", 'a'),
         ];
+        duplicate[0].value = Some("https://example.com".into());
         assert!(!valid_context_menu_items(&duplicate));
     }
 

@@ -213,9 +213,20 @@ pub(crate) struct AppState {
     /// In memory only — never persisted (see `carrier:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,
     /// Per-window secrets that authenticate reveal-download requests from
-    /// Carrier's injected click handler. Remote page scripts can emit events,
-    /// but cannot read these closure-scoped tokens.
+    /// Carrier's injected click handler. They are imported as non-extractable
+    /// HMAC keys in the page and are never included in an IPC payload.
     pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
+    /// Recently consumed signed-action nonces. A bounded replay cache keeps a
+    /// page-observed signed envelope from being reused after its native action.
+    pub(crate) signed_action_nonces: Mutex<std::collections::VecDeque<String>>,
+    /// Native context actions become usable only after AppKit reports that the
+    /// corresponding menu row was selected.
+    #[cfg(target_os = "macos")]
+    pub(crate) context_menu_activations: Mutex<HashMap<(String, String), bool>>,
+    /// Text captured at the genuine right-click and written by AppKit when its
+    /// native Copy address row is selected.
+    #[cfg(target_os = "macos")]
+    pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";

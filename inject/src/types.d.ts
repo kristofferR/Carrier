@@ -57,8 +57,8 @@ interface CarrierToastAction {
 }
 
 /**
- * Closure-scoped bridge supplied by the Rust initialization wrapper. It holds
- * the native reveal authorization and is deliberately not a Window property.
+ * Closure-scoped bridge supplied by the Rust initialization wrapper. It signs
+ * the request without serializing its non-extractable native authorization.
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
@@ -70,11 +70,15 @@ declare const carrierShareDownload: (
   url: string,
   x: number,
   y: number,
+  action: string,
 ) => Promise<unknown> | undefined;
+
+/** Write an image through the native pasteboard after its menu row is selected. */
+declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;
 
 /** Show Carrier's media actions in a native context menu. */
 declare const carrierShowContextMenu: (
-  items: { label: string; action: string }[],
+  items: { label: string; action: string; value?: string }[],
 ) => Promise<unknown> | undefined;
 
 interface Window {

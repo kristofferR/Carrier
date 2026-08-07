@@ -6,11 +6,14 @@
 //! native notifications, theme sync, and tracking-redirect-free external links.
 //! Anything that isn't Messenger is handed to the user's default browser.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use hmac::{Hmac, Mac};
+use serde::Deserialize;
+use sha2::Sha256;
 use tauri::{Listener, Manager};
 use tauri_plugin_opener::OpenerExt;
 mod cli;
@@ -96,19 +99,65 @@ pub(crate) fn refresh_unread_indicators(
     tray_badge::update_unity_launcher_count(unread);
 }
 
-fn valid_download_reveal_token(tokens: &HashMap<String, String>, candidate: &str) -> bool {
-    download_token_window(tokens, candidate).is_some()
+const SIGNED_ACTION_NONCE_CAP: usize = 256;
+
+#[derive(Deserialize)]
+struct SignedAction {
+    message: String,
+    nonce: String,
+    signature: String,
 }
 
-/// The label of the window whose per-window download credential matches, if any.
-fn download_token_window(tokens: &HashMap<String, String>, candidate: &str) -> Option<String> {
-    if candidate.is_empty() {
+fn authorize_signed_action(
+    tokens: &HashMap<String, String>,
+    used_nonces: &mut VecDeque<String>,
+    event: &str,
+    signed: &SignedAction,
+) -> Option<String> {
+    if signed.message.len() > 48 * 1024 * 1024
+        || signed.nonce.len() != 32
+        || !signed.nonce.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || signed.signature.len() != 64
+        || used_nonces.contains(&signed.nonce)
+    {
         return None;
     }
-    tokens
-        .iter()
-        .find(|(_, token)| token.as_str() == candidate)
-        .map(|(label, _)| label.clone())
+    let signature = hex::decode(&signed.signature).ok()?;
+    let authenticated = format!("{event}\n{}\n{}", signed.nonce, signed.message);
+    let label = tokens.iter().find_map(|(label, token)| {
+        let mut mac = Hmac::<Sha256>::new_from_slice(token.as_bytes()).ok()?;
+        mac.update(authenticated.as_bytes());
+        mac.verify_slice(&signature).ok().map(|()| label.clone())
+    })?;
+    used_nonces.push_back(signed.nonce.clone());
+    if used_nonces.len() > SIGNED_ACTION_NONCE_CAP {
+        used_nonces.pop_front();
+    }
+    Some(label)
+}
+
+fn signed_action_window(
+    app: &tauri::AppHandle,
+    event: &str,
+    signed: &SignedAction,
+) -> Option<String> {
+    let state = app.state::<AppState>();
+    let tokens = state.download_reveal_tokens.lock().unwrap();
+    let mut nonces = state.signed_action_nonces.lock().unwrap();
+    authorize_signed_action(&tokens, &mut nonces, event, signed)
+}
+
+#[cfg(target_os = "macos")]
+fn consume_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -> bool {
+    let state = app.state::<AppState>();
+    let key = (label.to_string(), action.to_string());
+    let mut activations = state.context_menu_activations.lock().unwrap();
+    if activations.get(&key) == Some(&true) {
+        activations.remove(&key);
+        true
+    } else {
+        false
+    }
 }
 
 /// The page we wrap.
@@ -333,6 +382,11 @@ pub fn run() {
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
             download_reveal_tokens: Mutex::new(HashMap::new()),
+            signed_action_nonces: Mutex::new(VecDeque::new()),
+            #[cfg(target_os = "macos")]
+            context_menu_activations: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            context_menu_copy_values: Mutex::new(HashMap::new()),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -411,32 +465,32 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
             });
 
-            // The injected toast handler echoes the download URL together with
-            // its closure-scoped per-window secret. Remote page scripts can emit
-            // this event too, so require that authorization before resolving the
-            // URL through the trusted map populated by `on_download`; a page-
-            // supplied filesystem path is never accepted.
+            // The injected toast handler signs the download URL with its
+            // non-extractable per-window key. Remote page scripts can emit this
+            // event too, so verify the signature before resolving the URL through
+            // the trusted map populated by `on_download`; a page-supplied
+            // filesystem path is never accepted.
             let reveal_handle = app.handle().clone();
             app.listen_any("carrier:reveal-download", move |event| {
                 #[derive(serde::Deserialize)]
                 struct RevealDownloadMsg {
                     url: String,
-                    authorization: String,
                 }
 
-                let Ok(msg) = serde_json::from_str::<RevealDownloadMsg>(event.payload()) else {
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                     log::warn!("carrier:reveal-download payload did not parse");
                     return;
                 };
-                let authorized = {
-                    let state = reveal_handle.state::<AppState>();
-                    let tokens = state.download_reveal_tokens.lock().unwrap();
-                    valid_download_reveal_token(&tokens, &msg.authorization)
-                };
-                if !authorized {
+                if signed_action_window(&reveal_handle, "carrier:reveal-download", &signed)
+                    .is_none()
+                {
                     log::warn!("carrier:reveal-download was not authorized by a trusted click");
                     return;
                 }
+                let Ok(msg) = serde_json::from_str::<RevealDownloadMsg>(&signed.message) else {
+                    log::warn!("carrier:reveal-download message did not parse");
+                    return;
+                };
                 let Some(path) = lookup_download(&msg.url) else {
                     log::warn!("carrier:reveal-download had no recent matching download");
                     return;
@@ -454,26 +508,23 @@ pub fn run() {
                 // Show a native context menu only for an authorized Messenger window.
                 let context_menu_handle = app.handle().clone();
                 app.listen_any("carrier:context-menu", move |event| {
-                    #[derive(serde::Deserialize)]
-                    struct ContextMenuMsg {
-                        authorization: String,
-                        items: Vec<menu::NativeContextMenuItem>,
-                    }
-
-                    let Ok(msg) = serde_json::from_str::<ContextMenuMsg>(event.payload()) else {
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                         log::warn!("carrier:context-menu payload did not parse");
                         return;
                     };
-                    let label = {
-                        let state = context_menu_handle.state::<AppState>();
-                        let tokens = state.download_reveal_tokens.lock().unwrap();
-                        download_token_window(&tokens, &msg.authorization)
-                    };
-                    let Some(label) = label else {
+                    let Some(label) =
+                        signed_action_window(&context_menu_handle, "carrier:context-menu", &signed)
+                    else {
                         log::warn!("carrier:context-menu was not authorized by a trusted click");
                         return;
                     };
-                    menu::show_native_context_menu(&context_menu_handle, &label, msg.items);
+                    let Ok(items) =
+                        serde_json::from_str::<Vec<menu::NativeContextMenuItem>>(&signed.message)
+                    else {
+                        log::warn!("carrier:context-menu message did not parse");
+                        return;
+                    };
+                    menu::show_native_context_menu(&context_menu_handle, &label, items);
                 });
 
                 // Share a just-downloaded media file via the macOS share sheet.
@@ -485,29 +536,85 @@ pub fn run() {
                     #[derive(serde::Deserialize)]
                     struct ShareDownloadMsg {
                         url: String,
-                        authorization: String,
                         x: f64,
                         y: f64,
+                        action: String,
                     }
 
-                    let Ok(msg) = serde_json::from_str::<ShareDownloadMsg>(event.payload()) else {
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                         log::warn!("carrier:share-download payload did not parse");
                         return;
                     };
-                    let label = {
-                        let state = share_handle.state::<AppState>();
-                        let tokens = state.download_reveal_tokens.lock().unwrap();
-                        download_token_window(&tokens, &msg.authorization)
-                    };
-                    let Some(label) = label else {
+                    let Some(label) =
+                        signed_action_window(&share_handle, "carrier:share-download", &signed)
+                    else {
                         log::warn!("carrier:share-download was not authorized by a trusted click");
                         return;
                     };
+                    let Ok(msg) = serde_json::from_str::<ShareDownloadMsg>(&signed.message) else {
+                        log::warn!("carrier:share-download message did not parse");
+                        return;
+                    };
+                    if !consume_context_activation(&share_handle, &label, &msg.action) {
+                        log::warn!("carrier:share-download had no selected native menu action");
+                        return;
+                    }
                     let Some(path) = lookup_download(&msg.url) else {
                         log::warn!("carrier:share-download had no recent matching download");
                         return;
                     };
                     macos::share::show_share_picker(&share_handle, &label, path, msg.x, msg.y);
+                });
+
+                let copy_handle = app.handle().clone();
+                app.listen_any("carrier:copy-image", move |event| {
+                    use base64::Engine;
+
+                    #[derive(serde::Deserialize)]
+                    struct CopyImageMsg {
+                        data_url: String,
+                        action: String,
+                    }
+
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                        log::warn!("carrier:copy-image payload did not parse");
+                        return;
+                    };
+                    let Some(label) =
+                        signed_action_window(&copy_handle, "carrier:copy-image", &signed)
+                    else {
+                        log::warn!("carrier:copy-image was not authorized by trusted code");
+                        return;
+                    };
+                    let Ok(msg) = serde_json::from_str::<CopyImageMsg>(&signed.message) else {
+                        log::warn!("carrier:copy-image message did not parse");
+                        return;
+                    };
+                    if !consume_context_activation(&copy_handle, &label, &msg.action) {
+                        log::warn!("carrier:copy-image had no selected native menu action");
+                        return;
+                    }
+                    let Some((header, encoded)) = msg.data_url.split_once(',') else {
+                        log::warn!("carrier:copy-image data URL did not parse");
+                        return;
+                    };
+                    if !header.starts_with("data:image/")
+                        || !header.ends_with(";base64")
+                        || encoded.len() > 44 * 1024 * 1024
+                    {
+                        log::warn!("carrier:copy-image data URL was invalid or too large");
+                        return;
+                    }
+                    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)
+                    else {
+                        log::warn!("carrier:copy-image base64 did not decode");
+                        return;
+                    };
+                    if bytes.len() > 32 * 1024 * 1024 {
+                        log::warn!("carrier:copy-image exceeded the clipboard size cap");
+                        return;
+                    }
+                    macos::clipboard::copy_image(&copy_handle, &label, bytes);
                 });
             }
 
@@ -794,30 +901,48 @@ mod tests {
     }
 
     #[test]
-    fn download_reveal_tokens_must_match_a_registered_window() {
+    fn signed_actions_resolve_to_their_window_and_cannot_be_replayed() {
         let tokens = HashMap::from([
             ("main".to_string(), "main-secret".to_string()),
             ("win-2".to_string(), "second-secret".to_string()),
         ]);
-
-        assert!(valid_download_reveal_token(&tokens, "main-secret"));
-        assert!(valid_download_reveal_token(&tokens, "second-secret"));
-        assert!(!valid_download_reveal_token(&tokens, ""));
-        assert!(!valid_download_reveal_token(&tokens, "page-supplied"));
+        let event = "carrier:share-download";
+        let message = r#"{"url":"blob:test","action":"abc"}"#;
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"second-secret").unwrap();
+        mac.update(format!("{event}\n{nonce}\n{message}").as_bytes());
+        let signed = SignedAction {
+            message: message.into(),
+            nonce: nonce.into(),
+            signature: hex::encode(mac.finalize().into_bytes()),
+        };
+        let mut used = VecDeque::new();
+        assert_eq!(
+            authorize_signed_action(&tokens, &mut used, event, &signed).as_deref(),
+            Some("win-2")
+        );
+        assert_eq!(
+            authorize_signed_action(&tokens, &mut used, event, &signed),
+            None
+        );
     }
 
     #[test]
-    fn download_token_resolves_to_its_own_window() {
-        let tokens = HashMap::from([
-            ("main".to_string(), "main-secret".to_string()),
-            ("win-2".to_string(), "second-secret".to_string()),
-        ]);
-
+    fn signed_actions_reject_tampered_messages() {
+        let tokens = HashMap::from([("main".to_string(), "main-secret".to_string())]);
+        let signed = SignedAction {
+            message: "tampered".into(),
+            nonce: "0123456789abcdef0123456789abcdef".into(),
+            signature: "00".repeat(32),
+        };
         assert_eq!(
-            download_token_window(&tokens, "second-secret").as_deref(),
-            Some("win-2")
+            authorize_signed_action(
+                &tokens,
+                &mut VecDeque::new(),
+                "carrier:context-menu",
+                &signed
+            ),
+            None
         );
-        assert_eq!(download_token_window(&tokens, ""), None);
-        assert_eq!(download_token_window(&tokens, "page-supplied"), None);
     }
 }
