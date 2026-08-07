@@ -454,6 +454,11 @@ pub(crate) fn show_native_context_menu(
     #[cfg(target_os = "macos")]
     {
         let state = app.state::<AppState>();
+        state
+            .download_reservations
+            .lock()
+            .unwrap()
+            .retain(|(window, _), _| window != label);
         let mut activations = state.context_menu_activations.lock().unwrap();
         let now = Instant::now();
         activations.retain(|(window, _), activation| {

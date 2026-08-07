@@ -333,34 +333,39 @@ fn claim_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn bind_claimed_download(app: &tauri::AppHandle, label: &str, download_id: &str) {
+fn prepare_context_download(app: &tauri::AppHandle, label: &str, action: &str, url: &str) -> bool {
     let state = app.state::<AppState>();
     let mut activations = state.context_menu_activations.lock().unwrap();
-    let Some((_, activation)) = activations
-        .iter_mut()
-        .filter(|((window, _), activation)| {
-            window == label
-                && matches!(
-                    activation,
-                    ContextMenuActivation::Claimed {
-                        download_id: None,
-                        ..
-                    }
-                )
-        })
-        .max_by_key(|(_, activation)| match activation {
-            ContextMenuActivation::Claimed { claimed_at, .. } => *claimed_at,
-            _ => unreachable!(),
-        })
-    else {
-        return;
-    };
-    if let ContextMenuActivation::Claimed {
+    let Some(ContextMenuActivation::Claimed {
         download_id: bound, ..
-    } = activation
-    {
-        *bound = Some(download_id.to_string());
+    }) = activations.get_mut(&(label.to_string(), action.to_string()))
+    else {
+        return false;
+    };
+    if bound.is_some() || url.len() > 4096 {
+        return false;
     }
+    *bound = Some(action.to_string());
+    drop(activations);
+    state
+        .download_reservations
+        .lock()
+        .unwrap()
+        .insert((label.to_string(), url.to_string()), action.to_string());
+    true
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn take_download_reservation(
+    app: &tauri::AppHandle,
+    label: &str,
+    url: &str,
+) -> Option<String> {
+    app.state::<AppState>()
+        .download_reservations
+        .lock()
+        .unwrap()
+        .remove(&(label.to_string(), url.to_string()))
 }
 
 #[cfg(target_os = "macos")]
@@ -624,6 +629,8 @@ pub fn run() {
             signed_action_nonces: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             context_menu_activations: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "macos")]
+            download_reservations: Mutex::new(HashMap::new()),
             context_menu_copy_values: Mutex::new(HashMap::new()),
         })
         .menu(menu::build_menu)
@@ -802,6 +809,34 @@ pub fn run() {
                     };
                     if !claim_context_activation(&claim_handle, &label, &msg.action) {
                         log::warn!("carrier:claim-context-action had no fresh menu selection");
+                    }
+                });
+
+                let prepare_handle = app.handle().clone();
+                app.listen_any("carrier:prepare-download", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct PrepareDownloadMsg {
+                        action: String,
+                        url: String,
+                    }
+
+                    let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                        log::warn!("carrier:prepare-download payload did not parse");
+                        return;
+                    };
+                    let Some(label) =
+                        signed_action_window(&prepare_handle, "carrier:prepare-download", &signed)
+                    else {
+                        log::warn!("carrier:prepare-download was not authorized");
+                        return;
+                    };
+                    let Ok(msg) = serde_json::from_str::<PrepareDownloadMsg>(&signed.message)
+                    else {
+                        log::warn!("carrier:prepare-download message did not parse");
+                        return;
+                    };
+                    if !prepare_context_download(&prepare_handle, &label, &msg.action, &msg.url) {
+                        log::warn!("carrier:prepare-download had no unbound share action");
                     }
                 });
 

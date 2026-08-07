@@ -181,7 +181,7 @@ function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
 // file), then ask the native side to share it, anchored at the click point.
 async function shareSrc(src: string, fallbackName: string, fx: number, fy: number, action: string) {
   await carrierClaimContextAction(action);
-  const { id } = await downloadSrc(src, fallbackName);
+  const { id } = await downloadSrc(src, fallbackName, action);
   await carrierShareDownload(id, fx, fy, action);
 }
 
@@ -201,6 +201,7 @@ const copyAddress = (text: string) =>
 export async function downloadSrc(
   src: string,
   fallbackName: string,
+  action?: string,
 ): Promise<{ id: string; url: string }> {
   // Fetch into a same-origin blob so the `download` attribute is honoured (it's
   // ignored for cross-origin URLs) and so we can derive the real extension.
@@ -224,6 +225,7 @@ export async function downloadSrc(
   a.style.display = "none";
   document.body.appendChild(a);
   try {
+    if (action) await carrierPrepareDownload(action, href);
     const completion = waitForNativeDownload(window, href, carrierVerifyResult);
     a.click();
     return await completion;
