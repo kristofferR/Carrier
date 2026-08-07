@@ -2,21 +2,25 @@
 
 use objc2::runtime::AnyObject;
 use objc2_foundation::NSString;
-use tauri::Manager;
 
 fn with_pasteboard<T: Send + 'static>(
     app: &tauri::AppHandle,
-    label: &str,
     write: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
-    let Some(window) = app.get_webview_window(label) else {
-        return None;
-    };
-    window.with_webview(move |_| write()).ok()
+    if objc2::MainThreadMarker::new().is_some() {
+        return Some(write());
+    }
+
+    let (sent, received) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sent.send(write());
+    })
+    .ok()?;
+    received.recv().ok()
 }
 
-pub(crate) fn copy_text(app: &tauri::AppHandle, label: &str, text: String) {
-    let _ = with_pasteboard(app, label, move || unsafe {
+pub(crate) fn copy_text(app: &tauri::AppHandle, text: String) {
+    let _ = with_pasteboard(app, move || unsafe {
         use objc2::{class, msg_send};
 
         let pasteboard: *mut AnyObject = msg_send![class!(NSPasteboard), generalPasteboard];
@@ -30,8 +34,13 @@ pub(crate) fn copy_text(app: &tauri::AppHandle, label: &str, text: String) {
     });
 }
 
-pub(crate) fn copy_image(app: &tauri::AppHandle, label: &str, bytes: Vec<u8>) -> bool {
-    with_pasteboard(app, label, move || unsafe {
+pub(crate) fn copy_image(app: &tauri::AppHandle, bytes: Vec<u8>) -> bool {
+    // SAFETY: `with_pasteboard` runs this on the main thread as AppKit requires.
+    // NSData copies `bytes`. `alloc`/`initWithData:` gives us a +1 image retain;
+    // `arrayWithObject:` retains it independently, so `release` balances our +1.
+    // When `initWithData:` returns nil, it has consumed the allocated receiver,
+    // so the early return has no caller-owned retain to release.
+    with_pasteboard(app, move || unsafe {
         use objc2::{class, msg_send};
 
         let data: *mut AnyObject =

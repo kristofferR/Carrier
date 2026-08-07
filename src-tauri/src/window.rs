@@ -690,14 +690,15 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       var nonceBytes = new NativeUint8Array(16);
       nativeGetRandomValues(nonceBytes);
       var nonce = hex(nonceBytes);
+      var timestamp = Date.now();
       var message = nativeStringify(inertClone(value));
-      var authenticated = event + '\n' + nonce + '\n' + message;
+      var authenticated = event + '\n' + timestamp + '\n' + nonce + '\n' + message;
       var signature = hex(new NativeUint8Array(
         await nativeSign('HMAC', await key, nativeEncode(authenticated))
       ));
       return invoke('plugin:event|emit', {{
         event: event,
-        payload: {{ message: message, nonce: nonce, signature: signature }}
+        payload: {{ message: message, nonce: nonce, timestamp: timestamp, signature: signature }}
       }});
     }};
   }})(
@@ -991,8 +992,11 @@ mod tests {
         assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
         assert!(script.contains("false, ['sign']"));
         assert!(
-            script.contains("payload: { message: message, nonce: nonce, signature: signature }")
+            script.contains(
+                "payload: { message: message, nonce: nonce, timestamp: timestamp, signature: signature }"
+            )
         );
+        assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
         assert!(!script.contains("authorization: authorization"));
         assert!(script.contains("EventTarget.prototype.dispatchEvent"));
         assert!(script.contains("new NativeEvent(eventName)"));
