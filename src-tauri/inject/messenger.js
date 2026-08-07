@@ -1013,7 +1013,7 @@
     ctxMenuReturnFocus = null;
   };
   function initContextMenu() {
-    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle)
+    if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle || !nativeSetTextContent || !nativeSetTabIndex)
       return;
     nativeReflectApply2(nativeAddEventListener, window, [
       "carrier:context-action",
@@ -1139,10 +1139,8 @@
           const label = item[0];
           const fn = item[1];
           const el = nativeReflectApply2(nativeCreateElement, document, ["div"]);
-          if (!nativeSetTextContent) return;
           nativeReflectApply2(nativeSetTextContent, el, [label]);
           nativeReflectApply2(nativeSetAttribute, el, ["role", "menuitem"]);
-          if (!nativeSetTabIndex) return;
           nativeReflectApply2(nativeSetTabIndex, el, [-1]);
           const elStyle = nativeReflectApply2(nativeGetStyle, el, []);
           applyStyles(elStyle, {

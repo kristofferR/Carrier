@@ -528,6 +528,19 @@ mod tests {
         assert_eq!(downloads.lookup_at("blob:carrier/pending", now), Some(path));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn download_ids_resolve_only_for_completed_entries() {
+        let now = Instant::now();
+        let mut downloads = RecentDownloads::default();
+        let path = PathBuf::from("shared.png");
+        downloads.remember_at("blob:carrier/shared", "shared-id".into(), path.clone(), now);
+        assert_eq!(downloads.lookup_id_at("shared-id", now), None);
+        downloads.complete_at("blob:carrier/shared", now);
+        assert_eq!(downloads.lookup_id_at("shared-id", now), Some(path));
+        assert_eq!(downloads.lookup_id_at("unknown-id", now), None);
+    }
+
     #[test]
     fn recent_downloads_expire_from_completion_time() {
         let started = Instant::now();
