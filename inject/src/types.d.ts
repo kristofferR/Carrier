@@ -65,6 +65,9 @@ declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefin
 /** Claim a selected native context action before starting its asynchronous work. */
 declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
 
+/** Reserve the exact blob URL produced by a claimed native share action. */
+declare const carrierPrepareDownload: (action: string, url: string) => Promise<unknown>;
+
 /**
  * Same closure-scoped credential, second action: open the macOS share sheet
  * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).

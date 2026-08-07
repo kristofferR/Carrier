@@ -924,12 +924,12 @@
   }
   async function shareSrc(src, fallbackName, fx, fy, action) {
     await carrierClaimContextAction(action);
-    const { id } = await downloadSrc(src, fallbackName);
+    const { id } = await downloadSrc(src, fallbackName, action);
     await carrierShareDownload(id, fx, fy, action);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
-  async function downloadSrc(src, fallbackName) {
+  async function downloadSrc(src, fallbackName, action) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
     if (oversizeByHeader(res)) throw new Error("file too large");
@@ -948,6 +948,7 @@
     a.style.display = "none";
     document.body.appendChild(a);
     try {
+      if (action) await carrierPrepareDownload(action, href);
       const completion = waitForNativeDownload(window, href, carrierVerifyResult);
       a.click();
       return await completion;

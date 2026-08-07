@@ -144,6 +144,16 @@ pub(crate) fn build_app_window(
         })
         .on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
+                #[cfg(target_os = "macos")]
+                let reserved_download_id = crate::take_download_reservation(
+                    &download_handle,
+                    &download_label,
+                    url.as_str(),
+                );
+                #[cfg(target_os = "macos")]
+                let download_id = reserved_download_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+                #[cfg(not(target_os = "macos"))]
                 let download_id = uuid::Uuid::new_v4().simple().to_string();
                 // Only accept downloads of Messenger's own media or page-generated
                 // blob:/data: content; refuse anything else a remote page might try
@@ -180,8 +190,6 @@ pub(crate) fn build_app_window(
                 }
                 *destination = unique_path(dir.join(name));
                 remember_download(&url, download_id.clone(), destination.clone());
-                #[cfg(target_os = "macos")]
-                crate::bind_claimed_download(&download_handle, &download_label, &download_id);
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
@@ -802,6 +810,12 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     }}
     return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
   }};
+  var carrierPrepareDownload = function (action, url) {{
+    if (!carrierAuthorizedEmit) {{
+      return Promise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
+  }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return Promise.reject(new Error('native bridge unavailable'));
@@ -1172,6 +1186,8 @@ mod tests {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("carrier:claim-context-action"));
+        assert!(script.contains("carrier:prepare-download"));
+        assert!(script.contains("download_id: downloadId"));
         assert!(script.contains("carrier:share-download-result"));
         assert!(script.contains("action: action, request: request"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));

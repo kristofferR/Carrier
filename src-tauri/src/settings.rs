@@ -225,6 +225,10 @@ pub(crate) struct AppState {
     /// corresponding menu row was selected.
     #[cfg(target_os = "macos")]
     pub(crate) context_menu_activations: Mutex<HashMap<(String, String), ContextMenuActivation>>,
+    /// Download reservations bind a claimed share action to its exact blob URL
+    /// before the WebView starts the download.
+    #[cfg(target_os = "macos")]
+    pub(crate) download_reservations: Mutex<HashMap<(String, String), String>>,
     /// Text captured at the genuine right-click and written to the system
     /// clipboard when its native Copy address row is selected.
     pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
