@@ -224,11 +224,18 @@ pub(crate) struct AppState {
     /// Native context actions become usable only after AppKit reports that the
     /// corresponding menu row was selected.
     #[cfg(target_os = "macos")]
-    pub(crate) context_menu_activations: Mutex<HashMap<(String, String), Option<Instant>>>,
-    /// Text captured at the genuine right-click and written by AppKit when its
-    /// native Copy address row is selected.
-    #[cfg(target_os = "macos")]
+    pub(crate) context_menu_activations: Mutex<HashMap<(String, String), ContextMenuActivation>>,
+    /// Text captured at the genuine right-click and written to the system
+    /// clipboard when its native Copy address row is selected.
     pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy)]
+pub(crate) enum ContextMenuActivation {
+    Pending,
+    Selected(Instant),
+    Claimed,
 }
 
 const APP_IDENTIFIER: &str = "io.github.kristofferr.carrier";

@@ -9,11 +9,14 @@ use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
 };
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::cli::NEW_CONVERSATION_JS;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
+#[cfg(target_os = "macos")]
+use crate::settings::ContextMenuActivation;
 use crate::settings::{
     apply_settings, save_settings, schedule_webview_data_clear, AppState, SaveOutcome, Settings,
 };
@@ -208,16 +211,16 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
         let state = app.state::<AppState>();
-        #[cfg(target_os = "macos")]
         let key = (label.to_string(), action.to_string());
-        #[cfg(target_os = "macos")]
         if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
-            crate::macos::clipboard::copy_text(app, value);
+            if let Err(error) = app.clipboard().write_text(value) {
+                log::warn!("failed to write context-menu address to the clipboard: {error}");
+            }
             return;
         }
         #[cfg(target_os = "macos")]
         if let Some(selected) = state.context_menu_activations.lock().unwrap().get_mut(&key) {
-            *selected = Some(Instant::now());
+            *selected = ContextMenuActivation::Selected(Instant::now());
         }
         let signature = state
             .download_reveal_tokens
@@ -402,20 +405,20 @@ pub(crate) fn show_native_context_menu(
     app: &tauri::AppHandle,
     label: &str,
     items: Vec<NativeContextMenuItem>,
-) {
+) -> bool {
     if !valid_context_menu_items(&items) {
         log::warn!("carrier:context-menu payload was invalid");
-        return;
+        return false;
     }
     let Some(window) = app.get_webview_window(label) else {
         log::warn!("carrier:context-menu target window {label:?} is gone");
-        return;
+        return false;
     };
     let menu = match Menu::new(app) {
         Ok(menu) => menu,
         Err(error) => {
             log::warn!("failed to create native media context menu: {error}");
-            return;
+            return false;
         }
     };
     for item in &items {
@@ -427,7 +430,7 @@ pub(crate) fn show_native_context_menu(
                     "failed to build native media context menu item for action {}: {error}",
                     item.action
                 );
-                return;
+                return false;
             }
         };
         if let Err(error) = menu.append(&menu_item) {
@@ -435,32 +438,55 @@ pub(crate) fn show_native_context_menu(
                 "failed to append native media context menu item for action {}: {error}",
                 item.action
             );
-            return;
+            return false;
+        }
+    }
+    {
+        let state = app.state::<AppState>();
+        let mut copies = state.context_menu_copy_values.lock().unwrap();
+        copies.retain(|(window, _), _| window != label);
+        for item in &items {
+            if let Some(value) = &item.value {
+                copies.insert((label.to_string(), item.action.clone()), value.clone());
+            }
         }
     }
     #[cfg(target_os = "macos")]
     {
         let state = app.state::<AppState>();
-        let mut copies = state.context_menu_copy_values.lock().unwrap();
-        copies.retain(|(window, _), _| window != label);
         let mut activations = state.context_menu_activations.lock().unwrap();
         let now = Instant::now();
-        activations.retain(|(window, _), selected_at| {
-            window != label || crate::context_menu_activation_is_current(*selected_at, now)
+        activations.retain(|(window, _), activation| {
+            window != label || crate::context_menu_activation_is_current(*activation, now)
         });
         for item in &items {
             let key = (label.to_string(), item.action.clone());
-            if let Some(value) = &item.value {
-                copies.insert(key, value.clone());
-            } else if item.label == IMAGE_CONTEXT_MENU_LABELS[0]
-                || item.label == IMAGE_CONTEXT_MENU_LABELS[2]
+            if item.value.is_none()
+                && (item.label == IMAGE_CONTEXT_MENU_LABELS[0]
+                    || item.label == IMAGE_CONTEXT_MENU_LABELS[2])
             {
-                activations.insert(key, None);
+                activations.insert(key, ContextMenuActivation::Pending);
             }
         }
     }
-    if let Err(error) = window.popup_menu(&menu) {
-        log::warn!("failed to show native media context menu: {error}");
+    match window.popup_menu(&menu) {
+        Ok(()) => true,
+        Err(error) => {
+            log::warn!("failed to show native media context menu: {error}");
+            let state = app.state::<AppState>();
+            state
+                .context_menu_copy_values
+                .lock()
+                .unwrap()
+                .retain(|(window, _), _| window != label);
+            #[cfg(target_os = "macos")]
+            state
+                .context_menu_activations
+                .lock()
+                .unwrap()
+                .retain(|(window, _), _| window != label);
+            false
+        }
     }
 }
 

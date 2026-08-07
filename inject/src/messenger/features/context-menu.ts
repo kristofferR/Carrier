@@ -136,7 +136,7 @@ async function runNativeAction(event: Event) {
   }
 }
 
-function showNativeContextMenu(items: ContextMenuItem[]) {
+function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
   const nativeItems: { label: string; action: string; value?: string }[] = [];
   // Replacing a menu makes any still-open native rows stale. Keep handlers
   // until native selection or replacement instead of expiring a live menu.
@@ -154,15 +154,17 @@ function showNativeContextMenu(items: ContextMenuItem[]) {
       item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
     );
   }
-  nativeShowContextMenu?.(nativeItems)?.catch(() => {
+  if (!nativeShowContextMenu) return Promise.reject(new Error("native context menu unavailable"));
+  return nativeShowContextMenu(nativeItems).catch((error: unknown) => {
     clearNativeActionHandlers();
-    toast("Menu failed");
+    throw error;
   });
 }
 
 // Save the media through the trusted download flow (the sheet needs a real
 // file), then ask the native side to share it, anchored at the click point.
 async function shareSrc(src: string, fallbackName: string, fx: number, fy: number, action: string) {
+  await carrierClaimContextAction(action);
   const href = await downloadSrc(src, fallbackName);
   await carrierShareDownload(href, fx, fy, action);
 }
@@ -213,6 +215,7 @@ export async function downloadSrc(src: string, fallbackName: string): Promise<st
 }
 
 async function copyImageSrc(src: string, action?: string) {
+  if (action) await carrierClaimContextAction(action);
   const res = await fetch(src);
   if (!res.ok) throw new Error(`fetch failed (${res.status})`);
   const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
@@ -289,7 +292,7 @@ export function initContextMenu() {
   ]);
   document.addEventListener(
     "contextmenu",
-    (e) => {
+    async (e) => {
       // Remote page code must not be able to create Carrier's native-action menu.
       if (!e.isTrusted) return;
       const t = e.target as Element;
@@ -380,9 +383,15 @@ export function initContextMenu() {
 
       e.preventDefault();
       if (nativeShowContextMenu) {
-        showNativeContextMenu(items);
-        return;
+        try {
+          await showNativeContextMenu(items);
+          return;
+        } catch {
+          // The authenticated native result says presentation failed. Continue
+          // into the hardened page-rendered menu so the click is not swallowed.
+        }
       }
+
       // Capture the restore target before closeMenu()/menu creation shifts
       // focus. The right-click target is usually a non-focusable image or span,
       // so climb to the nearest focusable ancestor and fall back to whatever

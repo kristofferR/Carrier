@@ -62,6 +62,9 @@ interface CarrierToastAction {
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
+/** Claim a selected native context action before starting its asynchronous work. */
+declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
+
 /**
  * Same closure-scoped credential, second action: open the macOS share sheet
  * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
@@ -79,7 +82,7 @@ declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unk
 /** Show Carrier's media actions in a native context menu. */
 declare const carrierShowContextMenu: (
   items: { label: string; action: string; value?: string }[],
-) => Promise<unknown> | undefined;
+) => Promise<void>;
 
 /** Verify the native context-menu selection without exposing the window secret. */
 declare const carrierVerifyResult:
