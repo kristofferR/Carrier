@@ -562,7 +562,7 @@
             respond("execute-js-response", cid, {
               result: null,
               type: "error",
-              error: String((e && e.stack) || e),
+              error: String((e && e.name) || "Error"),
             });
           });
           return;
@@ -572,7 +572,7 @@
             respond("execute-js-response", cid, {
               result: null,
               type: "error",
-              error: String((e && e.stack) || e),
+              error: String((e && e.name) || "Error"),
             });
           });
           return;
@@ -582,7 +582,7 @@
             respond("execute-js-response", cid, {
               result: null,
               type: "error",
-              error: String((e && e.stack) || e),
+              error: String((e && e.name) || "Error"),
             });
           });
           return;
@@ -592,7 +592,7 @@
             respond("execute-js-response", cid, {
               result: null,
               type: "error",
-              error: String((e && e.stack) || e),
+              error: String((e && e.name) || "Error"),
             });
           });
           return;
@@ -610,7 +610,7 @@
             respond("execute-js-response", cid, {
               result: null,
               type: "error",
-              error: String((e && e.stack) || e),
+              error: String((e && e.name) || "Error"),
             });
           });
           return;
@@ -1037,7 +1037,9 @@
     // native click input, then read the recorded classification.
     var displayCaptureState = null;
     var displayCaptureHandler = null;
+    var displayCaptureGeneration = 0;
     function armDisplayCaptureProbe() {
+      var generation = ++displayCaptureGeneration;
       if (displayCaptureHandler) {
         document.removeEventListener("click", displayCaptureHandler, true);
         displayCaptureHandler = null;
@@ -1048,17 +1050,21 @@
         return { armed: false, reason: "getDisplayMedia unavailable" };
       }
       displayCaptureState = { outcome: "armed-waiting-for-click" };
-      displayCaptureHandler = function () {
+      displayCaptureHandler = function (event) {
+        if (!event.isTrusted) return;
+        document.removeEventListener("click", displayCaptureHandler, true);
         displayCaptureHandler = null;
         displayCaptureState = { outcome: "click-received" };
         classifyCapture(md.getDisplayMedia({ video: true }), 6000).then(function (result) {
-          displayCaptureState = result;
+          if (generation === displayCaptureGeneration) {
+            displayCaptureState = result;
+          }
         });
       };
       document.addEventListener(
         "click",
         displayCaptureHandler,
-        { capture: true, once: true },
+        true,
       );
       return { armed: true };
     }
