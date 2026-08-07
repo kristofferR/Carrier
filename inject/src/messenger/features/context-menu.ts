@@ -486,7 +486,16 @@ export function initContextMenu() {
         const item = items[index];
         if (!item) continue;
         const label = item[0];
+        if (
+          isMac &&
+          (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])
+        ) {
+          // The native-only share action has no authorization token in the
+          // page-rendered fallback menu.
+          continue;
+        }
         const fn = item[1];
+        const rowIndex = menuItems.length;
         const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
         nativeReflectApply(nativeSetTextContent, el, [label]);
         nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
@@ -521,7 +530,7 @@ export function initContextMenu() {
           (ev: MouseEvent) => {
             if (!ev.isTrusted) return;
             nativeReflectApply(nativeStopPropagation, ev, []);
-            const expected = laidOutRects[index];
+            const expected = laidOutRects[rowIndex];
             const point = clientPointOf(ev);
             // No recorded rectangle means the click beat layout; refuse rather
             // than run a privileged action we cannot vouch for.

@@ -1137,7 +1137,11 @@
           const item = items[index];
           if (!item) continue;
           const label = item[0];
+          if (isMac2 && (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])) {
+            continue;
+          }
           const fn = item[1];
+          const rowIndex = menuItems.length;
           const el = nativeReflectApply2(nativeCreateElement, document, ["div"]);
           nativeReflectApply2(nativeSetTextContent, el, [label]);
           nativeReflectApply2(nativeSetAttribute, el, ["role", "menuitem"]);
@@ -1170,7 +1174,7 @@
             (ev) => {
               if (!ev.isTrusted) return;
               nativeReflectApply2(nativeStopPropagation, ev, []);
-              const expected = laidOutRects[index];
+              const expected = laidOutRects[rowIndex];
               const point = clientPointOf(ev);
               if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
                 closeMenu();
