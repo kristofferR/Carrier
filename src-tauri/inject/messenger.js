@@ -764,6 +764,7 @@
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var nativeArrayPush = Array.prototype.push;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
   var nativeSetTimeout = window.setTimeout.bind(window);
@@ -854,12 +855,16 @@
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
-  var closeMenuFromPointer = () => closeMenu();
+  var closeMenuFromClick = (event) => {
+    if (ctxMenu && event.target === ctxMenu) return;
+    closeMenu();
+  };
+  var closeMenuFromScroll = () => closeMenu();
   var closeMenu = (restoreFocus = false) => {
     ctxMenu?.remove();
     ctxMenu = null;
-    document.removeEventListener("click", closeMenuFromPointer, true);
-    document.removeEventListener("scroll", closeMenuFromPointer, true);
+    document.removeEventListener("click", closeMenuFromClick, true);
+    document.removeEventListener("scroll", closeMenuFromScroll, true);
     if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
     ctxMenuReturnFocus = null;
   };
@@ -958,7 +963,7 @@
           font: "13px -apple-system, system-ui, sans-serif"
         });
         const menuItems = [];
-        const laidOutRects = /* @__PURE__ */ new Map();
+        const laidOutRects = [];
         let focusedIndex = 0;
         const activate = (fn) => {
           closeMenu();
@@ -988,7 +993,7 @@
             (ev) => {
               if (!ev.isTrusted) return;
               ev.stopPropagation();
-              const expected = laidOutRects.get(el);
+              const expected = laidOutRects[index];
               if (!expected || !pointerActivationIsSound(expected, rectOf(el), ev.clientX, ev.clientY)) {
                 closeMenu();
                 toast("Menu action cancelled");
@@ -1007,7 +1012,7 @@
               activate(fn);
             }
           ]);
-          menuItems.push(el);
+          nativeReflectApply(nativeArrayPush, menuItems, [el]);
           menu.appendChild(el);
         }
         shadow.appendChild(menu);
@@ -1015,7 +1020,12 @@
         const r = rectOf(menu);
         if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
         if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
-        for (const el of menuItems) laidOutRects.set(el, rectOf(el));
+        for (let i = 0; i < menuItems.length; i += 1) {
+          const row = menuItems[i];
+          nativeReflectApply(nativeArrayPush, laidOutRects, [
+            row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 }
+          ]);
+        }
         nativeReflectApply(nativeAddEventListener, ctxMenu, [
           "keydown",
           (event) => {
@@ -1046,8 +1056,8 @@
         focusedIndex = 0;
         menuItems[0]?.focus({ preventScroll: true });
         setTimeout(() => {
-          document.addEventListener("click", closeMenuFromPointer, true);
-          document.addEventListener("scroll", closeMenuFromPointer, true);
+          document.addEventListener("click", closeMenuFromClick, true);
+          document.addEventListener("scroll", closeMenuFromScroll, true);
         }, 0);
       },
       true

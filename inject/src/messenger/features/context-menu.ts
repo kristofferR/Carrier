@@ -14,9 +14,12 @@ const nativeAddEventListener = EventTarget.prototype.addEventListener;
 const nativeObjectDefineProperty = Object.defineProperty;
 const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const nativeReflectApply = Reflect.apply;
-// Same reason: the menu's isolation depends on this being the real one.
+// Same reason: the menu's isolation depends on these being the real ones. A
+// replaced `push` would be handed each privileged row as an argument, which is
+// exactly the reference the closed shadow root exists to withhold.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const nativeArrayPush = Array.prototype.push;
 const NativeUint8Array = Uint8Array;
 const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
 const nativeSetTimeout = window.setTimeout.bind(window);
@@ -136,12 +139,20 @@ async function copyImageSrc(src: string) {
 
 let ctxMenu: HTMLDivElement | null = null;
 let ctxMenuReturnFocus: HTMLElement | null = null;
-const closeMenuFromPointer = () => closeMenu();
+// This capture-phase listener runs before the row's own handler. Tearing the
+// menu down here would detach the row first, leaving it unmeasurable — so a
+// click inside the menu (which retargets to the host, the rows being in a
+// closed root) is left for the row handler, which closes the menu itself.
+const closeMenuFromClick = (event: Event) => {
+  if (ctxMenu && event.target === ctxMenu) return;
+  closeMenu();
+};
+const closeMenuFromScroll = () => closeMenu();
 const closeMenu = (restoreFocus = false) => {
   ctxMenu?.remove();
   ctxMenu = null;
-  document.removeEventListener("click", closeMenuFromPointer, true);
-  document.removeEventListener("scroll", closeMenuFromPointer, true);
+  document.removeEventListener("click", closeMenuFromClick, true);
+  document.removeEventListener("scroll", closeMenuFromScroll, true);
   if (restoreFocus) ctxMenuReturnFocus?.focus({ preventScroll: true });
   ctxMenuReturnFocus = null;
 };
@@ -278,9 +289,11 @@ export function initContextMenu() {
         font: "13px -apple-system, system-ui, sans-serif",
       });
       const menuItems: HTMLElement[] = [];
-      // Filled once the menu has been laid out; a row whose rectangle no longer
-      // matches its entry here is not the row the user aimed at.
-      const laidOutRects = new Map<HTMLElement, MenuRect>();
+      // Filled once the menu has been laid out, index-aligned with menuItems: a
+      // row whose rectangle no longer matches its entry here is not the row the
+      // user aimed at. Kept as a plain array rather than a Map keyed by row, so
+      // no page-replaceable method is ever handed a row.
+      const laidOutRects: MenuRect[] = [];
       let focusedIndex = 0;
       const activate = (fn: () => unknown) => {
         closeMenu();
@@ -311,7 +324,7 @@ export function initContextMenu() {
           (ev: MouseEvent) => {
             if (!ev.isTrusted) return;
             ev.stopPropagation();
-            const expected = laidOutRects.get(el);
+            const expected = laidOutRects[index];
             // No recorded rectangle means the click beat layout; refuse rather
             // than run a privileged action we cannot vouch for.
             if (
@@ -337,7 +350,7 @@ export function initContextMenu() {
             activate(fn);
           },
         ]);
-        menuItems.push(el);
+        nativeReflectApply(nativeArrayPush, menuItems, [el]);
         menu.appendChild(el);
       }
       shadow.appendChild(menu);
@@ -345,7 +358,16 @@ export function initContextMenu() {
       const r = rectOf(menu);
       if (r.x + r.width > innerWidth) ctxMenu.style.left = `${innerWidth - r.width - 8}px`;
       if (r.y + r.height > innerHeight) ctxMenu.style.top = `${innerHeight - r.height - 8}px`;
-      for (const el of menuItems) laidOutRects.set(el, rectOf(el));
+      // Index loop, not for..of: iteration would run through a page-replaceable
+      // Array.prototype[Symbol.iterator], handing out the rows again.
+      for (let i = 0; i < menuItems.length; i += 1) {
+        const row = menuItems[i];
+        // Push unconditionally so the two arrays stay index-aligned; an empty
+        // rectangle matches no real row, so it refuses rather than misfires.
+        nativeReflectApply(nativeArrayPush, laidOutRects, [
+          row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 },
+        ]);
+      }
       nativeReflectApply(nativeAddEventListener, ctxMenu, [
         "keydown",
         (event: KeyboardEvent) => {
@@ -382,8 +404,8 @@ export function initContextMenu() {
       focusedIndex = 0;
       menuItems[0]?.focus({ preventScroll: true });
       setTimeout(() => {
-        document.addEventListener("click", closeMenuFromPointer, true);
-        document.addEventListener("scroll", closeMenuFromPointer, true);
+        document.addEventListener("click", closeMenuFromClick, true);
+        document.addEventListener("scroll", closeMenuFromScroll, true);
       }, 0);
     },
     true,
