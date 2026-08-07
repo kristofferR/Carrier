@@ -760,14 +760,57 @@
   var MAX_BLOB = 512 * 1024 * 1024;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeObjectDefineProperty = Object.defineProperty;
+  var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
   var nativeReflectApply = Reflect.apply;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+  var NativeUint8Array = Uint8Array;
+  var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+  var nativeSetTimeout = window.setTimeout.bind(window);
   var rectOf = (el) => {
     const r = nativeReflectApply(nativeGetBoundingClientRect, el, []);
     return { x: r.x, y: r.y, width: r.width, height: r.height };
   };
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  function contextActionToken() {
+    const bytes = new NativeUint8Array(16);
+    nativeGetRandomValues(bytes);
+    const hex = "0123456789abcdef";
+    let token = "";
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index] ?? 0;
+      token += (hex[byte >> 4] ?? "") + (hex[byte & 15] ?? "");
+    }
+    return token;
+  }
+  function showNativeContextMenu(items) {
+    const nativeItems = [];
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item) continue;
+      const action = contextActionToken();
+      const eventName = `carrier:context-action:${action}`;
+      const run = () => {
+        nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
+        item[1]();
+      };
+      nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
+      nativeSetTimeout(
+        () => nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]),
+        12e4
+      );
+      nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
+        String(nativeItems.length),
+        {
+          value: { label: item[0], action },
+          writable: true,
+          enumerable: true,
+          configurable: true
+        }
+      ]);
+    }
+    carrierShowContextMenu(nativeItems)?.catch(() => toast("Menu failed"));
+  }
   async function shareSrc(src, fallbackName, fx, fy) {
     const href = await downloadSrc(src, fallbackName);
     await carrierShareDownload(href, fx, fy);
@@ -881,6 +924,11 @@
         }
         if (!items.length) return;
         e.preventDefault();
+        if (isMac2) {
+          closeMenu();
+          showNativeContextMenu(items);
+          return;
+        }
         const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
         const previouslyFocused = document.activeElement;
         const priorReturnFocus = ctxMenu?.contains(previouslyFocused) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;

@@ -12,10 +12,14 @@ const MAX_BLOB = 512 * 1024 * 1024;
 // same JS world and may replace the prototype before a menu is opened.
 const nativeAddEventListener = EventTarget.prototype.addEventListener;
 const nativeObjectDefineProperty = Object.defineProperty;
+const nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
 const nativeReflectApply = Reflect.apply;
 // Same reason: the menu's isolation depends on this being the real one.
 const nativeAttachShadow = Element.prototype.attachShadow;
 const nativeGetBoundingClientRect = Element.prototype.getBoundingClientRect;
+const NativeUint8Array = Uint8Array;
+const nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
+const nativeSetTimeout = window.setTimeout.bind(window);
 
 const rectOf = (el: Element): MenuRect => {
   const r = nativeReflectApply(nativeGetBoundingClientRect, el, []) as DOMRect;
@@ -25,6 +29,47 @@ const rectOf = (el: Element): MenuRect => {
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
 // platforms have no equivalent Carrier can reach, so the item stays hidden.
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+
+function contextActionToken() {
+  const bytes = new NativeUint8Array(16);
+  nativeGetRandomValues(bytes);
+  const hex = "0123456789abcdef";
+  let token = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = bytes[index] ?? 0;
+    token += (hex[byte >> 4] ?? "") + (hex[byte & 15] ?? "");
+  }
+  return token;
+}
+
+function showNativeContextMenu(items: [string, () => unknown][]) {
+  const nativeItems: { label: string; action: string }[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    if (!item) continue;
+    const action = contextActionToken();
+    const eventName = `carrier:context-action:${action}`;
+    const run = () => {
+      nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]);
+      item[1]();
+    };
+    nativeReflectApply(nativeAddEventListener, window, [eventName, run, true]);
+    nativeSetTimeout(
+      () => nativeReflectApply(nativeRemoveEventListener, window, [eventName, run, true]),
+      120_000,
+    );
+    nativeReflectApply(nativeObjectDefineProperty, nativeItems, [
+      String(nativeItems.length),
+      {
+        value: { label: item[0], action },
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      },
+    ]);
+  }
+  carrierShowContextMenu(nativeItems)?.catch(() => toast("Menu failed"));
+}
 
 // Save the media through the trusted download flow (the sheet needs a real
 // file), then ask the native side to share it, anchored at the click point.
@@ -178,6 +223,11 @@ export function initContextMenu() {
       if (!items.length) return; // fall through to the native menu (text etc.)
 
       e.preventDefault();
+      if (isMac) {
+        closeMenu();
+        showNativeContextMenu(items);
+        return;
+      }
       // Capture the restore target before closeMenu()/menu creation shifts
       // focus. The right-click target is usually a non-focusable image or span,
       // so climb to the nearest focusable ancestor and fall back to whatever
