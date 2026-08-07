@@ -23,10 +23,28 @@ use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
 use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
 
-fn notify_download_finished(webview: &tauri::Webview, url: &Url, success: bool) {
+fn notify_download_finished(
+    app: &tauri::AppHandle,
+    webview: &tauri::Webview,
+    id: &str,
+    url: &Url,
+    success: bool,
+) {
+    let signature = app
+        .state::<AppState>()
+        .download_reveal_tokens
+        .lock()
+        .unwrap()
+        .get(webview.label())
+        .and_then(|secret| crate::download_finished_signature(secret, id, url.as_str(), success));
+    let Some(signature) = signature else {
+        return;
+    };
     let detail = serde_json::json!({
+        "id": id,
         "url": url.as_str(),
         "success": success,
+        "signature": signature,
     });
     let script = format!(
         "window.dispatchEvent(new CustomEvent('carrier:download-finished', {{ detail: {detail} }}));"
@@ -82,6 +100,9 @@ pub(crate) fn build_app_window(
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
+    let download_handle = app.clone();
+    #[cfg(target_os = "macos")]
+    let download_label = label.to_string();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .inner_size(1200.0, 780.0)
@@ -121,8 +142,9 @@ pub(crate) fn build_app_window(
             }
             false
         })
-        .on_download(|webview, event| match event {
+        .on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
+                let download_id = uuid::Uuid::new_v4().simple().to_string();
                 // Only accept downloads of Messenger's own media or page-generated
                 // blob:/data: content; refuse anything else a remote page might try
                 // to write to the user's Downloads folder.
@@ -137,36 +159,39 @@ pub(crate) fn build_app_window(
                     .unwrap_or_else(|| filename_from_url(&url));
                 let name = sanitize_filename(&suggested);
                 if !is_allowed_download(&url, &name) {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 // Don't silently save an executable a page might push to Downloads.
                 if is_unsafe_download(&name) {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 // Fail closed: if we can't resolve/create the Downloads folder we
                 // can't enforce where the file lands, so refuse rather than let the
                 // WebView write to its own chosen destination.
                 let Some(dir) = downloads_dir() else {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 };
                 if std::fs::create_dir_all(&dir).is_err() {
-                    notify_download_finished(&webview, &url, false);
+                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
                 *destination = unique_path(dir.join(name));
-                remember_download(&url, destination.clone());
+                remember_download(&url, download_id.clone(), destination.clone());
+                #[cfg(target_os = "macos")]
+                crate::bind_claimed_download(&download_handle, &download_label, &download_id);
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
-                if success {
-                    complete_download(&url);
+                let download_id = if success {
+                    complete_download(&url)
                 } else {
-                    forget_download(&url);
+                    forget_download(&url)
                 }
-                notify_download_finished(&webview, &url, success);
+                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+                notify_download_finished(&download_handle, &webview, &download_id, &url, success);
                 true
             }
             _ => true,
@@ -777,7 +802,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     }}
     return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
   }};
-  var carrierShareDownload = function (url, x, y, action) {{
+  var carrierShareDownload = function (downloadId, x, y, action) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return Promise.reject(new Error('native bridge unavailable'));
     }}
@@ -812,7 +837,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
         'carrier:share-download-result', finish
       ]);
       carrierAuthorizedEmit('carrier:share-download', {{
-        url: url, x: x, y: y, action: action, request: request
+        download_id: downloadId, x: x, y: y, action: action, request: request
       }}).catch(function (error) {{
         cleanup();
         reject(error);

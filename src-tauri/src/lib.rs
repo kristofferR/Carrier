@@ -42,6 +42,8 @@ mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
 use download::lookup_download;
+#[cfg(target_os = "macos")]
+use download::lookup_download_id;
 use hotkey::reconcile_startup_global_hotkey;
 #[cfg(target_os = "linux")]
 use linux::observe_system_theme_changes;
@@ -164,6 +166,25 @@ fn signed_action_window(
     let tokens = state.download_reveal_tokens.lock().unwrap();
     let mut nonces = state.signed_action_nonces.lock().unwrap();
     authorize_signed_action(&tokens, &mut nonces, event, signed)
+}
+
+pub(crate) fn download_finished_signature(
+    secret: &str,
+    id: &str,
+    url: &str,
+    success: bool,
+) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct DownloadFinished<'a> {
+        id: &'a str,
+        url: &'a str,
+        success: bool,
+    }
+
+    let message = serde_json::to_string(&DownloadFinished { id, url, success }).ok()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(format!("carrier:download-finished\n{message}").as_bytes());
+    Some(hex::encode(mac.finalize().into_bytes()))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -301,21 +322,63 @@ fn claim_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -
     let Some(activation) = activations.get_mut(&key) else {
         return false;
     };
-    if !context_menu_activation_is_current(*activation, Instant::now()) {
+    if !context_menu_activation_is_current(activation.clone(), Instant::now()) {
         return false;
     }
-    *activation = ContextMenuActivation::Claimed;
+    *activation = ContextMenuActivation::Claimed {
+        download_id: None,
+        claimed_at: Instant::now(),
+    };
     true
 }
 
 #[cfg(target_os = "macos")]
-fn consume_context_activation(app: &tauri::AppHandle, label: &str, action: &str) -> bool {
+pub(crate) fn bind_claimed_download(app: &tauri::AppHandle, label: &str, download_id: &str) {
+    let state = app.state::<AppState>();
+    let mut activations = state.context_menu_activations.lock().unwrap();
+    let Some((_, activation)) = activations
+        .iter_mut()
+        .filter(|((window, _), activation)| {
+            window == label
+                && matches!(
+                    activation,
+                    ContextMenuActivation::Claimed {
+                        download_id: None,
+                        ..
+                    }
+                )
+        })
+        .max_by_key(|(_, activation)| match activation {
+            ContextMenuActivation::Claimed { claimed_at, .. } => *claimed_at,
+            _ => unreachable!(),
+        })
+    else {
+        return;
+    };
+    if let ContextMenuActivation::Claimed {
+        download_id: bound, ..
+    } = activation
+    {
+        *bound = Some(download_id.to_string());
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn consume_context_activation(
+    app: &tauri::AppHandle,
+    label: &str,
+    action: &str,
+    download_id: Option<&str>,
+) -> bool {
     let state = app.state::<AppState>();
     let key = (label.to_string(), action.to_string());
     let mut activations = state.context_menu_activations.lock().unwrap();
     matches!(
         activations.remove(&key),
-        Some(ContextMenuActivation::Claimed)
+        Some(ContextMenuActivation::Claimed {
+            download_id: bound,
+            ..
+        }) if download_id.is_none() || bound.as_deref() == download_id
     )
 }
 
@@ -329,7 +392,7 @@ pub(crate) fn context_menu_activation_is_current(
         ContextMenuActivation::Selected(selected_at) => now
             .checked_duration_since(selected_at)
             .is_some_and(|age| age <= CONTEXT_MENU_ACTIVATION_TTL),
-        ContextMenuActivation::Claimed => true,
+        ContextMenuActivation::Claimed { .. } => true,
     }
 }
 
@@ -750,7 +813,7 @@ pub fn run() {
                 app.listen_any("carrier:share-download", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ShareDownloadMsg {
-                        url: String,
+                        download_id: String,
                         x: f64,
                         y: f64,
                         action: String,
@@ -771,12 +834,17 @@ pub fn run() {
                         log::warn!("carrier:share-download message did not parse");
                         return;
                     };
-                    if !consume_context_activation(&share_handle, &label, &msg.action) {
+                    if !consume_context_activation(
+                        &share_handle,
+                        &label,
+                        &msg.action,
+                        Some(&msg.download_id),
+                    ) {
                         log::warn!("carrier:share-download had no selected native menu action");
                         send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
                     }
-                    let Some(path) = lookup_download(&msg.url) else {
+                    let Some(path) = lookup_download_id(&msg.download_id) else {
                         log::warn!("carrier:share-download had no recent matching download");
                         send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
@@ -829,7 +897,7 @@ pub fn run() {
                         log::warn!("carrier:copy-image message did not parse");
                         return;
                     };
-                    if !consume_context_activation(&copy_handle, &label, &msg.action) {
+                    if !consume_context_activation(&copy_handle, &label, &msg.action, None) {
                         log::warn!("carrier:copy-image had no selected native menu action");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
@@ -1192,6 +1260,14 @@ mod tests {
     }
 
     #[test]
+    fn download_finished_results_bind_the_native_identity() {
+        let first = download_finished_signature("test-secret", "download-1", "blob:one", true);
+        let second = download_finished_signature("test-secret", "download-2", "blob:one", true);
+        assert!(first.is_some());
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn context_menu_results_are_authenticated_with_the_window_secret() {
         assert_eq!(
             context_menu_result_signature("test-secret", "0123456789abcdef0123456789abcdef", true)
@@ -1320,7 +1396,10 @@ mod tests {
             now,
         ));
         assert!(context_menu_activation_is_current(
-            ContextMenuActivation::Claimed,
+            ContextMenuActivation::Claimed {
+                download_id: None,
+                claimed_at: now,
+            },
             now + CONTEXT_MENU_ACTIVATION_TTL + Duration::from_secs(1)
         ));
     }

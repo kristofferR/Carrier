@@ -70,7 +70,7 @@ declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
  * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
  */
 declare const carrierShareDownload: (
-  url: string,
+  downloadId: string,
   x: number,
   y: number,
   action: string,
