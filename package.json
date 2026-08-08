@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:share-extension": "bun share-extension/macos/build.ts",
     "tauri": "tauri",
     "icon": "tauri icon",
     "build:inject": "bun inject/build.ts",
