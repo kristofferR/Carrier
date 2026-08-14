@@ -16,6 +16,7 @@ use serde::Deserialize;
 use sha2::Sha256;
 use tauri::{Listener, Manager};
 use tauri_plugin_opener::OpenerExt;
+mod actions;
 mod cli;
 mod commands;
 mod custom_css;
@@ -53,7 +54,7 @@ use macos::{
     theme::observe_system_theme_changes,
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use notifications::handle_reply_result;
 use notifications::{
     clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
@@ -109,6 +110,21 @@ struct SignedAction {
     nonce: String,
     timestamp: u64,
     signature: String,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Deserialize)]
+struct ThreadViewedMsg {
+    thread_path: String,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_thread_viewed_payload(payload: &str) -> Option<String> {
+    let message = serde_json::from_str::<ThreadViewedMsg>(payload).ok()?;
+    let path = actions::validated_thread_path(&message.thread_path)?;
+    path.strip_prefix("/t/")
+        .and_then(|path| path.strip_suffix('/'))
+        .map(str::to_string)
 }
 
 const SIGNED_ACTION_MAX_AGE: Duration = Duration::from_secs(5 * 60);
@@ -654,9 +670,6 @@ pub fn run() {
 
     let initial = load_settings_early();
     let cold_cli_action = cli::parse_cli_action(std::env::args_os());
-    let pending_cold_new_conversation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
-        cold_cli_action == Some(cli::CliAction::NewConversation),
-    ));
 
     let mut builder = tauri::Builder::default();
 
@@ -677,23 +690,12 @@ pub fn run() {
     ) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(action) = cli::parse_cli_action(argv) {
-                cli::perform_cli_action(app, action);
+                actions::run_app_action(app, action);
             } else {
                 show_main(app);
             }
         }));
     }
-
-    let pending_action = pending_cold_new_conversation.clone();
-    builder = builder.on_page_load(move |webview, payload| {
-        if webview.label() == "main"
-            && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
-            && url_rules::is_messenger_web_url(payload.url())
-            && pending_action.swap(false, Ordering::AcqRel)
-        {
-            cli::perform_cli_action(webview.app_handle(), cli::CliAction::NewConversation);
-        }
-    });
 
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
     // DOM/JS inspection. Restrict it to debug builds even when the Cargo feature
@@ -780,6 +782,13 @@ pub fn run() {
             context_menu_copy_values: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             pending_share: Mutex::new(None),
+            pending_action: Mutex::new(match &cold_cli_action {
+                Some(actions::AppAction::NewConversation) => {
+                    Some(actions::AppAction::NewConversation)
+                }
+                _ => None,
+            }),
+            messenger_loaded: std::sync::atomic::AtomicBool::new(false),
         })
         .menu(menu::build_menu)
         .on_menu_event(menu::handle_menu_event)
@@ -846,8 +855,8 @@ pub fn run() {
                 let _ = window.hide();
             }
 
-            if cold_cli_action == Some(cli::CliAction::Settings) {
-                cli::perform_cli_action(app.handle(), cli::CliAction::Settings);
+            if cold_cli_action == Some(actions::AppAction::Settings) {
+                actions::run_app_action(app.handle(), actions::AppAction::Settings);
             }
 
             // The Facebook page is a remote origin and can't call Carrier's own
@@ -1303,9 +1312,30 @@ pub fn run() {
                 },
             );
 
-            // KDE inline replies are delivered page-side through a content-free
-            // id/attempt/ok acknowledgement used by the native waiter.
-            #[cfg(target_os = "linux")]
+            #[cfg(target_os = "macos")]
+            {
+                let thread_viewed_handle = app.handle().clone();
+                app.listen_any("carrier:thread-viewed", move |event| {
+                    if !thread_viewed_handle
+                        .state::<AppState>()
+                        .settings
+                        .lock()
+                        .unwrap()
+                        .clear_notifications_on_view
+                    {
+                        return;
+                    }
+                    let Some(thread_id) = parse_thread_viewed_payload(event.payload()) else {
+                        log::warn!("carrier:thread-viewed payload did not parse");
+                        return;
+                    };
+                    macos::notifications::clear_delivered_for_thread(&thread_id);
+                });
+            }
+
+            // Native inline replies are delivered page-side through a
+            // content-free id/attempt/ok acknowledgement used by the waiter.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             app.listen_any("carrier:reply-result", move |event| {
                 handle_reply_result(event.payload());
             });
@@ -1366,15 +1396,28 @@ pub fn run() {
                 reopen_main_if_needed(app, has_visible_windows);
             }
 
-            // The share extension hands its inbox over as a carrier:// open
-            // (running instance or cold start alike). See macos::share_intake.
+            // LaunchServices delivers both share-extension handoffs and the
+            // public carrier:// automation surface here, warm or cold.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &event {
-                for url in urls
-                    .iter()
-                    .filter(|url| macos::share_intake::is_share_handoff(url.as_str()))
-                {
-                    macos::share_intake::handle_share_open(app, url.as_str());
+                let mut automation_action = None;
+                for url in urls {
+                    if macos::share_intake::is_share_handoff(url.as_str()) {
+                        macos::share_intake::handle_share_open(app, url.as_str());
+                        continue;
+                    }
+                    if automation_action.is_none() && url.scheme() == "carrier" {
+                        match actions::parse_carrier_url(url) {
+                            Some(action) => automation_action = Some(action),
+                            None => log::warn!(
+                                "ignoring malformed carrier URL ({} bytes)",
+                                url.as_str().len().min(4_096)
+                            ),
+                        }
+                    }
+                }
+                if let Some(action) = automation_action {
+                    actions::run_app_action(app, action);
                 }
             }
 
@@ -1401,6 +1444,17 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64
+    }
+
+    #[test]
+    fn thread_viewed_payload_accepts_only_valid_thread_paths() {
+        assert_eq!(
+            parse_thread_viewed_payload(r#"{"thread_path":"/t/123/"}"#).as_deref(),
+            Some("123")
+        );
+        assert!(parse_thread_viewed_payload(r#"{"thread_path":"/t/nope/"}"#).is_none());
+        assert!(parse_thread_viewed_payload(r#"{"thread_path":"/t/123/?x=1"}"#).is_none());
+        assert!(parse_thread_viewed_payload("{}").is_none());
     }
 
     fn signed_action(

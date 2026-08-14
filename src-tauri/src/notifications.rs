@@ -9,7 +9,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -23,8 +23,11 @@ use futures_util::{pin_mut, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::actions::{run_app_action, validated_thread_path, AppAction};
 #[cfg(target_os = "macos")]
-use crate::macos::notifications::deliver_notification_macos;
+use crate::macos::notifications::{
+    clear_delivered_for_thread, deliver_notification_macos, MacNotificationOptions,
+};
 use crate::settings::AppState;
 use crate::tray::show_main;
 
@@ -199,14 +202,6 @@ struct RouteEntry {
     at: Instant,
 }
 static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
-
-fn validated_thread_path(value: &str) -> Option<String> {
-    let id = value.strip_prefix("/t/")?.strip_suffix('/')?;
-    if id.is_empty() || id.len() > 32 || !id.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("/t/{id}/"))
-}
 
 fn remember_notification_route(id: u64, value: &str) {
     // `id` is the page's unique per-notification handle. A missing or zero id
@@ -453,6 +448,15 @@ fn linux_reply_eligible(
         && thread_path.is_some()
         && capabilities.actions
         && capabilities.inline_reply
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_reply_eligible(
+    hide_preview: bool,
+    notification_id: u64,
+    thread_path: Option<&str>,
+) -> bool {
+    !hide_preview && notification_id != 0 && thread_path.is_some()
 }
 
 #[cfg(target_os = "linux")]
@@ -728,19 +732,61 @@ fn show_linux_notification(
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+const MAX_PENDING_PAGE_REPLIES: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+const MAX_NATIVE_QUICK_REPLY_WORKERS: usize = 16;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+struct QuickReplyWorkerSlots {
+    active: AtomicUsize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+impl QuickReplyWorkerSlots {
+    const fn new() -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+        }
+    }
+
+    fn try_acquire(&self) -> Option<QuickReplyWorkerPermit<'_>> {
+        self.active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < MAX_NATIVE_QUICK_REPLY_WORKERS).then_some(active + 1)
+            })
+            .ok()
+            .map(|_| QuickReplyWorkerPermit { slots: self })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+struct QuickReplyWorkerPermit<'a> {
+    slots: &'a QuickReplyWorkerSlots,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+impl Drop for QuickReplyWorkerPermit<'_> {
+    fn drop(&mut self) {
+        self.slots.active.fetch_sub(1, Ordering::Release);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+static QUICK_REPLY_WORKER_SLOTS: QuickReplyWorkerSlots = QuickReplyWorkerSlots::new();
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PendingReplyMode {
     Send,
     Draft,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Clone)]
 struct PendingPageReply {
     id: u64,
@@ -752,13 +798,13 @@ struct PendingPageReply {
     resume_attempted: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Default)]
 struct PendingPageReplies {
     replies: HashMap<u64, PendingPageReply>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl PendingPageReplies {
     fn register(
         &mut self,
@@ -769,6 +815,16 @@ impl PendingPageReplies {
         mode: PendingReplyMode,
         expires_at: Instant,
     ) {
+        if self.replies.len() >= MAX_PENDING_PAGE_REPLIES && !self.replies.contains_key(&id) {
+            if let Some(oldest) = self
+                .replies
+                .iter()
+                .min_by_key(|(_, reply)| reply.expires_at)
+                .map(|(id, _)| *id)
+            {
+                self.replies.remove(&oldest);
+            }
+        }
         self.replies.insert(
             id,
             PendingPageReply {
@@ -806,24 +862,24 @@ impl PendingPageReplies {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
     static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
     REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
 }
 
-#[cfg(target_os = "linux")]
-fn capped_reply_text(text: &str) -> String {
-    text.chars().take(MAX_QUICK_REPLY_CHARS).collect()
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn sanitized_reply_text(text: &str) -> String {
+    text.trim().chars().take(MAX_QUICK_REPLY_CHARS).collect()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Default)]
 struct ReplyAckWaiters {
     waiters: HashMap<u64, (u64, std::sync::mpsc::SyncSender<bool>)>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl ReplyAckWaiters {
     fn register(&mut self, id: u64, attempt: u64, sender: std::sync::mpsc::SyncSender<bool>) {
         self.waiters.insert(id, (attempt, sender));
@@ -847,13 +903,13 @@ impl ReplyAckWaiters {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
     static WAITERS: OnceLock<Mutex<ReplyAckWaiters>> = OnceLock::new();
     WAITERS.get_or_init(|| Mutex::new(ReplyAckWaiters::default()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Deserialize)]
 struct ReplyResultMsg {
     id: u64,
@@ -861,7 +917,7 @@ struct ReplyResultMsg {
     ok: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn handle_reply_result(payload: &str) {
     let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
         return;
@@ -876,13 +932,13 @@ pub(crate) fn handle_reply_result(payload: &str) {
         .complete(result.id, result.attempt, result.ok);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn next_reply_attempt() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn quick_reply_script(
     id: u64,
     attempt: u64,
@@ -899,7 +955,7 @@ fn quick_reply_script(
     Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn register_pending_page_reply(
     id: u64,
     attempt: u64,
@@ -920,7 +976,7 @@ fn register_pending_page_reply(
 /// Re-dispatch an in-memory notification reply after a hard Messenger
 /// navigation replaces the page that received the first eval. Each action gets
 /// one resume attempt and expires with the native acknowledgement window.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     let replies = pending_page_replies()
         .lock()
@@ -952,7 +1008,7 @@ pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn eval_hidden_quick_reply(
     app: &tauri::AppHandle,
     id: u64,
@@ -988,7 +1044,19 @@ fn show_reply_failure_notification() {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+fn show_reply_failure_notification() {
+    deliver_notification_macos(
+        "Carrier",
+        "Reply not sent — opening the conversation",
+        0,
+        None,
+        false,
+        MacNotificationOptions::default(),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
@@ -1027,19 +1095,25 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64) {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
-    let Some(thread_path) = take_notification_route(id) else {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn deliver_quick_reply(
+    app: tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<String>,
+    raw_text: String,
+) {
+    let thread_path = take_notification_route(id)
+        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
         on_notification_click(app, id);
         show_reply_failure_notification();
         return;
     };
-    let text = capped_reply_text(&raw_text);
-    if text.trim().is_empty() {
+    let text = sanitized_reply_text(&raw_text);
+    if text.is_empty() {
         // Empty input is equivalent to activating the notification.
-        remember_notification_route(id, &thread_path);
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, Some(thread_path));
         return;
     }
 
@@ -1057,13 +1131,85 @@ fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
             .unwrap_or(false);
     reply_ack_waiters().lock().unwrap().remove(id);
     pending_page_replies().lock().unwrap().complete(id, attempt);
-    if !sent {
+    if sent {
+        #[cfg(target_os = "macos")]
+        if app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .clear_notifications_on_view
+        {
+            if let Some(thread_id) = thread_path
+                .strip_prefix("/t/")
+                .and_then(|path| path.strip_suffix('/'))
+            {
+                clear_delivered_for_thread(thread_id);
+            }
+        }
+    } else {
         if let Err(error) = dispatched {
             log::warn!("quick-reply delivery could not start (id {id}): {error}");
         } else {
             log::warn!("quick-reply delivery failed or timed out (id {id})");
         }
         open_reply_fallback(app, id, thread_path, text);
+    }
+}
+
+/// Queue an inline notification reply away from the native callback. A single
+/// in-flight guard serializes the SPA navigation/composer automation so replies
+/// for two conversations cannot race each other.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn on_notification_reply(
+    app: tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<String>,
+    text: String,
+) {
+    let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
+        log::warn!("quick reply rejected because the native worker cap was reached (id {id})");
+        open_rejected_reply_fallback(app, id, fallback_path, text);
+        return;
+    };
+
+    let fallback_app = app.clone();
+    let fallback_path_copy = fallback_path.clone();
+    let fallback_text = text.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("carrier-quick-reply".into())
+        .spawn(move || {
+            let _permit = permit;
+            static REPLY_IN_FLIGHT: OnceLock<Mutex<()>> = OnceLock::new();
+            let _guard = REPLY_IN_FLIGHT
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            deliver_quick_reply(app, id, fallback_path, text);
+        })
+    {
+        log::warn!("failed to start quick-reply worker (id {id}): {error}");
+        open_rejected_reply_fallback(fallback_app, id, fallback_path_copy, fallback_text);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_rejected_reply_fallback(
+    app: tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<String>,
+    raw_text: String,
+) {
+    let thread_path = take_notification_route(id)
+        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    let text = sanitized_reply_text(&raw_text);
+    match (thread_path, text.is_empty()) {
+        (Some(path), false) => open_reply_fallback(app, id, path, text),
+        (Some(path), true) => on_notification_click_with_path(app, id, Some(path)),
+        (None, _) => {
+            on_notification_click(app, id);
+            show_reply_failure_notification();
+        }
     }
 }
 
@@ -1086,13 +1232,15 @@ pub(crate) fn show_message_notification(
     // checks in messenger.js run in the remote facebook.com origin, so a page
     // bug (or a hostile script emitting carrier:notify directly) must not be
     // able to bypass mute or leak sender/message content past hide-preview.
-    let (sound, muted, hide_preview) = {
+    let (sound, muted, hide_preview, group_by_conversation, attention_on_message) = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         (
             s.notification_sound,
             s.mute_notifications,
             s.hide_notification_preview,
+            s.group_notifications_by_conversation,
+            s.attention_on_message,
         )
     };
     if muted {
@@ -1142,11 +1290,12 @@ pub(crate) fn show_message_notification(
         msg.body
     };
     let id = msg.id;
+    let thread_path = validated_thread_path(&msg.thread_path);
     #[cfg(target_os = "linux")]
     let allow_inline_reply = linux_reply_eligible(
         hide_preview,
         id,
-        validated_thread_path(&msg.thread_path).as_deref(),
+        thread_path.as_deref(),
         linux_notification_capabilities(),
     );
     remember_notification_route(id, &msg.thread_path);
@@ -1161,13 +1310,44 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "macos")]
     {
+        if attention_on_message {
+            let windows = app.webview_windows();
+            let messenger_focused = windows.iter().any(|(label, window)| {
+                (label == "main" || label.starts_with("win-"))
+                    && window.is_focused().unwrap_or(false)
+            });
+            if !messenger_focused {
+                if let Some(window) = windows.get("main").or_else(|| {
+                    windows
+                        .iter()
+                        .find(|(label, _)| label.starts_with("win-"))
+                        .map(|(_, window)| window)
+                }) {
+                    let _ = window
+                        .request_user_attention(Some(tauri::UserAttentionType::Informational));
+                }
+            }
+        }
         // The click comes back through the centre's delegate, which holds its
         // own handle, so `app` isn't needed here. The avatar temp file is read
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
-        let _ = app;
-        deliver_notification_macos(&title, &body, id, image.as_deref(), sound);
+        deliver_notification_macos(
+            &title,
+            &body,
+            id,
+            image.as_deref(),
+            sound,
+            MacNotificationOptions {
+                thread_path: thread_path.as_deref(),
+                group_by_conversation,
+                reply_eligible: macos_reply_eligible(hide_preview, id, thread_path.as_deref()),
+            },
+        );
     }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (group_by_conversation, attention_on_message, thread_path);
 
     #[cfg(target_os = "windows")]
     {
@@ -1202,7 +1382,7 @@ pub(crate) fn show_message_notification(
             LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
                 on_notification_click(app, id);
             }
-            LinuxNotificationResponse::Reply(text) => deliver_quick_reply(app, id, text),
+            LinuxNotificationResponse::Reply(text) => on_notification_reply(app, id, None, text),
             LinuxNotificationResponse::Closed => {
                 let _ = take_notification_route(id);
             }
@@ -1360,7 +1540,14 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     #[cfg(target_os = "macos")]
     {
         let _ = app;
-        deliver_notification_macos(title, &body, id, None, false);
+        deliver_notification_macos(
+            title,
+            &body,
+            id,
+            None,
+            false,
+            MacNotificationOptions::default(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1384,23 +1571,30 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     });
 }
 
-/// A notification was clicked: surface Carrier's window and ask the page to open
-/// the conversation (it invokes Facebook's own `onclick` for that notification,
-/// keyed by `id`). Hops to the main thread for the window + webview calls.
+/// A notification was clicked: surface Carrier and open its retained route, or
+/// fall back to the page's original notification callback when no route exists.
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
-    let thread_path = take_notification_route(id);
+    on_notification_click_with_path(app, id, None);
+}
+
+/// Notification activation with an optional route persisted in native
+/// `userInfo`. The in-memory route wins while it exists; the persisted path
+/// keeps old Notification Center entries useful after an app restart.
+pub(crate) fn on_notification_click_with_path(
+    app: tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<String>,
+) {
+    let thread_path = take_notification_route(id)
+        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    if let Some(thread_path) = thread_path {
+        run_app_action(&app, AppAction::OpenThread(thread_path));
+        return;
+    }
     let _ = app.clone().run_on_main_thread(move || {
         show_main(&app);
         if let Some(w) = app.get_webview_window("main") {
-            let script = if let Some(thread_path) = thread_path {
-                let path = serde_json::to_string(&thread_path).unwrap();
-                format!(
-                    "if (window.__carrierNotifyClick?.({id}) !== true) \
-                     window.__carrierOpenThread?.({path});"
-                )
-            } else {
-                format!("window.__carrierNotifyClick?.({id});")
-            };
+            let script = format!("window.__carrierNotifyClick?.({id});");
             let _ = w.eval(script);
         }
     });
@@ -1554,15 +1748,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn notification_routes_accept_only_bare_numeric_thread_paths() {
-        assert_eq!(validated_thread_path("/t/12345/"), Some("/t/12345/".into()));
-        assert_eq!(validated_thread_path("/t/12345"), None);
-        assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
-        assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
-        assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
-    }
-
     #[cfg(target_os = "windows")]
     #[test]
     fn notification_responses_distinguish_activation_from_dismissal() {
@@ -1605,6 +1790,14 @@ mod tests {
                 inline_reply: false,
             }
         ));
+    }
+
+    #[test]
+    fn macos_reply_requires_preview_route_and_unique_id() {
+        assert!(macos_reply_eligible(false, 7, Some("/t/123/")));
+        assert!(!macos_reply_eligible(true, 7, Some("/t/123/")));
+        assert!(!macos_reply_eligible(false, 0, Some("/t/123/")));
+        assert!(!macos_reply_eligible(false, 7, None));
     }
 
     #[cfg(target_os = "linux")]
@@ -1674,7 +1867,6 @@ mod tests {
         assert!(silent_reply.contains_key("x-kde-reply-placeholder-text"));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn reply_ack_waiters_route_concurrent_ids_independently() {
         let mut waiters = ReplyAckWaiters::default();
@@ -1689,7 +1881,6 @@ mod tests {
         assert!(second_rx.recv().unwrap());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn pending_page_replies_resume_once_and_ignore_stale_results() {
         let now = Instant::now();
@@ -1724,13 +1915,52 @@ mod tests {
         assert!(pending.replies.is_empty());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn reply_text_cap_preserves_unicode_boundaries() {
+    fn reply_text_sanitation_trims_and_preserves_unicode_boundaries() {
         let text = "å".repeat(MAX_QUICK_REPLY_CHARS + 1);
-        let capped = capped_reply_text(&text);
+        let capped = sanitized_reply_text(&format!("  {text}  "));
         assert_eq!(capped.chars().count(), MAX_QUICK_REPLY_CHARS);
         assert!(capped.is_char_boundary(capped.len()));
+        assert_eq!(sanitized_reply_text("  hello \n"), "hello");
+        assert!(sanitized_reply_text(" \n\t ").is_empty());
+    }
+
+    #[test]
+    fn pending_page_replies_evict_the_oldest_entry_at_the_cap() {
+        let now = Instant::now();
+        let mut pending = PendingPageReplies::default();
+        for id in 1..=MAX_PENDING_PAGE_REPLIES as u64 {
+            pending.register(
+                id,
+                id,
+                "/t/123/".into(),
+                "reply".into(),
+                PendingReplyMode::Send,
+                now + Duration::from_secs(id),
+            );
+        }
+        pending.register(
+            999,
+            999,
+            "/t/999/".into(),
+            "new".into(),
+            PendingReplyMode::Send,
+            now + Duration::from_secs(999),
+        );
+        assert_eq!(pending.replies.len(), MAX_PENDING_PAGE_REPLIES);
+        assert!(!pending.replies.contains_key(&1));
+        assert!(pending.replies.contains_key(&999));
+    }
+
+    #[test]
+    fn quick_reply_worker_slots_are_bounded_and_reusable() {
+        let slots = QuickReplyWorkerSlots::new();
+        let permits: Vec<_> = (0..MAX_NATIVE_QUICK_REPLY_WORKERS)
+            .map(|_| slots.try_acquire().expect("slot remains available"))
+            .collect();
+        assert!(slots.try_acquire().is_none());
+        drop(permits);
+        assert!(slots.try_acquire().is_some());
     }
 
     #[test]

@@ -14,7 +14,7 @@
 interface CarrierSettings {
   always_on_top?: boolean;
   show_tray?: boolean;
-  /** Linux tray artwork: the full-color icon or a panel-tinted glyph. */
+  /** macOS/Linux tray artwork: the full-color icon or a monochrome glyph. */
   tray_icon_style?: "color" | "symbolic";
   start_to_tray?: boolean;
   autostart?: boolean;
@@ -36,6 +36,9 @@ interface CarrierSettings {
   mute_notifications?: boolean;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;
+  group_notifications_by_conversation?: boolean;
+  clear_notifications_on_view?: boolean;
+  attention_on_message?: boolean;
   hide_names_avatars?: boolean;
   system_emoji?: boolean;
   /** Pause video/GIF playback unless it follows a recent user interaction. */
@@ -124,7 +127,7 @@ interface Window {
   __carrierNotifyResult?: (id: number, delivery: string) => void;
   /** Share-extension payload delivery from the native intake (macOS). */
   __carrierShareMedia?: (payload: unknown) => void;
-  /** Deliver a KDE notification reply without raising the Carrier window. */
+  /** Deliver a native notification reply without raising the Carrier window. */
   __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
   /** Preserve a failed notification reply as an unsent composer draft. */
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;

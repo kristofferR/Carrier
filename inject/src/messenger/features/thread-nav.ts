@@ -1,5 +1,6 @@
 /* ------------------- Open thread & conversation info ------------------ */
-import { toast } from "../bridge";
+import { diag, invoke, toast } from "../bridge";
+import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 
 export function initThreadNav() {
@@ -19,6 +20,28 @@ export function initThreadNav() {
     location.href = `https://www.facebook.com/messages/t/${id}/`;
     return true;
   };
+
+  // Notification Center has no dependable Messenger read-receipt signal. A
+  // visible, focused thread is the narrow native heuristic: report path only,
+  // once per continuous view, and report again when focus returns.
+  let viewed = initialThreadViewedState();
+  const reportViewedThread = () => {
+    const id = threadPathId(location.pathname);
+    const path = id ? `/t/${id}/` : null;
+    const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
+    viewed = next.state;
+    if (next.emit) {
+      invoke("plugin:event|emit", {
+        event: "carrier:thread-viewed",
+        payload: { thread_path: next.emit },
+      })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+    }
+  };
+  setInterval(reportViewedThread, 1_000);
+  document.addEventListener("visibilitychange", reportViewedThread);
+  window.addEventListener("focus", reportViewedThread);
+  window.addEventListener("blur", reportViewedThread);
+  reportViewedThread();
 
   /* ------------------ Toggle conversation information ------------------- */
   // Click Messenger's own conversation-info ("ⓘ") button in the open thread's

@@ -6002,6 +6002,19 @@
     }
   }
 
+  // inject/src/messenger/lib/thread-viewed.ts
+  var initialThreadViewedState = () => ({
+    visible: false,
+    threadPath: null
+  });
+  function advanceThreadViewed(previous, threadPath, visible) {
+    const emit = visible && threadPath && (!previous.visible || previous.threadPath !== threadPath) ? threadPath : null;
+    return {
+      state: { visible, threadPath },
+      emit
+    };
+  }
+
   // inject/src/messenger/features/thread-nav.ts
   function initThreadNav() {
     window.__carrierOpenThread = (href) => {
@@ -6016,6 +6029,24 @@
       location.href = `https://www.facebook.com/messages/t/${id}/`;
       return true;
     };
+    let viewed = initialThreadViewedState();
+    const reportViewedThread = () => {
+      const id = threadPathId(location.pathname);
+      const path = id ? `/t/${id}/` : null;
+      const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
+      viewed = next.state;
+      if (next.emit) {
+        invoke("plugin:event|emit", {
+          event: "carrier:thread-viewed",
+          payload: { thread_path: next.emit }
+        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+      }
+    };
+    setInterval(reportViewedThread, 1e3);
+    document.addEventListener("visibilitychange", reportViewedThread);
+    window.addEventListener("focus", reportViewedThread);
+    window.addEventListener("blur", reportViewedThread);
+    reportViewedThread();
     window.__carrierToggleInfo = () => {
       const wanted = (el) => {
         const l = (el.getAttribute("aria-label") || "").toLowerCase();

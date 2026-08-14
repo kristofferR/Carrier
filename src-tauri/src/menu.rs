@@ -12,7 +12,7 @@ use tauri::{
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::cli::NEW_CONVERSATION_JS;
+use crate::actions::{run_app_action, validated_thread_path, AppAction, NEW_CONVERSATION_JS};
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 #[cfg(target_os = "macos")]
@@ -274,8 +274,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
         "new_conversation" => eval(NEW_CONVERSATION_JS),
         "dock:new_conversation" => {
-            show_main(app);
-            eval(NEW_CONVERSATION_JS);
+            run_app_action(app, AppAction::NewConversation);
         }
         "toggle_info" => eval("window.__carrierToggleInfo && window.__carrierToggleInfo()"),
         "keyboard_shortcuts" => {
@@ -602,10 +601,7 @@ pub(crate) fn recent_menu_id(thread: &RecentThread) -> String {
 
 fn recent_href_from_menu_id(menu_id: &str) -> Option<String> {
     let id = menu_id.strip_prefix("recent:")?;
-    if id.is_empty() || id.len() > 32 || !id.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("/t/{id}/"))
+    validated_thread_path(&format!("/t/{id}/"))
 }
 
 /// The recent-threads list as native menus should show it: empty while Hide

@@ -96,6 +96,11 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
+    if label == "main" {
+        app.state::<AppState>()
+            .messenger_loaded
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
     let watchdog = WebviewWatchdog::new();
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
@@ -112,12 +117,18 @@ pub(crate) fn build_app_window(
         .user_agent(user_agent())
         .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
         .on_page_load(move |window, payload| match payload.event() {
-            tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
+            tauri::webview::PageLoadEvent::Started => {
+                page_load_watchdog.navigation_started();
+                crate::actions::messenger_page_started(&window);
+            }
             tauri::webview::PageLoadEvent::Finished => {
                 if !is_messenger_web_url(payload.url()) {
                     page_load_watchdog.disarm();
                 }
-                #[cfg(target_os = "linux")]
+                if is_messenger_web_url(payload.url()) {
+                    crate::actions::messenger_page_finished(&window);
+                }
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 if window.label() == "main" && is_messenger_web_url(payload.url()) {
                     crate::notifications::resume_pending_page_replies(&window);
                 }

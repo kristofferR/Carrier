@@ -8,7 +8,18 @@ use std::path::Path;
 use objc2::runtime::NSObjectProtocol;
 use objc2_user_notifications::UNUserNotificationCenterDelegate;
 
-use crate::notifications::on_notification_click;
+use crate::actions::validated_thread_path;
+use crate::notifications::{on_notification_click_with_path, on_notification_reply};
+
+const MESSAGE_CATEGORY_ID: &str = "carrier.message";
+const REPLY_ACTION_ID: &str = "reply";
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MacNotificationOptions<'a> {
+    pub(crate) thread_path: Option<&'a str>,
+    pub(crate) group_by_conversation: bool,
+    pub(crate) reply_eligible: bool,
+}
 
 /// The data the notification-centre delegate needs: the handle it routes a
 /// notification click back through.
@@ -22,9 +33,8 @@ struct NotifyDelegateIvars {
 //   notification is shown even while Carrier is frontmost/focused (without a
 //   delegate, macOS suppresses banners for the active app — a required product
 //   behaviour here).
-// - `didReceiveNotificationResponse` recovers the conversation id from the
-//   notification's `userInfo` and routes a click back to the page via
-//   `on_notification_click`.
+// - `didReceiveNotificationResponse` recovers the conversation id and persisted
+//   path from `userInfo`, then routes a click or inline reply back to the page.
 //
 // Set once at startup and retained for the process lifetime (the centre's
 // `setDelegate:` does not retain) — see `setup_macos_notifications`.
@@ -58,11 +68,44 @@ objc2::define_class!(
         ) {
             use objc2::DefinedClass;
             use objc2_foundation::{NSNumber, NSString};
+            use objc2_user_notifications::{
+                UNNotificationDefaultActionIdentifier, UNTextInputNotificationResponse,
+            };
             let user_info = response.notification().request().content().userInfo();
-            let key = NSString::from_str("id");
-            if let Some(value) = user_info.objectForKey(&key) {
-                if let Ok(num) = value.downcast::<NSNumber>() {
-                    on_notification_click(self.ivars().app.clone(), num.unsignedLongLongValue());
+            let id = user_info
+                .objectForKey(&NSString::from_str("id"))
+                .and_then(|value| value.downcast::<NSNumber>().ok())
+                .map(|value| value.unsignedLongLongValue());
+            let path = user_info
+                .objectForKey(&NSString::from_str("path"))
+                .and_then(|value| value.downcast::<NSString>().ok())
+                .map(|value| value.to_string())
+                .and_then(|value| validated_thread_path(&value));
+            let action = response.actionIdentifier();
+
+            if action.to_string() == REPLY_ACTION_ID {
+                let text = response
+                    .downcast_ref::<UNTextInputNotificationResponse>()
+                    .map(|response| response.userText().to_string());
+                // The native callback must never wait for page navigation or
+                // its acknowledgement. `on_notification_reply` queues the work.
+                completion_handler.call(());
+                if let Some(id) = id {
+                    if let Some(text) = text {
+                        on_notification_reply(self.ivars().app.clone(), id, path, text);
+                    } else {
+                        on_notification_click_with_path(self.ivars().app.clone(), id, path);
+                    }
+                }
+                return;
+            }
+
+            // SAFETY: UserNotifications exports this as a process-lifetime
+            // NSString constant on every supported macOS version.
+            let default_action = unsafe { UNNotificationDefaultActionIdentifier };
+            if &*action == default_action {
+                if let Some(id) = id {
+                    on_notification_click_with_path(self.ivars().app.clone(), id, path);
                 }
             }
             // The API requires the completion block be called when we're done.
@@ -98,8 +141,12 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
     use objc2::{msg_send, AllocAnyThread};
-    use objc2_foundation::NSError;
-    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+    use objc2_foundation::{NSArray, NSError, NSSet, NSString};
+    use objc2_user_notifications::{
+        UNAuthorizationOptions, UNNotificationAction, UNNotificationActionOptionNone,
+        UNNotificationCategory, UNNotificationCategoryOptionNone, UNTextInputNotificationAction,
+        UNUserNotificationCenter,
+    };
 
     refresh_launch_services_registration();
 
@@ -113,6 +160,26 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     center.setDelegate(Some(proto));
     // Keep the delegate alive for the process: `setDelegate:` does not retain.
     std::mem::forget(delegate);
+
+    // Categories are valid independently of authorization state and must be
+    // registered before a reply-eligible notification is delivered.
+    let reply = UNTextInputNotificationAction::actionWithIdentifier_title_options_textInputButtonTitle_textInputPlaceholder(
+        &NSString::from_str(REPLY_ACTION_ID),
+        &NSString::from_str("Reply"),
+        UNNotificationActionOptionNone,
+        &NSString::from_str("Send"),
+        &NSString::from_str("Message…"),
+    );
+    let reply_action: &UNNotificationAction = &reply;
+    let actions = NSArray::from_slice(&[reply_action]);
+    let intents = NSArray::<NSString>::from_slice(&[]);
+    let category = UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+        &NSString::from_str(MESSAGE_CATEGORY_ID),
+        &actions,
+        &intents,
+        UNNotificationCategoryOptionNone,
+    );
+    center.setNotificationCategories(&NSSet::from_slice(&[&*category]));
 
     let options = UNAuthorizationOptions::Badge
         | UNAuthorizationOptions::Alert
@@ -189,6 +256,7 @@ pub(crate) fn deliver_notification_macos(
     id: u64,
     image: Option<&Path>,
     sound: bool,
+    options: MacNotificationOptions<'_>,
 ) {
     use objc2::rc::Retained;
     use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
@@ -204,12 +272,36 @@ pub(crate) fn deliver_notification_macos(
         content.setSound(Some(&UNNotificationSound::defaultSound()));
     }
 
-    // Carry the conversation id so the delegate's click handler can recover it.
-    // Built typed (NSString → NSNumber) then cast to the bare `NSDictionary`
-    // the `setUserInfo:` signature wants; the generics are just markers.
-    let key = NSString::from_str("id");
+    let thread_path = options.thread_path.and_then(validated_thread_path);
+    let thread_id = thread_path.as_deref().and_then(|path| {
+        path.strip_prefix("/t/")
+            .and_then(|path| path.strip_suffix('/'))
+    });
+    if options.group_by_conversation {
+        if let Some(thread_id) = thread_id {
+            content.setThreadIdentifier(&NSString::from_str(thread_id));
+        }
+    }
+    if options.reply_eligible && thread_path.is_some() {
+        content.setCategoryIdentifier(&NSString::from_str(MESSAGE_CATEGORY_ID));
+    }
+
+    // Carry both the page notification id and validated route. Notification
+    // Center entries outlive this process, so the route is the restart-safe
+    // fallback when the in-memory map is gone.
+    let id_key = NSString::from_str("id");
     let num = NSNumber::numberWithUnsignedLongLong(id);
-    let dict = NSDictionary::from_slices(&[&*key], &[&*num]);
+    let dict = if let Some(thread_path) = thread_path.as_deref() {
+        use objc2_foundation::NSObject;
+        let path_key = NSString::from_str("path");
+        let path = NSString::from_str(thread_path);
+        let values: [&NSObject; 2] = [&num, &path];
+        NSDictionary::from_slices(&[&*id_key, &*path_key], &values)
+    } else {
+        use objc2_foundation::NSObject;
+        let values: [&NSObject; 1] = [&num];
+        NSDictionary::from_slices(&[&*id_key], &values)
+    };
     let dict: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(dict) };
     // SAFETY: `dict` is a valid NSDictionary with a string key and number value.
     unsafe { content.setUserInfo(&dict) };
@@ -247,4 +339,51 @@ pub(crate) fn deliver_notification_macos(
     });
     UNUserNotificationCenter::currentNotificationCenter()
         .addNotificationRequest_withCompletionHandler(&request, Some(&handler));
+}
+
+/// Remove delivered notifications belonging to one validated conversation.
+/// Querying Notification Center instead of keeping another process-local map
+/// also clears entries delivered before Carrier restarted.
+pub(crate) fn clear_delivered_for_thread(thread_id: &str) {
+    use core::ptr::NonNull;
+
+    use objc2::rc::Retained;
+    use objc2_foundation::{NSArray, NSString};
+    use objc2_user_notifications::{UNNotification, UNUserNotificationCenter};
+
+    let Some(expected_path) = validated_thread_path(&format!("/t/{thread_id}/")) else {
+        return;
+    };
+    let thread_id = thread_id.to_string();
+    let path_key = NSString::from_str("path");
+    let handler = block2::RcBlock::new(move |notifications: NonNull<NSArray<UNNotification>>| {
+        // SAFETY: UserNotifications supplies a valid array for the duration
+        // of this callback.
+        let notifications = unsafe { notifications.as_ref() };
+        let identifiers: Vec<Retained<NSString>> = notifications
+            .iter()
+            .filter_map(|notification| {
+                let request = notification.request();
+                let content = request.content();
+                let grouped = content.threadIdentifier().to_string() == thread_id;
+                let persisted_path = content
+                    .userInfo()
+                    .objectForKey(&*path_key)
+                    .and_then(|value| value.downcast::<NSString>().ok())
+                    .map(|value| value.to_string());
+                (grouped || persisted_path.as_deref() == Some(expected_path.as_str()))
+                    .then(|| request.identifier())
+            })
+            .collect();
+        if !identifiers.is_empty() {
+            UNUserNotificationCenter::currentNotificationCenter()
+                .removeDeliveredNotificationsWithIdentifiers(&NSArray::from_retained_slice(
+                    &identifiers,
+                ));
+        }
+    });
+    // UserNotifications copies the block, so dropping our local RcBlock after
+    // registering it does not end the asynchronous enumeration.
+    UNUserNotificationCenter::currentNotificationCenter()
+        .getDeliveredNotificationsWithCompletionHandler(&handler);
 }

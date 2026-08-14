@@ -96,6 +96,9 @@
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
         ["notification_sound", "Notification sound", "Play the system sound when a notification arrives."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
+        ["group_notifications_by_conversation", "Group by Conversation", "macOS: stack notifications from the same conversation together."],
+        ["clear_notifications_on_view", "Clear When Viewed", "macOS: remove a conversation's notifications when you view it in Carrier."],
+        ["attention_on_message", IS_WINDOWS ? "Flash Taskbar Icon" : "Bounce Dock Icon", IS_WINDOWS ? "Windows: flash the taskbar icon when a message arrives while Carrier is unfocused." : "macOS: bounce the Dock icon when a message arrives while Carrier is unfocused."],
         ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+H)."],
         ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
         ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
@@ -139,12 +142,14 @@
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
-            ...(IS_LINUX ? ["tray_icon_style"] : []),
+            ...(IS_MAC || IS_LINUX ? ["tray_icon_style"] : []),
             ...(IS_MAC ? ["menu_bar_only"] : []),
             ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
           ] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
+                   ...(IS_MAC ? ["group_notifications_by_conversation", "clear_notifications_on_view"] : []),
+                   ...(IS_MAC || IS_WINDOWS ? ["attention_on_message"] : []),
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
@@ -264,7 +269,9 @@
           "tray_icon_style", "color",
           [["color", "Color"], ["symbolic", "Symbolic"]],
           "Tray icon style",
-          "Linux: use the full-color icon or a monochrome mark tinted for the desktop theme.",
+          IS_MAC
+            ? "macOS: use the full-color icon or a monochrome template tinted by the menu bar."
+            : "Linux: use the full-color icon or a monochrome mark tinted for the desktop theme.",
           false,
         );
       }

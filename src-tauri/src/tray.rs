@@ -517,10 +517,24 @@ pub(crate) fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
 pub(crate) fn build_tray_with_menu(
     app: &tauri::AppHandle,
     menu: Menu<tauri::Wry>,
+    icon_style: &str,
 ) -> tauri::Result<PlatformTrayIcon> {
+    #[cfg(target_os = "macos")]
+    let symbolic = icon_style == "symbolic";
+    #[cfg(target_os = "macos")]
+    let icon = if symbolic {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
+    } else {
+        app.default_window_icon().expect("bundled icon").clone()
+    };
+    #[cfg(not(target_os = "macos"))]
+    let icon = {
+        let _ = icon_style;
+        app.default_window_icon().expect("bundled icon").clone()
+    };
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
-        .icon(app.default_window_icon().expect("bundled icon").clone())
+        .icon(icon)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
             if event.id.as_ref() == "quit" {
@@ -548,15 +562,34 @@ pub(crate) fn build_tray_with_menu(
     #[cfg(not(target_os = "macos"))]
     let builder = builder.menu(&menu);
     #[cfg(target_os = "macos")]
-    let _ = &menu;
+    let builder = {
+        let _ = &menu;
+        builder.icon_as_template(symbolic)
+    };
 
     builder.build(app)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn set_macos_tray_icon_style(
+    app: &tauri::AppHandle,
+    tray: &PlatformTrayIcon,
+    icon_style: &str,
+) -> tauri::Result<()> {
+    let symbolic = icon_style == "symbolic";
+    let icon = if symbolic {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
+    } else {
+        app.default_window_icon().expect("bundled icon").clone()
+    };
+    tray.set_icon_with_as_template(Some(icon), symbolic)
 }
 
 #[cfg(target_os = "linux")]
 pub(crate) fn build_tray_with_menu(
     app: &tauri::AppHandle,
     _menu: (),
+    _icon_style: &str,
 ) -> tauri::Result<PlatformTrayIcon> {
     use ksni::blocking::TrayMethods;
 
