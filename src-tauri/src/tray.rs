@@ -576,6 +576,7 @@ fn macos_tray_icon(
         app.default_window_icon()
             .ok_or_else(|| tauri::Error::Io(std::io::Error::other("missing bundled icon")))?
             .clone()
+            .to_owned()
     };
     Ok((icon, symbolic))
 }

@@ -287,7 +287,7 @@ fn apply_route_metadata(
     let num = NSNumber::numberWithUnsignedLongLong(id);
     let page_id = page_id.filter(|page_id| *page_id != 0);
     let page_key = NSString::from_str("page_id");
-    let page_num = page_id.map(|page_id| NSNumber::numberWithUnsignedLongLong(page_id));
+    let page_num = page_id.map(NSNumber::numberWithUnsignedLongLong);
     let path_key = NSString::from_str("path");
     let path = thread_path.as_deref().map(NSString::from_str);
     let dict = match (path.as_deref(), page_num.as_deref()) {

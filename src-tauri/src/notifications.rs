@@ -2023,6 +2023,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
 /// A notification was clicked: surface Carrier and open its retained route, or
 /// fall back to the page's original notification callback when no route exists.
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
     on_notification_click_with_path(app, id, None, None);
 }
