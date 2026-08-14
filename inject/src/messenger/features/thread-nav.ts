@@ -28,7 +28,12 @@ export function initThreadNav() {
   const reportViewedThread = () => {
     const id = threadIdFromHref(location.pathname);
     const path = id ? `/t/${id}/` : null;
-    const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
+    const next = advanceThreadViewed(
+      viewed,
+      path,
+      document.hasFocus() && !document.hidden,
+      performance.now(),
+    );
     viewed = next.state;
     if (next.emit) {
       invoke("plugin:event|emit", {

@@ -444,8 +444,13 @@ fn resolved_notification_route(
     id: u64,
     fallback_path: Option<&str>,
 ) -> Option<String> {
-    let route =
-        take_notification_route(id).or_else(|| fallback_path.and_then(validated_thread_path));
+    // Notification Center's embedded path belongs to the exact request the
+    // user acted on. A page-local id can be reused after Messenger reloads, so
+    // never let a newer process-local association override that path.
+    if let Some(route) = fallback_path.and_then(validated_thread_path) {
+        return Some(route);
+    }
+    let route = take_notification_route(id);
     #[cfg(target_os = "macos")]
     {
         if route.is_some() {
@@ -1086,8 +1091,8 @@ fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
-fn sanitized_reply_text(text: &str) -> String {
-    text.trim().chars().take(MAX_QUICK_REPLY_CHARS).collect()
+fn trimmed_reply_text(text: &str) -> String {
+    text.trim().to_string()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -1326,10 +1331,15 @@ fn deliver_quick_reply(
         show_reply_failure_notification();
         return;
     };
-    let text = sanitized_reply_text(&raw_text);
+    let text = trimmed_reply_text(&raw_text);
     if text.is_empty() {
         // Empty input is equivalent to activating the notification.
         on_notification_click_with_path(app, id, Some(thread_path));
+        return;
+    }
+    if text.chars().count() > MAX_QUICK_REPLY_CHARS {
+        log::warn!("quick reply exceeds the inline send limit (id {id})");
+        open_reply_fallback(app, id, thread_path, text);
         return;
     }
 
@@ -1417,7 +1427,7 @@ fn open_rejected_reply_fallback(
     raw_text: String,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
-    let text = sanitized_reply_text(&raw_text);
+    let text = trimmed_reply_text(&raw_text);
     match (thread_path, text.is_empty()) {
         (Some(path), false) => open_reply_fallback(app, id, path, text),
         (Some(path), true) => on_notification_click_with_path(app, id, Some(path)),
@@ -1515,9 +1525,10 @@ pub(crate) fn show_message_notification(
         thread_path.as_deref(),
         linux_notification_capabilities(),
     );
-    // Page notification ids restart with the page. Retire a durable route from
-    // an older request before reusing the id; this notification's own userInfo
-    // carries its current route when one is already known.
+    // Page notification ids restart with the page. Retire routes from an older
+    // request before reusing the id; this notification's own userInfo carries
+    // its current route when one is already known.
+    let _ = take_notification_route(id);
     #[cfg(target_os = "macos")]
     forget_persisted_notification_route(&app, id);
     remember_notification_route(id, &msg.thread_path);
@@ -2137,13 +2148,13 @@ mod tests {
     }
 
     #[test]
-    fn reply_text_sanitation_trims_and_preserves_unicode_boundaries() {
+    fn reply_text_trimming_never_silently_truncates() {
         let text = "å".repeat(MAX_QUICK_REPLY_CHARS + 1);
-        let capped = sanitized_reply_text(&format!("  {text}  "));
-        assert_eq!(capped.chars().count(), MAX_QUICK_REPLY_CHARS);
-        assert!(capped.is_char_boundary(capped.len()));
-        assert_eq!(sanitized_reply_text("  hello \n"), "hello");
-        assert!(sanitized_reply_text(" \n\t ").is_empty());
+        let preserved = trimmed_reply_text(&format!("  {text}  "));
+        assert_eq!(preserved.chars().count(), MAX_QUICK_REPLY_CHARS + 1);
+        assert!(preserved.is_char_boundary(preserved.len()));
+        assert_eq!(trimmed_reply_text("  hello \n"), "hello");
+        assert!(trimmed_reply_text(" \n\t ").is_empty());
     }
 
     #[test]

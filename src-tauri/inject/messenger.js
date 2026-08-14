@@ -4893,7 +4893,7 @@
     };
     window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
       const text = String(rawText);
-      if (threadPathId(path) === null || [...text].length > MAX_REPLY_CHARS || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
         emitReplyResult(id, attempt, false);
         return;
       }
@@ -6005,12 +6005,21 @@
   // inject/src/messenger/lib/thread-viewed.ts
   var initialThreadViewedState = () => ({
     visible: false,
-    threadPath: null
+    threadPath: null,
+    lastReportedAt: null
   });
-  function advanceThreadViewed(previous, threadPath, visible) {
-    const emit = visible && threadPath && (!previous.visible || previous.threadPath !== threadPath) ? threadPath : null;
+  var THREAD_VIEW_RECHECK_MS = 5e3;
+  function advanceThreadViewed(previous, threadPath, visible, now) {
+    const active = visible && threadPath !== null;
+    const changed = !previous.visible || previous.threadPath !== threadPath;
+    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
+    const emit = active && (changed || recheckDue) ? threadPath : null;
     return {
-      state: { visible, threadPath },
+      state: {
+        visible,
+        threadPath,
+        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
+      },
       emit
     };
   }
@@ -6033,7 +6042,12 @@
     const reportViewedThread = () => {
       const id = threadIdFromHref(location.pathname);
       const path = id ? `/t/${id}/` : null;
-      const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
+      const next = advanceThreadViewed(
+        viewed,
+        path,
+        document.hasFocus() && !document.hidden,
+        performance.now()
+      );
       viewed = next.state;
       if (next.emit) {
         invoke("plugin:event|emit", {

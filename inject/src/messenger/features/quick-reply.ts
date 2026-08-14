@@ -144,7 +144,6 @@ export function initQuickReply() {
     const text = String(rawText);
     if (
       threadPathId(path) === null ||
-      [...text].length > MAX_REPLY_CHARS ||
       !Number.isSafeInteger(id) ||
       id <= 0 ||
       !Number.isSafeInteger(attempt) ||
