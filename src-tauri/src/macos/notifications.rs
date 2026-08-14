@@ -21,6 +21,7 @@ pub(crate) struct MacNotificationOptions<'a> {
     pub(crate) group_by_conversation: bool,
     pub(crate) reply_eligible: bool,
     pub(crate) wait_for_route: bool,
+    pub(crate) page_id: Option<u64>,
 }
 
 /// The data the notification-centre delegate needs: the handle it routes a
@@ -78,6 +79,10 @@ objc2::define_class!(
                 .objectForKey(&NSString::from_str("id"))
                 .and_then(|value| value.downcast::<NSNumber>().ok())
                 .map(|value| value.unsignedLongLongValue());
+            let page_id = user_info
+                .objectForKey(&NSString::from_str("page_id"))
+                .and_then(|value| value.downcast::<NSNumber>().ok())
+                .map(|value| value.unsignedLongLongValue());
             let path = user_info
                 .objectForKey(&NSString::from_str("path"))
                 .and_then(|value| value.downcast::<NSString>().ok())
@@ -94,9 +99,14 @@ objc2::define_class!(
                 completion_handler.call(());
                 if let Some(id) = id {
                     if let Some(text) = text {
-                        on_notification_reply(self.ivars().app.clone(), id, path, text);
+                        on_notification_reply(self.ivars().app.clone(), id, page_id, path, text);
                     } else {
-                        on_notification_click_with_path(self.ivars().app.clone(), id, path);
+                        on_notification_click_with_path(
+                            self.ivars().app.clone(),
+                            id,
+                            page_id,
+                            path,
+                        );
                     }
                 }
                 return;
@@ -107,7 +117,12 @@ objc2::define_class!(
             let default_action = unsafe { UNNotificationDefaultActionIdentifier };
             if &*action == default_action {
                 if let Some(id) = id {
-                    on_notification_click_with_path(self.ivars().app.clone(), id, path);
+                    on_notification_click_with_path(
+                        self.ivars().app.clone(),
+                        id,
+                        page_id,
+                        path,
+                    );
                 }
             }
             // The API requires the completion block be called when we're done.
@@ -246,6 +261,7 @@ fn refresh_launch_services_registration() {
 fn apply_route_metadata(
     content: &objc2_user_notifications::UNMutableNotificationContent,
     id: u64,
+    page_id: Option<u64>,
     thread_path: Option<&str>,
     group_by_conversation: bool,
     reply_eligible: bool,
@@ -269,14 +285,28 @@ fn apply_route_metadata(
 
     let id_key = NSString::from_str("id");
     let num = NSNumber::numberWithUnsignedLongLong(id);
-    let dict = if let Some(thread_path) = thread_path.as_deref() {
-        let path_key = NSString::from_str("path");
-        let path = NSString::from_str(thread_path);
-        let values: [&NSObject; 2] = [&num, &path];
-        NSDictionary::from_slices(&[&*id_key, &*path_key], &values)
-    } else {
-        let values: [&NSObject; 1] = [&num];
-        NSDictionary::from_slices(&[&*id_key], &values)
+    let page_id = page_id.filter(|page_id| *page_id != 0);
+    let page_key = NSString::from_str("page_id");
+    let page_num = page_id.map(|page_id| NSNumber::numberWithUnsignedLongLong(page_id));
+    let path_key = NSString::from_str("path");
+    let path = thread_path.as_deref().map(NSString::from_str);
+    let dict = match (path.as_deref(), page_num.as_deref()) {
+        (Some(path), Some(page_num)) => {
+            let values: [&NSObject; 3] = [&num, page_num, path];
+            NSDictionary::from_slices(&[&*id_key, &*page_key, &*path_key], &values)
+        }
+        (Some(path), None) => {
+            let values: [&NSObject; 2] = [&num, path];
+            NSDictionary::from_slices(&[&*id_key, &*path_key], &values)
+        }
+        (None, Some(page_num)) => {
+            let values: [&NSObject; 2] = [&num, page_num];
+            NSDictionary::from_slices(&[&*id_key, &*page_key], &values)
+        }
+        (None, None) => {
+            let values: [&NSObject; 1] = [&num];
+            NSDictionary::from_slices(&[&*id_key], &values)
+        }
     };
     let dict: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(dict) };
     // SAFETY: every key is an NSString and every value is an Objective-C
@@ -312,12 +342,13 @@ pub(crate) fn deliver_notification_macos(
         content.setSound(Some(&UNNotificationSound::defaultSound()));
     }
 
-    // Carry both the page notification id and validated route. Notification
-    // Center entries outlive this process, so the route is the restart-safe
-    // fallback when the in-memory map is gone.
+    // Carry the trusted native id, page callback id, and validated route.
+    // Notification Center entries outlive this process, so the route is the
+    // restart-safe fallback when the in-memory map is gone.
     let thread_path = apply_route_metadata(
         &content,
         id,
+        options.page_id,
         options.thread_path,
         options.group_by_conversation,
         options.reply_eligible,
@@ -338,8 +369,8 @@ pub(crate) fn deliver_notification_macos(
         }
     }
 
-    // A per-notification identifier; the page's id (stringified) is unique
-    // enough and keeps requests from coalescing.
+    // The trusted native id stays unique when the page reloads, so an older
+    // Notification Center request cannot coalesce with a new page counter.
     let request_id = NSString::from_str(&id.to_string());
     // A page-first message may precede its conversation row by a moment. Keep
     // only an explicitly pairable route-less request pending long enough for
@@ -405,9 +436,16 @@ pub(crate) fn update_pending_notification_route_macos(
             return;
         };
         let content = request.content().mutableCopy();
+        let page_id = request
+            .content()
+            .userInfo()
+            .objectForKey(&NSString::from_str("page_id"))
+            .and_then(|value| value.downcast::<objc2_foundation::NSNumber>().ok())
+            .map(|value| value.unsignedLongLongValue());
         apply_route_metadata(
             &content,
             id,
+            page_id,
             Some(&thread_path),
             group_by_conversation,
             reply_eligible,

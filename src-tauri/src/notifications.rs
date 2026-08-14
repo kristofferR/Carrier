@@ -64,6 +64,11 @@ const MAX_RECENT_NOTIFICATIONS: usize = 256;
 const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
 const MAX_NOTIFICATIONS_PER_WINDOW: usize = 20;
 const LATE_NOTIFICATION_ROUTE_TTL: Duration = Duration::from_secs(2 * 60);
+const MAX_SAFE_NOTIFICATION_ID: u64 = (1_u64 << 53) - 1;
+
+fn next_native_notification_id() -> u64 {
+    ((uuid::Uuid::new_v4().as_u128() as u64) & MAX_SAFE_NOTIFICATION_ID).max(1)
+}
 
 /// What to do with an incoming notification after deduplication.
 enum Delivery {
@@ -119,7 +124,7 @@ impl NotificationDeduper {
     /// copy every 30 seconds while it keeps replaying the same event. A
     /// suppressed duplicate reports the id of the notification already shown for
     /// its fingerprint so its route can still be attached there.
-    fn classify(&mut self, msg: &NotifyMsg, now: Instant) -> Delivery {
+    fn classify(&mut self, msg: &NotifyMsg, delivered_id: u64, now: Instant) -> Delivery {
         self.seen
             .retain(|_, seen| now.saturating_duration_since(seen.at) <= NOTIFICATION_DEDUPE_WINDOW);
 
@@ -145,7 +150,7 @@ impl NotificationDeduper {
             fingerprint,
             SeenNotification {
                 at: now,
-                delivered_id: msg.id,
+                delivered_id,
             },
         );
         Delivery::Show
@@ -154,7 +159,7 @@ impl NotificationDeduper {
     /// Test helper: the delivery decision reduced to a bool.
     #[cfg(test)]
     fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
-        matches!(self.classify(msg, now), Delivery::Show)
+        matches!(self.classify(msg, msg.id, now), Delivery::Show)
     }
 }
 
@@ -207,40 +212,52 @@ static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock
 
 #[derive(Default)]
 struct LateNotificationRoutes {
-    accepted: HashMap<u64, Instant>,
+    accepted: HashMap<u64, (u64, Instant)>,
 }
 
 impl LateNotificationRoutes {
-    fn register(&mut self, id: u64, now: Instant) {
+    fn register(&mut self, page_id: u64, native_id: u64, now: Instant) {
         self.prune(now);
-        if id == 0 {
+        if page_id == 0 || native_id == 0 {
             return;
         }
-        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS && !self.accepted.contains_key(&id) {
+        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS && !self.accepted.contains_key(&page_id)
+        {
             if let Some(oldest) = self
                 .accepted
                 .iter()
-                .min_by_key(|(_, at)| *at)
+                .min_by_key(|(_, (_, at))| *at)
                 .map(|(id, _)| *id)
             {
                 self.accepted.remove(&oldest);
             }
         }
-        self.accepted.insert(id, now);
+        self.accepted.insert(page_id, (native_id, now));
     }
 
-    fn forget(&mut self, id: u64) {
-        self.accepted.remove(&id);
+    fn forget(&mut self, page_id: u64) {
+        self.accepted.remove(&page_id);
     }
 
-    fn claim(&mut self, id: u64, now: Instant) -> bool {
+    fn forget_native(&mut self, native_id: u64) {
+        self.accepted
+            .retain(|_, (accepted_native_id, _)| *accepted_native_id != native_id);
+    }
+
+    fn claim(&mut self, page_id: u64, now: Instant) -> Option<u64> {
         self.prune(now);
-        id != 0 && self.accepted.remove(&id).is_some()
+        (page_id != 0)
+            .then(|| {
+                self.accepted
+                    .remove(&page_id)
+                    .map(|(native_id, _)| native_id)
+            })
+            .flatten()
     }
 
     fn prune(&mut self, now: Instant) {
         self.accepted
-            .retain(|_, at| now.saturating_duration_since(*at) <= LATE_NOTIFICATION_ROUTE_TTL);
+            .retain(|_, (_, at)| now.saturating_duration_since(*at) <= LATE_NOTIFICATION_ROUTE_TTL);
     }
 }
 
@@ -577,8 +594,8 @@ fn resolved_notification_route(
     fallback_path: Option<&str>,
 ) -> Option<String> {
     // Notification Center's embedded path belongs to the exact request the
-    // user acted on. A page-local id can be reused after Messenger reloads, so
-    // never let a newer process-local association override that path.
+    // user acted on. Prefer it to every cache so the request remains
+    // self-contained across process restarts.
     if let Some(route) = fallback_path.and_then(validated_thread_path) {
         return Some(route);
     }
@@ -626,14 +643,14 @@ pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRout
     let Some(thread_path) = validated_thread_path(&msg.thread_path) else {
         return;
     };
-    if !late_notification_routes()
+    let Some(native_id) = late_notification_routes()
         .lock()
         .unwrap()
         .claim(msg.id, Instant::now())
-    {
+    else {
         return;
-    }
-    remember_notification_route(msg.id, &thread_path);
+    };
+    remember_notification_route(native_id, &thread_path);
     #[cfg(target_os = "macos")]
     {
         let (group_by_conversation, hide_preview) = {
@@ -646,7 +663,7 @@ pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRout
         };
         attach_notification_route_macos(
             app,
-            msg.id,
+            native_id,
             &thread_path,
             group_by_conversation,
             hide_preview,
@@ -1456,9 +1473,9 @@ fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text
 }
 
 #[cfg(target_os = "linux")]
-fn open_notification_composer(app: tauri::AppHandle, id: u64) {
+fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
     let Some(thread_path) = take_notification_route(id) else {
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, Some(page_id), None);
         return;
     };
     let attempt = next_reply_attempt();
@@ -1480,20 +1497,21 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64) {
 fn deliver_quick_reply(
     app: tauri::AppHandle,
     id: u64,
+    page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, page_id, None);
         show_reply_failure_notification();
         return;
     };
     let text = trimmed_reply_text(&raw_text);
     if text.is_empty() {
         // Empty input is equivalent to activating the notification.
-        on_notification_click_with_path(app, id, Some(thread_path));
+        on_notification_click_with_path(app, id, page_id, Some(thread_path));
         return;
     }
     if text.chars().count() > MAX_QUICK_REPLY_CHARS {
@@ -1549,16 +1567,18 @@ fn deliver_quick_reply(
 pub(crate) fn on_notification_reply(
     app: tauri::AppHandle,
     id: u64,
+    page_id: Option<u64>,
     fallback_path: Option<String>,
     text: String,
 ) {
     let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
         log::warn!("quick reply rejected because the native worker cap was reached (id {id})");
-        open_rejected_reply_fallback(app, id, fallback_path, text);
+        open_rejected_reply_fallback(app, id, page_id, fallback_path, text);
         return;
     };
 
     let fallback_app = app.clone();
+    let fallback_page_id = page_id;
     let fallback_path_copy = fallback_path.clone();
     let fallback_text = text.clone();
     if let Err(error) = std::thread::Builder::new()
@@ -1570,11 +1590,17 @@ pub(crate) fn on_notification_reply(
                 .get_or_init(|| Mutex::new(()))
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            deliver_quick_reply(app, id, fallback_path, text);
+            deliver_quick_reply(app, id, page_id, fallback_path, text);
         })
     {
         log::warn!("failed to start quick-reply worker (id {id}): {error}");
-        open_rejected_reply_fallback(fallback_app, id, fallback_path_copy, fallback_text);
+        open_rejected_reply_fallback(
+            fallback_app,
+            id,
+            fallback_page_id,
+            fallback_path_copy,
+            fallback_text,
+        );
     }
 }
 
@@ -1582,6 +1608,7 @@ pub(crate) fn on_notification_reply(
 fn open_rejected_reply_fallback(
     app: tauri::AppHandle,
     id: u64,
+    page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
 ) {
@@ -1589,9 +1616,9 @@ fn open_rejected_reply_fallback(
     let text = trimmed_reply_text(&raw_text);
     match (thread_path, text.is_empty()) {
         (Some(path), false) => open_reply_fallback(app, id, path, text),
-        (Some(path), true) => on_notification_click_with_path(app, id, Some(path)),
+        (Some(path), true) => on_notification_click_with_path(app, id, page_id, Some(path)),
         (None, _) => {
-            on_notification_click(app, id);
+            on_notification_click_with_path(app, id, page_id, None);
             show_reply_failure_notification();
         }
     }
@@ -1636,12 +1663,14 @@ pub(crate) fn show_message_notification(
         return NativeNotificationDelivery::Suppressed;
     }
 
+    let page_id = msg.id;
+    let native_id = next_native_notification_id();
     let thread_path = validated_thread_path(&msg.thread_path);
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
-        .classify(&msg, Instant::now());
+        .classify(&msg, native_id, Instant::now());
     if let Delivery::Suppress { delivered_id } = decision {
         // The duplicate is dropped, but it may carry the reload-safe route the
         // shown notification lacked (a page-first notification whose row paired
@@ -1652,7 +1681,7 @@ pub(crate) fn show_message_notification(
             late_notification_routes()
                 .lock()
                 .unwrap()
-                .forget(delivered_id);
+                .forget_native(delivered_id);
         }
         #[cfg(target_os = "macos")]
         if let Some(thread_path) = thread_path.as_deref() {
@@ -1691,26 +1720,22 @@ pub(crate) fn show_message_notification(
     } else {
         msg.body
     };
-    let id = msg.id;
     #[cfg(target_os = "linux")]
     let allow_inline_reply = linux_reply_eligible(
         hide_preview,
-        id,
+        native_id,
         thread_path.as_deref(),
         linux_notification_capabilities(),
     );
-    // Page notification ids restart with the page. Retire routes from an older
-    // request before reusing the id; this notification's own userInfo carries
-    // its current route when one is already known.
-    let _ = take_notification_route(id);
-    #[cfg(target_os = "macos")]
-    forget_persisted_notification_route(&app, id);
-    remember_notification_route(id, &msg.thread_path);
+    // The native id is generated on the trusted side and never reused when the
+    // page's callback counter restarts. Old Notification Center entries retain
+    // their own in-memory/sidecar route instead of being overwritten here.
+    remember_notification_route(native_id, &msg.thread_path);
     if thread_path.is_none() {
         late_notification_routes()
             .lock()
             .unwrap()
-            .register(id, Instant::now());
+            .register(page_id, native_id, Instant::now());
     }
     // A Flatpak-private temp path is not readable by the host notification
     // daemon. Skip the path attachment there instead of showing a broken icon.
@@ -1748,14 +1773,19 @@ pub(crate) fn show_message_notification(
         deliver_notification_macos(
             &title,
             &body,
-            id,
+            native_id,
             image.as_deref(),
             sound,
             MacNotificationOptions {
                 thread_path: thread_path.as_deref(),
                 group_by_conversation,
-                reply_eligible: macos_reply_eligible(hide_preview, id, thread_path.as_deref()),
-                wait_for_route: id != 0 && thread_path.is_none(),
+                reply_eligible: macos_reply_eligible(
+                    hide_preview,
+                    native_id,
+                    thread_path.as_deref(),
+                ),
+                wait_for_route: page_id != 0 && thread_path.is_none(),
+                page_id: Some(page_id),
             },
         );
     }
@@ -1776,9 +1806,9 @@ pub(crate) fn show_message_notification(
                 let _ = std::fs::remove_file(path);
             }
             if clicked {
-                on_notification_click(app, id);
+                on_notification_click_with_path(app, native_id, Some(page_id), None);
             } else {
-                let _ = take_notification_route(id);
+                let _ = take_notification_route(native_id);
             }
         });
     }
@@ -1791,14 +1821,20 @@ pub(crate) fn show_message_notification(
             let _ = std::fs::remove_file(path);
         }
         match response {
-            LinuxNotificationResponse::Open => on_notification_click(app, id),
-            LinuxNotificationResponse::OpenComposer => open_notification_composer(app, id),
-            LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
-                on_notification_click(app, id);
+            LinuxNotificationResponse::Open => {
+                on_notification_click_with_path(app, native_id, Some(page_id), None)
             }
-            LinuxNotificationResponse::Reply(text) => on_notification_reply(app, id, None, text),
+            LinuxNotificationResponse::OpenComposer => {
+                open_notification_composer(app, native_id, page_id)
+            }
+            LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
+                on_notification_click_with_path(app, native_id, Some(page_id), None);
+            }
+            LinuxNotificationResponse::Reply(text) => {
+                on_notification_reply(app, native_id, Some(page_id), None, text)
+            }
             LinuxNotificationResponse::Closed => {
-                let _ = take_notification_route(id);
+                let _ = take_notification_route(native_id);
             }
         }
     });
@@ -1988,15 +2024,16 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 /// A notification was clicked: surface Carrier and open its retained route, or
 /// fall back to the page's original notification callback when no route exists.
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
-    on_notification_click_with_path(app, id, None);
+    on_notification_click_with_path(app, id, None, None);
 }
 
 /// Notification activation with an optional route persisted in native
-/// `userInfo`. The in-memory route wins while it exists; the persisted path
-/// keeps old Notification Center entries useful after an app restart.
+/// `userInfo`. The request-local path wins; native-id caches keep requests
+/// useful when no path was embedded or after an app restart.
 pub(crate) fn on_notification_click_with_path(
     app: tauri::AppHandle,
     id: u64,
+    page_id: Option<u64>,
     fallback_path: Option<String>,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
@@ -2004,10 +2041,14 @@ pub(crate) fn on_notification_click_with_path(
         run_app_action(&app, AppAction::OpenThread(thread_path));
         return;
     }
+    let Some(page_id) = page_id else {
+        show_main(&app);
+        return;
+    };
     let _ = app.clone().run_on_main_thread(move || {
         show_main(&app);
         if let Some(w) = app.get_webview_window("main") {
-            let script = format!("window.__carrierNotifyClick?.({id});");
+            let script = format!("window.__carrierNotifyClick?.({page_id});");
             let _ = w.eval(script);
         }
     });
@@ -2408,22 +2449,44 @@ mod tests {
         let start = Instant::now();
         let mut routes = LateNotificationRoutes::default();
 
-        assert!(!routes.claim(9_020, start));
-        routes.register(9_020, start);
-        assert!(routes.claim(9_020, start));
-        assert!(!routes.claim(9_020, start));
+        assert_eq!(routes.claim(9_020, start), None);
+        routes.register(9_020, 90_020, start);
+        assert_eq!(routes.claim(9_020, start), Some(90_020));
+        assert_eq!(routes.claim(9_020, start), None);
 
-        routes.register(9_021, start);
-        assert!(!routes.claim(
-            9_021,
-            start + LATE_NOTIFICATION_ROUTE_TTL + Duration::from_secs(1)
-        ));
+        routes.register(9_021, 90_021, start);
+        assert_eq!(
+            routes.claim(
+                9_021,
+                start + LATE_NOTIFICATION_ROUTE_TTL + Duration::from_secs(1)
+            ),
+            None
+        );
 
-        routes.register(9_022, start);
+        routes.register(9_022, 90_022, start);
         routes.forget(9_022);
-        assert!(!routes.claim(9_022, start));
-        routes.register(0, start);
-        assert!(!routes.claim(0, start));
+        assert_eq!(routes.claim(9_022, start), None);
+        routes.register(9_023, 90_023, start);
+        routes.forget_native(90_023);
+        assert_eq!(routes.claim(9_023, start), None);
+        routes.register(9_024, 90_024, start);
+        routes.register(9_024, 90_025, start + Duration::from_millis(1));
+        assert_eq!(
+            routes.claim(9_024, start + Duration::from_millis(1)),
+            Some(90_025)
+        );
+        routes.register(0, 90_023, start);
+        assert_eq!(routes.claim(0, start), None);
+    }
+
+    #[test]
+    fn native_notification_ids_fit_exactly_in_javascript_numbers() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..32 {
+            let id = next_native_notification_id();
+            assert!((1..=MAX_SAFE_NOTIFICATION_ID).contains(&id));
+            assert!(ids.insert(id));
+        }
     }
 
     #[test]
@@ -2505,16 +2568,16 @@ mod tests {
 
     #[test]
     fn suppressed_duplicate_reports_the_shown_notification_id() {
-        // A page-first notification (id 42) is shown; a later fallback for the
-        // same message (id 99) that carries the route is suppressed, but must
-        // report id 42 so the route reaches the notification on screen.
+        // A page-first notification (page id 42, native id 900) is shown; a
+        // later fallback for the same message is suppressed, but must report
+        // native id 900 so its route reaches the notification on screen.
         let now = Instant::now();
         let mut deduper = NotificationDeduper::default();
         let shown = notify_msg(42, "Jane", "Hello", "0123456789abcdef");
         let duplicate = notify_msg(99, "Jane", "Hello", "0123456789abcdef");
-        assert!(matches!(deduper.classify(&shown, now), Delivery::Show));
-        match deduper.classify(&duplicate, now) {
-            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 42),
+        assert!(matches!(deduper.classify(&shown, 900, now), Delivery::Show));
+        match deduper.classify(&duplicate, 901, now) {
+            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 900),
             Delivery::Show => panic!("an identical second notification must be suppressed"),
         }
     }
