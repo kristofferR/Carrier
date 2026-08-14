@@ -66,6 +66,7 @@ describe("downloadRevealLabel", () => {
 describe("isDownloadCancellation", () => {
   test("recognizes only an explicit native-picker cancellation", () => {
     expect(isDownloadCancellation(new Error("download cancelled"))).toBe(true);
+    expect(isDownloadCancellation(new Error("download rejected"))).toBe(false);
     expect(isDownloadCancellation(new Error("native download failed"))).toBe(false);
     expect(isDownloadCancellation("download cancelled")).toBe(false);
   });

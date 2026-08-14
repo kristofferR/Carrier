@@ -875,11 +875,14 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   // One request/response lifecycle for every result-bearing native call: sign
   // and emit the request with a fresh correlation token, then settle only on a
   // '<event>-result' CustomEvent that carries that token, a boolean under
-  // `field`, and a signature that verifies against this window's secret.
+  // `field`, and a signature that verifies against this window's secret. A
+  // result can optionally authenticate a second boolean that selects a more
+  // specific failure message.
   // Blocking native UI can acknowledge presentation first, clearing the
   // timeout, then send its final result after the blocking call returns.
   var carrierNativeCall = function (
-    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal
+    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal,
+    failureField, alternateFailedMessage
   ) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
@@ -899,10 +902,16 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
           if (phase !== 'presented' && phase !== 'complete') return;
           if (phase === 'presented' && value !== true) return;
         }}
+        var failureValue;
+        if (failureField) {{
+          failureValue = detail[failureField];
+          if (failureValue !== true && failureValue !== false) return;
+        }}
         // Field order matters. Phased calls append `phase` after the result field.
         var result = {{ request: request }};
         result[field] = value;
         if (acknowledgesBeforeFinal) result.phase = phase;
+        if (failureField) result[failureField] = failureValue;
         var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
         if (!authenticated) return;
         if (acknowledgesBeforeFinal && phase === 'presented') {{
@@ -914,7 +923,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
         }}
         cleanup();
         if (value) resolve();
-        else reject(new Error(failedMessage));
+        else reject(new Error(failureValue === false ? alternateFailedMessage : failedMessage));
       }};
       var timeout = nativeSetTimeout(function () {{
         cleanup();
@@ -955,7 +964,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     return carrierNativeCall(
       'carrier:choose-download', 'chosen',
       'download cancelled', 'download picker timed out',
-      {{ url: url, name: name }}, true
+      {{ url: url, name: name }}, true, 'cancelled', 'download rejected'
     );
   }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
@@ -1248,8 +1257,9 @@ mod tests {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
 
         assert!(script.contains("'carrier:choose-download', 'chosen'"));
-        assert!(script.contains("{ url: url, name: name }, true"));
+        assert!(script.contains("{ url: url, name: name }, true, 'cancelled'"));
         assert!(script.contains("download cancelled"));
+        assert!(script.contains("download rejected"));
         assert!(script.contains("download picker timed out"));
     }
 

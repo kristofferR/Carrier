@@ -282,6 +282,23 @@ enum NativeResultPhase {
     Complete,
 }
 
+#[derive(Clone, Copy)]
+enum DownloadChoice {
+    Chosen,
+    Cancelled,
+    Rejected,
+}
+
+impl DownloadChoice {
+    fn chosen(self) -> bool {
+        matches!(self, Self::Chosen)
+    }
+
+    fn cancelled(self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
+}
+
 fn context_menu_result_signature(
     secret: &str,
     request: &str,
@@ -309,7 +326,7 @@ fn context_menu_result_signature(
 fn choose_download_result_signature(
     secret: &str,
     request: &str,
-    chosen: bool,
+    choice: DownloadChoice,
     phase: NativeResultPhase,
 ) -> Option<String> {
     #[derive(serde::Serialize)]
@@ -317,6 +334,7 @@ fn choose_download_result_signature(
         request: &'a str,
         chosen: bool,
         phase: NativeResultPhase,
+        cancelled: bool,
     }
 
     result_signature(
@@ -324,8 +342,9 @@ fn choose_download_result_signature(
         "carrier:choose-download-result",
         &ChooseDownloadResult {
             request,
-            chosen,
+            chosen: choice.chosen(),
             phase,
+            cancelled: choice.cancelled(),
         },
     )
 }
@@ -425,7 +444,7 @@ fn send_choose_download_result(
     app: &tauri::AppHandle,
     label: &str,
     request: &str,
-    chosen: bool,
+    choice: DownloadChoice,
     phase: NativeResultPhase,
 ) {
     if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -437,7 +456,7 @@ fn send_choose_download_result(
         let tokens = state.download_reveal_tokens.lock().unwrap();
         tokens
             .get(label)
-            .and_then(|secret| choose_download_result_signature(secret, request, chosen, phase))
+            .and_then(|secret| choose_download_result_signature(secret, request, choice, phase))
     };
     let Some(signature) = signature else {
         log::warn!("failed to authenticate carrier:choose-download-result");
@@ -446,8 +465,10 @@ fn send_choose_download_result(
     let request = serde_json::to_string(request).expect("request serializes");
     let phase = serde_json::to_string(&phase).expect("phase serializes");
     let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let chosen = choice.chosen();
+    let cancelled = choice.cancelled();
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, signature: {signature} }} }}));"
+        "window.dispatchEvent(new CustomEvent('carrier:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, cancelled: {cancelled}, signature: {signature} }} }}));"
     );
     if let Some(window) = app.get_webview_window(label) {
         if let Err(error) = window.eval(&script) {
@@ -1046,21 +1067,25 @@ pub fn run() {
                     .is_some_and(|url| is_allowed_download(url, &name))
                     && !is_unsafe_download(&name);
                 let Some(window) = choose_download_handle.get_webview_window(&label) else {
+                    log::warn!("carrier:choose-download window was no longer available");
                     send_choose_download_result(
                         &choose_download_handle,
                         &label,
                         &msg.request,
-                        false,
+                        DownloadChoice::Rejected,
                         NativeResultPhase::Complete,
                     );
                     return;
                 };
                 if !asks || !allowed {
+                    log::warn!(
+                        "carrier:choose-download rejected (ask mode: {asks}, allowed media: {allowed})"
+                    );
                     send_choose_download_result(
                         &choose_download_handle,
                         &label,
                         &msg.request,
-                        false,
+                        DownloadChoice::Rejected,
                         NativeResultPhase::Complete,
                     );
                     return;
@@ -1081,22 +1106,45 @@ pub fn run() {
                 let result_url = msg.url.clone();
                 let result_parsed_url = parsed_url.expect("allowed download URL parsed");
                 dialog.save_file(move |selection| {
-                    let chosen = selection
-                        .and_then(|path| path.into_path().ok())
-                        .filter(|path| is_allowed_download_path(&result_parsed_url, path))
-                        .is_some_and(|path| {
-                            reserve_prompted_download(
-                                &result_handle,
-                                &result_label,
-                                &result_url,
-                                path,
-                            )
-                        });
+                    let choice = match selection {
+                        None => DownloadChoice::Cancelled,
+                        Some(path) => match path.into_path() {
+                            Err(_) => {
+                                log::warn!(
+                                    "carrier:choose-download selection was not a filesystem path"
+                                );
+                                DownloadChoice::Rejected
+                            }
+                            Ok(path)
+                                if !is_allowed_download_path(&result_parsed_url, &path) =>
+                            {
+                                log::warn!(
+                                    "carrier:choose-download selection failed the media policy"
+                                );
+                                DownloadChoice::Rejected
+                            }
+                            Ok(path) => {
+                                if reserve_prompted_download(
+                                    &result_handle,
+                                    &result_label,
+                                    &result_url,
+                                    path,
+                                ) {
+                                    DownloadChoice::Chosen
+                                } else {
+                                    log::warn!(
+                                        "carrier:choose-download reservation cap was reached"
+                                    );
+                                    DownloadChoice::Rejected
+                                }
+                            }
+                        },
+                    };
                     send_choose_download_result(
                         &result_handle,
                         &result_label,
                         &result_request,
-                        chosen,
+                        choice,
                         NativeResultPhase::Complete,
                     );
                 });
@@ -1104,7 +1152,7 @@ pub fn run() {
                     &choose_download_handle,
                     &label,
                     &msg.request,
-                    true,
+                    DownloadChoice::Chosen,
                     NativeResultPhase::Presented,
                 );
             });
@@ -1757,19 +1805,24 @@ mod tests {
         let presented = choose_download_result_signature(
             "test-secret",
             "0123456789abcdef0123456789abcdef",
-            true,
+            DownloadChoice::Chosen,
             NativeResultPhase::Presented,
         );
         let complete = choose_download_result_signature(
             "test-secret",
             "0123456789abcdef0123456789abcdef",
-            true,
+            DownloadChoice::Chosen,
             NativeResultPhase::Complete,
         );
 
-        assert!(presented.is_some());
-        assert!(complete.is_some());
-        assert_ne!(presented, complete);
+        assert_eq!(
+            presented.as_deref(),
+            Some("c2b68bde1b166f3d29ed8237b2cd1e70a3895525384d19191737b56cd4adb401")
+        );
+        assert_eq!(
+            complete.as_deref(),
+            Some("6052d1952b4519524cbbd131ecc552829dae1faacfb0cb4725f49185df1881bf")
+        );
     }
 
     #[test]
