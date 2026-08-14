@@ -344,8 +344,9 @@ pub(crate) fn deliver_notification_macos(
 /// Remove delivered notifications belonging to one validated conversation.
 /// Querying Notification Center instead of keeping another process-local map
 /// also clears entries delivered before Carrier restarted.
-pub(crate) fn clear_delivered_for_thread(thread_id: &str) {
+pub(crate) fn clear_delivered_for_thread(thread_id: &str, late_route_ids: &[u64]) {
     use core::ptr::NonNull;
+    use std::collections::HashSet;
 
     use objc2::rc::Retained;
     use objc2_foundation::{NSArray, NSString};
@@ -355,6 +356,7 @@ pub(crate) fn clear_delivered_for_thread(thread_id: &str) {
         return;
     };
     let thread_id = thread_id.to_string();
+    let late_route_ids: HashSet<String> = late_route_ids.iter().map(u64::to_string).collect();
     let path_key = NSString::from_str("path");
     let handler = block2::RcBlock::new(move |notifications: NonNull<NSArray<UNNotification>>| {
         // SAFETY: UserNotifications supplies a valid array for the duration
@@ -366,13 +368,16 @@ pub(crate) fn clear_delivered_for_thread(thread_id: &str) {
                 let request = notification.request();
                 let content = request.content();
                 let grouped = content.threadIdentifier().to_string() == thread_id;
+                let late_routed = late_route_ids.contains(&request.identifier().to_string());
                 let persisted_path = content
                     .userInfo()
                     .objectForKey(&*path_key)
                     .and_then(|value| value.downcast::<NSString>().ok())
                     .map(|value| value.to_string());
-                (grouped || persisted_path.as_deref() == Some(expected_path.as_str()))
-                    .then(|| request.identifier())
+                (grouped
+                    || late_routed
+                    || persisted_path.as_deref() == Some(expected_path.as_str()))
+                .then(|| request.identifier())
             })
             .collect();
         if !identifiers.is_empty() {

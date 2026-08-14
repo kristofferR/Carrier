@@ -328,6 +328,43 @@ fn forget_persisted_notification_route_from_dir(directory: &Path, id: u64) -> Re
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn take_persisted_notification_ids_for_thread_from_dir(
+    directory: &Path,
+    thread_path: &str,
+) -> Result<Vec<u64>, String> {
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return Ok(Vec::new());
+    };
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut ids = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Ok(value) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if validated_thread_path(&value).as_deref() == Some(thread_path.as_str()) {
+            ids.push(id);
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(ids)
+}
+
 #[cfg(target_os = "macos")]
 fn persisted_notification_routes_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
@@ -366,6 +403,40 @@ fn forget_persisted_notification_route(app: &tauri::AppHandle, id: u64) {
     if let Err(error) = forget_persisted_notification_route_from_dir(&directory, id) {
         log::warn!("failed to retire a persisted notification route: {error}");
     }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn take_notification_ids_for_thread(
+    app: &tauri::AppHandle,
+    thread_path: &str,
+) -> Vec<u64> {
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .retain(|id, entry| {
+            if entry.path == thread_path {
+                ids.push(*id);
+                false
+            } else {
+                true
+            }
+        });
+    if let Some(directory) = persisted_notification_routes_dir(app) {
+        match take_persisted_notification_ids_for_thread_from_dir(&directory, &thread_path) {
+            Ok(persisted) => ids.extend(persisted),
+            Err(error) => {
+                log::warn!("failed to correlate persisted notification routes: {error}")
+            }
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 fn resolved_notification_route(
@@ -1289,7 +1360,7 @@ fn deliver_quick_reply(
                 .strip_prefix("/t/")
                 .and_then(|path| path.strip_suffix('/'))
             {
-                clear_delivered_for_thread(thread_id);
+                clear_delivered_for_thread(thread_id, &[id]);
             }
         }
     } else {
@@ -2160,6 +2231,27 @@ mod tests {
             !directory.join("9011").exists(),
             "the consumed route cache should be retired"
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn late_routes_are_correlated_for_clear_on_view() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-clear-test-{}-{sequence}",
+            std::process::id()
+        ));
+
+        persist_notification_route_in_dir(&directory, 9_021, "/t/777/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_022, "/t/777/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_023, "/t/888/").unwrap();
+        let mut ids =
+            take_persisted_notification_ids_for_thread_from_dir(&directory, "/t/777/").unwrap();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![9_021, 9_022]);
+        assert!(!directory.join("9021").exists());
+        assert!(!directory.join("9022").exists());
+        assert!(directory.join("9023").exists());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

@@ -127,6 +127,34 @@ fn parse_thread_viewed_payload(payload: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn messenger_url_thread_id(url: &url::Url) -> Option<String> {
+    if !url_rules::is_messenger_web_url(url) {
+        return None;
+    }
+    let path = url.path();
+    let id = path
+        .strip_prefix("/messages/t/")
+        .or_else(|| path.strip_prefix("/t/"))?;
+    let id = id.strip_suffix('/').unwrap_or(id);
+    actions::validated_thread_path(&format!("/t/{id}/"))?;
+    Some(id.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn focused_messenger_window_shows_thread(app: &tauri::AppHandle, thread_id: &str) -> bool {
+    app.webview_windows().into_iter().any(|(label, window)| {
+        (label == "main" || label.starts_with("win-"))
+            && window.is_focused().unwrap_or(false)
+            && window
+                .url()
+                .ok()
+                .and_then(|url| messenger_url_thread_id(&url))
+                .as_deref()
+                == Some(thread_id)
+    })
+}
+
 const SIGNED_ACTION_MAX_AGE: Duration = Duration::from_secs(5 * 60);
 const SIGNED_ACTION_FUTURE_SKEW: Duration = Duration::from_secs(30);
 const SIGNED_ACTION_NONCE_CAP: usize = 4_096;
@@ -1330,7 +1358,18 @@ pub fn run() {
                         log::warn!("carrier:thread-viewed payload did not parse");
                         return;
                     };
-                    macos::notifications::clear_delivered_for_thread(&thread_id);
+                    if !focused_messenger_window_shows_thread(&thread_viewed_handle, &thread_id) {
+                        log::warn!(
+                            "carrier:thread-viewed did not match the focused Messenger window"
+                        );
+                        return;
+                    }
+                    let thread_path = format!("/t/{thread_id}/");
+                    let late_route_ids = notifications::take_notification_ids_for_thread(
+                        &thread_viewed_handle,
+                        &thread_path,
+                    );
+                    macos::notifications::clear_delivered_for_thread(&thread_id, &late_route_ids);
                 });
             }
 
@@ -1456,6 +1495,31 @@ mod tests {
         assert!(parse_thread_viewed_payload(r#"{"thread_path":"/t/nope/"}"#).is_none());
         assert!(parse_thread_viewed_payload(r#"{"thread_path":"/t/123/?x=1"}"#).is_none());
         assert!(parse_thread_viewed_payload("{}").is_none());
+    }
+
+    #[test]
+    fn thread_viewed_url_requires_the_real_messenger_thread() {
+        assert_eq!(
+            messenger_url_thread_id(
+                &url::Url::parse("https://www.facebook.com/messages/t/123/?source=carrier")
+                    .unwrap()
+            )
+            .as_deref(),
+            Some("123")
+        );
+        assert_eq!(
+            messenger_url_thread_id(&url::Url::parse("https://www.messenger.com/t/456").unwrap())
+                .as_deref(),
+            Some("456")
+        );
+        assert!(messenger_url_thread_id(
+            &url::Url::parse("https://www.facebook.com/messages/").unwrap()
+        )
+        .is_none());
+        assert!(messenger_url_thread_id(
+            &url::Url::parse("https://example.com/messages/t/123/").unwrap()
+        )
+        .is_none());
     }
 
     fn signed_action(
