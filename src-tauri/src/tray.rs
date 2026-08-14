@@ -520,13 +520,7 @@ pub(crate) fn build_tray_with_menu(
     icon_style: &str,
 ) -> tauri::Result<PlatformTrayIcon> {
     #[cfg(target_os = "macos")]
-    let symbolic = icon_style == "symbolic";
-    #[cfg(target_os = "macos")]
-    let icon = if symbolic {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
-    } else {
-        app.default_window_icon().expect("bundled icon").clone()
-    };
+    let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
     #[cfg(not(target_os = "macos"))]
     let icon = {
         let _ = icon_style;
@@ -571,17 +565,28 @@ pub(crate) fn build_tray_with_menu(
 }
 
 #[cfg(target_os = "macos")]
+fn macos_tray_icon(
+    app: &tauri::AppHandle,
+    icon_style: &str,
+) -> tauri::Result<(tauri::image::Image<'static>, bool)> {
+    let symbolic = icon_style == "symbolic";
+    let icon = if symbolic {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
+    } else {
+        app.default_window_icon()
+            .ok_or_else(|| tauri::Error::Io(std::io::Error::other("missing bundled icon")))?
+            .clone()
+    };
+    Ok((icon, symbolic))
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn set_macos_tray_icon_style(
     app: &tauri::AppHandle,
     tray: &PlatformTrayIcon,
     icon_style: &str,
 ) -> tauri::Result<()> {
-    let symbolic = icon_style == "symbolic";
-    let icon = if symbolic {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))?
-    } else {
-        app.default_window_icon().expect("bundled icon").clone()
-    };
+    let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
     tray.set_icon_with_as_template(Some(icon), symbolic)
 }
 

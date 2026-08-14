@@ -351,7 +351,7 @@ export function initNotificationBridge() {
             // instance so `this` stays bound to the Notification.
             this.onclick?.(new Event("click"));
           },
-          pageMatch.threadPath,
+          pageMatch.threadPath ?? pageMatch.signal?.threadPath,
           pageMatch.signal
             ? (delivery) => {
                 pageMatch.signal!.nativeDelivery = delivery;
@@ -718,10 +718,11 @@ export function initNotificationBridge() {
       // while bypassing the native replay guard for a confirmed repeat. Once
       // emitted, changing the signal cannot update the payload already sent.
       if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-      // The page path already delivered this logical notification. If it fired
-      // before this row was known, its native notification carries no route —
-      // attach one now so a click survives the auto-refresh reload.
-      if (pageSignal.nativeId !== undefined && conversation.threadPath) {
+      // If avatar conversion is still in flight, put the route directly into
+      // the initial native request. Otherwise retrofit the still-pending macOS
+      // request (and retain the route for click/clear fallback on every OS).
+      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+      if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (pageSignal.emitted) {

@@ -13,6 +13,7 @@ use crate::notifications::{on_notification_click_with_path, on_notification_repl
 
 const MESSAGE_CATEGORY_ID: &str = "carrier.message";
 const REPLY_ACTION_ID: &str = "reply";
+const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MacNotificationOptions<'a> {
@@ -240,16 +241,54 @@ fn refresh_launch_services_registration() {
     }
 }
 
-/// Deliver a new-message notification through the modern
-/// `UNUserNotificationCenter` (macOS). Builds a `UNMutableNotificationContent`
-/// (title = sender, body = preview, the default sound when `sound` is on —
-/// leaving it unset delivers silently), stashes the conversation
-/// `id` in `userInfo` so [`NotifyDelegate`] can recover it on click, attaches
-/// the avatar as a `UNNotificationAttachment` when one decoded (best-effort),
-/// and adds the request for immediate delivery (`trigger: nil`).
-///
-/// Replaces the dead legacy `NSUserNotification` path (mac-notification-sys),
-/// which macOS 26/27 no longer presents for third-party apps.
+/// Apply the routing fields shared by initial and late-paired requests.
+fn apply_route_metadata(
+    content: &objc2_user_notifications::UNMutableNotificationContent,
+    id: u64,
+    thread_path: Option<&str>,
+    group_by_conversation: bool,
+    reply_eligible: bool,
+) -> Option<String> {
+    use objc2::rc::Retained;
+    use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSString};
+
+    let thread_path = thread_path.and_then(validated_thread_path);
+    let thread_id = thread_path.as_deref().and_then(|path| {
+        path.strip_prefix("/t/")
+            .and_then(|path| path.strip_suffix('/'))
+    });
+    if group_by_conversation {
+        if let Some(thread_id) = thread_id {
+            content.setThreadIdentifier(&NSString::from_str(thread_id));
+        }
+    }
+    if reply_eligible && thread_path.is_some() {
+        content.setCategoryIdentifier(&NSString::from_str(MESSAGE_CATEGORY_ID));
+    }
+
+    let id_key = NSString::from_str("id");
+    let num = NSNumber::numberWithUnsignedLongLong(id);
+    let dict = if let Some(thread_path) = thread_path.as_deref() {
+        let path_key = NSString::from_str("path");
+        let path = NSString::from_str(thread_path);
+        let values: [&NSObject; 2] = [&num, &path];
+        NSDictionary::from_slices(&[&*id_key, &*path_key], &values)
+    } else {
+        let values: [&NSObject; 1] = [&num];
+        NSDictionary::from_slices(&[&*id_key], &values)
+    };
+    let dict: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(dict) };
+    // SAFETY: every key is an NSString and every value is an Objective-C
+    // property-list object (NSNumber or NSString).
+    unsafe { content.setUserInfo(&dict) };
+    thread_path
+}
+
+/// Deliver a new-message notification through modern UserNotifications. A
+/// route-known request is immediate; a route-less page-first request gets a
+/// short trigger so a late pairing can replace it while still pending. This
+/// supersedes the legacy `NSUserNotification` path, which modern macOS no
+/// longer presents reliably for third-party apps.
 pub(crate) fn deliver_notification_macos(
     title: &str,
     body: &str,
@@ -258,11 +297,11 @@ pub(crate) fn deliver_notification_macos(
     sound: bool,
     options: MacNotificationOptions<'_>,
 ) {
-    use objc2::rc::Retained;
-    use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
+    use objc2_foundation::{NSArray, NSString, NSURL};
     use objc2_user_notifications::{
         UNMutableNotificationContent, UNNotificationAttachment, UNNotificationRequest,
-        UNNotificationSound, UNUserNotificationCenter,
+        UNNotificationSound, UNNotificationTrigger, UNTimeIntervalNotificationTrigger,
+        UNUserNotificationCenter,
     };
 
     let content = UNMutableNotificationContent::new();
@@ -272,39 +311,16 @@ pub(crate) fn deliver_notification_macos(
         content.setSound(Some(&UNNotificationSound::defaultSound()));
     }
 
-    let thread_path = options.thread_path.and_then(validated_thread_path);
-    let thread_id = thread_path.as_deref().and_then(|path| {
-        path.strip_prefix("/t/")
-            .and_then(|path| path.strip_suffix('/'))
-    });
-    if options.group_by_conversation {
-        if let Some(thread_id) = thread_id {
-            content.setThreadIdentifier(&NSString::from_str(thread_id));
-        }
-    }
-    if options.reply_eligible && thread_path.is_some() {
-        content.setCategoryIdentifier(&NSString::from_str(MESSAGE_CATEGORY_ID));
-    }
-
     // Carry both the page notification id and validated route. Notification
     // Center entries outlive this process, so the route is the restart-safe
     // fallback when the in-memory map is gone.
-    let id_key = NSString::from_str("id");
-    let num = NSNumber::numberWithUnsignedLongLong(id);
-    let dict = if let Some(thread_path) = thread_path.as_deref() {
-        use objc2_foundation::NSObject;
-        let path_key = NSString::from_str("path");
-        let path = NSString::from_str(thread_path);
-        let values: [&NSObject; 2] = [&num, &path];
-        NSDictionary::from_slices(&[&*id_key, &*path_key], &values)
-    } else {
-        use objc2_foundation::NSObject;
-        let values: [&NSObject; 1] = [&num];
-        NSDictionary::from_slices(&[&*id_key], &values)
-    };
-    let dict: Retained<NSDictionary> = unsafe { Retained::cast_unchecked(dict) };
-    // SAFETY: `dict` is a valid NSDictionary with a string key and number value.
-    unsafe { content.setUserInfo(&dict) };
+    let thread_path = apply_route_metadata(
+        &content,
+        id,
+        options.thread_path,
+        options.group_by_conversation,
+        options.reply_eligible,
+    );
 
     // Avatar attachment (Caprine-style thumbnail). Best-effort: if the OS
     // rejects the file, send the notification without it.
@@ -324,9 +340,26 @@ pub(crate) fn deliver_notification_macos(
     // A per-notification identifier; the page's id (stringified) is unique
     // enough and keeps requests from coalescing.
     let request_id = NSString::from_str(&id.to_string());
+    // A page-first notification may precede its conversation row by a moment.
+    // Keep only that route-less request pending long enough for the late route
+    // event to replace it with fully grouped/reply-capable content. Route-known
+    // notifications remain immediate.
+    let delayed_trigger = thread_path.is_none().then(|| {
+        UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(
+            ROUTE_PAIRING_DELAY_SECONDS,
+            false,
+        )
+    });
+    let trigger = delayed_trigger.as_deref().map(|trigger| {
+        let trigger: &UNNotificationTrigger = trigger;
+        trigger
+    });
     // `&content` coerces from the mutable subclass to `&UNNotificationContent`.
-    let request =
-        UNNotificationRequest::requestWithIdentifier_content_trigger(&request_id, &content, None);
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+        &request_id,
+        &content,
+        trigger,
+    );
     // A rejected request (revoked authorization, malformed content) is
     // otherwise invisible — same silent failure mode the authorization
     // logging in `setup_macos_notifications` exists for — so log it. The
@@ -339,6 +372,55 @@ pub(crate) fn deliver_notification_macos(
     });
     UNUserNotificationCenter::currentNotificationCenter()
         .addNotificationRequest_withCompletionHandler(&request, Some(&handler));
+}
+
+/// Add a late route to a notification that is still inside the short native
+/// pairing delay. Replacing a pending request with the same identifier is
+/// silent; using an immediate trigger then delivers it once with complete
+/// click, grouping, and reply metadata.
+pub(crate) fn update_pending_notification_route_macos(
+    id: u64,
+    thread_path: &str,
+    group_by_conversation: bool,
+    reply_eligible: bool,
+) {
+    use core::ptr::NonNull;
+
+    use objc2_foundation::{NSArray, NSMutableCopying, NSString};
+    use objc2_user_notifications::{UNNotificationRequest, UNUserNotificationCenter};
+
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return;
+    };
+    let expected_id = id.to_string();
+    let handler = block2::RcBlock::new(move |requests: NonNull<NSArray<UNNotificationRequest>>| {
+        // SAFETY: UserNotifications supplies a valid array for the callback.
+        let requests = unsafe { requests.as_ref() };
+        let Some(request) = requests
+            .iter()
+            .find(|request| request.identifier().to_string() == expected_id)
+        else {
+            return;
+        };
+        let content = request.content().mutableCopy();
+        apply_route_metadata(
+            &content,
+            id,
+            Some(&thread_path),
+            group_by_conversation,
+            reply_eligible,
+        );
+        let identifier = NSString::from_str(&expected_id);
+        let replacement = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &identifier,
+            &content,
+            None,
+        );
+        UNUserNotificationCenter::currentNotificationCenter()
+            .addNotificationRequest_withCompletionHandler(&replacement, None);
+    });
+    UNUserNotificationCenter::currentNotificationCenter()
+        .getPendingNotificationRequestsWithCompletionHandler(&handler);
 }
 
 /// Remove delivered notifications belonging to one validated conversation.

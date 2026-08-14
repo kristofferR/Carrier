@@ -4145,7 +4145,7 @@
             () => {
               this.onclick?.(new Event("click"));
             },
-            pageMatch.threadPath,
+            pageMatch.threadPath ?? pageMatch.signal?.threadPath,
             pageMatch.signal ? (delivery) => {
               pageMatch.signal.nativeDelivery = delivery;
               const handler = pageMatch.signal.onNativeDelivery;
@@ -4376,7 +4376,8 @@
       );
       if (pageSignal) {
         if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-        if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
+        if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+        if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
@@ -4865,7 +4866,18 @@
         if (!text) return true;
         if (composerContainsReply(box.textContent, text)) return true;
         if ((box.textContent || "").trim()) {
-          diag("quick-reply.draft", "existing composer draft preserved");
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          range.collapse(false);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          if (!document.execCommand("insertText", false, `
+
+${text}`)) {
+            diag("quick-reply.draft", "fallback append failed");
+            return false;
+          }
           return true;
         }
         if (!document.execCommand("insertText", false, text)) {

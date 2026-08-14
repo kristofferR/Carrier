@@ -1285,6 +1285,8 @@ pub fn run() {
             // avatar), notify you while Carrier is in the background, and open the
             // conversation on click. See `show_message_notification`.
             clear_avatar_cache();
+            #[cfg(target_os = "macos")]
+            notifications::clear_stale_notification_routes(app.handle());
             // macOS delivery now goes through UNUserNotificationCenter under the
             // app's own bundle id (set up in `setup_macos_notifications` once the
             // app is ready), so there's no per-process registration to do here.
@@ -1365,11 +1367,29 @@ pub fn run() {
                         return;
                     }
                     let thread_path = format!("/t/{thread_id}/");
-                    let late_route_ids = notifications::take_notification_ids_for_thread(
-                        &thread_viewed_handle,
-                        &thread_path,
-                    );
-                    macos::notifications::clear_delivered_for_thread(&thread_id, &late_route_ids);
+                    let correlation_handle = thread_viewed_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let route_handle = correlation_handle.clone();
+                        let late_route_ids = tauri::async_runtime::spawn_blocking(move || {
+                            notifications::take_notification_ids_for_thread(
+                                &route_handle,
+                                &thread_path,
+                            )
+                        })
+                        .await;
+                        let Ok(late_route_ids) = late_route_ids else {
+                            log::warn!("notification route correlation task failed");
+                            return;
+                        };
+                        if let Err(error) = correlation_handle.run_on_main_thread(move || {
+                            macos::notifications::clear_delivered_for_thread(
+                                &thread_id,
+                                &late_route_ids,
+                            );
+                        }) {
+                            log::warn!("failed to queue notification clearing: {error}");
+                        }
+                    });
                 });
             }
 

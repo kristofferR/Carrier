@@ -106,18 +106,7 @@ fn dispatch_page_action(window: &tauri::WebviewWindow, action: &AppAction) -> bo
     })
 }
 
-/// Run an app action now when Messenger is ready, otherwise retain the newest
-/// action for the main window's next completed Messenger load.
-pub(crate) fn run_app_action(app: &tauri::AppHandle, action: AppAction) {
-    if action == AppAction::Settings {
-        // Window creation from a single-instance callback can deadlock on
-        // Windows; dispatch it away from that callback just like F3.
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move { show_settings_window(&app) });
-        return;
-    }
-
-    show_main(app);
+fn dispatch_or_retain_page_action(app: &tauri::AppHandle, action: AppAction) {
     let state = app.state::<AppState>();
     let mut pending = state.pending_action.lock().unwrap();
     let ready = state.messenger_loaded.load(Ordering::Acquire);
@@ -134,14 +123,38 @@ pub(crate) fn run_app_action(app: &tauri::AppHandle, action: AppAction) {
     *pending = Some(action);
 }
 
+/// Run an app action now when Messenger is ready, otherwise retain the newest
+/// action for the main window's next completed Messenger load.
+pub(crate) fn run_app_action(app: &tauri::AppHandle, action: AppAction) {
+    if action == AppAction::Settings {
+        // Window creation from a single-instance callback can deadlock on
+        // Windows; dispatch it away from that callback just like F3.
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { show_settings_window(&app) });
+        return;
+    }
+
+    show_main(app);
+    // Page-load callbacks run on the main thread. Put readiness inspection and
+    // eval there too so a Started transition cannot race a background
+    // notification/CLI action between the ready read and script dispatch.
+    let main_app = app.clone();
+    let fallback_action = action.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        dispatch_or_retain_page_action(&main_app, action);
+    }) {
+        log::warn!("failed to queue app action on the main thread: {error}");
+        *app.state::<AppState>().pending_action.lock().unwrap() = Some(fallback_action);
+    }
+}
+
 /// Mark the main page unavailable before a navigation replaces its injected
 /// hooks. This keeps actions arriving during a reload in the pending slot.
 pub(crate) fn messenger_page_started(window: &tauri::WebviewWindow) {
     if window.label() == "main" {
-        window
-            .state::<AppState>()
-            .messenger_loaded
-            .store(false, Ordering::Release);
+        let state = window.state::<AppState>();
+        let _pending = state.pending_action.lock().unwrap();
+        state.messenger_loaded.store(false, Ordering::Release);
     }
 }
 

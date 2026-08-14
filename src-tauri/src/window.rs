@@ -97,7 +97,9 @@ pub(crate) fn build_app_window(
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
     if label == "main" {
-        app.state::<AppState>()
+        let state = app.state::<AppState>();
+        let _pending = state.pending_action.lock().unwrap();
+        state
             .messenger_loaded
             .store(false, std::sync::atomic::Ordering::Release);
     }

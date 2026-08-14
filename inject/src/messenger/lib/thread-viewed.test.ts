@@ -9,10 +9,16 @@ describe("visible thread reporting", () => {
   test("deduplicates a visible conversation until its periodic recheck", () => {
     const first = advanceThreadViewed(initialThreadViewedState(), "/t/123/", true, 0);
     expect(first.emit).toBe("/t/123/");
-    expect(advanceThreadViewed(first.state, "/t/123/", true, 1_000).emit).toBeNull();
-    expect(advanceThreadViewed(first.state, "/t/123/", true, THREAD_VIEW_RECHECK_MS).emit).toBe(
-      "/t/123/",
-    );
+    expect(first.state.lastReportedAt).toBe(0);
+    const held = advanceThreadViewed(first.state, "/t/123/", true, 1_000);
+    expect(held.emit).toBeNull();
+    expect(held.state.lastReportedAt).toBe(0);
+    const recheck = advanceThreadViewed(first.state, "/t/123/", true, THREAD_VIEW_RECHECK_MS);
+    expect(recheck.emit).toBe("/t/123/");
+    expect(recheck.state.lastReportedAt).toBe(THREAD_VIEW_RECHECK_MS);
+    expect(
+      advanceThreadViewed(recheck.state, "/t/123/", true, THREAD_VIEW_RECHECK_MS + 1).emit,
+    ).toBeNull();
   });
 
   test("emits when the conversation changes", () => {
@@ -28,7 +34,12 @@ describe("visible thread reporting", () => {
   });
 
   test("never emits inbox or hidden states", () => {
-    expect(advanceThreadViewed(initialThreadViewedState(), null, true, 0).emit).toBeNull();
-    expect(advanceThreadViewed(initialThreadViewedState(), "/t/123/", false, 0).emit).toBeNull();
+    const focused = advanceThreadViewed(initialThreadViewedState(), "/t/123/", true, 0);
+    const inbox = advanceThreadViewed(focused.state, null, true, 1);
+    expect(inbox.emit).toBeNull();
+    expect(inbox.state.lastReportedAt).toBeNull();
+    const hidden = advanceThreadViewed(focused.state, "/t/123/", false, 1);
+    expect(hidden.emit).toBeNull();
+    expect(hidden.state.lastReportedAt).toBeNull();
   });
 });

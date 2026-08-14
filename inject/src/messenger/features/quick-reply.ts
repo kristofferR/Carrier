@@ -108,9 +108,20 @@ async function preserveDraft(path: string, text: string): Promise<boolean> {
       box.focus();
       if (!text) return true;
       if (composerContainsReply(box.textContent, text)) return true;
-      // Never merge a notification reply into a draft the user already wrote.
+      // This fallback never sends automatically. Preserve both pieces when a
+      // draft already exists instead of acknowledging and dropping the native
+      // reply that brought the user here.
       if ((box.textContent || "").trim()) {
-        diag("quick-reply.draft", "existing composer draft preserved");
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(box);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        if (!document.execCommand("insertText", false, `\n\n${text}`)) {
+          diag("quick-reply.draft", "fallback append failed");
+          return false;
+        }
         return true;
       }
       if (!document.execCommand("insertText", false, text)) {

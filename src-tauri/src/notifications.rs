@@ -26,7 +26,8 @@ use tauri::Manager;
 use crate::actions::{run_app_action, validated_thread_path, AppAction};
 #[cfg(target_os = "macos")]
 use crate::macos::notifications::{
-    clear_delivered_for_thread, deliver_notification_macos, MacNotificationOptions,
+    clear_delivered_for_thread, deliver_notification_macos,
+    update_pending_notification_route_macos, MacNotificationOptions,
 };
 use crate::settings::AppState;
 use crate::tray::show_main;
@@ -209,6 +210,10 @@ const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
 static PERSISTED_NOTIFICATION_ROUTE_IO: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(any(target_os = "macos", test))]
 static PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
+#[cfg(any(target_os = "macos", test))]
+const PERSISTED_NOTIFICATION_ROUTE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+#[cfg(any(target_os = "macos", test))]
+const PERSISTED_NOTIFICATION_ROUTE_TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 fn remember_notification_route(id: u64, value: &str) {
     // `id` is the page's unique per-notification handle. A missing or zero id
@@ -297,6 +302,55 @@ fn persist_notification_route_in_dir(directory: &Path, id: u64, value: &str) -> 
 }
 
 #[cfg(any(target_os = "macos", test))]
+fn clear_stale_notification_routes_in_dir(
+    directory: &Path,
+    now: std::time::SystemTime,
+) -> Result<(), String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() || file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let age = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok());
+        let remove = if let Ok(id) = name.parse::<u64>() {
+            let valid = id != 0
+                && std::fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|value| validated_thread_path(&value))
+                    .is_some();
+            !valid || age.is_some_and(|age| age > PERSISTED_NOTIFICATION_ROUTE_MAX_AGE)
+        } else {
+            name.starts_with('.')
+                && name.ends_with(".tmp")
+                && age.is_some_and(|age| age > PERSISTED_NOTIFICATION_ROUTE_TEMP_MAX_AGE)
+        };
+        if remove {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn take_persisted_notification_route_from_dir(
     directory: &Path,
     id: u64,
@@ -371,6 +425,18 @@ fn persisted_notification_routes_dir(app: &tauri::AppHandle) -> Option<PathBuf> 
         .app_data_dir()
         .ok()
         .map(|directory| directory.join(PERSISTED_NOTIFICATION_ROUTES_DIR))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn clear_stale_notification_routes(app: &tauri::AppHandle) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) =
+        clear_stale_notification_routes_in_dir(&directory, std::time::SystemTime::now())
+    {
+        log::warn!("failed to prune persisted notification routes: {error}");
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -492,7 +558,25 @@ pub(crate) struct NotifyRouteMsg {
 pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRouteMsg) {
     remember_notification_route(msg.id, &msg.thread_path);
     #[cfg(target_os = "macos")]
-    persist_notification_route(app, msg.id, &msg.thread_path);
+    {
+        persist_notification_route(app, msg.id, &msg.thread_path);
+        if let Some(thread_path) = validated_thread_path(&msg.thread_path) {
+            let (group_by_conversation, hide_preview) = {
+                let settings = app.state::<AppState>();
+                let settings = settings.settings.lock().unwrap();
+                (
+                    settings.group_notifications_by_conversation,
+                    settings.hide_notification_preview,
+                )
+            };
+            update_pending_notification_route_macos(
+                msg.id,
+                &thread_path,
+                group_by_conversation,
+                macos_reply_eligible(hide_preview, msg.id, Some(&thread_path)),
+            );
+        }
+    }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
 }
@@ -2263,6 +2347,39 @@ mod tests {
         assert!(!directory.join("9021").exists());
         assert!(!directory.join("9022").exists());
         assert!(directory.join("9023").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_persisted_routes_and_temporary_files_are_pruned() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-prune-test-{}-{sequence}",
+            std::process::id()
+        ));
+        persist_notification_route_in_dir(&directory, 9_031, "/t/111/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_032, "/t/222/").unwrap();
+        std::fs::write(directory.join("9033"), "not-a-route").unwrap();
+        let temp = directory.join(".9034.1.1.tmp");
+        std::fs::write(&temp, "/t/333/").unwrap();
+
+        let old = std::time::SystemTime::now()
+            - PERSISTED_NOTIFICATION_ROUTE_MAX_AGE
+            - Duration::from_secs(1);
+        std::fs::File::open(directory.join("9032"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::File::open(&temp)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        clear_stale_notification_routes_in_dir(&directory, std::time::SystemTime::now()).unwrap();
+
+        assert!(directory.join("9031").exists());
+        assert!(!directory.join("9032").exists());
+        assert!(!directory.join("9033").exists());
+        assert!(!temp.exists());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

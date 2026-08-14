@@ -91,6 +91,8 @@ export interface PageNotificationSignal extends NotificationText {
    * can attach a reload-safe route to that already-emitted notification.
    */
   nativeId?: number;
+  /** Route learned while the async native notification emit is still pending. */
+  threadPath?: string;
   /**
    * Set once a conversation row consumed this signal. The async emitter checks
    * it before persisting a cross-reload receipt: a row-paired signal was
