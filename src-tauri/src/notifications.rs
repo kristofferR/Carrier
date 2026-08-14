@@ -63,6 +63,7 @@ const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
 const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
 const MAX_NOTIFICATIONS_PER_WINDOW: usize = 20;
+const LATE_NOTIFICATION_ROUTE_TTL: Duration = Duration::from_secs(2 * 60);
 
 /// What to do with an incoming notification after deduplication.
 enum Delivery {
@@ -203,6 +204,51 @@ struct RouteEntry {
     at: Instant,
 }
 static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
+
+#[derive(Default)]
+struct LateNotificationRoutes {
+    accepted: HashMap<u64, Instant>,
+}
+
+impl LateNotificationRoutes {
+    fn register(&mut self, id: u64, now: Instant) {
+        self.prune(now);
+        if id == 0 {
+            return;
+        }
+        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS && !self.accepted.contains_key(&id) {
+            if let Some(oldest) = self
+                .accepted
+                .iter()
+                .min_by_key(|(_, at)| *at)
+                .map(|(id, _)| *id)
+            {
+                self.accepted.remove(&oldest);
+            }
+        }
+        self.accepted.insert(id, now);
+    }
+
+    fn forget(&mut self, id: u64) {
+        self.accepted.remove(&id);
+    }
+
+    fn claim(&mut self, id: u64, now: Instant) -> bool {
+        self.prune(now);
+        id != 0 && self.accepted.remove(&id).is_some()
+    }
+
+    fn prune(&mut self, now: Instant) {
+        self.accepted
+            .retain(|_, at| now.saturating_duration_since(*at) <= LATE_NOTIFICATION_ROUTE_TTL);
+    }
+}
+
+static LATE_NOTIFICATION_ROUTES: OnceLock<Mutex<LateNotificationRoutes>> = OnceLock::new();
+
+fn late_notification_routes() -> &'static Mutex<LateNotificationRoutes> {
+    LATE_NOTIFICATION_ROUTES.get_or_init(|| Mutex::new(LateNotificationRoutes::default()))
+}
 
 #[cfg(target_os = "macos")]
 const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
@@ -450,6 +496,26 @@ fn persist_notification_route(app: &tauri::AppHandle, id: u64, value: &str) {
 }
 
 #[cfg(target_os = "macos")]
+fn attach_notification_route_macos(
+    app: &tauri::AppHandle,
+    id: u64,
+    thread_path: &str,
+    group_by_conversation: bool,
+    hide_preview: bool,
+) {
+    if id == 0 {
+        return;
+    }
+    persist_notification_route(app, id, thread_path);
+    update_pending_notification_route_macos(
+        id,
+        thread_path,
+        group_by_conversation,
+        macos_reply_eligible(hide_preview, id, Some(thread_path)),
+    );
+}
+
+#[cfg(target_os = "macos")]
 fn take_persisted_notification_route(app: &tauri::AppHandle, id: u64) -> Option<String> {
     let directory = persisted_notification_routes_dir(app)?;
     match take_persisted_notification_route_from_dir(&directory, id) {
@@ -553,29 +619,38 @@ pub(crate) struct NotifyRouteMsg {
     thread_path: String,
 }
 
-/// Attach (or refresh) the reload-safe route for a notification the page has
-/// already emitted. A no-op for a non-unique id or an invalid path.
+/// Attach the reload-safe route for an accepted route-less notification the
+/// page already emitted. Uncorrelated, repeated, and malformed updates are
+/// ignored before they can touch the route cache or filesystem.
 pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRouteMsg) {
-    remember_notification_route(msg.id, &msg.thread_path);
+    let Some(thread_path) = validated_thread_path(&msg.thread_path) else {
+        return;
+    };
+    if !late_notification_routes()
+        .lock()
+        .unwrap()
+        .claim(msg.id, Instant::now())
+    {
+        return;
+    }
+    remember_notification_route(msg.id, &thread_path);
     #[cfg(target_os = "macos")]
     {
-        persist_notification_route(app, msg.id, &msg.thread_path);
-        if let Some(thread_path) = validated_thread_path(&msg.thread_path) {
-            let (group_by_conversation, hide_preview) = {
-                let settings = app.state::<AppState>();
-                let settings = settings.settings.lock().unwrap();
-                (
-                    settings.group_notifications_by_conversation,
-                    settings.hide_notification_preview,
-                )
-            };
-            update_pending_notification_route_macos(
-                msg.id,
-                &thread_path,
-                group_by_conversation,
-                macos_reply_eligible(hide_preview, msg.id, Some(&thread_path)),
-            );
-        }
+        let (group_by_conversation, hide_preview) = {
+            let settings = app.state::<AppState>();
+            let settings = settings.settings.lock().unwrap();
+            (
+                settings.group_notifications_by_conversation,
+                settings.hide_notification_preview,
+            )
+        };
+        attach_notification_route_macos(
+            app,
+            msg.id,
+            &thread_path,
+            group_by_conversation,
+            hide_preview,
+        );
     }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
@@ -1552,6 +1627,7 @@ pub(crate) fn show_message_notification(
             s.attention_on_message,
         )
     };
+    late_notification_routes().lock().unwrap().forget(msg.id);
     if muted {
         log::info!(
             "carrier:notify suppressed by mute_notifications (id {})",
@@ -1560,6 +1636,7 @@ pub(crate) fn show_message_notification(
         return NativeNotificationDelivery::Suppressed;
     }
 
+    let thread_path = validated_thread_path(&msg.thread_path);
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
@@ -1571,8 +1648,22 @@ pub(crate) fn show_message_notification(
         // only after the page pairing window, inside the native dedupe window).
         // Attach it to the notification the user actually has on screen.
         remember_notification_route(delivered_id, &msg.thread_path);
+        if delivered_id != 0 && thread_path.is_some() {
+            late_notification_routes()
+                .lock()
+                .unwrap()
+                .forget(delivered_id);
+        }
         #[cfg(target_os = "macos")]
-        persist_notification_route(&app, delivered_id, &msg.thread_path);
+        if let Some(thread_path) = thread_path.as_deref() {
+            attach_notification_route_macos(
+                &app,
+                delivered_id,
+                thread_path,
+                group_by_conversation,
+                hide_preview,
+            );
+        }
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
         return NativeNotificationDelivery::Duplicate;
     }
@@ -1601,7 +1692,6 @@ pub(crate) fn show_message_notification(
         msg.body
     };
     let id = msg.id;
-    let thread_path = validated_thread_path(&msg.thread_path);
     #[cfg(target_os = "linux")]
     let allow_inline_reply = linux_reply_eligible(
         hide_preview,
@@ -1616,6 +1706,12 @@ pub(crate) fn show_message_notification(
     #[cfg(target_os = "macos")]
     forget_persisted_notification_route(&app, id);
     remember_notification_route(id, &msg.thread_path);
+    if thread_path.is_none() {
+        late_notification_routes()
+            .lock()
+            .unwrap()
+            .register(id, Instant::now());
+    }
     // A Flatpak-private temp path is not readable by the host notification
     // daemon. Skip the path attachment there instead of showing a broken icon.
     let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
@@ -1659,6 +1755,7 @@ pub(crate) fn show_message_notification(
                 thread_path: thread_path.as_deref(),
                 group_by_conversation,
                 reply_eligible: macos_reply_eligible(hide_preview, id, thread_path.as_deref()),
+                wait_for_route: id != 0 && thread_path.is_none(),
             },
         );
     }
@@ -2304,6 +2401,29 @@ mod tests {
         // is known; the later value must win for that id.
         remember_notification_route(9_010, "/t/555/");
         assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
+    }
+
+    #[test]
+    fn late_route_updates_require_a_fresh_accepted_notification() {
+        let start = Instant::now();
+        let mut routes = LateNotificationRoutes::default();
+
+        assert!(!routes.claim(9_020, start));
+        routes.register(9_020, start);
+        assert!(routes.claim(9_020, start));
+        assert!(!routes.claim(9_020, start));
+
+        routes.register(9_021, start);
+        assert!(!routes.claim(
+            9_021,
+            start + LATE_NOTIFICATION_ROUTE_TTL + Duration::from_secs(1)
+        ));
+
+        routes.register(9_022, start);
+        routes.forget(9_022);
+        assert!(!routes.claim(9_022, start));
+        routes.register(0, start);
+        assert!(!routes.claim(0, start));
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub(crate) struct MacNotificationOptions<'a> {
     pub(crate) thread_path: Option<&'a str>,
     pub(crate) group_by_conversation: bool,
     pub(crate) reply_eligible: bool,
+    pub(crate) wait_for_route: bool,
 }
 
 /// The data the notification-centre delegate needs: the handle it routes a
@@ -340,11 +341,12 @@ pub(crate) fn deliver_notification_macos(
     // A per-notification identifier; the page's id (stringified) is unique
     // enough and keeps requests from coalescing.
     let request_id = NSString::from_str(&id.to_string());
-    // A page-first notification may precede its conversation row by a moment.
-    // Keep only that route-less request pending long enough for the late route
-    // event to replace it with fully grouped/reply-capable content. Route-known
-    // notifications remain immediate.
-    let delayed_trigger = thread_path.is_none().then(|| {
+    // A page-first message may precede its conversation row by a moment. Keep
+    // only an explicitly pairable route-less request pending long enough for
+    // the late route event to replace it with fully grouped/reply-capable
+    // content. Route-known messages and route-independent system alerts remain
+    // immediate.
+    let delayed_trigger = (options.wait_for_route && thread_path.is_none()).then(|| {
         UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(
             ROUTE_PAIRING_DELAY_SECONDS,
             false,
