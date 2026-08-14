@@ -8,7 +8,7 @@
 //      path so a click becomes an ordinary, cancelable in-page activation.
 //   2. Intercept that click and run downloadSrc() — the same fetch -> untargeted
 //      anchor -> Rust `on_download` path the working right-click "Download" uses.
-import { toast, toastDownloadSaved } from "../bridge";
+import { toastDownloadFailure, toastDownloadSaved } from "../bridge";
 import { downloadSrc } from "./context-menu";
 
 const stripDlTarget = (a: Node | null) => {
@@ -90,12 +90,16 @@ export function initDownloadAnchors() {
       // download pipeline. Intercepting it again would recurse forever, never
       // reach the WebView hook, and continuously reset the success toast.
       if (a.hasAttribute("data-carrier-native-download")) return;
+      // A remote script must not be able to manufacture a click that opens a
+      // native save dialog. Its direct download still reaches Rust, where ask
+      // mode rejects anything without a picker reservation.
+      if (!e.isTrusted) return;
       a.removeAttribute("target");
       e.preventDefault();
       e.stopImmediatePropagation();
       downloadSrc(href, a.getAttribute("download") || "download")
         .then(({ url }) => toastDownloadSaved(url))
-        .catch(() => toast("Download failed"));
+        .catch((error) => toastDownloadFailure(error));
     },
     true,
   );

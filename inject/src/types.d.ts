@@ -48,6 +48,8 @@ interface CarrierSettings {
   strip_link_tracking?: boolean;
   /** Require Cmd+Enter (macOS) or Ctrl+Enter (elsewhere) to send. */
   send_with_accelerator?: boolean;
+  /** Save automatically to Downloads, or open a native save dialog first. */
+  download_behavior?: "downloads" | "ask";
 }
 
 interface CarrierToastAction {
@@ -67,6 +69,9 @@ declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
 
 /** Reserve the exact blob URL produced by a claimed native share action. */
 declare const carrierPrepareDownload: (action: string, url: string) => Promise<unknown>;
+
+/** Ask the native shell to reserve a user-selected path for this download. */
+declare const carrierChooseDownload: (url: string, name: string) => Promise<unknown>;
 
 /**
  * Same closure-scoped credential, second action: open the macOS share sheet

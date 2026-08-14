@@ -133,7 +133,7 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck"] },
+          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
           fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
@@ -256,6 +256,15 @@
           [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
           "Badge counts", "Whether the badge shows unread messages or unread conversations.",
           !settings.unread_badge,
+        );
+      }
+
+      function downloadBehaviorRow() {
+        return selectRow(
+          "download_behavior", "downloads",
+          [["downloads", "Downloads folder"], ["ask", "Ask every time"]],
+          "Save downloads", "Choose whether Carrier saves automatically or asks where to put each file.",
+          false,
         );
       }
 
@@ -425,6 +434,7 @@
         theme: themeRow,
         zoom: zoomRow,
         badge_mode: badgeModeRow,
+        download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,
         custom_css: customCssRow,
         open_logs: openLogsRow,
