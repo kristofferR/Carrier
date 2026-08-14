@@ -143,6 +143,11 @@ v1.0.0 is released; `main` is the trunk. **Live work lives on GitHub, not here**
 - GitHub: **kristofferR** (`gh auth switch -u kristofferR`). Trigger CodeRabbit
   **only** through `crq` (never post `@coderabbitai review` directly). A
   `crq autoreview` daemon may be running.
+- Batch dependency maintenance into one PR per update cycle. When several
+  Dependabot PRs are open, consolidate their current safe updates with the rest
+  of the Bun, Cargo, and pinned GitHub Actions audit, validate the combined
+  branch, open one PR, then close the superseded bot PRs. Do not queue, review,
+  and merge dependency PRs one by one unless the maintainer explicitly asks.
 - GitHub comments: a request to **draft** a comment is text-only; never post it.
   A request to **write**, **comment**, **post**, or **send** a comment means
   publish it on GitHub without asking for separate approval.
