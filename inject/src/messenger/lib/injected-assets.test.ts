@@ -76,6 +76,16 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain('[["color", "Color"], ["symbolic", "Symbolic"]]');
   });
 
+  test("downloads can save automatically or ask for a location", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain('"download_behavior", "downloads"');
+    expect(settings).toContain('["downloads", "Downloads folder"]');
+    expect(settings).toContain('["ask", "Ask every time"]');
+    expect(settings).toContain('"spellcheck", "download_behavior"');
+    expect(settings).toContain("download_behavior: downloadBehaviorRow");
+  });
+
   test("custom CSS is presented as best-effort and reloadable", async () => {
     const settings = await repoAsset("dist/settings.html");
 

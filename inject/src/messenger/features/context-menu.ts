@@ -1,7 +1,13 @@
 /* --------------------- Adaptive context menu -------------------------- */
 // Right-click an image, video or link to get the relevant actions
 // (download / copy / copy address / open in browser), matching the original.
-import { cleanSharedUrl, openUrl, toast, toastDownloadSaved } from "../bridge";
+import {
+  cleanSharedUrl,
+  openUrl,
+  toast,
+  toastDownloadFailure,
+  toastDownloadSaved,
+} from "../bridge";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
@@ -231,6 +237,9 @@ export async function downloadSrc(
   document.body.appendChild(a);
   try {
     if (action) await carrierPrepareDownload(action, href);
+    if (window.__CARRIER_SETTINGS__?.download_behavior === "ask") {
+      await carrierChooseDownload(href, name);
+    }
     const completion = waitForNativeDownload(window, href, carrierVerifyResult);
     a.click();
     return await completion;
@@ -358,14 +367,16 @@ export function initContextMenu() {
           () =>
             downloadSrc(imgSrc, "image")
               .then(({ url }) => toastDownloadSaved(url))
-              .catch(() => toast("Download failed")),
+              .catch((error) => toastDownloadFailure(error)),
         ]);
         if (isMac) {
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[2],
             (action) =>
               action
-                ? shareSrc(imgSrc, "image", fx, fy, action).catch(() => toast("Share failed"))
+                ? shareSrc(imgSrc, "image", fx, fy, action).catch((error) =>
+                    toastDownloadFailure(error, "Share failed"),
+                  )
                 : undefined,
           ]);
         }
@@ -377,14 +388,16 @@ export function initContextMenu() {
           () =>
             downloadSrc(vidSrc, "video")
               .then(({ url }) => toastDownloadSaved(url))
-              .catch(() => toast("Download failed")),
+              .catch((error) => toastDownloadFailure(error)),
         ]);
         if (isMac) {
           addItem([
             VIDEO_CONTEXT_MENU_LABELS[1],
             (action) =>
               action
-                ? shareSrc(vidSrc, "video", fx, fy, action).catch(() => toast("Share failed"))
+                ? shareSrc(vidSrc, "video", fx, fy, action).catch((error) =>
+                    toastDownloadFailure(error, "Share failed"),
+                  )
                 : undefined,
           ]);
         }

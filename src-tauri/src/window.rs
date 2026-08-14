@@ -12,7 +12,8 @@ use url::Url;
 use crate::custom_css::apply_custom_css;
 use crate::download::{
     complete_download, downloads_dir, filename_from_url, forget_download, is_allowed_download,
-    is_unsafe_download, remember_download, sanitize_filename, unique_path,
+    is_allowed_download_path, is_unsafe_download, remember_download, sanitize_filename,
+    unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -101,7 +102,6 @@ pub(crate) fn build_app_window(
     let page_load_watchdog = watchdog.clone();
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
     let download_handle = app.clone();
-    #[cfg(target_os = "macos")]
     let download_label = label.to_string();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
@@ -186,18 +186,69 @@ pub(crate) fn build_app_window(
                     notify_download_finished(&download_handle, &webview, &download_id, &url, false);
                     return false;
                 }
-                // Fail closed: if we can't resolve/create the Downloads folder we
-                // can't enforce where the file lands, so refuse rather than let the
-                // WebView write to its own chosen destination.
-                let Some(dir) = downloads_dir() else {
-                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
-                    return false;
-                };
-                if std::fs::create_dir_all(&dir).is_err() {
-                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
-                    return false;
+                if let Some(chosen) =
+                    crate::take_prompted_download(&download_handle, &download_label, url.as_str())
+                {
+                    if !is_allowed_download_path(&url, &chosen) {
+                        notify_download_finished(
+                            &download_handle,
+                            &webview,
+                            &download_id,
+                            &url,
+                            false,
+                        );
+                        return false;
+                    }
+                    // The path came from Carrier's native save dialog and never
+                    // crossed the remote-origin page. Honor it exactly, including
+                    // the user's overwrite decision.
+                    *destination = chosen;
+                } else {
+                    let asks = download_handle
+                        .state::<AppState>()
+                        .settings
+                        .lock()
+                        .unwrap()
+                        .download_behavior
+                        == "ask";
+                    if asks {
+                        // Ask mode accepts only downloads pre-authorized by the
+                        // native picker. This also prevents a page-initiated
+                        // download from bypassing the prompt.
+                        notify_download_finished(
+                            &download_handle,
+                            &webview,
+                            &download_id,
+                            &url,
+                            false,
+                        );
+                        return false;
+                    }
+                    // Fail closed: if we can't resolve/create the Downloads folder
+                    // we can't enforce where the file lands, so refuse rather than
+                    // let the WebView write to its own chosen destination.
+                    let Some(dir) = downloads_dir() else {
+                        notify_download_finished(
+                            &download_handle,
+                            &webview,
+                            &download_id,
+                            &url,
+                            false,
+                        );
+                        return false;
+                    };
+                    if std::fs::create_dir_all(&dir).is_err() {
+                        notify_download_finished(
+                            &download_handle,
+                            &webview,
+                            &download_id,
+                            &url,
+                            false,
+                        );
+                        return false;
+                    }
+                    *destination = unique_path(dir.join(name));
                 }
-                *destination = unique_path(dir.join(name));
                 remember_download(&url, download_id.clone(), destination.clone());
                 true
             }
@@ -252,6 +303,11 @@ pub(crate) fn build_app_window(
                     .remove(&token_cleanup_label);
                 state
                     .context_menu_copy_values
+                    .lock()
+                    .unwrap()
+                    .retain(|(window, _), _| window != &token_cleanup_label);
+                state
+                    .prompted_downloads
                     .lock()
                     .unwrap()
                     .retain(|(window, _), _| window != &token_cleanup_label);
@@ -819,11 +875,14 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   // One request/response lifecycle for every result-bearing native call: sign
   // and emit the request with a fresh correlation token, then settle only on a
   // '<event>-result' CustomEvent that carries that token, a boolean under
-  // `field`, and a signature that verifies against this window's secret.
+  // `field`, and a signature that verifies against this window's secret. A
+  // result can optionally authenticate a second boolean that selects a more
+  // specific failure message.
   // Blocking native UI can acknowledge presentation first, clearing the
   // timeout, then send its final result after the blocking call returns.
   var carrierNativeCall = function (
-    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal
+    requestEvent, field, failedMessage, timedOutMessage, payload, acknowledgesBeforeFinal,
+    failureField, alternateFailedMessage
   ) {{
     if (!carrierAuthorizedEmit || !carrierVerifyResult) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
@@ -843,10 +902,16 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
           if (phase !== 'presented' && phase !== 'complete') return;
           if (phase === 'presented' && value !== true) return;
         }}
+        var failureValue;
+        if (failureField) {{
+          failureValue = detail[failureField];
+          if (failureValue !== true && failureValue !== false) return;
+        }}
         // Field order matters. Phased calls append `phase` after the result field.
         var result = {{ request: request }};
         result[field] = value;
         if (acknowledgesBeforeFinal) result.phase = phase;
+        if (failureField) result[failureField] = failureValue;
         var authenticated = await carrierVerifyResult(resultEvent, result, detail.signature);
         if (!authenticated) return;
         if (acknowledgesBeforeFinal && phase === 'presented') {{
@@ -858,7 +923,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
         }}
         cleanup();
         if (value) resolve();
-        else reject(new Error(failedMessage));
+        else reject(new Error(failureValue === false ? alternateFailedMessage : failedMessage));
       }};
       var timeout = nativeSetTimeout(function () {{
         cleanup();
@@ -894,6 +959,13 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     return carrierAuthorizedEmit('carrier:prepare-download', {{ action: action, url: url }});
+  }};
+  var carrierChooseDownload = function (url, name) {{
+    return carrierNativeCall(
+      'carrier:choose-download', 'chosen',
+      'download cancelled', 'download picker timed out',
+      {{ url: url, name: name }}, true, 'cancelled', 'download rejected'
+    );
   }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
     return carrierNativeCall(
@@ -934,6 +1006,9 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       }}
       if (merged.tray_icon_style !== 'color' && merged.tray_icon_style !== 'symbolic') {{
         merged.tray_icon_style = baked.tray_icon_style;
+      }}
+      if (merged.download_behavior !== 'downloads' && merged.download_behavior !== 'ask') {{
+        merged.download_behavior = baked.download_behavior;
       }}
       var mz = Math.round(Number(merged.zoom));
       merged.zoom = isFinite(mz) ? Math.min({ZOOM_MAX}, Math.max({ZOOM_MIN}, mz)) : baked.zoom;
@@ -1175,6 +1250,17 @@ mod tests {
         assert!(script.contains("'carrier:share-download', 'shown'"));
         assert!(script.contains("download_id: downloadId, x: x, y: y, action: action"));
         assert!(script.contains("native share picker failed"));
+    }
+
+    #[test]
+    fn choose_download_bridge_goes_through_the_native_call_factory() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("'carrier:choose-download', 'chosen'"));
+        assert!(script.contains("{ url: url, name: name }, true, 'cancelled'"));
+        assert!(script.contains("download cancelled"));
+        assert!(script.contains("download rejected"));
+        assert!(script.contains("download picker timed out"));
     }
 
     #[test]

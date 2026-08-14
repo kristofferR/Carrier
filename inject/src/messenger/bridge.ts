@@ -1,5 +1,5 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
-import { downloadRevealLabel } from "./lib/downloads";
+import { downloadRevealLabel, isDownloadCancellation } from "./lib/downloads";
 import { stripFacebookTracking } from "./lib/links";
 
 // Use the always-present internal bridge directly instead of the global
@@ -53,8 +53,18 @@ export const openUrl = (url: string) =>
   );
 
 export const toastDownloadSaved = (url: string) =>
-  toast("Saved to Downloads", {
-    label: downloadRevealLabel(navigator.userAgent),
-    kind: "reveal-download",
-    url,
-  });
+  toast(
+    window.__CARRIER_SETTINGS__?.download_behavior === "ask"
+      ? "Download saved"
+      : "Saved to Downloads",
+    {
+      label: downloadRevealLabel(navigator.userAgent),
+      kind: "reveal-download",
+      url,
+    },
+  );
+
+export const toastDownloadFailure = (error: unknown, message = "Download failed") => {
+  if (isDownloadCancellation(error)) return;
+  toast(message);
+};
