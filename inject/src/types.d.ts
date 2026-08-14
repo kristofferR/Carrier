@@ -95,6 +95,9 @@ declare const carrierVerifyResult:
   | ((event: string, value: unknown, signature: unknown) => Promise<boolean>)
   | undefined;
 
+/** Send a quick-reply result through the non-extractable per-window signer. */
+declare const carrierReplyResult: (id: number, attempt: number, ok: boolean) => Promise<unknown>;
+
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {

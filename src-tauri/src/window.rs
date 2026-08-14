@@ -929,6 +929,12 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       {{ items: items }}, true
     );
   }};
+  var carrierReplyResult = function (id, attempt, ok) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:reply-result', {{ id: id, attempt: attempt, ok: ok }});
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -1167,6 +1173,14 @@ mod tests {
         assert!(script.contains("payload.request = request;"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
+    }
+
+    #[test]
+    fn quick_reply_results_use_the_authenticated_emit_bridge() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("return carrierAuthorizedEmit('carrier:reply-result'"));
+        assert!(script.contains("carrierReplyResult(id, attempt, ok)"));
     }
 
     #[test]

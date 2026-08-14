@@ -695,6 +695,7 @@ export function initNotificationBridge() {
     conversation: Conversation,
     detectedAt: number,
     confirmedRepeat = false,
+    routeCandidates?: Iterable<Conversation>,
   ) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -711,6 +712,7 @@ export function initNotificationBridge() {
       conversation,
       detectedAt,
       PAGE_NOTIFICATION_MATCH_MS,
+      routeCandidates,
     );
     if (pageSignal) {
       // The page's async avatar conversion may still be in flight. Give that
@@ -731,7 +733,7 @@ export function initNotificationBridge() {
             // The page emitted with the old content fingerprint before this
             // row confirmed a new, identical message. Retry only when native
             // delivery reports that exact emit was suppressed.
-            scheduleFallback(conversation, detectedAt, true);
+            scheduleFallback(conversation, detectedAt, true, routeCandidates);
             return;
           }
           notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -909,6 +911,7 @@ export function initNotificationBridge() {
       // must not evict a tracked signature either. The first hydrated
       // observation primes silently instead.
       const hydrated = conversations.filter(({ body }) => body.length > 0);
+      const routeCandidates = observed.filter(({ body }) => body.length > 0);
       // Confirm read state before the signature tracker runs: a thread turning
       // unread again is only a new message if this document had established it
       // was read, and the tracker needs that verdict for the very scan the
@@ -1047,6 +1050,7 @@ export function initNotificationBridge() {
               conversation,
               detectedAt,
               PAGE_NOTIFICATION_MATCH_MS,
+              routeCandidates,
             )
           : null;
         let reconciliation = notifiedStore.reconcileFingerprint(
@@ -1084,7 +1088,7 @@ export function initNotificationBridge() {
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           pageSignal.onNativeDelivery = (delivery) => {
             if (delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true);
+              scheduleFallback(conversation, detectedAt, true, routeCandidates);
               return;
             }
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -1096,7 +1100,7 @@ export function initNotificationBridge() {
           // The native layer did not show the page emit. A reload also erased
           // the in-memory page signal, but the confirmed row transition still
           // proves this is a new logical delivery, so retry it with a fresh key.
-          scheduleFallback(conversation, detectedAt, true);
+          scheduleFallback(conversation, detectedAt, true, routeCandidates);
           changed.delete(conversation.key);
           continue;
         }
@@ -1187,7 +1191,12 @@ export function initNotificationBridge() {
           !stale.has(conversation.key) &&
           !unhydrated.has(conversation.key)
         ) {
-          scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
+          scheduleFallback(
+            conversation,
+            detectedAt,
+            confirmedRepeats.has(conversation.key),
+            routeCandidates,
+          );
         }
       }
     } finally {

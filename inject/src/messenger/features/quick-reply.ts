@@ -1,4 +1,4 @@
-import { diag, invoke } from "../bridge";
+import { diag } from "../bridge";
 import {
   composerContainsReply,
   decideQuickReply,
@@ -27,10 +27,9 @@ const sendButton = () => {
 };
 
 const emitReplyResult = (id: number, attempt: number, ok: boolean) => {
-  invoke("plugin:event|emit", {
-    event: "carrier:reply-result",
-    payload: { id, attempt, ok },
-  })?.catch?.(() => diag("quick-reply.ack", "reply acknowledgement emit failed"));
+  carrierReplyResult(id, attempt, ok).catch(() =>
+    diag("quick-reply.ack", "reply acknowledgement emit failed"),
+  );
 };
 
 const validRequest = (path: string, text: string, id: number, attempt: number) =>

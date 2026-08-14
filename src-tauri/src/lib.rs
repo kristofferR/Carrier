@@ -1395,9 +1395,25 @@ pub fn run() {
 
             // Native inline replies are delivered page-side through a
             // content-free id/attempt/ok acknowledgement used by the waiter.
+            // It is signed by the main window's non-extractable bridge key: the
+            // remote page can replace the writable delivery hook, but it cannot
+            // forge success and suppress the native fallback.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let reply_result_handle = app.handle().clone();
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             app.listen_any("carrier:reply-result", move |event| {
-                handle_reply_result(event.payload());
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                    log::warn!("carrier:reply-result payload did not parse");
+                    return;
+                };
+                if signed_action_window(&reply_result_handle, "carrier:reply-result", &signed)
+                    .as_deref()
+                    != Some("main")
+                {
+                    log::warn!("carrier:reply-result was not authorized by the main window");
+                    return;
+                }
+                handle_reply_result(&signed.message);
             });
 
             // Page diagnostics (`diag()` in messenger.js): selector-health and

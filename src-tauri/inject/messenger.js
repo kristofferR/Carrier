@@ -3495,21 +3495,43 @@
      * Returning the signal — rather than a boolean — lets the caller reach its
      * `nativeId` and route the already-emitted page-first notification.
      */
-    consumeMatching(row, rowChangeAt, matchWindowMs) {
-      for (let index = this.signals.length - 1; index >= 0; index--) {
-        const signal = this.signals[index];
-        const age = rowChangeAt - signal.at;
+    consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows) {
+      for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
+        const signal2 = this.signals[index2];
+        const age = rowChangeAt - signal2.at;
         if (age > matchWindowMs) {
-          this.signals.splice(index, 1);
-          continue;
-        }
-        if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
-          this.signals.splice(index, 1);
-          signal.matched = true;
-          return signal;
+          this.signals.splice(index2, 1);
         }
       }
-      return null;
+      const matches = [];
+      for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
+        const signal2 = this.signals[index2];
+        const age = rowChangeAt - signal2.at;
+        if (age >= 0 && notificationTextMatches(signal2.title, signal2.body, row.title, row.body)) {
+          matches.push(index2);
+        }
+      }
+      if (matches.length !== 1) {
+        for (const index2 of matches) this.signals.splice(index2, 1);
+        return null;
+      }
+      const index = matches[0];
+      const signal = this.signals[index];
+      if (candidateRows) {
+        const candidateKeys = /* @__PURE__ */ new Set();
+        for (const candidate of candidateRows) {
+          if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
+            candidateKeys.add(candidate.key);
+          }
+        }
+        if (candidateKeys.size !== 1 || row.key !== void 0 && !candidateKeys.has(row.key)) {
+          this.signals.splice(index, 1);
+          return null;
+        }
+      }
+      this.signals.splice(index, 1);
+      signal.matched = true;
+      return signal;
     }
   };
   var UnreadArrivalTracker = class {
@@ -4360,7 +4382,7 @@
         unread
       };
     };
-    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -4372,7 +4394,8 @@
       const pageSignal = unmatchedPageNotifications.consumeMatching(
         conversation,
         detectedAt,
-        PAGE_NOTIFICATION_MATCH_MS
+        PAGE_NOTIFICATION_MATCH_MS,
+        routeCandidates
       );
       if (pageSignal) {
         if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
@@ -4383,7 +4406,7 @@
         if (pageSignal.emitted) {
           const finishDelivery = (delivery) => {
             if (confirmedRepeat && delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true);
+              scheduleFallback(conversation, detectedAt, true, routeCandidates);
               return;
             }
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -4491,6 +4514,7 @@
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
+        const routeCandidates = observed.filter(({ body }) => body.length > 0);
         const hydratedReadKeys = new Set(
           listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
@@ -4591,7 +4615,8 @@
           const pageSignal = pageReceipt ? unmatchedPageNotifications.consumeMatching(
             conversation,
             detectedAt,
-            PAGE_NOTIFICATION_MATCH_MS
+            PAGE_NOTIFICATION_MATCH_MS,
+            routeCandidates
           ) : null;
           let reconciliation = notifiedStore.reconcileFingerprint(
             conversation.key,
@@ -4610,7 +4635,7 @@
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             pageSignal.onNativeDelivery = (delivery) => {
               if (delivery === "duplicate") {
-                scheduleFallback(conversation, detectedAt, true);
+                scheduleFallback(conversation, detectedAt, true, routeCandidates);
                 return;
               }
               notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -4619,7 +4644,7 @@
             continue;
           }
           if (receiptSuppressedRepeat) {
-            scheduleFallback(conversation, detectedAt, true);
+            scheduleFallback(conversation, detectedAt, true, routeCandidates);
             changed.delete(conversation.key);
             continue;
           }
@@ -4677,7 +4702,12 @@
         }
         for (const conversation of conversations) {
           if (changed.has(conversation.key) && !stale.has(conversation.key) && !unhydrated.has(conversation.key)) {
-            scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
+            scheduleFallback(
+              conversation,
+              detectedAt,
+              confirmedRepeats.has(conversation.key),
+              routeCandidates
+            );
           }
         }
       } finally {
@@ -4802,10 +4832,9 @@
     return buttonByLabel(["press enter to send", "send message"], root);
   };
   var emitReplyResult = (id, attempt, ok) => {
-    invoke("plugin:event|emit", {
-      event: "carrier:reply-result",
-      payload: { id, attempt, ok }
-    })?.catch?.(() => diag("quick-reply.ack", "reply acknowledgement emit failed"));
+    carrierReplyResult(id, attempt, ok).catch(
+      () => diag("quick-reply.ack", "reply acknowledgement emit failed")
+    );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
   async function deliver(path, text) {
