@@ -6031,7 +6031,7 @@
     };
     let viewed = initialThreadViewedState();
     const reportViewedThread = () => {
-      const id = threadPathId(location.pathname);
+      const id = threadIdFromHref(location.pathname);
       const path = id ? `/t/${id}/` : null;
       const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
       viewed = next.state;

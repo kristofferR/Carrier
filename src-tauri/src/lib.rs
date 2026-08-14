@@ -1304,10 +1304,11 @@ pub fn run() {
             // Late route update for a page-first notification (see
             // `update_notification_route`): the row-driven pairing found the
             // conversation after the native notification had already fired.
+            let notify_route_handle = app.handle().clone();
             app.listen_any(
                 "carrier:notify-route",
                 move |event| match serde_json::from_str::<NotifyRouteMsg>(event.payload()) {
-                    Ok(msg) => update_notification_route(&msg),
+                    Ok(msg) => update_notification_route(&notify_route_handle, &msg),
                     Err(e) => log::warn!("carrier:notify-route payload did not parse: {e}"),
                 },
             );

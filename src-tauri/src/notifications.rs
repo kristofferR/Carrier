@@ -203,6 +203,13 @@ struct RouteEntry {
 }
 static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
 
+#[cfg(target_os = "macos")]
+const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
+#[cfg(any(target_os = "macos", test))]
+static PERSISTED_NOTIFICATION_ROUTE_IO: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(any(target_os = "macos", test))]
+static PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
+
 fn remember_notification_route(id: u64, value: &str) {
     // `id` is the page's unique per-notification handle. A missing or zero id
     // (older or malformed payloads deserialize `id` to 0) is not unique: every
@@ -249,6 +256,141 @@ fn take_notification_route(id: u64) -> Option<String> {
         .map(|entry| entry.path)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn persist_notification_route_in_dir(directory: &Path, id: u64, value: &str) -> Result<(), String> {
+    let Some(thread_path) = validated_thread_path(value) else {
+        return Ok(());
+    };
+    if id == 0 {
+        return Ok(());
+    }
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let path = directory.join(id.to_string());
+    if !path.exists() {
+        let mut entries: Vec<_> = std::fs::read_dir(directory)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry.file_name().to_str()?.parse::<u64>().ok()?;
+                let modified = entry.metadata().ok()?.modified().ok()?;
+                Some((modified, entry.path()))
+            })
+            .collect();
+        entries.sort_by_key(|(modified, _)| *modified);
+        let remove_count = entries.len().saturating_sub(MAX_RECENT_NOTIFICATIONS - 1);
+        for (_, stale) in entries.into_iter().take(remove_count) {
+            let _ = std::fs::remove_file(stale);
+        }
+    }
+    let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = directory.join(format!(".{id}.{}.{}.tmp", std::process::id(), sequence));
+    std::fs::write(&temp, thread_path).map_err(|error| error.to_string())?;
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(temp);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn take_persisted_notification_route_from_dir(
+    directory: &Path,
+    id: u64,
+) -> Result<Option<String>, String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let path = directory.join(id.to_string());
+    let value = match std::fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    std::fs::remove_file(path).map_err(|error| error.to_string())?;
+    Ok(validated_thread_path(&value))
+}
+
+#[cfg(target_os = "macos")]
+fn forget_persisted_notification_route_from_dir(directory: &Path, id: u64) -> Result<(), String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    match std::fs::remove_file(directory.join(id.to_string())) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn persisted_notification_routes_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join(PERSISTED_NOTIFICATION_ROUTES_DIR))
+}
+
+#[cfg(target_os = "macos")]
+fn persist_notification_route(app: &tauri::AppHandle, id: u64, value: &str) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) = persist_notification_route_in_dir(&directory, id, value) {
+        log::warn!("failed to persist a late notification route: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn take_persisted_notification_route(app: &tauri::AppHandle, id: u64) -> Option<String> {
+    let directory = persisted_notification_routes_dir(app)?;
+    match take_persisted_notification_route_from_dir(&directory, id) {
+        Ok(route) => route,
+        Err(error) => {
+            log::warn!("failed to recover a persisted notification route: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn forget_persisted_notification_route(app: &tauri::AppHandle, id: u64) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) = forget_persisted_notification_route_from_dir(&directory, id) {
+        log::warn!("failed to retire a persisted notification route: {error}");
+    }
+}
+
+fn resolved_notification_route(
+    app: &tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<&str>,
+) -> Option<String> {
+    let route =
+        take_notification_route(id).or_else(|| fallback_path.and_then(validated_thread_path));
+    #[cfg(target_os = "macos")]
+    {
+        if route.is_some() {
+            forget_persisted_notification_route(app, id);
+            route
+        } else {
+            take_persisted_notification_route(app, id)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        route
+    }
+}
+
 impl NotifyMsg {
     /// The page's handle for this notification (safe to log — it's a counter,
     /// not message content).
@@ -271,8 +413,12 @@ pub(crate) struct NotifyRouteMsg {
 
 /// Attach (or refresh) the reload-safe route for a notification the page has
 /// already emitted. A no-op for a non-unique id or an invalid path.
-pub(crate) fn update_notification_route(msg: &NotifyRouteMsg) {
+pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRouteMsg) {
     remember_notification_route(msg.id, &msg.thread_path);
+    #[cfg(target_os = "macos")]
+    persist_notification_route(app, msg.id, &msg.thread_path);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
@@ -1102,8 +1248,7 @@ fn deliver_quick_reply(
     fallback_path: Option<String>,
     raw_text: String,
 ) {
-    let thread_path = take_notification_route(id)
-        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
         on_notification_click(app, id);
@@ -1200,8 +1345,7 @@ fn open_rejected_reply_fallback(
     fallback_path: Option<String>,
     raw_text: String,
 ) {
-    let thread_path = take_notification_route(id)
-        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let text = sanitized_reply_text(&raw_text);
     match (thread_path, text.is_empty()) {
         (Some(path), false) => open_reply_fallback(app, id, path, text),
@@ -1262,6 +1406,8 @@ pub(crate) fn show_message_notification(
         // only after the page pairing window, inside the native dedupe window).
         // Attach it to the notification the user actually has on screen.
         remember_notification_route(delivered_id, &msg.thread_path);
+        #[cfg(target_os = "macos")]
+        persist_notification_route(&app, delivered_id, &msg.thread_path);
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
         return NativeNotificationDelivery::Duplicate;
     }
@@ -1298,6 +1444,11 @@ pub(crate) fn show_message_notification(
         thread_path.as_deref(),
         linux_notification_capabilities(),
     );
+    // Page notification ids restart with the page. Retire a durable route from
+    // an older request before reusing the id; this notification's own userInfo
+    // carries its current route when one is already known.
+    #[cfg(target_os = "macos")]
+    forget_persisted_notification_route(&app, id);
     remember_notification_route(id, &msg.thread_path);
     // A Flatpak-private temp path is not readable by the host notification
     // daemon. Skip the path attachment there instead of showing a broken icon.
@@ -1585,8 +1736,7 @@ pub(crate) fn on_notification_click_with_path(
     id: u64,
     fallback_path: Option<String>,
 ) {
-    let thread_path = take_notification_route(id)
-        .or_else(|| fallback_path.as_deref().and_then(validated_thread_path));
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     if let Some(thread_path) = thread_path {
         run_app_action(&app, AppAction::OpenThread(thread_path));
         return;
@@ -1983,14 +2133,34 @@ mod tests {
     }
 
     #[test]
-    fn update_notification_route_refreshes_an_emitted_route() {
+    fn late_notification_route_refreshes_an_emitted_route() {
         // The page-first path emits with no route, then supplies it once the row
         // is known; the later value must win for that id.
-        update_notification_route(&NotifyRouteMsg {
-            id: 9_010,
-            thread_path: "/t/555/".into(),
-        });
+        remember_notification_route(9_010, "/t/555/");
         assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
+    }
+
+    #[test]
+    fn late_notification_route_survives_a_process_restart() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-routes-test-{}-{sequence}",
+            std::process::id()
+        ));
+
+        persist_notification_route_in_dir(&directory, 9_011, "/t/111/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_011, "/t/666/").unwrap();
+        assert_eq!(
+            take_persisted_notification_route_from_dir(&directory, 9_011)
+                .unwrap()
+                .as_deref(),
+            Some("/t/666/")
+        );
+        assert!(
+            !directory.join("9011").exists(),
+            "the consumed route cache should be retired"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

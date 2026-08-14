@@ -26,7 +26,7 @@ export function initThreadNav() {
   // once per continuous view, and report again when focus returns.
   let viewed = initialThreadViewedState();
   const reportViewedThread = () => {
-    const id = threadPathId(location.pathname);
+    const id = threadIdFromHref(location.pathname);
     const path = id ? `/t/${id}/` : null;
     const next = advanceThreadViewed(viewed, path, document.hasFocus() && !document.hidden);
     viewed = next.state;

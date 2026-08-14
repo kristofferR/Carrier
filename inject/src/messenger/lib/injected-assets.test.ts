@@ -82,7 +82,7 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain(
       '...(IS_MAC ? ["group_notifications_by_conversation", "clear_notifications_on_view"] : [])',
     );
-    expect(settings).toContain('...(IS_MAC || IS_WINDOWS ? ["attention_on_message"] : [])');
+    expect(settings).toContain('...(IS_MAC ? ["attention_on_message"] : [])');
   });
 
   test("custom CSS is presented as best-effort and reloadable", async () => {
