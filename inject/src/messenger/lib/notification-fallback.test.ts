@@ -678,6 +678,18 @@ describe("PageNotificationQueue", () => {
 
     expect(queue.consumeMatching(row, 1_100, 2_000, [row, row])).not.toBeNull();
   });
+
+  test("refuses a signal whose only candidate is a different conversation", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Same" });
+    const other = { key: "2", title: "Jane", body: "Same" };
+
+    expect(
+      queue.consumeMatching({ key: "1", title: "Jane", body: "Same" }, 1_100, 2_000, [other]),
+    ).toBeNull();
+    // The refused signal is dropped, not left to match a later row.
+    expect(queue.consumeMatching(other, 1_200, 2_000, [other])).toBeNull();
+  });
 });
 
 describe("UnreadArrivalTracker", () => {

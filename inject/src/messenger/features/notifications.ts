@@ -269,8 +269,26 @@ export function initNotificationBridge() {
     dedupeKey?: string;
     signal?: PageNotificationSignal;
   } => {
-    for (const [key, pending] of pendingFallbacks) {
-      if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
+    // Row-first: pair only with a UNIQUE pending fallback. Two visible threads
+    // with the same display text cannot be told apart from a Notification's
+    // title/body, and guessing would route a Notification Center reply to the
+    // wrong conversation. Ambiguous matches are left pending: their fallbacks
+    // still fire with their own routes and the native dedupe absorbs the
+    // copies, which beats misrouting (mirrors the page-first uniqueness check
+    // in `PageNotificationQueue.consumeMatching`).
+    let match: [string, PendingFallback] | null = null;
+    let ambiguous = false;
+    for (const entry of pendingFallbacks) {
+      if (!notificationTextMatches(title, body, entry[1].title, entry[1].body)) continue;
+      if (match) {
+        ambiguous = true;
+        break;
+      }
+      match = entry;
+    }
+    if (ambiguous) return {};
+    if (match) {
+      const [key, pending] = match;
       clearTimeout(pending.timer);
       pendingFallbacks.delete(key);
       return {

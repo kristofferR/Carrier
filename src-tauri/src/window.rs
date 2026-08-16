@@ -520,11 +520,24 @@ pub(crate) fn recreate_messenger_window(
         let was_fullscreen = window.is_fullscreen().unwrap_or(false);
         let was_focused = window.is_focused().unwrap_or(false);
 
+        // The old page is about to go away with `messenger_loaded` still set:
+        // an app action dispatched into that gap would eval successfully and
+        // then be lost with the webview. Take readiness away under the same
+        // lock `dispatch_or_retain_page_action` uses, so it retains instead.
+        let was_loaded = {
+            let state = app.state::<AppState>();
+            let _pending = state.pending_action.lock().unwrap();
+            state.messenger_loaded.swap(false, Ordering::AcqRel)
+        };
+
         if let Err(error) = window.destroy() {
             log::warn!("failed to destroy blank Messenger webview {label}: {error}");
-            app.state::<AppState>()
-                .recreating
-                .store(false, Ordering::SeqCst);
+            let state = app.state::<AppState>();
+            {
+                let _pending = state.pending_action.lock().unwrap();
+                state.messenger_loaded.store(was_loaded, Ordering::Release);
+            }
+            state.recreating.store(false, Ordering::SeqCst);
             if let Some(on_abandoned) = on_abandoned {
                 on_abandoned();
             }

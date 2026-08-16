@@ -4123,8 +4123,19 @@
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
-      for (const [key, pending] of pendingFallbacks) {
-        if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
+      let match = null;
+      let ambiguous = false;
+      for (const entry of pendingFallbacks) {
+        if (!notificationTextMatches(title, body, entry[1].title, entry[1].body)) continue;
+        if (match) {
+          ambiguous = true;
+          break;
+        }
+        match = entry;
+      }
+      if (ambiguous) return {};
+      if (match) {
+        const [key, pending] = match;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
         return {
