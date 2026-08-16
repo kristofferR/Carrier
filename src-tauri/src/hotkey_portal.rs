@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
-use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut, Shortcut};
-use ashpd::desktop::{ResponseError, Session};
+use ashpd::desktop::global_shortcuts::{
+    BindShortcutsOptions, GlobalShortcuts, NewShortcut, Shortcut,
+};
+use ashpd::desktop::{CreateSessionOptions, ResponseError, Session};
 use futures_util::future::{select, Either};
 use futures_util::{pin_mut, StreamExt};
 use tauri::Manager;
@@ -145,7 +147,7 @@ fn activation_token(
         .filter(|token| !token.is_empty())
 }
 
-fn serialized_session_path<T>(session: &Session<'_, T>) -> Result<String, BindFailure>
+fn serialized_session_path<T>(session: &Session<T>) -> Result<String, BindFailure>
 where
     T: ashpd::desktop::SessionPortal,
 {
@@ -156,13 +158,14 @@ where
         .map_err(|error| BindFailure::ordinary(format!("couldn't read portal session: {error}")))
 }
 
-async fn create_session(
-    portal: &GlobalShortcuts<'static>,
-) -> Result<Session<'static, GlobalShortcuts<'static>>, BindFailure> {
-    tokio::time::timeout(CREATE_TIMEOUT, portal.create_session())
-        .await
-        .map_err(|_| BindFailure::ordinary("portal session creation timed out"))?
-        .map_err(bind_failure)
+async fn create_session(portal: &GlobalShortcuts) -> Result<Session<GlobalShortcuts>, BindFailure> {
+    tokio::time::timeout(
+        CREATE_TIMEOUT,
+        portal.create_session(CreateSessionOptions::default()),
+    )
+    .await
+    .map_err(|_| BindFailure::ordinary("portal session creation timed out"))?
+    .map_err(bind_failure)
 }
 
 async fn register_host_app(app: &tauri::AppHandle) -> Result<(), BindFailure> {
@@ -227,7 +230,7 @@ async fn register_host_app(app: &tauri::AppHandle) -> Result<(), BindFailure> {
     Ok(())
 }
 
-async fn remember_portal_owner(portal: &GlobalShortcuts<'_>) -> Result<(), BindFailure> {
+async fn remember_portal_owner(portal: &GlobalShortcuts) -> Result<(), BindFailure> {
     let connection = portal.connection().clone();
     let dbus = zbus::fdo::DBusProxy::new(&connection)
         .await
@@ -242,7 +245,7 @@ async fn remember_portal_owner(portal: &GlobalShortcuts<'_>) -> Result<(), BindF
     Ok(())
 }
 
-async fn close_session(session: &Session<'_, GlobalShortcuts<'static>>) -> Result<(), String> {
+async fn close_session(session: &Session<GlobalShortcuts>) -> Result<(), String> {
     tokio::time::timeout(CLOSE_TIMEOUT, session.close())
         .await
         .map_err(|_| "Couldn't disable portal Global Hotkey: close timed out".to_string())?
@@ -250,7 +253,7 @@ async fn close_session(session: &Session<'_, GlobalShortcuts<'static>>) -> Resul
 }
 
 async fn close_after_portal_failure(
-    session: &Session<'_, GlobalShortcuts<'static>>,
+    session: &Session<GlobalShortcuts>,
     failure: BindFailure,
 ) -> BindFailure {
     if let Err(error) = close_session(session).await {
@@ -321,7 +324,7 @@ async fn run_portal_session(
 
     let connect = tokio::time::timeout(CREATE_TIMEOUT, GlobalShortcuts::new());
     pin_mut!(connect);
-    let portal: GlobalShortcuts<'static> = match select(&mut *stop, connect).await {
+    let portal: GlobalShortcuts = match select(&mut *stop, connect).await {
         Either::Left((close_sender, _)) => {
             acknowledge_early_stop(close_sender, ready, Ok(()));
             return Ok(());
@@ -371,7 +374,7 @@ async fn run_portal_session(
     let shortcuts = [shortcut];
     let bind = tokio::time::timeout(
         BIND_TIMEOUT,
-        portal.bind_shortcuts(&session, &shortcuts, None),
+        portal.bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default()),
     );
     pin_mut!(bind);
     let request = match select(&mut *stop, bind).await {

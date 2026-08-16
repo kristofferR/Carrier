@@ -7,14 +7,16 @@
 //! Anything that isn't Messenger is handed to the user's default browser.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use tauri::{Listener, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 mod actions;
 mod cli;
@@ -42,9 +44,12 @@ mod webview_watchdog;
 mod window;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
-use download::lookup_download;
 #[cfg(target_os = "macos")]
 use download::lookup_download_id;
+use download::{
+    downloads_dir, is_allowed_download, is_allowed_download_path, is_unsafe_download,
+    lookup_download, sanitize_filename,
+};
 use hotkey::reconcile_startup_global_hotkey;
 #[cfg(target_os = "linux")]
 use linux::observe_system_theme_changes;
@@ -316,22 +321,39 @@ fn native_result_signature(
 
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-enum ContextMenuResultPhase {
+enum NativeResultPhase {
     Presented,
     Complete,
+}
+
+#[derive(Clone, Copy)]
+enum DownloadChoice {
+    Chosen,
+    Cancelled,
+    Rejected,
+}
+
+impl DownloadChoice {
+    fn chosen(self) -> bool {
+        matches!(self, Self::Chosen)
+    }
+
+    fn cancelled(self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
 }
 
 fn context_menu_result_signature(
     secret: &str,
     request: &str,
     shown: bool,
-    phase: ContextMenuResultPhase,
+    phase: NativeResultPhase,
 ) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ContextMenuResult<'a> {
         request: &'a str,
         shown: bool,
-        phase: ContextMenuResultPhase,
+        phase: NativeResultPhase,
     }
 
     result_signature(
@@ -341,6 +363,32 @@ fn context_menu_result_signature(
             request,
             shown,
             phase,
+        },
+    )
+}
+
+fn choose_download_result_signature(
+    secret: &str,
+    request: &str,
+    choice: DownloadChoice,
+    phase: NativeResultPhase,
+) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ChooseDownloadResult<'a> {
+        request: &'a str,
+        chosen: bool,
+        phase: NativeResultPhase,
+        cancelled: bool,
+    }
+
+    result_signature(
+        secret,
+        "carrier:choose-download-result",
+        &ChooseDownloadResult {
+            request,
+            chosen: choice.chosen(),
+            phase,
+            cancelled: choice.cancelled(),
         },
     )
 }
@@ -406,7 +454,7 @@ fn send_context_menu_result(
     label: &str,
     request: &str,
     shown: bool,
-    phase: ContextMenuResultPhase,
+    phase: NativeResultPhase,
 ) {
     if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         log::warn!("carrier:context-menu result had an invalid request token");
@@ -434,6 +482,84 @@ fn send_context_menu_result(
             log::warn!("failed to report carrier:context-menu-result: {error}");
         }
     }
+}
+
+fn send_choose_download_result(
+    app: &tauri::AppHandle,
+    label: &str,
+    request: &str,
+    choice: DownloadChoice,
+    phase: NativeResultPhase,
+) {
+    if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        log::warn!("carrier:choose-download result had an invalid request token");
+        return;
+    }
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| choose_download_result_signature(secret, request, choice, phase))
+    };
+    let Some(signature) = signature else {
+        log::warn!("failed to authenticate carrier:choose-download-result");
+        return;
+    };
+    let request = serde_json::to_string(request).expect("request serializes");
+    let phase = serde_json::to_string(&phase).expect("phase serializes");
+    let signature = serde_json::to_string(&signature).expect("signature serializes");
+    let chosen = choice.chosen();
+    let cancelled = choice.cancelled();
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('carrier:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, cancelled: {cancelled}, signature: {signature} }} }}));"
+    );
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(error) = window.eval(&script) {
+            log::warn!("failed to report carrier:choose-download-result: {error}");
+        }
+    }
+}
+
+const PROMPTED_DOWNLOAD_TTL: Duration = Duration::from_secs(10 * 60);
+const PROMPTED_DOWNLOAD_CAP: usize = 32;
+
+fn reserve_prompted_download(
+    app: &tauri::AppHandle,
+    label: &str,
+    url: &str,
+    path: PathBuf,
+) -> bool {
+    let now = Instant::now();
+    let state = app.state::<AppState>();
+    let mut downloads = state.prompted_downloads.lock().unwrap();
+    downloads.retain(|_, (_, inserted)| {
+        now.checked_duration_since(*inserted)
+            .is_some_and(|age| age <= PROMPTED_DOWNLOAD_TTL)
+    });
+    let key = (label.to_string(), url.to_string());
+    if downloads.len() >= PROMPTED_DOWNLOAD_CAP && !downloads.contains_key(&key) {
+        return false;
+    }
+    downloads.insert(key, (path, now));
+    true
+}
+
+pub(crate) fn take_prompted_download(
+    app: &tauri::AppHandle,
+    label: &str,
+    url: &str,
+) -> Option<PathBuf> {
+    let (path, inserted) = app
+        .state::<AppState>()
+        .prompted_downloads
+        .lock()
+        .unwrap()
+        .remove(&(label.to_string(), url.to_string()))?;
+    Instant::now()
+        .checked_duration_since(inserted)
+        .is_some_and(|age| age <= PROMPTED_DOWNLOAD_TTL)
+        .then_some(path)
 }
 
 /// Move a fresh `Selected` activation to `Claimed`. Pure over the map so the
@@ -752,6 +878,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Persist geometry only — NOT visibility, so the app always shows
@@ -802,6 +929,7 @@ pub fn run() {
             recreating: std::sync::atomic::AtomicBool::new(false),
             recent_threads: Mutex::new(Vec::new()),
             download_reveal_tokens: Mutex::new(HashMap::new()),
+            prompted_downloads: Mutex::new(HashMap::new()),
             signed_action_nonces: Mutex::new(HashMap::new()),
             #[cfg(target_os = "macos")]
             context_menu_activations: Mutex::new(HashMap::new()),
@@ -933,6 +1061,139 @@ pub fn run() {
                 });
             });
 
+            // In ask mode the trusted injected click path requests a native save
+            // location before starting the WebView download. Only the opaque URL
+            // key returns to the page; the selected path stays in AppState until
+            // `on_download` consumes it.
+            let choose_download_handle = app.handle().clone();
+            app.listen_any("carrier:choose-download", move |event| {
+                #[derive(serde::Deserialize)]
+                struct ChooseDownloadMsg {
+                    url: String,
+                    name: String,
+                    request: String,
+                }
+
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                    log::warn!("carrier:choose-download payload did not parse");
+                    return;
+                };
+                let Some(label) = signed_action_window(
+                    &choose_download_handle,
+                    "carrier:choose-download",
+                    &signed,
+                ) else {
+                    log::warn!("carrier:choose-download was not authorized");
+                    return;
+                };
+                let Ok(msg) = serde_json::from_str::<ChooseDownloadMsg>(&signed.message) else {
+                    log::warn!("carrier:choose-download message did not parse");
+                    return;
+                };
+                let asks = choose_download_handle
+                    .state::<AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .download_behavior
+                    == "ask";
+                let parsed_url = url::Url::parse(&msg.url).ok();
+                let name = sanitize_filename(&msg.name);
+                let allowed = parsed_url
+                    .as_ref()
+                    .is_some_and(|url| is_allowed_download(url, &name))
+                    && !is_unsafe_download(&name);
+                let Some(window) = choose_download_handle.get_webview_window(&label) else {
+                    log::warn!("carrier:choose-download window was no longer available");
+                    send_choose_download_result(
+                        &choose_download_handle,
+                        &label,
+                        &msg.request,
+                        DownloadChoice::Rejected,
+                        NativeResultPhase::Complete,
+                    );
+                    return;
+                };
+                if !asks || !allowed {
+                    log::warn!(
+                        "carrier:choose-download rejected (ask mode: {asks}, allowed media: {allowed})"
+                    );
+                    send_choose_download_result(
+                        &choose_download_handle,
+                        &label,
+                        &msg.request,
+                        DownloadChoice::Rejected,
+                        NativeResultPhase::Complete,
+                    );
+                    return;
+                }
+
+                let mut dialog = window
+                    .dialog()
+                    .file()
+                    .set_parent(&window)
+                    .set_title("Save Messenger download")
+                    .set_file_name(&name);
+                if let Some(directory) = downloads_dir() {
+                    dialog = dialog.set_directory(directory);
+                }
+                let result_handle = choose_download_handle.clone();
+                let result_label = label.clone();
+                let result_request = msg.request.clone();
+                let result_url = msg.url.clone();
+                let result_parsed_url = parsed_url.expect("allowed download URL parsed");
+                dialog.save_file(move |selection| {
+                    let choice = match selection {
+                        None => DownloadChoice::Cancelled,
+                        Some(path) => match path.into_path() {
+                            Err(_) => {
+                                log::warn!(
+                                    "carrier:choose-download selection was not a filesystem path"
+                                );
+                                DownloadChoice::Rejected
+                            }
+                            Ok(path)
+                                if !is_allowed_download_path(&result_parsed_url, &path) =>
+                            {
+                                log::warn!(
+                                    "carrier:choose-download selection failed the media policy"
+                                );
+                                DownloadChoice::Rejected
+                            }
+                            Ok(path) => {
+                                if reserve_prompted_download(
+                                    &result_handle,
+                                    &result_label,
+                                    &result_url,
+                                    path,
+                                ) {
+                                    DownloadChoice::Chosen
+                                } else {
+                                    log::warn!(
+                                        "carrier:choose-download reservation cap was reached"
+                                    );
+                                    DownloadChoice::Rejected
+                                }
+                            }
+                        },
+                    };
+                    send_choose_download_result(
+                        &result_handle,
+                        &result_label,
+                        &result_request,
+                        choice,
+                        NativeResultPhase::Complete,
+                    );
+                });
+                send_choose_download_result(
+                    &choose_download_handle,
+                    &label,
+                    &msg.request,
+                    DownloadChoice::Chosen,
+                    NativeResultPhase::Presented,
+                );
+            });
+
             // Show a native context menu only for an authorized Messenger window.
             let context_menu_handle = app.handle().clone();
             app.listen_any("carrier:context-menu", move |event| {
@@ -982,7 +1243,7 @@ pub fn run() {
                                 &label,
                                 &msg.request,
                                 true,
-                                ContextMenuResultPhase::Presented,
+                                NativeResultPhase::Presented,
                             );
                         });
                     send_context_menu_result(
@@ -990,7 +1251,7 @@ pub fn run() {
                         &label,
                         &msg.request,
                         shown,
-                        ContextMenuResultPhase::Complete,
+                        NativeResultPhase::Complete,
                     );
                 });
                 if let Err(error) = dispatched {
@@ -1002,7 +1263,7 @@ pub fn run() {
                         &error_label,
                         &error_request,
                         false,
-                        ContextMenuResultPhase::Complete,
+                        NativeResultPhase::Complete,
                     );
                 }
             });
@@ -1675,13 +1936,13 @@ mod tests {
             "test-secret",
             "0123456789abcdef0123456789abcdef",
             true,
-            ContextMenuResultPhase::Presented,
+            NativeResultPhase::Presented,
         );
         let complete = context_menu_result_signature(
             "test-secret",
             "0123456789abcdef0123456789abcdef",
             true,
-            ContextMenuResultPhase::Complete,
+            NativeResultPhase::Complete,
         );
 
         assert_eq!(
@@ -1691,6 +1952,31 @@ mod tests {
         assert_eq!(
             complete.as_deref(),
             Some("41ecbdff8974add7ab0bd2ff1d7a97815a2f3eb709a706d41955bfd6f63abee8")
+        );
+    }
+
+    #[test]
+    fn choose_download_results_are_authenticated_with_the_window_secret() {
+        let presented = choose_download_result_signature(
+            "test-secret",
+            "0123456789abcdef0123456789abcdef",
+            DownloadChoice::Chosen,
+            NativeResultPhase::Presented,
+        );
+        let complete = choose_download_result_signature(
+            "test-secret",
+            "0123456789abcdef0123456789abcdef",
+            DownloadChoice::Chosen,
+            NativeResultPhase::Complete,
+        );
+
+        assert_eq!(
+            presented.as_deref(),
+            Some("c2b68bde1b166f3d29ed8237b2cd1e70a3895525384d19191737b56cd4adb401")
+        );
+        assert_eq!(
+            complete.as_deref(),
+            Some("6052d1952b4519524cbbd131ecc552829dae1faacfb0cb4725f49185df1881bf")
         );
     }
 

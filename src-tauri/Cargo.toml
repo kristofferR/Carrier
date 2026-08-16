@@ -6,7 +6,7 @@ authors = ["kristofferR"]
 edition = "2021"
 # Keep in step with the highest dependency MSRV (Tauri 2 + plugins) so the
 # advertised minimum is actually buildable.
-rust-version = "1.82"
+rust-version = "1.89"
 
 [lib]
 # The Tauri app logic lives in a lib so it can be shared with mobile targets.
@@ -29,6 +29,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-log = "2"
 # The `log` macros behind tauri-plugin-log; failures that used to vanish into
@@ -48,8 +49,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 open = "5"
 # Already in the tree via Tauri; the short delay when recreating a window on a
@@ -64,12 +65,11 @@ tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", rev = "
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# System-theme detection outside Linux. On Linux `dark-light` is only a
-# wrapper around the same ashpd settings portal that linux.rs already talks
-# to, and it pins an older ashpd — keeping it non-Linux avoids compiling two
-# ashpd versions/backends into Linux builds.
+# System-theme detection outside Linux. On Linux it duplicates the portal work
+# linux.rs already handles, so keeping it non-Linux avoids compiling a second
+# settings backend.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-dark-light = "2"
+dark-light = "3"
 # Keep Tauri's native tray path on macOS and Windows; Linux uses KSNI below.
 tauri = { version = "2", features = ["tray-icon"] }
 
@@ -77,7 +77,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 # `org.freedesktop.appearance` settings portal (see linux.rs). `async-io`
 # supplies the `block_on` for the synchronous point-in-time read.
 [target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.12", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts", "settings"] }
 async-io = "2"
 futures-util = "0.3"
 # Apply the GlobalShortcuts portal activation token to GTK's native window

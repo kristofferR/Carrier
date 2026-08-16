@@ -34,6 +34,7 @@
     return name;
   };
   var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+  var isDownloadCancellation = (error) => error instanceof Error && error.message === "download cancelled";
 
   // inject/src/messenger/lib/links.ts
   var INTERNAL_HOSTS = [
@@ -161,11 +162,18 @@
   var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
-  var toastDownloadSaved = (url) => toast("Saved to Downloads", {
-    label: downloadRevealLabel(navigator.userAgent),
-    kind: "reveal-download",
-    url
-  });
+  var toastDownloadSaved = (url) => toast(
+    window.__CARRIER_SETTINGS__?.download_behavior === "ask" ? "Download saved" : "Saved to Downloads",
+    {
+      label: downloadRevealLabel(navigator.userAgent),
+      kind: "reveal-download",
+      url
+    }
+  );
+  var toastDownloadFailure = (error, message = "Download failed") => {
+    if (isDownloadCancellation(error)) return;
+    toast(message);
+  };
 
   // inject/src/messenger/lib/auto-refresh.ts
   var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
@@ -965,6 +973,9 @@
     document.body.appendChild(a);
     try {
       if (action) await carrierPrepareDownload(action, href);
+      if (window.__CARRIER_SETTINGS__?.download_behavior === "ask") {
+        await carrierChooseDownload(href, name);
+      }
       const completion = waitForNativeDownload(window, href, carrierVerifyResult);
       a.click();
       return await completion;
@@ -1061,12 +1072,14 @@
           ]);
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[1],
-            () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
+            () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
           ]);
           if (isMac2) {
             addItem([
               IMAGE_CONTEXT_MENU_LABELS[2],
-              (action) => action ? shareSrc(imgSrc, "image", fx, fy, action).catch(() => toast("Share failed")) : void 0
+              (action) => action ? shareSrc(imgSrc, "image", fx, fy, action).catch(
+                (error) => toastDownloadFailure(error, "Share failed")
+              ) : void 0
             ]);
           }
           addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
@@ -1074,12 +1087,14 @@
         } else if (vidSrc) {
           addItem([
             VIDEO_CONTEXT_MENU_LABELS[0],
-            () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"))
+            () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
           ]);
           if (isMac2) {
             addItem([
               VIDEO_CONTEXT_MENU_LABELS[1],
-              (action) => action ? shareSrc(vidSrc, "video", fx, fy, action).catch(() => toast("Share failed")) : void 0
+              (action) => action ? shareSrc(vidSrc, "video", fx, fy, action).catch(
+                (error) => toastDownloadFailure(error, "Share failed")
+              ) : void 0
             ]);
           }
           addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
@@ -1531,10 +1546,11 @@
         const href = a?.href;
         if (!a || !href || !/^(blob:|data:|https?:)/i.test(href)) return;
         if (a.hasAttribute("data-carrier-native-download")) return;
+        if (!e.isTrusted) return;
         a.removeAttribute("target");
         e.preventDefault();
         e.stopImmediatePropagation();
-        downloadSrc(href, a.getAttribute("download") || "download").then(({ url }) => toastDownloadSaved(url)).catch(() => toast("Download failed"));
+        downloadSrc(href, a.getAttribute("download") || "download").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error));
       },
       true
     );

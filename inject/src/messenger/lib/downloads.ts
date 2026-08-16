@@ -38,3 +38,6 @@ export const friendlyDownloadName = (name: string): string => {
 
 export const downloadRevealLabel = (userAgent: string): string =>
   /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
+
+export const isDownloadCancellation = (error: unknown): boolean =>
+  error instanceof Error && error.message === "download cancelled";

@@ -4,7 +4,7 @@
 
 use std::{
     collections::VecDeque,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
@@ -273,6 +273,15 @@ pub(crate) fn is_allowed_download(url: &Url, name: &str) -> bool {
     }
 }
 
+/// Apply the same media and executable-extension policy to a path selected in
+/// the native save dialog. The suggested name was already checked, but the user
+/// can edit it before confirming.
+pub(crate) fn is_allowed_download_path(url: &Url, path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| is_allowed_download(url, name) && !is_unsafe_download(name))
+}
+
 /// True for filenames whose extension is a directly-executable type, so a remote
 /// page can't quietly drop malware in Downloads. Media, documents and archives
 /// (the things you'd actually save from Messenger) are all allowed.
@@ -443,6 +452,15 @@ mod tests {
             &u("https://example.com/photo.jpg"),
             "photo.jpg"
         ));
+    }
+
+    #[test]
+    fn prompted_path_revalidates_the_selected_filename() {
+        let url = u("blob:https://www.facebook.com/download");
+
+        assert!(is_allowed_download_path(&url, Path::new("photo.png")));
+        assert!(!is_allowed_download_path(&url, Path::new("photo.exe")));
+        assert!(!is_allowed_download_path(&url, Path::new("download")));
     }
 
     #[test]

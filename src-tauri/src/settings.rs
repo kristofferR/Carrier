@@ -102,6 +102,9 @@ pub(crate) struct Settings {
     /// Require Cmd+Enter on macOS or Ctrl+Enter elsewhere to send a message.
     /// Plain Enter inserts a line break. Off by default.
     pub(crate) send_with_accelerator: bool,
+    /// Where downloads go: "downloads" saves automatically to the system
+    /// Downloads folder, while "ask" opens a native save dialog first.
+    pub(crate) download_behavior: String,
 }
 
 /// Valid page-zoom range in percent (matches the keyboard zoom in
@@ -124,6 +127,9 @@ impl Settings {
         self.zoom = clamp_zoom(self.zoom);
         if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
             self.tray_icon_style = "color".into();
+        }
+        if self.download_behavior != "downloads" && self.download_behavior != "ask" {
+            self.download_behavior = "downloads".into();
         }
         // Flatpak owns updates, and autostart requires the Background portal
         // rather than writing a host desktop file from the sandbox.
@@ -177,6 +183,7 @@ impl Default for Settings {
             block_telemetry: true,
             strip_link_tracking: true,
             send_with_accelerator: false,
+            download_behavior: "downloads".into(),
         }
     }
 }
@@ -231,6 +238,9 @@ pub(crate) struct AppState {
     /// Carrier's injected click handler. They are imported as non-extractable
     /// HMAC keys in the page and are never included in an IPC payload.
     pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
+    /// User-selected save paths awaiting the matching WebView download. The
+    /// remote page sees only the URL key, never the filesystem path.
+    pub(crate) prompted_downloads: Mutex<HashMap<(String, String), (PathBuf, Instant)>>,
     /// Recently consumed signed-action nonces and their insertion times. The
     /// authenticated action timestamp lets old entries expire without allowing
     /// a captured action to be replayed.
@@ -777,6 +787,10 @@ mod tests {
             s.strip_link_tracking,
             "Facebook link tracking removal should default to true"
         );
+        assert_eq!(
+            s.download_behavior, "downloads",
+            "downloads should save automatically by default"
+        );
         assert_eq!(s.zoom, 100, "zoom should default to 100%");
     }
 
@@ -820,6 +834,20 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(settings.sanitized().tray_icon_style, "symbolic");
+    }
+
+    #[test]
+    fn settings_sanitized_rejects_unknown_download_behaviors() {
+        let settings = Settings {
+            download_behavior: "desktop".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().download_behavior, "downloads");
+        let settings = Settings {
+            download_behavior: "ask".into(),
+            ..Default::default()
+        };
+        assert_eq!(settings.sanitized().download_behavior, "ask");
     }
 
     #[test]
@@ -930,6 +958,12 @@ mod tests {
         // Existing installs should not opt into autoplay suppression implicitly.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.stop_media_autoplay);
+    }
+
+    #[test]
+    fn settings_json_missing_download_behavior_defaults_to_downloads() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.download_behavior, "downloads");
     }
 
     #[test]
