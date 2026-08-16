@@ -25,13 +25,36 @@ const PKEY_TITLE: PROPERTYKEY = PROPERTYKEY {
     pid: 2,
 };
 
+/// Monotonic rebuild generation: workers holding an outdated generation skip
+/// their build entirely, so a slow older rebuild can never commit a stale list
+/// over a newer one. This matters for privacy — turning Hide Names & Avatars on
+/// clears the recents, and a racing stale commit could restore conversation
+/// names to the jump list.
+static JUMP_LIST_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Serializes the COM build itself so two workers never interleave
+/// BeginList/CommitList sequences.
+static JUMP_LIST_BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Rebuild the taskbar jump list from the current recent conversations. Runs on
 /// its own short-lived STA thread so it never touches the main apartment, and is
 /// best-effort — a COM failure is logged, not surfaced.
 pub(crate) fn rebuild_jump_list(threads: Vec<RecentThread>) {
+    use std::sync::atomic::Ordering;
+
+    let generation = JUMP_LIST_GENERATION
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1);
     let spawned = std::thread::Builder::new()
         .name("carrier-jump-list".into())
         .spawn(move || {
+            let _serialized = JUMP_LIST_BUILD
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // A newer rebuild is pending or done; this snapshot is obsolete.
+            // Checked under the lock, so the newest request always commits last.
+            if JUMP_LIST_GENERATION.load(Ordering::Acquire) != generation {
+                return;
+            }
             // SAFETY: standard COM lifecycle on a dedicated thread.
             unsafe {
                 let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();

@@ -129,7 +129,7 @@ pub(crate) fn refresh_unread_indicators(
 #[cfg(target_os = "windows")]
 fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
     use tauri::image::Image;
-    use tray_badge::{overlay_badge_rgba, UnreadBucket};
+    use tray_badge::{overlay_badge_rgba, UnreadBucket, OVERLAY_BADGE_SIZE};
 
     // Rasterize only when the bucket changes — the RGBA is identical across
     // every window — but always call `set_overlay_icon`: it is cheap and
@@ -148,7 +148,9 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
         if label == "settings" {
             continue;
         }
-        let overlay = rgba.as_deref().map(|bytes| Image::new(bytes, 32, 32));
+        let overlay = rgba
+            .as_deref()
+            .map(|bytes| Image::new(bytes, OVERLAY_BADGE_SIZE, OVERLAY_BADGE_SIZE));
         let _ = window.set_overlay_icon(overlay);
     }
 }
@@ -182,8 +184,11 @@ fn messenger_url_thread_id(url: &url::Url) -> Option<String> {
         return None;
     }
     let path = url.path();
+    // E2EE conversations (the default for personal chats) live under
+    // /messages/e2ee/t/<id>; plaintext ones under /messages/t/<id>.
     let id = path
-        .strip_prefix("/messages/t/")
+        .strip_prefix("/messages/e2ee/t/")
+        .or_else(|| path.strip_prefix("/messages/t/"))
         .or_else(|| path.strip_prefix("/t/"))?;
     let id = id.strip_suffix('/').unwrap_or(id);
     actions::validated_thread_path(&format!("/t/{id}/"))?;
@@ -1890,6 +1895,14 @@ mod tests {
             messenger_url_thread_id(&url::Url::parse("https://www.messenger.com/t/456").unwrap())
                 .as_deref(),
             Some("456")
+        );
+        // E2EE threads (the default for personal chats) use a distinct path.
+        assert_eq!(
+            messenger_url_thread_id(
+                &url::Url::parse("https://www.facebook.com/messages/e2ee/t/789/").unwrap()
+            )
+            .as_deref(),
+            Some("789")
         );
         assert!(messenger_url_thread_id(
             &url::Url::parse("https://www.facebook.com/messages/").unwrap()

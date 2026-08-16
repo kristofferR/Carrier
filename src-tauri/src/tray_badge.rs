@@ -164,9 +164,14 @@ pub(crate) fn draw_unread_badge(
 /// ~16 px slot Windows composites the overlay into. `None` for count ≤ 0 so the
 /// caller clears the overlay. Shares [`UnreadBucket`] bucketing with the tray so
 /// the image only changes when the bucket does.
+/// Side length of the taskbar overlay badge. Shared with the `Image::new` call
+/// in `lib.rs` so the pixel buffer and the declared dimensions cannot drift.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) const OVERLAY_BADGE_SIZE: u32 = 32;
+
 #[cfg(any(target_os = "windows", test))]
 pub(crate) fn overlay_badge_rgba(count: i64) -> Option<Vec<u8>> {
-    const SIZE: u32 = 32;
+    const SIZE: u32 = OVERLAY_BADGE_SIZE;
     let bucket = UnreadBucket::from_count(count);
     if bucket == UnreadBucket::None {
         return None;
