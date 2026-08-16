@@ -1132,7 +1132,7 @@ fn show_linux_notification(
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 const MAX_PENDING_PAGE_REPLIES: usize = 64;
@@ -1174,7 +1174,7 @@ impl Drop for QuickReplyWorkerPermit<'_> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 static QUICK_REPLY_WORKER_SLOTS: QuickReplyWorkerSlots = QuickReplyWorkerSlots::new();
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -1185,6 +1185,7 @@ enum PendingReplyMode {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 #[derive(Clone)]
 struct PendingPageReply {
     id: u64,
@@ -1260,7 +1261,7 @@ impl PendingPageReplies {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
     static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
     REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
@@ -1296,18 +1297,19 @@ impl ReplyAckWaiters {
             .is_some_and(|(_, sender)| sender.send(ok).is_ok())
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn remove(&mut self, id: u64) {
         self.waiters.remove(&id);
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
     static WAITERS: OnceLock<Mutex<ReplyAckWaiters>> = OnceLock::new();
     WAITERS.get_or_init(|| Mutex::new(ReplyAckWaiters::default()))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 struct ReplyResultMsg {
     id: u64,
@@ -1315,7 +1317,7 @@ struct ReplyResultMsg {
     ok: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn handle_reply_result(payload: &str) {
     let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
         return;
@@ -1330,13 +1332,13 @@ pub(crate) fn handle_reply_result(payload: &str) {
         .complete(result.id, result.attempt, result.ok);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn next_reply_attempt() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn quick_reply_script(
     id: u64,
     attempt: u64,
@@ -1353,7 +1355,7 @@ fn quick_reply_script(
     Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn register_pending_page_reply(
     id: u64,
     attempt: u64,
@@ -1374,7 +1376,7 @@ fn register_pending_page_reply(
 /// Re-dispatch an in-memory notification reply after a hard Messenger
 /// navigation replaces the page that received the first eval. Each action gets
 /// one resume attempt and expires with the native acknowledgement window.
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     let replies = pending_page_replies()
         .lock()
@@ -1406,7 +1408,7 @@ pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn eval_hidden_quick_reply(
     app: &tauri::AppHandle,
     id: u64,
