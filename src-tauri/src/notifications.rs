@@ -2552,14 +2552,17 @@ mod tests {
         let old = std::time::SystemTime::now()
             - PERSISTED_NOTIFICATION_ROUTE_MAX_AGE
             - Duration::from_secs(1);
-        std::fs::File::open(directory.join("9032"))
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        std::fs::File::open(&temp)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
+        // Windows refuses to change timestamps through a read-only handle.
+        let backdate = |path: &Path| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        };
+        backdate(&directory.join("9032"));
+        backdate(&temp);
         clear_stale_notification_routes_in_dir(&directory, std::time::SystemTime::now()).unwrap();
 
         assert!(directory.join("9031").exists());
