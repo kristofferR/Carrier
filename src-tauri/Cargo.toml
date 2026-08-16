@@ -122,7 +122,31 @@ mac-notification-sys = "0.6"
 muda = "0.19"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Storage_FileSystem"] }
+# Win32_System_Registry: read the taskbar's light/dark preference for the
+# monochrome tray tint (SystemUsesLightTheme, which the dark-light crate does
+# NOT read — it reads AppsUseLightTheme, and the two diverge under Win11 Custom).
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_Registry"] }
+# Register the carrier:// URL scheme in HKCU (per-user, no admin) so protocol
+# launches reach Carrier as argv and are parsed in one audited place by
+# actions::action_from_argv. Registration only — the plugin's JS API capability
+# and single-instance's deep-link feature are intentionally left off.
+tauri-plugin-deep-link = "2"
+# Raw WinRT for the toast module (text input, toast tag/group, Action Center
+# history removal — none of which notify-rust's backend exposes). Already in the
+# tree transitively via tauri-winrt-notification, so it adds no new build cost.
+windows = { version = "0.61", features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "Foundation_Collections",
+    "UI_Notifications",
+    # Taskbar jump list (ICustomDestinationList + IShellLinkW + IPropertyStore).
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
 
 [profile.release]
 panic = "abort"

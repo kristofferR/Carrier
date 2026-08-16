@@ -140,7 +140,7 @@ pub(crate) fn build_app_window(
                 if is_messenger_web_url(payload.url()) {
                     crate::actions::messenger_page_finished(&window);
                 }
-                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
                 if window.label() == "main" && is_messenger_web_url(payload.url()) {
                     crate::notifications::resume_pending_page_replies(&window);
                 }

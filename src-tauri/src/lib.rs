@@ -37,11 +37,15 @@ mod notifications;
 mod preflight;
 mod settings;
 mod tray;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 mod tray_badge;
 mod url_rules;
 mod webview_watchdog;
+// Pure toast helpers (XML building, activation-arg parsing) unit-test on any OS;
+// the WinRT delivery path inside is gated to Windows.
 mod window;
+#[cfg(any(test, target_os = "windows"))]
+mod windows;
 
 use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
 #[cfg(target_os = "macos")]
@@ -59,7 +63,7 @@ use macos::{
     theme::observe_system_theme_changes,
 };
 use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use notifications::handle_reply_result;
 use notifications::{
     clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
@@ -100,6 +104,11 @@ pub(crate) fn refresh_unread_indicators(
         let _ = tray.set_unread(unread);
         #[cfg(target_os = "macos")]
         let _ = tray.set_title(tray_unread_title(settings, unread));
+        // Cheap re-check of the taskbar theme (the page re-emits the unread count
+        // at least ~minutely), so a Dark↔Light taskbar flip retints the symbolic
+        // tray within a minute without a registry watcher.
+        #[cfg(target_os = "windows")]
+        crate::tray::set_windows_tray_icon_style(app, tray, &settings.tray_icon_style);
     }
     drop(tray);
 
@@ -107,6 +116,41 @@ pub(crate) fn refresh_unread_indicators(
     // task manager plus Ubuntu Dock/Dash-to-Dock.
     #[cfg(target_os = "linux")]
     tray_badge::update_unity_launcher_count(unread);
+
+    // Windows has no tray-managed count; the unread total rides the taskbar
+    // button as an overlay icon on every Messenger window.
+    #[cfg(target_os = "windows")]
+    update_windows_overlay_badges(app, unread);
+}
+
+/// Paint (or clear) the Windows taskbar overlay badge on every Messenger window.
+/// The Settings dialog is skipped — it carries its own taskbar button and should
+/// never show an unread count.
+#[cfg(target_os = "windows")]
+fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
+    use tauri::image::Image;
+    use tray_badge::{overlay_badge_rgba, UnreadBucket};
+
+    // Rasterize only when the bucket changes — the RGBA is identical across
+    // every window — but always call `set_overlay_icon`: it is cheap and
+    // idempotent, so a theme-rebuild or a freshly opened window self-heals on
+    // the page's next unread re-emit without any extra plumbing.
+    static OVERLAY_CACHE: Mutex<Option<(UnreadBucket, Option<Vec<u8>>)>> = Mutex::new(None);
+    let bucket = UnreadBucket::from_count(unread);
+    let rgba = {
+        let mut cache = OVERLAY_CACHE.lock().unwrap();
+        if cache.as_ref().map(|(cached, _)| *cached) != Some(bucket) {
+            *cache = Some((bucket, overlay_badge_rgba(unread)));
+        }
+        cache.as_ref().unwrap().1.clone()
+    };
+    for (label, window) in app.webview_windows() {
+        if label == "settings" {
+            continue;
+        }
+        let overlay = rgba.as_deref().map(|bytes| Image::new(bytes, 32, 32));
+        let _ = window.set_overlay_icon(overlay);
+    }
 }
 
 #[derive(Deserialize)]
@@ -117,13 +161,13 @@ struct SignedAction {
     signature: String,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 #[derive(Deserialize)]
 struct ThreadViewedMsg {
     thread_path: String,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn parse_thread_viewed_payload(payload: &str) -> Option<String> {
     let message = serde_json::from_str::<ThreadViewedMsg>(payload).ok()?;
     let path = actions::validated_thread_path(&message.thread_path)?;
@@ -132,7 +176,7 @@ fn parse_thread_viewed_payload(payload: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 fn messenger_url_thread_id(url: &url::Url) -> Option<String> {
     if !url_rules::is_messenger_web_url(url) {
         return None;
@@ -146,7 +190,7 @@ fn messenger_url_thread_id(url: &url::Url) -> Option<String> {
     Some(id.to_string())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn focused_messenger_window_shows_thread(app: &tauri::AppHandle, thread_id: &str) -> bool {
     app.webview_windows().into_iter().any(|(label, window)| {
         (label == "main" || label.starts_with("win-"))
@@ -823,7 +867,7 @@ pub fn run() {
     configure_linux_webkit_renderer();
 
     let initial = load_settings_early();
-    let cold_cli_action = cli::parse_cli_action(std::env::args_os());
+    let cold_cli_action = cli::parse_launch_action(std::env::args_os());
 
     let mut builder = tauri::Builder::default();
 
@@ -843,12 +887,20 @@ pub fn run() {
         is_isolated_mcp_socket(mcp_socket_override.as_deref()),
     ) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if let Some(action) = cli::parse_cli_action(argv) {
+            if let Some(action) = cli::parse_launch_action(argv) {
                 actions::run_app_action(app, action);
             } else {
                 show_main(app);
             }
         }));
+    }
+
+    // Register the carrier:// URL scheme (HKCU, no admin) so protocol launches
+    // reach Carrier as argv, parsed in the one audited place (action_from_argv).
+    // Registration only — no JS capability, no single-instance deep-link feature.
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
     // Dev-only (the `mcp` feature): expose the webview to tauri-plugin-mcp for
@@ -942,6 +994,12 @@ pub fn run() {
                 Some(actions::AppAction::NewConversation) => {
                     Some(actions::AppAction::NewConversation)
                 }
+                // A cold carrier://t/<id> or --thread <id> launch opens the
+                // conversation once the main page finishes loading.
+                #[cfg(target_os = "windows")]
+                Some(actions::AppAction::OpenThread(path)) => {
+                    Some(actions::AppAction::OpenThread(path.clone()))
+                }
                 _ => None,
             }),
             messenger_loaded: std::sync::atomic::AtomicBool::new(false),
@@ -971,6 +1029,20 @@ pub fn run() {
             app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
 
             clear_pending_webview_data(app.handle());
+
+            // Portable zips have no installer to register the scheme, and a moved
+            // portable folder must re-point the handler at the new exe. Writing
+            // the HKCU keys at every startup covers both (idempotent, no admin).
+            #[cfg(target_os = "windows")]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(error) = app.deep_link().register("carrier") {
+                    log::warn!("failed to register the carrier:// protocol handler: {error}");
+                }
+                // Give the AUMID a display name so portable-zip toasts (which have
+                // no installer-stamped shortcut) still show "Carrier".
+                crate::windows::toast::init(app.handle());
+            }
 
             #[cfg(target_os = "linux")]
             let settings = load_settings(app.handle());
@@ -1604,7 +1676,7 @@ pub fn run() {
                 },
             );
 
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let thread_viewed_handle = app.handle().clone();
                 app.listen_any("carrier:thread-viewed", move |event| {
@@ -1627,30 +1699,40 @@ pub fn run() {
                         );
                         return;
                     }
-                    let thread_path = format!("/t/{thread_id}/");
-                    let correlation_handle = thread_viewed_handle.clone();
-                    tauri::async_runtime::spawn(async move {
-                        let route_handle = correlation_handle.clone();
-                        let late_route_ids = tauri::async_runtime::spawn_blocking(move || {
-                            notifications::take_notification_ids_for_thread(
-                                &route_handle,
-                                &thread_path,
-                            )
-                        })
-                        .await;
-                        let Ok(late_route_ids) = late_route_ids else {
-                            log::warn!("notification route correlation task failed");
-                            return;
-                        };
-                        if let Err(error) = correlation_handle.run_on_main_thread(move || {
-                            macos::notifications::clear_delivered_for_thread(
-                                &thread_id,
-                                &late_route_ids,
-                            );
-                        }) {
-                            log::warn!("failed to queue notification clearing: {error}");
-                        }
-                    });
+                    #[cfg(target_os = "macos")]
+                    {
+                        let thread_path = format!("/t/{thread_id}/");
+                        let correlation_handle = thread_viewed_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let route_handle = correlation_handle.clone();
+                            let late_route_ids = tauri::async_runtime::spawn_blocking(move || {
+                                notifications::take_notification_ids_for_thread(
+                                    &route_handle,
+                                    &thread_path,
+                                )
+                            })
+                            .await;
+                            let Ok(late_route_ids) = late_route_ids else {
+                                log::warn!("notification route correlation task failed");
+                                return;
+                            };
+                            if let Err(error) = correlation_handle.run_on_main_thread(move || {
+                                macos::notifications::clear_delivered_for_thread(
+                                    &thread_id,
+                                    &late_route_ids,
+                                );
+                            }) {
+                                log::warn!("failed to queue notification clearing: {error}");
+                            }
+                        });
+                    }
+                    // RemoveGroupWithId clears the whole conversation group in one
+                    // OS-side call, so no per-id correlation is needed on Windows.
+                    #[cfg(target_os = "windows")]
+                    crate::windows::toast::clear_thread_group(
+                        &thread_viewed_handle.config().identifier,
+                        &thread_id,
+                    );
                 });
             }
 
@@ -1659,9 +1741,9 @@ pub fn run() {
             // It is signed by the main window's non-extractable bridge key: the
             // remote page can replace the writable delivery hook, but it cannot
             // forge success and suppress the native fallback.
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             let reply_result_handle = app.handle().clone();
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             app.listen_any("carrier:reply-result", move |event| {
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                     log::warn!("carrier:reply-result payload did not parse");

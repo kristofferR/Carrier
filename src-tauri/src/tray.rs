@@ -521,11 +521,10 @@ pub(crate) fn build_tray_with_menu(
 ) -> tauri::Result<PlatformTrayIcon> {
     #[cfg(target_os = "macos")]
     let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
+    // Windows (the only other non-Linux target): full-colour icon or the
+    // taskbar-tinted symbolic mark, per the Tray icon style setting.
     #[cfg(not(target_os = "macos"))]
-    let icon = {
-        let _ = icon_style;
-        app.default_window_icon().expect("bundled icon").clone()
-    };
+    let icon = windows_tray_image(app, icon_style);
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(icon)
@@ -589,6 +588,117 @@ pub(crate) fn set_macos_tray_icon_style(
 ) -> tauri::Result<()> {
     let (icon, symbolic) = macos_tray_icon(app, icon_style)?;
     tray.set_icon_with_as_template(Some(icon), symbolic)
+}
+
+/// Recolour the symbolic tray mark for a Windows taskbar. The asset is a white
+/// glyph carried in its alpha channel: keep it white on a dark taskbar, recolour
+/// the RGB to a dark grey (~#404040) on a light one. Alpha is always preserved
+/// so the antialiased edges and interior holes survive. Pure for unit tests.
+#[cfg(any(target_os = "windows", test))]
+fn tint_symbolic(rgba: &[u8], dark_taskbar: bool) -> Vec<u8> {
+    let rgb = if dark_taskbar {
+        [0xFF, 0xFF, 0xFF]
+    } else {
+        [0x40, 0x40, 0x40]
+    };
+    let mut pixels = rgba.to_vec();
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel[..3].copy_from_slice(&rgb);
+    }
+    pixels
+}
+
+/// Interpret `HKCU\...\Themes\Personalize\SystemUsesLightTheme` for the tray:
+/// only an explicit `1` (light) yields a light taskbar. A missing value (old
+/// Win10 builds, where the taskbar was always dark) or `0` means dark. Pure so
+/// the mapping is unit-testable off Windows.
+#[cfg(any(target_os = "windows", test))]
+fn dark_taskbar_from_reg(system_uses_light_theme: Option<u32>) -> bool {
+    !matches!(system_uses_light_theme, Some(1))
+}
+
+#[cfg(target_os = "windows")]
+fn read_system_uses_light_theme() -> Option<u32> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let value: Vec<u16> = "SystemUsesLightTheme"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut data: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: a fixed-size DWORD read into a stack u32; RRF_RT_REG_DWORD makes
+    // RegGetValueW reject any other value type, and it writes at most `size`
+    // bytes, updating `size` with what it wrote.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut data as *mut u32).cast(),
+            &mut size,
+        )
+    };
+    (status == 0).then_some(data) // ERROR_SUCCESS
+}
+
+/// Whether the Windows taskbar is currently dark. Errors and missing values
+/// fall back to dark, so the tray never renders a light glyph onto a dark
+/// taskbar by mistake.
+#[cfg(target_os = "windows")]
+fn taskbar_prefers_dark() -> bool {
+    dark_taskbar_from_reg(read_system_uses_light_theme())
+}
+
+/// The base tray image for the current style on Windows: the full-colour app
+/// icon, or the symbolic mark tinted for the taskbar theme. A decode failure
+/// falls back to the colour icon so the tray is never invisible.
+#[cfg(target_os = "windows")]
+fn windows_tray_image(app: &tauri::AppHandle, icon_style: &str) -> tauri::image::Image<'static> {
+    if icon_style == "symbolic" {
+        match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+        {
+            Ok(symbolic) => {
+                let tinted = tint_symbolic(symbolic.rgba(), taskbar_prefers_dark());
+                return tauri::image::Image::new_owned(tinted, symbolic.width(), symbolic.height());
+            }
+            Err(error) => {
+                log::warn!("failed to decode the symbolic tray asset ({error}); using colour");
+            }
+        }
+    }
+    app.default_window_icon()
+        .expect("bundled icon")
+        .clone()
+        .to_owned()
+}
+
+/// Apply the Windows tray icon style, re-setting the icon only when the
+/// (style, taskbar-theme) pair changes. This keeps the live-toggle path from
+/// `apply_settings` and the ~minutely re-check on the unread poll from
+/// flickering the tray on every call.
+#[cfg(target_os = "windows")]
+pub(crate) fn set_windows_tray_icon_style(
+    app: &tauri::AppHandle,
+    tray: &PlatformTrayIcon,
+    icon_style: &str,
+) {
+    static LAST: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+    let key = (icon_style.to_string(), taskbar_prefers_dark());
+    let mut last = LAST.lock().unwrap();
+    if last.as_ref() == Some(&key) {
+        return;
+    }
+    if let Err(error) = tray.set_icon(Some(windows_tray_image(app, icon_style))) {
+        log::warn!("failed to update the Windows tray icon: {error}");
+        return;
+    }
+    *last = Some(key);
 }
 
 #[cfg(target_os = "linux")]
@@ -673,6 +783,27 @@ mod tests {
         assert_eq!((image.width(), image.height()), (128, 128));
         assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
         assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 255));
+    }
+
+    #[test]
+    fn windows_symbolic_tint_is_white_on_dark_and_grey_on_light() {
+        let source = vec![10, 20, 30, 0, 10, 20, 30, 200];
+        assert_eq!(
+            tint_symbolic(&source, true),
+            vec![255, 255, 255, 0, 255, 255, 255, 200]
+        );
+        assert_eq!(
+            tint_symbolic(&source, false),
+            vec![0x40, 0x40, 0x40, 0, 0x40, 0x40, 0x40, 200]
+        );
+    }
+
+    #[test]
+    fn taskbar_theme_defaults_to_dark_unless_explicitly_light() {
+        assert!(dark_taskbar_from_reg(None), "absent value => dark");
+        assert!(dark_taskbar_from_reg(Some(0)), "0 => dark");
+        assert!(!dark_taskbar_from_reg(Some(1)), "1 => light");
+        assert!(dark_taskbar_from_reg(Some(2)), "unexpected value => dark");
     }
 
     #[test]

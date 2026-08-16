@@ -68,21 +68,26 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain('key === "show_tray" && trayRequired');
   });
 
-  test("the symbolic tray setting is offered on macOS and Linux", async () => {
+  test("the symbolic tray setting is offered on macOS, Linux, and Windows", async () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
-    expect(settings).toContain('...(IS_MAC || IS_LINUX ? ["tray_icon_style"] : [])');
+    expect(settings).toContain(
+      '...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : [])',
+    );
     expect(settings).toContain('[["color", "Color"], ["symbolic", "Symbolic"]]');
   });
 
-  test("macOS notification polish remains independently configurable", async () => {
+  test("notification polish is configurable, with a taskbar flash on Windows", async () => {
     const settings = await repoAsset("dist/settings.html");
 
+    // Conversation grouping / clear-on-view stay macOS-only for now.
     expect(settings).toContain(
       '...(IS_MAC ? ["group_notifications_by_conversation", "clear_notifications_on_view"] : [])',
     );
-    expect(settings).toContain('...(IS_MAC ? ["attention_on_message"] : [])');
+    // The shared attention setting now covers Windows (relabelled to a flash).
+    expect(settings).toContain('...(IS_MAC || IS_WINDOWS ? ["attention_on_message"] : [])');
+    expect(settings).toContain('label: "Flash Taskbar Icon"');
   });
 
   test("downloads can save automatically or ask for a location", async () => {

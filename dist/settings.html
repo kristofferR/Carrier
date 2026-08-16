@@ -134,6 +134,16 @@
       const IS_LINUX = !IS_MAC && !IS_WINDOWS && /Linux/.test(navigator.userAgent);
       let runtimeCapabilities = null;
 
+      // The shared attention setting is a Dock bounce on macOS and a taskbar
+      // flash on Windows — same setting, per-OS wording (defined here because the
+      // platform flags are not available yet where FIELDS is built above).
+      if (IS_WINDOWS) {
+        FIELD_META.attention_on_message = {
+          label: "Flash Taskbar Icon",
+          hint: "Flash the taskbar button when a message arrives while Carrier is unfocused.",
+        };
+      }
+
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "download_behavior"] },
@@ -142,14 +152,14 @@
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
-            ...(IS_MAC || IS_LINUX ? ["tray_icon_style"] : []),
+            ...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : []),
             ...(IS_MAC ? ["menu_bar_only"] : []),
             ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
           ] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    ...(IS_MAC ? ["group_notifications_by_conversation", "clear_notifications_on_view"] : []),
-                   ...(IS_MAC ? ["attention_on_message"] : []),
+                   ...(IS_MAC || IS_WINDOWS ? ["attention_on_message"] : []),
                    "unread_badge", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
