@@ -649,6 +649,47 @@ describe("PageNotificationQueue", () => {
     expect(consumed.matched).toBe(true);
     expect(expired.matched).toBeUndefined();
   });
+
+  test("refuses indistinguishable signals and cannot match one later", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Same" });
+    queue.add({ at: 1_050, title: "Jane", body: "Same" });
+
+    expect(queue.consumeMatching({ title: "Jane", body: "Same" }, 1_100, 2_000)).toBeNull();
+    expect(queue.consumeMatching({ title: "Jane", body: "Same" }, 1_200, 2_000)).toBeNull();
+  });
+
+  test("requires a signal to match exactly one candidate conversation", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Same" });
+    const twins = [
+      { key: "1", title: "Jane", body: "Same" },
+      { key: "2", title: "Jane", body: "Same" },
+    ];
+
+    expect(queue.consumeMatching(twins[0]!, 1_100, 2_000, twins)).toBeNull();
+    expect(queue.consumeMatching(twins[1]!, 1_200, 2_000, [twins[1]!])).toBeNull();
+  });
+
+  test("duplicate anchors for one candidate thread remain unambiguous", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Same" });
+    const row = { key: "1", title: "Jane", body: "Same" };
+
+    expect(queue.consumeMatching(row, 1_100, 2_000, [row, row])).not.toBeNull();
+  });
+
+  test("refuses a signal whose only candidate is a different conversation", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Same" });
+    const other = { key: "2", title: "Jane", body: "Same" };
+
+    expect(
+      queue.consumeMatching({ key: "1", title: "Jane", body: "Same" }, 1_100, 2_000, [other]),
+    ).toBeNull();
+    // The refused signal is dropped, not left to match a later row.
+    expect(queue.consumeMatching(other, 1_200, 2_000, [other])).toBeNull();
+  });
 });
 
 describe("UnreadArrivalTracker", () => {

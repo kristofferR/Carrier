@@ -9,7 +9,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -23,8 +23,12 @@ use futures_util::{pin_mut, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::actions::{run_app_action, validated_thread_path, AppAction};
 #[cfg(target_os = "macos")]
-use crate::macos::notifications::deliver_notification_macos;
+use crate::macos::notifications::{
+    clear_delivered_for_thread, deliver_notification_macos,
+    update_pending_notification_route_macos, MacNotificationOptions,
+};
 use crate::settings::AppState;
 use crate::tray::show_main;
 
@@ -59,6 +63,12 @@ const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
 const MAX_RECENT_NOTIFICATIONS: usize = 256;
 const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
 const MAX_NOTIFICATIONS_PER_WINDOW: usize = 20;
+const LATE_NOTIFICATION_ROUTE_TTL: Duration = Duration::from_secs(2 * 60);
+const MAX_SAFE_NOTIFICATION_ID: u64 = (1_u64 << 53) - 1;
+
+fn next_native_notification_id() -> u64 {
+    ((uuid::Uuid::new_v4().as_u128() as u64) & MAX_SAFE_NOTIFICATION_ID).max(1)
+}
 
 /// What to do with an incoming notification after deduplication.
 enum Delivery {
@@ -114,7 +124,7 @@ impl NotificationDeduper {
     /// copy every 30 seconds while it keeps replaying the same event. A
     /// suppressed duplicate reports the id of the notification already shown for
     /// its fingerprint so its route can still be attached there.
-    fn classify(&mut self, msg: &NotifyMsg, now: Instant) -> Delivery {
+    fn classify(&mut self, msg: &NotifyMsg, delivered_id: u64, now: Instant) -> Delivery {
         self.seen
             .retain(|_, seen| now.saturating_duration_since(seen.at) <= NOTIFICATION_DEDUPE_WINDOW);
 
@@ -140,7 +150,7 @@ impl NotificationDeduper {
             fingerprint,
             SeenNotification {
                 at: now,
-                delivered_id: msg.id,
+                delivered_id,
             },
         );
         Delivery::Show
@@ -149,7 +159,7 @@ impl NotificationDeduper {
     /// Test helper: the delivery decision reduced to a bool.
     #[cfg(test)]
     fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
-        matches!(self.classify(msg, now), Delivery::Show)
+        matches!(self.classify(msg, msg.id, now), Delivery::Show)
     }
 }
 
@@ -200,13 +210,73 @@ struct RouteEntry {
 }
 static NOTIFICATION_ROUTES: OnceLock<Mutex<HashMap<u64, RouteEntry>>> = OnceLock::new();
 
-fn validated_thread_path(value: &str) -> Option<String> {
-    let id = value.strip_prefix("/t/")?.strip_suffix('/')?;
-    if id.is_empty() || id.len() > 32 || !id.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("/t/{id}/"))
+#[derive(Default)]
+struct LateNotificationRoutes {
+    accepted: HashMap<u64, (u64, Instant)>,
 }
+
+impl LateNotificationRoutes {
+    fn register(&mut self, page_id: u64, native_id: u64, now: Instant) {
+        self.prune(now);
+        if page_id == 0 || native_id == 0 {
+            return;
+        }
+        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS && !self.accepted.contains_key(&page_id)
+        {
+            if let Some(oldest) = self
+                .accepted
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(id, _)| *id)
+            {
+                self.accepted.remove(&oldest);
+            }
+        }
+        self.accepted.insert(page_id, (native_id, now));
+    }
+
+    fn forget(&mut self, page_id: u64) {
+        self.accepted.remove(&page_id);
+    }
+
+    fn forget_native(&mut self, native_id: u64) {
+        self.accepted
+            .retain(|_, (accepted_native_id, _)| *accepted_native_id != native_id);
+    }
+
+    fn claim(&mut self, page_id: u64, now: Instant) -> Option<u64> {
+        self.prune(now);
+        (page_id != 0)
+            .then(|| {
+                self.accepted
+                    .remove(&page_id)
+                    .map(|(native_id, _)| native_id)
+            })
+            .flatten()
+    }
+
+    fn prune(&mut self, now: Instant) {
+        self.accepted
+            .retain(|_, (_, at)| now.saturating_duration_since(*at) <= LATE_NOTIFICATION_ROUTE_TTL);
+    }
+}
+
+static LATE_NOTIFICATION_ROUTES: OnceLock<Mutex<LateNotificationRoutes>> = OnceLock::new();
+
+fn late_notification_routes() -> &'static Mutex<LateNotificationRoutes> {
+    LATE_NOTIFICATION_ROUTES.get_or_init(|| Mutex::new(LateNotificationRoutes::default()))
+}
+
+#[cfg(target_os = "macos")]
+const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
+#[cfg(any(target_os = "macos", test))]
+static PERSISTED_NOTIFICATION_ROUTE_IO: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(any(target_os = "macos", test))]
+static PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ: AtomicUsize = AtomicUsize::new(0);
+#[cfg(any(target_os = "macos", test))]
+const PERSISTED_NOTIFICATION_ROUTE_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+#[cfg(any(target_os = "macos", test))]
+const PERSISTED_NOTIFICATION_ROUTE_TEMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 fn remember_notification_route(id: u64, value: &str) {
     // `id` is the page's unique per-notification handle. A missing or zero id
@@ -254,6 +324,298 @@ fn take_notification_route(id: u64) -> Option<String> {
         .map(|entry| entry.path)
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn persist_notification_route_in_dir(directory: &Path, id: u64, value: &str) -> Result<(), String> {
+    let Some(thread_path) = validated_thread_path(value) else {
+        return Ok(());
+    };
+    if id == 0 {
+        return Ok(());
+    }
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let path = directory.join(id.to_string());
+    if !path.exists() {
+        let mut entries: Vec<_> = std::fs::read_dir(directory)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry.file_name().to_str()?.parse::<u64>().ok()?;
+                let modified = entry.metadata().ok()?.modified().ok()?;
+                Some((modified, entry.path()))
+            })
+            .collect();
+        entries.sort_by_key(|(modified, _)| *modified);
+        let remove_count = entries.len().saturating_sub(MAX_RECENT_NOTIFICATIONS - 1);
+        for (_, stale) in entries.into_iter().take(remove_count) {
+            let _ = std::fs::remove_file(stale);
+        }
+    }
+    let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = directory.join(format!(".{id}.{}.{}.tmp", std::process::id(), sequence));
+    std::fs::write(&temp, thread_path).map_err(|error| error.to_string())?;
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(temp);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn clear_stale_notification_routes_in_dir(
+    directory: &Path,
+    now: std::time::SystemTime,
+) -> Result<(), String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() || file_type.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let age = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok());
+        let remove = if let Ok(id) = name.parse::<u64>() {
+            let valid = id != 0
+                && std::fs::read_to_string(entry.path())
+                    .ok()
+                    .and_then(|value| validated_thread_path(&value))
+                    .is_some();
+            !valid || age.is_some_and(|age| age > PERSISTED_NOTIFICATION_ROUTE_MAX_AGE)
+        } else {
+            name.starts_with('.')
+                && name.ends_with(".tmp")
+                && age.is_some_and(|age| age > PERSISTED_NOTIFICATION_ROUTE_TEMP_MAX_AGE)
+        };
+        if remove {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn take_persisted_notification_route_from_dir(
+    directory: &Path,
+    id: u64,
+) -> Result<Option<String>, String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let path = directory.join(id.to_string());
+    let value = match std::fs::read_to_string(&path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    std::fs::remove_file(path).map_err(|error| error.to_string())?;
+    Ok(validated_thread_path(&value))
+}
+
+#[cfg(target_os = "macos")]
+fn forget_persisted_notification_route_from_dir(directory: &Path, id: u64) -> Result<(), String> {
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    match std::fs::remove_file(directory.join(id.to_string())) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn take_persisted_notification_ids_for_thread_from_dir(
+    directory: &Path,
+    thread_path: &str,
+) -> Result<Vec<u64>, String> {
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return Ok(Vec::new());
+    };
+    let _guard = PERSISTED_NOTIFICATION_ROUTE_IO
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut ids = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let Some(id) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let Ok(value) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        if validated_thread_path(&value).as_deref() == Some(thread_path.as_str()) {
+            ids.push(id);
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(ids)
+}
+
+#[cfg(target_os = "macos")]
+fn persisted_notification_routes_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join(PERSISTED_NOTIFICATION_ROUTES_DIR))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn clear_stale_notification_routes(app: &tauri::AppHandle) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) =
+        clear_stale_notification_routes_in_dir(&directory, std::time::SystemTime::now())
+    {
+        log::warn!("failed to prune persisted notification routes: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn persist_notification_route(app: &tauri::AppHandle, id: u64, value: &str) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) = persist_notification_route_in_dir(&directory, id, value) {
+        log::warn!("failed to persist a late notification route: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn attach_notification_route_macos(
+    app: &tauri::AppHandle,
+    id: u64,
+    thread_path: &str,
+    group_by_conversation: bool,
+    hide_preview: bool,
+) {
+    if id == 0 {
+        return;
+    }
+    persist_notification_route(app, id, thread_path);
+    update_pending_notification_route_macos(
+        id,
+        thread_path,
+        group_by_conversation,
+        macos_reply_eligible(hide_preview, id, Some(thread_path)),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn take_persisted_notification_route(app: &tauri::AppHandle, id: u64) -> Option<String> {
+    let directory = persisted_notification_routes_dir(app)?;
+    match take_persisted_notification_route_from_dir(&directory, id) {
+        Ok(route) => route,
+        Err(error) => {
+            log::warn!("failed to recover a persisted notification route: {error}");
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn forget_persisted_notification_route(app: &tauri::AppHandle, id: u64) {
+    let Some(directory) = persisted_notification_routes_dir(app) else {
+        return;
+    };
+    if let Err(error) = forget_persisted_notification_route_from_dir(&directory, id) {
+        log::warn!("failed to retire a persisted notification route: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn take_notification_ids_for_thread(
+    app: &tauri::AppHandle,
+    thread_path: &str,
+) -> Vec<u64> {
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    NOTIFICATION_ROUTES
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .retain(|id, entry| {
+            if entry.path == thread_path {
+                ids.push(*id);
+                false
+            } else {
+                true
+            }
+        });
+    if let Some(directory) = persisted_notification_routes_dir(app) {
+        match take_persisted_notification_ids_for_thread_from_dir(&directory, &thread_path) {
+            Ok(persisted) => ids.extend(persisted),
+            Err(error) => {
+                log::warn!("failed to correlate persisted notification routes: {error}")
+            }
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn resolved_notification_route(
+    app: &tauri::AppHandle,
+    id: u64,
+    fallback_path: Option<&str>,
+) -> Option<String> {
+    // Notification Center's embedded path belongs to the exact request the
+    // user acted on. Prefer it to every cache so the request remains
+    // self-contained across process restarts.
+    if let Some(route) = fallback_path.and_then(validated_thread_path) {
+        return Some(route);
+    }
+    let route = take_notification_route(id);
+    #[cfg(target_os = "macos")]
+    {
+        if route.is_some() {
+            forget_persisted_notification_route(app, id);
+            route
+        } else {
+            take_persisted_notification_route(app, id)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        route
+    }
+}
+
 impl NotifyMsg {
     /// The page's handle for this notification (safe to log — it's a counter,
     /// not message content).
@@ -274,10 +636,41 @@ pub(crate) struct NotifyRouteMsg {
     thread_path: String,
 }
 
-/// Attach (or refresh) the reload-safe route for a notification the page has
-/// already emitted. A no-op for a non-unique id or an invalid path.
-pub(crate) fn update_notification_route(msg: &NotifyRouteMsg) {
-    remember_notification_route(msg.id, &msg.thread_path);
+/// Attach the reload-safe route for an accepted route-less notification the
+/// page already emitted. Uncorrelated, repeated, and malformed updates are
+/// ignored before they can touch the route cache or filesystem.
+pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRouteMsg) {
+    let Some(thread_path) = validated_thread_path(&msg.thread_path) else {
+        return;
+    };
+    let Some(native_id) = late_notification_routes()
+        .lock()
+        .unwrap()
+        .claim(msg.id, Instant::now())
+    else {
+        return;
+    };
+    remember_notification_route(native_id, &thread_path);
+    #[cfg(target_os = "macos")]
+    {
+        let (group_by_conversation, hide_preview) = {
+            let settings = app.state::<AppState>();
+            let settings = settings.settings.lock().unwrap();
+            (
+                settings.group_notifications_by_conversation,
+                settings.hide_notification_preview,
+            )
+        };
+        attach_notification_route_macos(
+            app,
+            native_id,
+            &thread_path,
+            group_by_conversation,
+            hide_preview,
+        );
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 }
 
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
@@ -453,6 +846,15 @@ fn linux_reply_eligible(
         && thread_path.is_some()
         && capabilities.actions
         && capabilities.inline_reply
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_reply_eligible(
+    hide_preview: bool,
+    notification_id: u64,
+    thread_path: Option<&str>,
+) -> bool {
+    !hide_preview && notification_id != 0 && thread_path.is_some()
 }
 
 #[cfg(target_os = "linux")]
@@ -728,19 +1130,62 @@ fn show_linux_notification(
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+const MAX_PENDING_PAGE_REPLIES: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+const MAX_NATIVE_QUICK_REPLY_WORKERS: usize = 16;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+struct QuickReplyWorkerSlots {
+    active: AtomicUsize,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+impl QuickReplyWorkerSlots {
+    const fn new() -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+        }
+    }
+
+    fn try_acquire(&self) -> Option<QuickReplyWorkerPermit<'_>> {
+        self.active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < MAX_NATIVE_QUICK_REPLY_WORKERS).then_some(active + 1)
+            })
+            .ok()
+            .map(|_| QuickReplyWorkerPermit { slots: self })
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+struct QuickReplyWorkerPermit<'a> {
+    slots: &'a QuickReplyWorkerSlots,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+impl Drop for QuickReplyWorkerPermit<'_> {
+    fn drop(&mut self) {
+        self.slots.active.fetch_sub(1, Ordering::Release);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+static QUICK_REPLY_WORKER_SLOTS: QuickReplyWorkerSlots = QuickReplyWorkerSlots::new();
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PendingReplyMode {
     Send,
     Draft,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 #[derive(Clone)]
 struct PendingPageReply {
     id: u64,
@@ -752,13 +1197,13 @@ struct PendingPageReply {
     resume_attempted: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Default)]
 struct PendingPageReplies {
     replies: HashMap<u64, PendingPageReply>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl PendingPageReplies {
     fn register(
         &mut self,
@@ -769,6 +1214,16 @@ impl PendingPageReplies {
         mode: PendingReplyMode,
         expires_at: Instant,
     ) {
+        if self.replies.len() >= MAX_PENDING_PAGE_REPLIES && !self.replies.contains_key(&id) {
+            if let Some(oldest) = self
+                .replies
+                .iter()
+                .min_by_key(|(_, reply)| reply.expires_at)
+                .map(|(id, _)| *id)
+            {
+                self.replies.remove(&oldest);
+            }
+        }
         self.replies.insert(
             id,
             PendingPageReply {
@@ -806,24 +1261,24 @@ impl PendingPageReplies {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
     static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
     REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
 }
 
-#[cfg(target_os = "linux")]
-fn capped_reply_text(text: &str) -> String {
-    text.chars().take(MAX_QUICK_REPLY_CHARS).collect()
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn trimmed_reply_text(text: &str) -> String {
+    text.trim().to_string()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Default)]
 struct ReplyAckWaiters {
     waiters: HashMap<u64, (u64, std::sync::mpsc::SyncSender<bool>)>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 impl ReplyAckWaiters {
     fn register(&mut self, id: u64, attempt: u64, sender: std::sync::mpsc::SyncSender<bool>) {
         self.waiters.insert(id, (attempt, sender));
@@ -842,18 +1297,19 @@ impl ReplyAckWaiters {
             .is_some_and(|(_, sender)| sender.send(ok).is_ok())
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn remove(&mut self, id: u64) {
         self.waiters.remove(&id);
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
     static WAITERS: OnceLock<Mutex<ReplyAckWaiters>> = OnceLock::new();
     WAITERS.get_or_init(|| Mutex::new(ReplyAckWaiters::default()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Deserialize)]
 struct ReplyResultMsg {
     id: u64,
@@ -861,7 +1317,7 @@ struct ReplyResultMsg {
     ok: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn handle_reply_result(payload: &str) {
     let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
         return;
@@ -876,13 +1332,13 @@ pub(crate) fn handle_reply_result(payload: &str) {
         .complete(result.id, result.attempt, result.ok);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn next_reply_attempt() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn quick_reply_script(
     id: u64,
     attempt: u64,
@@ -899,7 +1355,7 @@ fn quick_reply_script(
     Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn register_pending_page_reply(
     id: u64,
     attempt: u64,
@@ -920,7 +1376,7 @@ fn register_pending_page_reply(
 /// Re-dispatch an in-memory notification reply after a hard Messenger
 /// navigation replaces the page that received the first eval. Each action gets
 /// one resume attempt and expires with the native acknowledgement window.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     let replies = pending_page_replies()
         .lock()
@@ -952,7 +1408,7 @@ pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn eval_hidden_quick_reply(
     app: &tauri::AppHandle,
     id: u64,
@@ -988,7 +1444,19 @@ fn show_reply_failure_notification() {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+fn show_reply_failure_notification() {
+    deliver_notification_macos(
+        "Carrier",
+        "Reply not sent — opening the conversation",
+        0,
+        None,
+        false,
+        MacNotificationOptions::default(),
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
@@ -1007,9 +1475,9 @@ fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text
 }
 
 #[cfg(target_os = "linux")]
-fn open_notification_composer(app: tauri::AppHandle, id: u64) {
+fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
     let Some(thread_path) = take_notification_route(id) else {
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, Some(page_id), None);
         return;
     };
     let attempt = next_reply_attempt();
@@ -1027,19 +1495,30 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64) {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
-    let Some(thread_path) = take_notification_route(id) else {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn deliver_quick_reply(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+    raw_text: String,
+) {
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
+    let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, page_id, None);
         show_reply_failure_notification();
         return;
     };
-    let text = capped_reply_text(&raw_text);
-    if text.trim().is_empty() {
+    let text = trimmed_reply_text(&raw_text);
+    if text.is_empty() {
         // Empty input is equivalent to activating the notification.
-        remember_notification_route(id, &thread_path);
-        on_notification_click(app, id);
+        on_notification_click_with_path(app, id, page_id, Some(thread_path));
+        return;
+    }
+    if text.chars().count() > MAX_QUICK_REPLY_CHARS {
+        log::warn!("quick reply exceeds the inline send limit (id {id})");
+        open_reply_fallback(app, id, thread_path, text);
         return;
     }
 
@@ -1057,13 +1536,93 @@ fn deliver_quick_reply(app: tauri::AppHandle, id: u64, raw_text: String) {
             .unwrap_or(false);
     reply_ack_waiters().lock().unwrap().remove(id);
     pending_page_replies().lock().unwrap().complete(id, attempt);
-    if !sent {
+    if sent {
+        #[cfg(target_os = "macos")]
+        if app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .clear_notifications_on_view
+        {
+            if let Some(thread_id) = thread_path
+                .strip_prefix("/t/")
+                .and_then(|path| path.strip_suffix('/'))
+            {
+                clear_delivered_for_thread(thread_id, &[id]);
+            }
+        }
+    } else {
         if let Err(error) = dispatched {
             log::warn!("quick-reply delivery could not start (id {id}): {error}");
         } else {
             log::warn!("quick-reply delivery failed or timed out (id {id})");
         }
         open_reply_fallback(app, id, thread_path, text);
+    }
+}
+
+/// Queue an inline notification reply away from the native callback. A single
+/// in-flight guard serializes the SPA navigation/composer automation so replies
+/// for two conversations cannot race each other.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn on_notification_reply(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+    text: String,
+) {
+    let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
+        log::warn!("quick reply rejected because the native worker cap was reached (id {id})");
+        open_rejected_reply_fallback(app, id, page_id, fallback_path, text);
+        return;
+    };
+
+    let fallback_app = app.clone();
+    let fallback_page_id = page_id;
+    let fallback_path_copy = fallback_path.clone();
+    let fallback_text = text.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("carrier-quick-reply".into())
+        .spawn(move || {
+            let _permit = permit;
+            static REPLY_IN_FLIGHT: OnceLock<Mutex<()>> = OnceLock::new();
+            let _guard = REPLY_IN_FLIGHT
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            deliver_quick_reply(app, id, page_id, fallback_path, text);
+        })
+    {
+        log::warn!("failed to start quick-reply worker (id {id}): {error}");
+        open_rejected_reply_fallback(
+            fallback_app,
+            id,
+            fallback_page_id,
+            fallback_path_copy,
+            fallback_text,
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn open_rejected_reply_fallback(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+    raw_text: String,
+) {
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
+    let text = trimmed_reply_text(&raw_text);
+    match (thread_path, text.is_empty()) {
+        (Some(path), false) => open_reply_fallback(app, id, path, text),
+        (Some(path), true) => on_notification_click_with_path(app, id, page_id, Some(path)),
+        (None, _) => {
+            on_notification_click_with_path(app, id, page_id, None);
+            show_reply_failure_notification();
+        }
     }
 }
 
@@ -1086,15 +1645,18 @@ pub(crate) fn show_message_notification(
     // checks in messenger.js run in the remote facebook.com origin, so a page
     // bug (or a hostile script emitting carrier:notify directly) must not be
     // able to bypass mute or leak sender/message content past hide-preview.
-    let (sound, muted, hide_preview) = {
+    let (sound, muted, hide_preview, group_by_conversation, attention_on_message) = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         (
             s.notification_sound,
             s.mute_notifications,
             s.hide_notification_preview,
+            s.group_notifications_by_conversation,
+            s.attention_on_message,
         )
     };
+    late_notification_routes().lock().unwrap().forget(msg.id);
     if muted {
         log::info!(
             "carrier:notify suppressed by mute_notifications (id {})",
@@ -1103,17 +1665,36 @@ pub(crate) fn show_message_notification(
         return NativeNotificationDelivery::Suppressed;
     }
 
+    let page_id = msg.id;
+    let native_id = next_native_notification_id();
+    let thread_path = validated_thread_path(&msg.thread_path);
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
-        .classify(&msg, Instant::now());
+        .classify(&msg, native_id, Instant::now());
     if let Delivery::Suppress { delivered_id } = decision {
         // The duplicate is dropped, but it may carry the reload-safe route the
         // shown notification lacked (a page-first notification whose row paired
         // only after the page pairing window, inside the native dedupe window).
         // Attach it to the notification the user actually has on screen.
         remember_notification_route(delivered_id, &msg.thread_path);
+        if delivered_id != 0 && thread_path.is_some() {
+            late_notification_routes()
+                .lock()
+                .unwrap()
+                .forget_native(delivered_id);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(thread_path) = thread_path.as_deref() {
+            attach_notification_route_macos(
+                &app,
+                delivered_id,
+                thread_path,
+                group_by_conversation,
+                hide_preview,
+            );
+        }
         log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
         return NativeNotificationDelivery::Duplicate;
     }
@@ -1141,15 +1722,23 @@ pub(crate) fn show_message_notification(
     } else {
         msg.body
     };
-    let id = msg.id;
     #[cfg(target_os = "linux")]
     let allow_inline_reply = linux_reply_eligible(
         hide_preview,
-        id,
-        validated_thread_path(&msg.thread_path).as_deref(),
+        native_id,
+        thread_path.as_deref(),
         linux_notification_capabilities(),
     );
-    remember_notification_route(id, &msg.thread_path);
+    // The native id is generated on the trusted side and never reused when the
+    // page's callback counter restarts. Old Notification Center entries retain
+    // their own in-memory/sidecar route instead of being overwritten here.
+    remember_notification_route(native_id, &msg.thread_path);
+    if thread_path.is_none() {
+        late_notification_routes()
+            .lock()
+            .unwrap()
+            .register(page_id, native_id, Instant::now());
+    }
     // A Flatpak-private temp path is not readable by the host notification
     // daemon. Skip the path attachment there instead of showing a broken icon.
     let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
@@ -1161,13 +1750,50 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "macos")]
     {
+        if attention_on_message {
+            let windows = app.webview_windows();
+            let messenger_focused = windows.iter().any(|(label, window)| {
+                (label == "main" || label.starts_with("win-"))
+                    && window.is_focused().unwrap_or(false)
+            });
+            if !messenger_focused {
+                if let Some(window) = windows.get("main").or_else(|| {
+                    windows
+                        .iter()
+                        .find(|(label, _)| label.starts_with("win-"))
+                        .map(|(_, window)| window)
+                }) {
+                    let _ = window
+                        .request_user_attention(Some(tauri::UserAttentionType::Informational));
+                }
+            }
+        }
         // The click comes back through the centre's delegate, which holds its
         // own handle, so `app` isn't needed here. The avatar temp file is read
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
-        let _ = app;
-        deliver_notification_macos(&title, &body, id, image.as_deref(), sound);
+        deliver_notification_macos(
+            &title,
+            &body,
+            native_id,
+            image.as_deref(),
+            sound,
+            MacNotificationOptions {
+                thread_path: thread_path.as_deref(),
+                group_by_conversation,
+                reply_eligible: macos_reply_eligible(
+                    hide_preview,
+                    native_id,
+                    thread_path.as_deref(),
+                ),
+                wait_for_route: page_id != 0 && thread_path.is_none(),
+                page_id: Some(page_id),
+            },
+        );
     }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (group_by_conversation, attention_on_message, thread_path);
 
     #[cfg(target_os = "windows")]
     {
@@ -1182,9 +1808,9 @@ pub(crate) fn show_message_notification(
                 let _ = std::fs::remove_file(path);
             }
             if clicked {
-                on_notification_click(app, id);
+                on_notification_click_with_path(app, native_id, Some(page_id), None);
             } else {
-                let _ = take_notification_route(id);
+                let _ = take_notification_route(native_id);
             }
         });
     }
@@ -1197,14 +1823,20 @@ pub(crate) fn show_message_notification(
             let _ = std::fs::remove_file(path);
         }
         match response {
-            LinuxNotificationResponse::Open => on_notification_click(app, id),
-            LinuxNotificationResponse::OpenComposer => open_notification_composer(app, id),
-            LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
-                on_notification_click(app, id);
+            LinuxNotificationResponse::Open => {
+                on_notification_click_with_path(app, native_id, Some(page_id), None)
             }
-            LinuxNotificationResponse::Reply(text) => deliver_quick_reply(app, id, text),
+            LinuxNotificationResponse::OpenComposer => {
+                open_notification_composer(app, native_id, page_id)
+            }
+            LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
+                on_notification_click_with_path(app, native_id, Some(page_id), None);
+            }
+            LinuxNotificationResponse::Reply(text) => {
+                on_notification_reply(app, native_id, Some(page_id), None, text)
+            }
             LinuxNotificationResponse::Closed => {
-                let _ = take_notification_route(id);
+                let _ = take_notification_route(native_id);
             }
         }
     });
@@ -1360,7 +1992,14 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     #[cfg(target_os = "macos")]
     {
         let _ = app;
-        deliver_notification_macos(title, &body, id, None, false);
+        deliver_notification_macos(
+            title,
+            &body,
+            id,
+            None,
+            false,
+            MacNotificationOptions::default(),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1384,23 +2023,35 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     });
 }
 
-/// A notification was clicked: surface Carrier's window and ask the page to open
-/// the conversation (it invokes Facebook's own `onclick` for that notification,
-/// keyed by `id`). Hops to the main thread for the window + webview calls.
+/// A notification was clicked: surface Carrier and open its retained route, or
+/// fall back to the page's original notification callback when no route exists.
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
-    let thread_path = take_notification_route(id);
+    on_notification_click_with_path(app, id, None, None);
+}
+
+/// Notification activation with an optional route persisted in native
+/// `userInfo`. The request-local path wins; native-id caches keep requests
+/// useful when no path was embedded or after an app restart.
+pub(crate) fn on_notification_click_with_path(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+) {
+    let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
+    if let Some(thread_path) = thread_path {
+        run_app_action(&app, AppAction::OpenThread(thread_path));
+        return;
+    }
+    let Some(page_id) = page_id else {
+        show_main(&app);
+        return;
+    };
     let _ = app.clone().run_on_main_thread(move || {
         show_main(&app);
         if let Some(w) = app.get_webview_window("main") {
-            let script = if let Some(thread_path) = thread_path {
-                let path = serde_json::to_string(&thread_path).unwrap();
-                format!(
-                    "if (window.__carrierNotifyClick?.({id}) !== true) \
-                     window.__carrierOpenThread?.({path});"
-                )
-            } else {
-                format!("window.__carrierNotifyClick?.({id});")
-            };
+            let script = format!("window.__carrierNotifyClick?.({page_id});");
             let _ = w.eval(script);
         }
     });
@@ -1554,15 +2205,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn notification_routes_accept_only_bare_numeric_thread_paths() {
-        assert_eq!(validated_thread_path("/t/12345/"), Some("/t/12345/".into()));
-        assert_eq!(validated_thread_path("/t/12345"), None);
-        assert_eq!(validated_thread_path("https://facebook.com/t/12345/"), None);
-        assert_eq!(validated_thread_path("/t/1';alert(1)//"), None);
-        assert_eq!(validated_thread_path("/t/123/../../settings/"), None);
-    }
-
     #[cfg(target_os = "windows")]
     #[test]
     fn notification_responses_distinguish_activation_from_dismissal() {
@@ -1605,6 +2247,14 @@ mod tests {
                 inline_reply: false,
             }
         ));
+    }
+
+    #[test]
+    fn macos_reply_requires_preview_route_and_unique_id() {
+        assert!(macos_reply_eligible(false, 7, Some("/t/123/")));
+        assert!(!macos_reply_eligible(true, 7, Some("/t/123/")));
+        assert!(!macos_reply_eligible(false, 0, Some("/t/123/")));
+        assert!(!macos_reply_eligible(false, 7, None));
     }
 
     #[cfg(target_os = "linux")]
@@ -1674,7 +2324,6 @@ mod tests {
         assert!(silent_reply.contains_key("x-kde-reply-placeholder-text"));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn reply_ack_waiters_route_concurrent_ids_independently() {
         let mut waiters = ReplyAckWaiters::default();
@@ -1689,7 +2338,6 @@ mod tests {
         assert!(second_rx.recv().unwrap());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn pending_page_replies_resume_once_and_ignore_stale_results() {
         let now = Instant::now();
@@ -1724,13 +2372,52 @@ mod tests {
         assert!(pending.replies.is_empty());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn reply_text_cap_preserves_unicode_boundaries() {
+    fn reply_text_trimming_never_silently_truncates() {
         let text = "å".repeat(MAX_QUICK_REPLY_CHARS + 1);
-        let capped = capped_reply_text(&text);
-        assert_eq!(capped.chars().count(), MAX_QUICK_REPLY_CHARS);
-        assert!(capped.is_char_boundary(capped.len()));
+        let preserved = trimmed_reply_text(&format!("  {text}  "));
+        assert_eq!(preserved.chars().count(), MAX_QUICK_REPLY_CHARS + 1);
+        assert!(preserved.is_char_boundary(preserved.len()));
+        assert_eq!(trimmed_reply_text("  hello \n"), "hello");
+        assert!(trimmed_reply_text(" \n\t ").is_empty());
+    }
+
+    #[test]
+    fn pending_page_replies_evict_the_oldest_entry_at_the_cap() {
+        let now = Instant::now();
+        let mut pending = PendingPageReplies::default();
+        for id in 1..=MAX_PENDING_PAGE_REPLIES as u64 {
+            pending.register(
+                id,
+                id,
+                "/t/123/".into(),
+                "reply".into(),
+                PendingReplyMode::Send,
+                now + Duration::from_secs(id),
+            );
+        }
+        pending.register(
+            999,
+            999,
+            "/t/999/".into(),
+            "new".into(),
+            PendingReplyMode::Send,
+            now + Duration::from_secs(999),
+        );
+        assert_eq!(pending.replies.len(), MAX_PENDING_PAGE_REPLIES);
+        assert!(!pending.replies.contains_key(&1));
+        assert!(pending.replies.contains_key(&999));
+    }
+
+    #[test]
+    fn quick_reply_worker_slots_are_bounded_and_reusable() {
+        let slots = QuickReplyWorkerSlots::new();
+        let permits: Vec<_> = (0..MAX_NATIVE_QUICK_REPLY_WORKERS)
+            .map(|_| slots.try_acquire().expect("slot remains available"))
+            .collect();
+        assert!(slots.try_acquire().is_none());
+        drop(permits);
+        assert!(slots.try_acquire().is_some());
     }
 
     #[test]
@@ -1753,28 +2440,150 @@ mod tests {
     }
 
     #[test]
-    fn update_notification_route_refreshes_an_emitted_route() {
+    fn late_notification_route_refreshes_an_emitted_route() {
         // The page-first path emits with no route, then supplies it once the row
         // is known; the later value must win for that id.
-        update_notification_route(&NotifyRouteMsg {
-            id: 9_010,
-            thread_path: "/t/555/".into(),
-        });
+        remember_notification_route(9_010, "/t/555/");
         assert_eq!(take_notification_route(9_010).as_deref(), Some("/t/555/"));
     }
 
     #[test]
+    fn late_route_updates_require_a_fresh_accepted_notification() {
+        let start = Instant::now();
+        let mut routes = LateNotificationRoutes::default();
+
+        assert_eq!(routes.claim(9_020, start), None);
+        routes.register(9_020, 90_020, start);
+        assert_eq!(routes.claim(9_020, start), Some(90_020));
+        assert_eq!(routes.claim(9_020, start), None);
+
+        routes.register(9_021, 90_021, start);
+        assert_eq!(
+            routes.claim(
+                9_021,
+                start + LATE_NOTIFICATION_ROUTE_TTL + Duration::from_secs(1)
+            ),
+            None
+        );
+
+        routes.register(9_022, 90_022, start);
+        routes.forget(9_022);
+        assert_eq!(routes.claim(9_022, start), None);
+        routes.register(9_023, 90_023, start);
+        routes.forget_native(90_023);
+        assert_eq!(routes.claim(9_023, start), None);
+        routes.register(9_024, 90_024, start);
+        routes.register(9_024, 90_025, start + Duration::from_millis(1));
+        assert_eq!(
+            routes.claim(9_024, start + Duration::from_millis(1)),
+            Some(90_025)
+        );
+        routes.register(0, 90_023, start);
+        assert_eq!(routes.claim(0, start), None);
+    }
+
+    #[test]
+    fn native_notification_ids_fit_exactly_in_javascript_numbers() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..32 {
+            let id = next_native_notification_id();
+            assert!((1..=MAX_SAFE_NOTIFICATION_ID).contains(&id));
+            assert!(ids.insert(id));
+        }
+    }
+
+    #[test]
+    fn late_notification_route_survives_a_process_restart() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-routes-test-{}-{sequence}",
+            std::process::id()
+        ));
+
+        persist_notification_route_in_dir(&directory, 9_011, "/t/111/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_011, "/t/666/").unwrap();
+        assert_eq!(
+            take_persisted_notification_route_from_dir(&directory, 9_011)
+                .unwrap()
+                .as_deref(),
+            Some("/t/666/")
+        );
+        assert!(
+            !directory.join("9011").exists(),
+            "the consumed route cache should be retired"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn late_routes_are_correlated_for_clear_on_view() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-clear-test-{}-{sequence}",
+            std::process::id()
+        ));
+
+        persist_notification_route_in_dir(&directory, 9_021, "/t/777/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_022, "/t/777/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_023, "/t/888/").unwrap();
+        let mut ids =
+            take_persisted_notification_ids_for_thread_from_dir(&directory, "/t/777/").unwrap();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![9_021, 9_022]);
+        assert!(!directory.join("9021").exists());
+        assert!(!directory.join("9022").exists());
+        assert!(directory.join("9023").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn stale_persisted_routes_and_temporary_files_are_pruned() {
+        let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-notification-prune-test-{}-{sequence}",
+            std::process::id()
+        ));
+        persist_notification_route_in_dir(&directory, 9_031, "/t/111/").unwrap();
+        persist_notification_route_in_dir(&directory, 9_032, "/t/222/").unwrap();
+        std::fs::write(directory.join("9033"), "not-a-route").unwrap();
+        let temp = directory.join(".9034.1.1.tmp");
+        std::fs::write(&temp, "/t/333/").unwrap();
+
+        let old = std::time::SystemTime::now()
+            - PERSISTED_NOTIFICATION_ROUTE_MAX_AGE
+            - Duration::from_secs(1);
+        // Windows refuses to change timestamps through a read-only handle.
+        let backdate = |path: &Path| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        };
+        backdate(&directory.join("9032"));
+        backdate(&temp);
+        clear_stale_notification_routes_in_dir(&directory, std::time::SystemTime::now()).unwrap();
+
+        assert!(directory.join("9031").exists());
+        assert!(!directory.join("9032").exists());
+        assert!(!directory.join("9033").exists());
+        assert!(!temp.exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn suppressed_duplicate_reports_the_shown_notification_id() {
-        // A page-first notification (id 42) is shown; a later fallback for the
-        // same message (id 99) that carries the route is suppressed, but must
-        // report id 42 so the route reaches the notification on screen.
+        // A page-first notification (page id 42, native id 900) is shown; a
+        // later fallback for the same message is suppressed, but must report
+        // native id 900 so its route reaches the notification on screen.
         let now = Instant::now();
         let mut deduper = NotificationDeduper::default();
         let shown = notify_msg(42, "Jane", "Hello", "0123456789abcdef");
         let duplicate = notify_msg(99, "Jane", "Hello", "0123456789abcdef");
-        assert!(matches!(deduper.classify(&shown, now), Delivery::Show));
-        match deduper.classify(&duplicate, now) {
-            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 42),
+        assert!(matches!(deduper.classify(&shown, 900, now), Delivery::Show));
+        match deduper.classify(&duplicate, 901, now) {
+            Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 900),
             Delivery::Show => panic!("an identical second notification must be suppressed"),
         }
     }

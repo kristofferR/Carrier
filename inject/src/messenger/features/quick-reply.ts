@@ -1,4 +1,4 @@
-import { diag, invoke } from "../bridge";
+import { diag } from "../bridge";
 import {
   composerContainsReply,
   decideQuickReply,
@@ -27,10 +27,9 @@ const sendButton = () => {
 };
 
 const emitReplyResult = (id: number, attempt: number, ok: boolean) => {
-  invoke("plugin:event|emit", {
-    event: "carrier:reply-result",
-    payload: { id, attempt, ok },
-  })?.catch?.(() => diag("quick-reply.ack", "reply acknowledgement emit failed"));
+  carrierReplyResult(id, attempt, ok).catch(() =>
+    diag("quick-reply.ack", "reply acknowledgement emit failed"),
+  );
 };
 
 const validRequest = (path: string, text: string, id: number, attempt: number) =>
@@ -108,9 +107,20 @@ async function preserveDraft(path: string, text: string): Promise<boolean> {
       box.focus();
       if (!text) return true;
       if (composerContainsReply(box.textContent, text)) return true;
-      // Never merge a notification reply into a draft the user already wrote.
+      // This fallback never sends automatically. Preserve both pieces when a
+      // draft already exists instead of acknowledging and dropping the native
+      // reply that brought the user here.
       if ((box.textContent || "").trim()) {
-        diag("quick-reply.draft", "existing composer draft preserved");
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(box);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        if (!document.execCommand("insertText", false, `\n\n${text}`)) {
+          diag("quick-reply.draft", "fallback append failed");
+          return false;
+        }
         return true;
       }
       if (!document.execCommand("insertText", false, text)) {
@@ -144,7 +154,6 @@ export function initQuickReply() {
     const text = String(rawText);
     if (
       threadPathId(path) === null ||
-      [...text].length > MAX_REPLY_CHARS ||
       !Number.isSafeInteger(id) ||
       id <= 0 ||
       !Number.isSafeInteger(attempt) ||

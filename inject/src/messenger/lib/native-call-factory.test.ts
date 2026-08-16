@@ -168,3 +168,42 @@ test("native context calls wait for the result after their presentation acknowle
   await expect(failureCall).rejects.toThrow("failed");
   expect(failure.verifiedPhases).toEqual(["presented", "complete"]);
 });
+
+type ReplyResult = (id: number, attempt: number, ok: boolean) => Promise<unknown>;
+
+const replyResultFactory = async (
+  authorizedEmit: ((event: string, payload: Record<string, unknown>) => Promise<string>) | null,
+) => {
+  const source = await Bun.file(
+    new URL("../../../../src-tauri/src/window.rs", import.meta.url),
+  ).text();
+  const start = source.indexOf("  var carrierReplyResult = function");
+  const end = source.indexOf("\n\n", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  const exact = source.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
+  return new Function(
+    "carrierAuthorizedEmit",
+    "NativePromise",
+    `${exact}\nreturn carrierReplyResult;`,
+  )(authorizedEmit, Promise) as ReplyResult;
+};
+
+test("quick-reply results carry the id, attempt and outcome over the authenticated bridge", async () => {
+  const emitted: { event: string; payload: Record<string, unknown> }[] = [];
+  const replyResult = await replyResultFactory(async (event, payload) => {
+    emitted.push({ event, payload });
+    return "sent";
+  });
+
+  await expect(replyResult(7, 2, false)).resolves.toBe("sent");
+  expect(emitted).toEqual([
+    { event: "carrier:reply-result", payload: { id: 7, attempt: 2, ok: false } },
+  ]);
+});
+
+test("quick-reply results reject when the authenticated bridge is unavailable", async () => {
+  const replyResult = await replyResultFactory(null);
+
+  await expect(replyResult(1, 1, true)).rejects.toThrow("native bridge unavailable");
+});

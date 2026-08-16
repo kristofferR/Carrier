@@ -3,6 +3,7 @@
 //! and the theme-change window rebuild.
 
 use tauri::{
+    utils::config::BackgroundThrottlingPolicy,
     webview::{Color, DownloadEvent},
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
@@ -97,6 +98,13 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
+    if label == "main" {
+        let state = app.state::<AppState>();
+        let _pending = state.pending_action.lock().unwrap();
+        state
+            .messenger_loaded
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
     let watchdog = WebviewWatchdog::new();
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
@@ -110,14 +118,29 @@ pub(crate) fn build_app_window(
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
         .user_agent(user_agent())
+        // Messenger keeps a running AudioContext, so WebKit treats the page as
+        // holding an audio session. With the default `.suspend` scheduling
+        // policy (macOS 14+), WebKit deactivates that session whenever the
+        // window is hidden or fully occluded and reactivates it on every native
+        // eval into the page (watchdog ping, IPC responses) — a flip every few
+        // seconds that makes audioaccessoryd re-evaluate Bluetooth routing and
+        // silences AirPods system-wide (#232). Carrier wants the page alive in
+        // the background anyway (sync, notifications, badge), so opt out.
+        .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
         .on_page_load(move |window, payload| match payload.event() {
-            tauri::webview::PageLoadEvent::Started => page_load_watchdog.navigation_started(),
+            tauri::webview::PageLoadEvent::Started => {
+                page_load_watchdog.navigation_started();
+                crate::actions::messenger_page_started(&window);
+            }
             tauri::webview::PageLoadEvent::Finished => {
                 if !is_messenger_web_url(payload.url()) {
                     page_load_watchdog.disarm();
                 }
-                #[cfg(target_os = "linux")]
+                if is_messenger_web_url(payload.url()) {
+                    crate::actions::messenger_page_finished(&window);
+                }
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 if window.label() == "main" && is_messenger_web_url(payload.url()) {
                     crate::notifications::resume_pending_page_replies(&window);
                 }
@@ -553,11 +576,24 @@ pub(crate) fn recreate_messenger_window(
         let was_fullscreen = window.is_fullscreen().unwrap_or(false);
         let was_focused = window.is_focused().unwrap_or(false);
 
+        // The old page is about to go away with `messenger_loaded` still set:
+        // an app action dispatched into that gap would eval successfully and
+        // then be lost with the webview. Take readiness away under the same
+        // lock `dispatch_or_retain_page_action` uses, so it retains instead.
+        let was_loaded = {
+            let state = app.state::<AppState>();
+            let _pending = state.pending_action.lock().unwrap();
+            state.messenger_loaded.swap(false, Ordering::AcqRel)
+        };
+
         if let Err(error) = window.destroy() {
             log::warn!("failed to destroy blank Messenger webview {label}: {error}");
-            app.state::<AppState>()
-                .recreating
-                .store(false, Ordering::SeqCst);
+            let state = app.state::<AppState>();
+            {
+                let _pending = state.pending_action.lock().unwrap();
+                state.messenger_loaded.store(was_loaded, Ordering::Release);
+            }
+            state.recreating.store(false, Ordering::SeqCst);
             if let Some(on_abandoned) = on_abandoned {
                 on_abandoned();
             }
@@ -988,6 +1024,12 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       {{ items: items }}, true
     );
   }};
+  var carrierReplyResult = function (id, attempt, ok) {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:reply-result', {{ id: id, attempt: attempt, ok: ok }});
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -1229,6 +1271,14 @@ mod tests {
         assert!(script.contains("payload.request = request;"));
         assert!(script.contains("carrierAuthorizedEmit.verifyResult"));
         assert!(script.contains("detail.signature"));
+    }
+
+    #[test]
+    fn quick_reply_results_use_the_authenticated_emit_bridge() {
+        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+
+        assert!(script.contains("return carrierAuthorizedEmit('carrier:reply-result'"));
+        assert!(script.contains("carrierReplyResult(id, attempt, ok)"));
     }
 
     #[test]

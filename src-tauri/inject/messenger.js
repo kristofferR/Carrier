@@ -3511,21 +3511,43 @@
      * Returning the signal — rather than a boolean — lets the caller reach its
      * `nativeId` and route the already-emitted page-first notification.
      */
-    consumeMatching(row, rowChangeAt, matchWindowMs) {
-      for (let index = this.signals.length - 1; index >= 0; index--) {
-        const signal = this.signals[index];
-        const age = rowChangeAt - signal.at;
+    consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows) {
+      for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
+        const signal2 = this.signals[index2];
+        const age = rowChangeAt - signal2.at;
         if (age > matchWindowMs) {
-          this.signals.splice(index, 1);
-          continue;
-        }
-        if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
-          this.signals.splice(index, 1);
-          signal.matched = true;
-          return signal;
+          this.signals.splice(index2, 1);
         }
       }
-      return null;
+      const matches = [];
+      for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
+        const signal2 = this.signals[index2];
+        const age = rowChangeAt - signal2.at;
+        if (age >= 0 && notificationTextMatches(signal2.title, signal2.body, row.title, row.body)) {
+          matches.push(index2);
+        }
+      }
+      if (matches.length !== 1) {
+        for (const index2 of matches) this.signals.splice(index2, 1);
+        return null;
+      }
+      const index = matches[0];
+      const signal = this.signals[index];
+      if (candidateRows) {
+        const candidateKeys = /* @__PURE__ */ new Set();
+        for (const candidate of candidateRows) {
+          if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
+            candidateKeys.add(candidate.key);
+          }
+        }
+        if (candidateKeys.size !== 1 || row.key !== void 0 && !candidateKeys.has(row.key)) {
+          this.signals.splice(index, 1);
+          return null;
+        }
+      }
+      this.signals.splice(index, 1);
+      signal.matched = true;
+      return signal;
     }
   };
   var UnreadArrivalTracker = class {
@@ -4117,8 +4139,19 @@
     const pendingFallbacks = /* @__PURE__ */ new Map();
     const unmatchedPageNotifications = new PageNotificationQueue();
     const markPageNotification = (title, body) => {
-      for (const [key, pending] of pendingFallbacks) {
-        if (!notificationTextMatches(title, body, pending.title, pending.body)) continue;
+      let match = null;
+      let ambiguous = false;
+      for (const entry of pendingFallbacks) {
+        if (!notificationTextMatches(title, body, entry[1].title, entry[1].body)) continue;
+        if (match) {
+          ambiguous = true;
+          break;
+        }
+        match = entry;
+      }
+      if (ambiguous) return {};
+      if (match) {
+        const [key, pending] = match;
         clearTimeout(pending.timer);
         pendingFallbacks.delete(key);
         return {
@@ -4161,7 +4194,7 @@
             () => {
               this.onclick?.(new Event("click"));
             },
-            pageMatch.threadPath,
+            pageMatch.threadPath ?? pageMatch.signal?.threadPath,
             pageMatch.signal ? (delivery) => {
               pageMatch.signal.nativeDelivery = delivery;
               const handler = pageMatch.signal.onNativeDelivery;
@@ -4376,7 +4409,7 @@
         unread
       };
     };
-    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -4388,17 +4421,19 @@
       const pageSignal = unmatchedPageNotifications.consumeMatching(
         conversation,
         detectedAt,
-        PAGE_NOTIFICATION_MATCH_MS
+        PAGE_NOTIFICATION_MATCH_MS,
+        routeCandidates
       );
       if (pageSignal) {
         if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-        if (pageSignal.nativeId !== void 0 && conversation.threadPath) {
+        if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+        if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (pageSignal.emitted) {
           const finishDelivery = (delivery) => {
             if (confirmedRepeat && delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true);
+              scheduleFallback(conversation, detectedAt, true, routeCandidates);
               return;
             }
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -4506,6 +4541,7 @@
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
+        const routeCandidates = observed.filter(({ body }) => body.length > 0);
         const hydratedReadKeys = new Set(
           listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
@@ -4606,7 +4642,8 @@
           const pageSignal = pageReceipt ? unmatchedPageNotifications.consumeMatching(
             conversation,
             detectedAt,
-            PAGE_NOTIFICATION_MATCH_MS
+            PAGE_NOTIFICATION_MATCH_MS,
+            routeCandidates
           ) : null;
           let reconciliation = notifiedStore.reconcileFingerprint(
             conversation.key,
@@ -4625,7 +4662,7 @@
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             pageSignal.onNativeDelivery = (delivery) => {
               if (delivery === "duplicate") {
-                scheduleFallback(conversation, detectedAt, true);
+                scheduleFallback(conversation, detectedAt, true, routeCandidates);
                 return;
               }
               notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -4634,7 +4671,7 @@
             continue;
           }
           if (receiptSuppressedRepeat) {
-            scheduleFallback(conversation, detectedAt, true);
+            scheduleFallback(conversation, detectedAt, true, routeCandidates);
             changed.delete(conversation.key);
             continue;
           }
@@ -4692,7 +4729,12 @@
         }
         for (const conversation of conversations) {
           if (changed.has(conversation.key) && !stale.has(conversation.key) && !unhydrated.has(conversation.key)) {
-            scheduleFallback(conversation, detectedAt, confirmedRepeats.has(conversation.key));
+            scheduleFallback(
+              conversation,
+              detectedAt,
+              confirmedRepeats.has(conversation.key),
+              routeCandidates
+            );
           }
         }
       } finally {
@@ -4817,10 +4859,9 @@
     return buttonByLabel(["press enter to send", "send message"], root);
   };
   var emitReplyResult = (id, attempt, ok) => {
-    invoke("plugin:event|emit", {
-      event: "carrier:reply-result",
-      payload: { id, attempt, ok }
-    })?.catch?.(() => diag("quick-reply.ack", "reply acknowledgement emit failed"));
+    carrierReplyResult(id, attempt, ok).catch(
+      () => diag("quick-reply.ack", "reply acknowledgement emit failed")
+    );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
   async function deliver(path, text) {
@@ -4881,7 +4922,18 @@
         if (!text) return true;
         if (composerContainsReply(box.textContent, text)) return true;
         if ((box.textContent || "").trim()) {
-          diag("quick-reply.draft", "existing composer draft preserved");
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          range.collapse(false);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          if (!document.execCommand("insertText", false, `
+
+${text}`)) {
+            diag("quick-reply.draft", "fallback append failed");
+            return false;
+          }
           return true;
         }
         if (!document.execCommand("insertText", false, text)) {
@@ -4909,7 +4961,7 @@
     };
     window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
       const text = String(rawText);
-      if (threadPathId(path) === null || [...text].length > MAX_REPLY_CHARS || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
         emitReplyResult(id, attempt, false);
         return;
       }
@@ -6018,6 +6070,28 @@
     }
   }
 
+  // inject/src/messenger/lib/thread-viewed.ts
+  var initialThreadViewedState = () => ({
+    visible: false,
+    threadPath: null,
+    lastReportedAt: null
+  });
+  var THREAD_VIEW_RECHECK_MS = 5e3;
+  function advanceThreadViewed(previous, threadPath, visible, now) {
+    const active = visible && threadPath !== null;
+    const changed = !previous.visible || previous.threadPath !== threadPath;
+    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
+    const emit = active && (changed || recheckDue) ? threadPath : null;
+    return {
+      state: {
+        visible,
+        threadPath,
+        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
+      },
+      emit
+    };
+  }
+
   // inject/src/messenger/features/thread-nav.ts
   function initThreadNav() {
     window.__carrierOpenThread = (href) => {
@@ -6032,6 +6106,29 @@
       location.href = `https://www.facebook.com/messages/t/${id}/`;
       return true;
     };
+    let viewed = initialThreadViewedState();
+    const reportViewedThread = () => {
+      const id = threadIdFromHref(location.pathname);
+      const path = id ? `/t/${id}/` : null;
+      const next = advanceThreadViewed(
+        viewed,
+        path,
+        document.hasFocus() && !document.hidden,
+        performance.now()
+      );
+      viewed = next.state;
+      if (next.emit) {
+        invoke("plugin:event|emit", {
+          event: "carrier:thread-viewed",
+          payload: { thread_path: next.emit }
+        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+      }
+    };
+    setInterval(reportViewedThread, 1e3);
+    document.addEventListener("visibilitychange", reportViewedThread);
+    window.addEventListener("focus", reportViewedThread);
+    window.addEventListener("blur", reportViewedThread);
+    reportViewedThread();
     window.__carrierToggleInfo = () => {
       const wanted = (el) => {
         const l = (el.getAttribute("aria-label") || "").toLowerCase();

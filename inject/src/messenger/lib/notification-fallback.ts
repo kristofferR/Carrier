@@ -91,6 +91,8 @@ export interface PageNotificationSignal extends NotificationText {
    * can attach a reload-safe route to that already-emitted notification.
    */
   nativeId?: number;
+  /** Route learned while the async native notification emit is still pending. */
+  threadPath?: string;
   /**
    * Set once a conversation row consumed this signal. The async emitter checks
    * it before persisting a cross-reload receipt: a row-paired signal was
@@ -837,24 +839,51 @@ export class PageNotificationQueue {
    * `nativeId` and route the already-emitted page-first notification.
    */
   consumeMatching(
-    row: NotificationText,
+    row: NotificationText & { key?: string },
     rowChangeAt: number,
     matchWindowMs: number,
+    candidateRows?: Iterable<NotificationText & { key: string }>,
   ): PageNotificationSignal | null {
     for (let index = this.signals.length - 1; index >= 0; index--) {
       const signal = this.signals[index]!;
       const age = rowChangeAt - signal.at;
       if (age > matchWindowMs) {
         this.signals.splice(index, 1);
-        continue;
-      }
-      if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
-        this.signals.splice(index, 1);
-        signal.matched = true;
-        return signal;
       }
     }
-    return null;
+    const matches: number[] = [];
+    for (let index = this.signals.length - 1; index >= 0; index--) {
+      const signal = this.signals[index]!;
+      const age = rowChangeAt - signal.at;
+      if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
+        matches.push(index);
+      }
+    }
+    // Several indistinguishable page signals cannot be assigned safely. Drop
+    // them from this eager queue so expiration or virtualization cannot later
+    // manufacture a false unique match; their content-opaque receipts still
+    // get the batch-level uniqueness check after native emission.
+    if (matches.length !== 1) {
+      for (const index of matches) this.signals.splice(index, 1);
+      return null;
+    }
+    const index = matches[0]!;
+    const signal = this.signals[index]!;
+    if (candidateRows) {
+      const candidateKeys = new Set<string>();
+      for (const candidate of candidateRows) {
+        if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
+          candidateKeys.add(candidate.key);
+        }
+      }
+      if (candidateKeys.size !== 1 || (row.key !== undefined && !candidateKeys.has(row.key))) {
+        this.signals.splice(index, 1);
+        return null;
+      }
+    }
+    this.signals.splice(index, 1);
+    signal.matched = true;
+    return signal;
   }
 }
 

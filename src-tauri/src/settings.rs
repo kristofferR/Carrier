@@ -14,11 +14,14 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::actions::AppAction;
 use crate::hotkey::apply_global_hotkey;
 use crate::install_environment::is_flatpak;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
+#[cfg(target_os = "macos")]
+use crate::tray::set_macos_tray_icon_style;
 use crate::tray::{build_tray_menu, build_tray_with_menu, show_main, wants_tray, PlatformTrayIcon};
 #[cfg(target_os = "macos")]
 use crate::window::is_dark;
@@ -31,7 +34,7 @@ use crate::window::theme_for;
 pub(crate) struct Settings {
     pub(crate) always_on_top: bool,
     pub(crate) show_tray: bool,
-    /// Linux tray artwork: full-color app icon or a panel-tinted symbolic mark.
+    /// macOS/Linux tray artwork: full-color app icon or a monochrome mark.
     pub(crate) tray_icon_style: String,
     pub(crate) start_to_tray: bool,
     pub(crate) autostart: bool,
@@ -70,6 +73,14 @@ pub(crate) struct Settings {
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
     pub(crate) hide_notification_preview: bool,
+    /// macOS: stack Notification Center entries by Messenger conversation.
+    pub(crate) group_notifications_by_conversation: bool,
+    /// macOS: clear a conversation's delivered entries when it is viewed.
+    pub(crate) clear_notifications_on_view: bool,
+    /// Ask the desktop for user attention when an unfocused message arrives.
+    /// macOS uses a Dock bounce; the platform-neutral name is shared with the
+    /// corresponding Windows taskbar behavior.
+    pub(crate) attention_on_message: bool,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     pub(crate) hide_names_avatars: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
@@ -161,6 +172,9 @@ impl Default for Settings {
             automatic_update_checks: true,
             notification_sound: true,
             hide_notification_preview: false,
+            group_notifications_by_conversation: true,
+            clear_notifications_on_view: true,
+            attention_on_message: false,
             hide_names_avatars: false,
             system_emoji: false,
             stop_media_autoplay: false,
@@ -246,6 +260,10 @@ pub(crate) struct AppState {
     /// (cold start, or a reload racing the carrier:// open). See share_intake.
     #[cfg(target_os = "macos")]
     pub(crate) pending_share: Mutex<Option<crate::macos::share_intake::PendingShare>>,
+    /// The newest native action waiting for the main Messenger page hooks.
+    pub(crate) pending_action: Mutex<Option<AppAction>>,
+    /// Whether the main window has completed a Messenger page load.
+    pub(crate) messenger_loaded: AtomicBool,
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -635,7 +653,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     match (want_tray, tray.is_some()) {
         (true, false) => {
             if let Some(menu) = new_tray_menu {
-                if let Ok(t) = build_tray_with_menu(app, menu) {
+                if let Ok(t) = build_tray_with_menu(app, menu, &s.tray_icon_style) {
                     *tray = Some(t);
                 }
             }
@@ -660,6 +678,10 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     if let Some(tray) = tray.as_ref() {
         let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
         let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(tray) = tray.as_ref() {
+        let _ = set_macos_tray_icon_style(app, tray, &s.tray_icon_style);
     }
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
@@ -725,6 +747,9 @@ mod tests {
         let s = Settings::default();
         assert!(s.unread_badge, "unread_badge should default to true");
         assert_eq!(s.tray_icon_style, "color");
+        assert!(s.group_notifications_by_conversation);
+        assert!(s.clear_notifications_on_view);
+        assert!(!s.attention_on_message);
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
@@ -873,6 +898,14 @@ mod tests {
     fn settings_json_missing_tray_icon_style_defaults_to_color() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.tray_icon_style, "color");
+    }
+
+    #[test]
+    fn settings_json_missing_notification_options_uses_safe_defaults() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert!(settings.group_notifications_by_conversation);
+        assert!(settings.clear_notifications_on_view);
+        assert!(!settings.attention_on_message);
     }
 
     #[test]
