@@ -3,6 +3,7 @@
 //! and the theme-change window rebuild.
 
 use tauri::{
+    utils::config::BackgroundThrottlingPolicy,
     webview::{Color, DownloadEvent},
     Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
@@ -117,6 +118,15 @@ pub(crate) fn build_app_window(
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
         .user_agent(user_agent())
+        // Messenger keeps a running AudioContext, so WebKit treats the page as
+        // holding an audio session. With the default `.suspend` scheduling
+        // policy (macOS 14+), WebKit deactivates that session whenever the
+        // window is hidden or fully occluded and reactivates it on every native
+        // eval into the page (watchdog ping, IPC responses) — a flip every few
+        // seconds that makes audioaccessoryd re-evaluate Bluetooth routing and
+        // silences AirPods system-wide (#232). Carrier wants the page alive in
+        // the background anyway (sync, notifications, badge), so opt out.
+        .background_throttling(BackgroundThrottlingPolicy::Disabled)
         .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
         .on_page_load(move |window, payload| match payload.event() {
             tauri::webview::PageLoadEvent::Started => {
