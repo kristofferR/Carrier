@@ -2,8 +2,11 @@
 
 use std::sync::atomic::Ordering;
 
+#[cfg(any(target_os = "windows", test))]
+use std::ffi::OsStr;
+
 use tauri::Manager;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 use url::Url;
 
 use crate::settings::AppState;
@@ -35,7 +38,7 @@ pub(crate) fn validated_thread_path(value: &str) -> Option<String> {
 /// Parse the deliberately small `carrier://` automation surface. URL metadata
 /// is rejected rather than ignored so a copied or generated URL cannot mean
 /// something different to another parser.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(crate) fn parse_carrier_url(url: &Url) -> Option<AppAction> {
     if url.scheme() != "carrier"
         || !url.username().is_empty()
@@ -59,6 +62,50 @@ pub(crate) fn parse_carrier_url(url: &Url) -> Option<AppAction> {
         }
         _ => None,
     }
+}
+
+/// Parse a Windows launch's argv — the cold `run()` path and the single-instance
+/// warm callback share this — into an app action. argv[0] is skipped so an
+/// executable path that happens to contain "carrier://" is never treated as an
+/// action; then the first recognized token wins: `--new-conversation`,
+/// `--settings`, `--thread <digits>`, or any argument that parses as a
+/// `carrier://` URL. Jump-list entries use the `--thread <id>` flag (not a URL)
+/// so they keep working even if protocol registration failed. Unrecognized
+/// arguments are ignored — debug-logged, never echoed, since protocol arguments
+/// are attacker-controllable. Pure and unit-testable on every platform.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn action_from_argv<I, S>(args: I) -> Option<AppAction>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut args = args.into_iter();
+    let _executable = args.next();
+    while let Some(arg) = args.next() {
+        match arg.as_ref().to_str() {
+            Some("--new-conversation") => return Some(AppAction::NewConversation),
+            Some("--settings") => return Some(AppAction::Settings),
+            Some("--thread") => {
+                if let Some(path) = args
+                    .next()
+                    .as_ref()
+                    .and_then(|value| value.as_ref().to_str())
+                    .and_then(|id| validated_thread_path(&format!("/t/{id}/")))
+                {
+                    return Some(AppAction::OpenThread(path));
+                }
+                // A missing or malformed id falls through to a plain launch.
+            }
+            Some(other) => {
+                if let Some(action) = Url::parse(other).ok().as_ref().and_then(parse_carrier_url) {
+                    return Some(action);
+                }
+                log::debug!("ignoring an unrecognized launch argument");
+            }
+            None => {}
+        }
+    }
+    None
 }
 
 fn page_action_script(action: &AppAction) -> Option<String> {
@@ -213,6 +260,56 @@ mod tests {
             assert_eq!(parse(value), None, "{value}");
         }
         assert_eq!(parse(&format!("carrier://t/{}", "1".repeat(33))), None);
+    }
+
+    #[test]
+    fn action_from_argv_reads_flags_urls_and_threads() {
+        assert_eq!(
+            action_from_argv(["carrier.exe", "--new-conversation"]),
+            Some(AppAction::NewConversation)
+        );
+        assert_eq!(
+            action_from_argv(["carrier.exe", "--settings"]),
+            Some(AppAction::Settings)
+        );
+        assert_eq!(
+            action_from_argv(["carrier.exe", "--thread", "123456"]),
+            Some(AppAction::OpenThread("/t/123456/".into()))
+        );
+        assert_eq!(
+            action_from_argv(["carrier.exe", "carrier://t/789"]),
+            Some(AppAction::OpenThread("/t/789/".into()))
+        );
+        assert_eq!(
+            action_from_argv(["carrier.exe", "carrier://compose"]),
+            Some(AppAction::NewConversation)
+        );
+    }
+
+    #[test]
+    fn action_from_argv_skips_argv0_and_junk_and_takes_the_first_match() {
+        // argv[0] is never parsed, even when it looks like a protocol URL.
+        assert_eq!(
+            action_from_argv(["carrier://t/1", "--settings"]),
+            Some(AppAction::Settings)
+        );
+        // First recognized action wins; later ones are ignored.
+        assert_eq!(
+            action_from_argv(["carrier.exe", "--settings", "--new-conversation"]),
+            Some(AppAction::Settings)
+        );
+        // Junk, a missing --thread value, and an over-long id all fall through.
+        assert_eq!(action_from_argv(["carrier.exe", "--verbose"]), None);
+        assert_eq!(action_from_argv(["carrier.exe", "--thread"]), None);
+        assert_eq!(action_from_argv(["carrier.exe", "--thread", "12x"]), None);
+        assert_eq!(
+            action_from_argv([
+                "carrier.exe".to_string(),
+                "--thread".to_string(),
+                "1".repeat(33)
+            ]),
+            None
+        );
     }
 
     #[test]

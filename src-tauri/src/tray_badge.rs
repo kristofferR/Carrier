@@ -76,6 +76,7 @@ fn blend_pixel(pixel: &mut [u8], foreground: [u8; 4], coverage: u8) {
 
 /// Draw a red unread badge into an RGBA icon. The circle edge is sampled on a
 /// 4×4 grid so it remains smooth after a panel downsizes the source pixmap.
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn draw_unread_badge(
     base_rgba: &[u8],
     width: u32,
@@ -157,6 +158,92 @@ pub(crate) fn draw_unread_badge(
     pixels
 }
 
+/// Render a Windows taskbar overlay badge: a full-canvas Messenger-red circle
+/// with the bucketed unread count in white, and no base app logo (the taskbar
+/// button already shows the app icon). 32×32 gives 200 % DPI headroom for the
+/// ~16 px slot Windows composites the overlay into. `None` for count ≤ 0 so the
+/// caller clears the overlay. Shares [`UnreadBucket`] bucketing with the tray so
+/// the image only changes when the bucket does.
+/// Side length of the taskbar overlay badge. Shared with the `Image::new` call
+/// in `lib.rs` so the pixel buffer and the declared dimensions cannot drift.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) const OVERLAY_BADGE_SIZE: u32 = 32;
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn overlay_badge_rgba(count: i64) -> Option<Vec<u8>> {
+    const SIZE: u32 = OVERLAY_BADGE_SIZE;
+    let bucket = UnreadBucket::from_count(count);
+    if bucket == UnreadBucket::None {
+        return None;
+    }
+
+    let mut pixels = vec![0u8; SIZE as usize * SIZE as usize * 4];
+    let center = SIZE as f32 / 2.0;
+    // A hairline inset keeps the antialiased rim off the very edge pixels.
+    let radius = center - 0.5;
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let mut inside = 0_u8;
+            for sample_y in 0..4 {
+                for sample_x in 0..4 {
+                    let dx = x as f32 + (sample_x as f32 + 0.5) / 4.0 - center;
+                    let dy = y as f32 + (sample_y as f32 + 0.5) / 4.0 - center;
+                    if dx * dx + dy * dy <= radius * radius {
+                        inside += 1;
+                    }
+                }
+            }
+            if inside > 0 {
+                let offset = (y as usize * SIZE as usize + x as usize) * 4;
+                blend_pixel(
+                    &mut pixels[offset..offset + 4],
+                    BADGE_RED,
+                    (u16::from(inside) * 255 / 16) as u8,
+                );
+            }
+        }
+    }
+
+    // Centered white digits, sized to the circle the same way the tray badge
+    // fits its corner disc.
+    let label = bucket.label();
+    let glyph_count = label.chars().count() as u32;
+    let glyph_width = glyph_count * 3 + glyph_count.saturating_sub(1);
+    let diameter = (radius * 2.0) as u32;
+    let scale = ((diameter * 7 / 10) / glyph_width)
+        .min((diameter * 3 / 5) / 5)
+        .max(1);
+    let text_width = glyph_width * scale;
+    let text_height = 5 * scale;
+    let start_x = (center - text_width as f32 / 2.0).round().max(0.0) as u32;
+    let start_y = (center - text_height as f32 / 2.0).round().max(0.0) as u32;
+
+    for (index, character) in label.chars().enumerate() {
+        for (row, bits) in glyph(character).into_iter().enumerate() {
+            for column in 0..3_u32 {
+                if bits & (1 << (2 - column)) == 0 {
+                    continue;
+                }
+                let glyph_x = (index as u32 * 4 + column) * scale;
+                for offset_y in 0..scale {
+                    for offset_x in 0..scale {
+                        let x = start_x + glyph_x + offset_x;
+                        let y = start_y + row as u32 * scale + offset_y;
+                        if x < SIZE && y < SIZE {
+                            let offset = (y as usize * SIZE as usize + x as usize) * 4;
+                            pixels[offset..offset + 4].copy_from_slice(&WHITE);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Some(pixels)
+}
+
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn unity_app_uri(flatpak_id: Option<&str>) -> String {
     let desktop_file = flatpak_id
         .map(str::trim)
@@ -313,6 +400,37 @@ mod tests {
         assert!(white_pixels(&nine_plus) > white_pixels(&nine));
         assert_ne!(one, nine);
         assert_ne!(nine, nine_plus);
+    }
+
+    #[test]
+    fn overlay_badge_is_empty_for_zero_or_negative_counts() {
+        assert!(overlay_badge_rgba(0).is_none());
+        assert!(overlay_badge_rgba(-3).is_none());
+    }
+
+    #[test]
+    fn overlay_badge_is_a_32x32_rgba_buffer_with_an_opaque_red_disc() {
+        let badge = overlay_badge_rgba(1).expect("a positive count renders");
+        assert_eq!(badge.len(), 32 * 32 * 4);
+        // The centre of the disc is fully covered, so it is opaque Messenger-red.
+        assert!(badge
+            .chunks_exact(4)
+            .any(|pixel| pixel == BADGE_RED.as_slice()));
+        // The corners fall outside the circle and stay transparent.
+        assert_eq!(&badge[0..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn overlay_badge_digits_differ_by_bucket() {
+        let one = overlay_badge_rgba(1).unwrap();
+        let nine = overlay_badge_rgba(9).unwrap();
+        let nine_plus = overlay_badge_rgba(42).unwrap();
+        assert!(white_pixels(&one) > 0);
+        assert!(white_pixels(&nine_plus) > white_pixels(&nine));
+        assert_ne!(one, nine);
+        assert_ne!(nine, nine_plus);
+        // The bucket, not the raw count, drives the artwork.
+        assert_eq!(overlay_badge_rgba(42), overlay_badge_rgba(999));
     }
 
     #[test]

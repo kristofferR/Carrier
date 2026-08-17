@@ -705,6 +705,10 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
         if let Some(tray) = tray.as_ref() {
             let _ = tray.set_menu(Some(menu));
         }
+        drop(tray);
+        // The Windows taskbar jump list mirrors the tray's recent conversations.
+        #[cfg(target_os = "windows")]
+        crate::windows::jumplist::rebuild_jump_list(recent_threads_for_menu(app));
     }
 }
 

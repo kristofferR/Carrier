@@ -9,7 +9,7 @@ use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -857,6 +857,18 @@ fn macos_reply_eligible(
     !hide_preview && notification_id != 0 && thread_path.is_some()
 }
 
+/// Windows inline-reply eligibility (same rule as macOS): a real conversation
+/// route and a non-redacted banner. Ineligible toasts get no actions at all — no
+/// blind reply on a hidden-preview banner.
+#[cfg(any(target_os = "windows", test))]
+fn windows_reply_eligible(
+    hide_preview: bool,
+    notification_id: u64,
+    thread_path: Option<&str>,
+) -> bool {
+    !hide_preview && notification_id != 0 && thread_path.is_some()
+}
+
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 enum LinuxNotificationSignal {
@@ -1130,21 +1142,21 @@ fn show_linux_notification(
     })
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_PENDING_PAGE_REPLIES: usize = 64;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_NATIVE_QUICK_REPLY_WORKERS: usize = 16;
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 struct QuickReplyWorkerSlots {
     active: AtomicUsize,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 impl QuickReplyWorkerSlots {
     const fn new() -> Self {
         Self {
@@ -1162,29 +1174,29 @@ impl QuickReplyWorkerSlots {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 struct QuickReplyWorkerPermit<'a> {
     slots: &'a QuickReplyWorkerSlots,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 impl Drop for QuickReplyWorkerPermit<'_> {
     fn drop(&mut self) {
         self.slots.active.fetch_sub(1, Ordering::Release);
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static QUICK_REPLY_WORKER_SLOTS: QuickReplyWorkerSlots = QuickReplyWorkerSlots::new();
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PendingReplyMode {
     Send,
     Draft,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 #[derive(Clone)]
 struct PendingPageReply {
@@ -1197,13 +1209,13 @@ struct PendingPageReply {
     resume_attempted: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 #[derive(Default)]
 struct PendingPageReplies {
     replies: HashMap<u64, PendingPageReply>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 impl PendingPageReplies {
     fn register(
         &mut self,
@@ -1261,24 +1273,24 @@ impl PendingPageReplies {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn pending_page_replies() -> &'static Mutex<PendingPageReplies> {
     static REPLIES: OnceLock<Mutex<PendingPageReplies>> = OnceLock::new();
     REPLIES.get_or_init(|| Mutex::new(PendingPageReplies::default()))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 fn trimmed_reply_text(text: &str) -> String {
     text.trim().to_string()
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 #[derive(Default)]
 struct ReplyAckWaiters {
     waiters: HashMap<u64, (u64, std::sync::mpsc::SyncSender<bool>)>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 impl ReplyAckWaiters {
     fn register(&mut self, id: u64, attempt: u64, sender: std::sync::mpsc::SyncSender<bool>) {
         self.waiters.insert(id, (attempt, sender));
@@ -1297,19 +1309,19 @@ impl ReplyAckWaiters {
             .is_some_and(|(_, sender)| sender.send(ok).is_ok())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn remove(&mut self, id: u64) {
         self.waiters.remove(&id);
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn reply_ack_waiters() -> &'static Mutex<ReplyAckWaiters> {
     static WAITERS: OnceLock<Mutex<ReplyAckWaiters>> = OnceLock::new();
     WAITERS.get_or_init(|| Mutex::new(ReplyAckWaiters::default()))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Deserialize)]
 struct ReplyResultMsg {
     id: u64,
@@ -1317,7 +1329,7 @@ struct ReplyResultMsg {
     ok: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn handle_reply_result(payload: &str) {
     let Ok(result) = serde_json::from_str::<ReplyResultMsg>(payload) else {
         return;
@@ -1332,13 +1344,13 @@ pub(crate) fn handle_reply_result(payload: &str) {
         .complete(result.id, result.attempt, result.ok);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn next_reply_attempt() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     NEXT.fetch_add(1, Ordering::Relaxed).wrapping_add(1).max(1)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn quick_reply_script(
     id: u64,
     attempt: u64,
@@ -1355,7 +1367,7 @@ fn quick_reply_script(
     Ok(format!("window.{hook}?.({path}, {text}, {id}, {attempt});"))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn register_pending_page_reply(
     id: u64,
     attempt: u64,
@@ -1376,7 +1388,7 @@ fn register_pending_page_reply(
 /// Re-dispatch an in-memory notification reply after a hard Messenger
 /// navigation replaces the page that received the first eval. Each action gets
 /// one resume attempt and expires with the native acknowledgement window.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     let replies = pending_page_replies()
         .lock()
@@ -1408,7 +1420,7 @@ pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn eval_hidden_quick_reply(
     app: &tauri::AppHandle,
     id: u64,
@@ -1432,7 +1444,7 @@ fn eval_hidden_quick_reply(
 }
 
 #[cfg(target_os = "linux")]
-fn show_reply_failure_notification() {
+fn show_reply_failure_notification(_app: &tauri::AppHandle) {
     let mut notification = notify_rust::Notification::new();
     notification
         .appname("Carrier")
@@ -1445,7 +1457,7 @@ fn show_reply_failure_notification() {
 }
 
 #[cfg(target_os = "macos")]
-fn show_reply_failure_notification() {
+fn show_reply_failure_notification(_app: &tauri::AppHandle) {
     deliver_notification_macos(
         "Carrier",
         "Reply not sent — opening the conversation",
@@ -1456,7 +1468,27 @@ fn show_reply_failure_notification() {
     );
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn show_reply_failure_notification(app: &tauri::AppHandle) {
+    // A plain, fixed-string toast (no route, no actions, no grouping).
+    crate::windows::toast::deliver_notification_windows(
+        app,
+        crate::windows::toast::WindowsToastOptions {
+            app_id: app.config().identifier.clone(),
+            title: "Carrier".into(),
+            body: "Reply not sent — opening the conversation".into(),
+            avatar: None,
+            sound: false,
+            native_id: 0,
+            page_id: None,
+            thread_path: None,
+            reply_eligible: false,
+            is_sync_alert: true,
+        },
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
@@ -1471,7 +1503,7 @@ fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text
     }) {
         log::warn!("failed to open quick-reply fallback: {error}");
     }
-    show_reply_failure_notification();
+    show_reply_failure_notification(&app);
 }
 
 #[cfg(target_os = "linux")]
@@ -1495,7 +1527,7 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn deliver_quick_reply(
     app: tauri::AppHandle,
     id: u64,
@@ -1506,8 +1538,8 @@ fn deliver_quick_reply(
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
+        show_reply_failure_notification(&app);
         on_notification_click_with_path(app, id, page_id, None);
-        show_reply_failure_notification();
         return;
     };
     let text = trimmed_reply_text(&raw_text);
@@ -1552,6 +1584,23 @@ fn deliver_quick_reply(
                 clear_delivered_for_thread(thread_id, &[id]);
             }
         }
+        // A successful reply clears the conversation's toast group, mirroring
+        // clear-on-read (the OS-side removal also clears earlier toasts).
+        #[cfg(target_os = "windows")]
+        if app
+            .state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .clear_notifications_on_view
+        {
+            if let Some(thread_id) = thread_path
+                .strip_prefix("/t/")
+                .and_then(|path| path.strip_suffix('/'))
+            {
+                crate::windows::toast::clear_thread_group(&app.config().identifier, thread_id);
+            }
+        }
     } else {
         if let Err(error) = dispatched {
             log::warn!("quick-reply delivery could not start (id {id}): {error}");
@@ -1565,7 +1614,7 @@ fn deliver_quick_reply(
 /// Queue an inline notification reply away from the native callback. A single
 /// in-flight guard serializes the SPA navigation/composer automation so replies
 /// for two conversations cannot race each other.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_reply(
     app: tauri::AppHandle,
     id: u64,
@@ -1606,7 +1655,7 @@ pub(crate) fn on_notification_reply(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn open_rejected_reply_fallback(
     app: tauri::AppHandle,
     id: u64,
@@ -1620,9 +1669,40 @@ fn open_rejected_reply_fallback(
         (Some(path), false) => open_reply_fallback(app, id, path, text),
         (Some(path), true) => on_notification_click_with_path(app, id, page_id, Some(path)),
         (None, _) => {
+            show_reply_failure_notification(&app);
             on_notification_click_with_path(app, id, page_id, None);
-            show_reply_failure_notification();
         }
+    }
+}
+
+/// Whether a new-message notification should ask the desktop for attention: the
+/// setting is on and no Messenger window currently holds focus. Pure so the gate
+/// is unit-testable on every platform.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+fn should_request_attention(attention_on_message: bool, any_messenger_focused: bool) -> bool {
+    attention_on_message && !any_messenger_focused
+}
+
+/// Ask the desktop for user attention — a Dock bounce on macOS, a taskbar flash
+/// on Windows — on a Messenger window when [`should_request_attention`] allows
+/// it. Harmless while every window is hidden to the tray (no taskbar
+/// button/Dock tile to flag).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: bool) {
+    let windows = app.webview_windows();
+    let any_messenger_focused = windows.iter().any(|(label, window)| {
+        (label == "main" || label.starts_with("win-")) && window.is_focused().unwrap_or(false)
+    });
+    if !should_request_attention(attention_on_message, any_messenger_focused) {
+        return;
+    }
+    if let Some(window) = windows.get("main").or_else(|| {
+        windows
+            .iter()
+            .find(|(label, _)| label.starts_with("win-"))
+            .map(|(_, window)| window)
+    }) {
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
     }
 }
 
@@ -1748,26 +1828,16 @@ pub(crate) fn show_message_notification(
         None
     };
 
+    // Ask the desktop for attention when a message arrives and no Messenger
+    // window is focused: a Dock bounce on macOS, a taskbar flash on Windows
+    // (tao maps this to FlashWindowEx(FLASHW_TRAY)). Placed after mute, dedupe,
+    // and the rate limit so it inherits their spam protection, and never reached
+    // by sync alerts. Linux is out of scope (no equivalent opt-in yet).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    request_attention_if_unfocused(&app, attention_on_message);
+
     #[cfg(target_os = "macos")]
     {
-        if attention_on_message {
-            let windows = app.webview_windows();
-            let messenger_focused = windows.iter().any(|(label, window)| {
-                (label == "main" || label.starts_with("win-"))
-                    && window.is_focused().unwrap_or(false)
-            });
-            if !messenger_focused {
-                if let Some(window) = windows.get("main").or_else(|| {
-                    windows
-                        .iter()
-                        .find(|(label, _)| label.starts_with("win-"))
-                        .map(|(_, window)| window)
-                }) {
-                    let _ = window
-                        .request_user_attention(Some(tauri::UserAttentionType::Informational));
-                }
-            }
-        }
         // The click comes back through the centre's delegate, which holds its
         // own handle, so `app` isn't needed here. The avatar temp file is read
         // asynchronously by the OS, so leave it for the next startup's
@@ -1792,27 +1862,38 @@ pub(crate) fn show_message_notification(
         );
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     let _ = (group_by_conversation, attention_on_message, thread_path);
+    // Windows groups by conversation inherently (the Action Center group id is
+    // the thread), so the toggle is not consulted there.
+    #[cfg(target_os = "windows")]
+    let _ = group_by_conversation;
 
     #[cfg(target_os = "windows")]
     {
-        let app_id = app.config().identifier.clone();
-        std::thread::spawn(move || {
-            let clicked =
-                show_windows_notification(&title, &body, image.as_deref(), sound, &app_id);
-            // The notification has been shown and dismissed/clicked, so the OS is
-            // done with the avatar file — delete it now rather than leaving it for
-            // the next startup's clear_avatar_cache().
-            if let Some(path) = image.as_deref() {
-                let _ = std::fs::remove_file(path);
-            }
-            if clicked {
-                on_notification_click_with_path(app, native_id, Some(page_id), None);
-            } else {
-                let _ = take_notification_route(native_id);
-            }
-        });
+        // Event-driven, like macOS: build the toast, attach handlers capturing
+        // the AppHandle, and show it. The avatar temp file is read asynchronously
+        // by the OS while the toast lives, so — like macOS — leave it for the
+        // 10-minute sweep rather than racing a per-notification delete.
+        let reply_eligible =
+            windows_reply_eligible(hide_preview, native_id, thread_path.as_deref());
+        crate::windows::toast::deliver_notification_windows(
+            &app,
+            crate::windows::toast::WindowsToastOptions {
+                app_id: app.config().identifier.clone(),
+                title,
+                body,
+                avatar: image
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                sound,
+                native_id,
+                page_id: Some(page_id),
+                thread_path,
+                reply_eligible,
+                is_sync_alert: false,
+            },
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -1842,49 +1923,6 @@ pub(crate) fn show_message_notification(
     });
 
     NativeNotificationDelivery::Accepted
-}
-
-/// A response represents a click unless the platform explicitly reports that
-/// the notification closed. In particular, Windows reports a toast body click
-/// as `Default` rather than as a named action.
-#[cfg(target_os = "windows")]
-fn notification_response_was_clicked(response: &notify_rust::NotificationResponse) -> bool {
-    !matches!(response, notify_rust::NotificationResponse::Closed(_))
-}
-
-/// See the macOS variant. On Windows notify-rust blocks until the notification
-/// closes.
-#[cfg(target_os = "windows")]
-fn show_windows_notification(
-    title: &str,
-    body: &str,
-    image: Option<&std::path::Path>,
-    sound: bool,
-    app_id: &str,
-) -> bool {
-    let mut n = notify_rust::Notification::new();
-    n.summary(title);
-    if !body.is_empty() {
-        n.body(body);
-    }
-    if let Some(path) = image.and_then(|p| p.to_str()) {
-        n.image_path(path);
-    }
-    // Windows toasts are silent unless a sound is named (notify-rust maps an
-    // unset `sound_name` to a silent toast), so name the system default when
-    // sound is on; when it's off, leaving `sound_name` unset already delivers
-    // silently.
-    n.app_id(app_id);
-    if sound {
-        n.sound_name("Default");
-    }
-    let mut clicked = false;
-    if let Ok(handle) = n.show() {
-        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
-            clicked = notification_response_was_clicked(response);
-        });
-    }
-    clicked
 }
 
 /* ---------------------------- Sync alerts ----------------------------- */
@@ -2004,12 +2042,24 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
     #[cfg(target_os = "windows")]
     {
-        let app_id = app.config().identifier.clone();
-        std::thread::spawn(move || {
-            if show_windows_notification(title, &body, None, false, &app_id) {
-                on_notification_click(app, id);
-            }
-        });
+        // A plain toast: no avatar, no grouping, no actions. A click routes
+        // through the activation handler, which finds no route for this id and
+        // simply surfaces the window.
+        crate::windows::toast::deliver_notification_windows(
+            &app,
+            crate::windows::toast::WindowsToastOptions {
+                app_id: app.config().identifier.clone(),
+                title: title.to_string(),
+                body,
+                avatar: None,
+                sound: false,
+                native_id: id,
+                page_id: None,
+                thread_path: None,
+                reply_eligible: false,
+                is_sync_alert: true,
+            },
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -2025,7 +2075,9 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
 /// A notification was clicked: surface Carrier and open its retained route, or
 /// fall back to the page's original notification callback when no route exists.
-#[cfg(not(target_os = "macos"))]
+/// Only Linux still uses the route-less form — Windows toast activations always
+/// carry the route through [`on_notification_click_with_path`].
+#[cfg(target_os = "linux")]
 pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
     on_notification_click_with_path(app, id, None, None);
 }
@@ -2110,6 +2162,16 @@ mod tests {
             t0 + SYNC_ALERT_MIN_GAP * 2 + Duration::from_secs(60)
         ));
         assert!(!gate.on_recovered(SyncAlertSource::Watchdog));
+    }
+
+    #[test]
+    fn attention_is_requested_only_when_enabled_and_unfocused() {
+        // Off: never, regardless of focus.
+        assert!(!should_request_attention(false, false));
+        assert!(!should_request_attention(false, true));
+        // On: only when no Messenger window holds focus.
+        assert!(should_request_attention(true, false));
+        assert!(!should_request_attention(true, true));
     }
 
     #[test]
@@ -2205,28 +2267,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn notification_responses_distinguish_activation_from_dismissal() {
-        use notify_rust::{CloseReason, NotificationResponse};
-
-        assert!(notification_response_was_clicked(
-            &NotificationResponse::Default
-        ));
-        assert!(notification_response_was_clicked(
-            &NotificationResponse::Action("open".into())
-        ));
-        assert!(notification_response_was_clicked(
-            &NotificationResponse::Reply("hello".into())
-        ));
-        assert!(!notification_response_was_clicked(
-            &NotificationResponse::Closed(CloseReason::Dismissed)
-        ));
-        assert!(!notification_response_was_clicked(
-            &NotificationResponse::Closed(CloseReason::Expired)
-        ));
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_reply_requires_preview_route_id_and_capabilities() {
@@ -2255,6 +2295,14 @@ mod tests {
         assert!(!macos_reply_eligible(true, 7, Some("/t/123/")));
         assert!(!macos_reply_eligible(false, 0, Some("/t/123/")));
         assert!(!macos_reply_eligible(false, 7, None));
+    }
+
+    #[test]
+    fn windows_reply_requires_preview_route_and_unique_id() {
+        assert!(windows_reply_eligible(false, 7, Some("/t/123/")));
+        assert!(!windows_reply_eligible(true, 7, Some("/t/123/")));
+        assert!(!windows_reply_eligible(false, 0, Some("/t/123/")));
+        assert!(!windows_reply_eligible(false, 7, None));
     }
 
     #[cfg(target_os = "linux")]

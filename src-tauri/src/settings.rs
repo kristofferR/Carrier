@@ -75,7 +75,8 @@ pub(crate) struct Settings {
     pub(crate) hide_notification_preview: bool,
     /// macOS: stack Notification Center entries by Messenger conversation.
     pub(crate) group_notifications_by_conversation: bool,
-    /// macOS: clear a conversation's delivered entries when it is viewed.
+    /// macOS/Windows: clear a conversation's delivered notifications (Action
+    /// Center toasts on Windows) when it is viewed or replied to inline.
     pub(crate) clear_notifications_on_view: bool,
     /// Ask the desktop for user attention when an unfocused message arrives.
     /// macOS uses a Dock bounce; the platform-neutral name is shared with the
