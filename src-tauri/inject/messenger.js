@@ -6692,7 +6692,6 @@ ${text}`)) {
     initFeature("spellcheck", initSpellcheck);
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
-    initFeature("web-audio-idle", initWebAudioIdle);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);
@@ -6711,5 +6710,6 @@ ${text}`)) {
     initFeature("viewer-controls", initViewerControls);
     initFeature("fullscreen", initFullscreenPolyfill);
   }
+  initFeature("web-audio-idle", initWebAudioIdle);
   if (window.top === window.self) main();
 })();
