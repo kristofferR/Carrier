@@ -41,6 +41,7 @@ import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
+import { initWebAudioIdle } from "./features/web-audio-idle";
 import { initZoom } from "./features/zoom";
 
 function initFeature(name: string, init: () => void) {
@@ -72,6 +73,7 @@ function main() {
   initFeature("spellcheck", initSpellcheck);
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
+  initFeature("web-audio-idle", initWebAudioIdle);
   initFeature("notifications", initNotificationBridge);
   initFeature("share-intake", initShareIntake);
   initFeature("sync-health", initSyncHealth);
