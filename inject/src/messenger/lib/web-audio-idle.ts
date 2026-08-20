@@ -20,6 +20,62 @@ export const WEB_AUDIO_IDLE_MS = 5_000;
 /** A page resume this soon after an automatic suspend counts as fighting it (observability only). */
 export const WEB_AUDIO_PING_PONG_WINDOW_MS = 2_000;
 
+export type WebAudioDiagnostic =
+  | {
+      type: "stats";
+      suspends: number;
+      pageResumes: number;
+      states: readonly AudioContextState[];
+    }
+  | { type: "resume-rejected" }
+  | { type: "initialization-failed" };
+
+const trustedAudioFrameHost = (host: string) =>
+  host === "facebook.com" ||
+  host.endsWith(".facebook.com") ||
+  host === "messenger.com" ||
+  host.endsWith(".messenger.com") ||
+  host === "fbsbx.com" ||
+  host.endsWith(".fbsbx.com");
+
+/** Only these origins may participate in the cross-frame call-state relay. */
+export function isTrustedWebAudioFrameOrigin(origin: string) {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "https:" && trustedAudioFrameHost(url.hostname.toLowerCase());
+  } catch (_) {
+    return false;
+  }
+}
+
+const safeDiagnosticCount = (value: number) =>
+  Number.isFinite(value) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(value))) : 0;
+
+const AUDIO_CONTEXT_STATES = new Set<string>(["closed", "interrupted", "running", "suspended"]);
+
+/** Turn internal events into fixed, content-free messages for the native log. */
+export function formatWebAudioDiagnostic(diagnostic: WebAudioDiagnostic) {
+  switch (diagnostic.type) {
+    case "stats": {
+      const states = diagnostic.states.filter((state) => AUDIO_CONTEXT_STATES.has(state)).join(",");
+      return {
+        key: "web-audio.stats",
+        message: `suspends=${safeDiagnosticCount(diagnostic.suspends)} pageResumes=${safeDiagnosticCount(diagnostic.pageResumes)} state=${states}`,
+      };
+    }
+    case "resume-rejected":
+      return {
+        key: "web-audio.idle",
+        message: "resume rejected; leaving the context alone",
+      };
+    case "initialization-failed":
+      return {
+        key: "init.web-audio-idle",
+        message: "initialization failed",
+      };
+  }
+}
+
 export class WebAudioIdleGate {
   private holds = 0;
   private inCall = false;

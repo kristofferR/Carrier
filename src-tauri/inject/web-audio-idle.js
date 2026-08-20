@@ -45,6 +45,38 @@
   // inject/src/messenger/lib/web-audio-idle.ts
   var WEB_AUDIO_IDLE_MS = 5e3;
   var WEB_AUDIO_PING_PONG_WINDOW_MS = 2e3;
+  var trustedAudioFrameHost = (host) => host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com") || host === "fbsbx.com" || host.endsWith(".fbsbx.com");
+  function isTrustedWebAudioFrameOrigin(origin) {
+    try {
+      const url = new URL(origin);
+      return url.protocol === "https:" && trustedAudioFrameHost(url.hostname.toLowerCase());
+    } catch (_) {
+      return false;
+    }
+  }
+  var safeDiagnosticCount = (value) => Number.isFinite(value) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(value))) : 0;
+  var AUDIO_CONTEXT_STATES = /* @__PURE__ */ new Set(["closed", "interrupted", "running", "suspended"]);
+  function formatWebAudioDiagnostic(diagnostic) {
+    switch (diagnostic.type) {
+      case "stats": {
+        const states = diagnostic.states.filter((state) => AUDIO_CONTEXT_STATES.has(state)).join(",");
+        return {
+          key: "web-audio.stats",
+          message: `suspends=${safeDiagnosticCount(diagnostic.suspends)} pageResumes=${safeDiagnosticCount(diagnostic.pageResumes)} state=${states}`
+        };
+      }
+      case "resume-rejected":
+        return {
+          key: "web-audio.idle",
+          message: "resume rejected; leaving the context alone"
+        };
+      case "initialization-failed":
+        return {
+          key: "init.web-audio-idle",
+          message: "initialization failed"
+        };
+    }
+  }
   var WebAudioIdleGate = class {
     constructor(_createdAt, idleMs = WEB_AUDIO_IDLE_MS) {
       __publicField(this, "idleMs", idleMs);
@@ -142,6 +174,7 @@
   // inject/src/messenger/features/web-audio-idle.ts
   var CALL_STATE_MESSAGE = "carrier:web-audio-call-state:v1";
   var CALL_STATE_REQUEST = "carrier:web-audio-call-state-request:v1";
+  var CALL_STATE_RELEASE = "carrier:web-audio-call-state-release:v1";
   function initWebAudioIdle(report) {
     const NativeAudioContext = window.AudioContext;
     if (typeof NativeAudioContext !== "function") return;
@@ -156,8 +189,12 @@
     let resumes = 0;
     window.setInterval(() => {
       if (suspends || resumes) {
-        const states = [...live].map((c) => c.state).join(",");
-        report("web-audio.stats", `suspends=${suspends} pageResumes=${resumes} state=${states}`);
+        report({
+          type: "stats",
+          suspends,
+          pageResumes: resumes,
+          states: [...live].map((context) => context.state)
+        });
         suspends = 0;
         resumes = 0;
       }
@@ -176,7 +213,7 @@
             () => gate.autoResumed(),
             () => {
               gate.giveUp();
-              report("web-audio.idle", "resume rejected; leaving the context alone");
+              report({ type: "resume-rejected" });
             }
           );
         }
@@ -360,22 +397,10 @@
       touch(this);
       return originalCreateScriptProcessor.apply(this, args);
     };
-    const applyCallState = (inCall = window.__carrierInCall === true) => {
+    const applyCallState = (inCall) => {
       for (const ctx of live) {
         gateOf(ctx)?.setInCall(inCall);
         sync(ctx);
-      }
-    };
-    const postCallState = (target, inCall) => {
-      try {
-        target.postMessage({ type: CALL_STATE_MESSAGE, inCall }, "*");
-      } catch (_) {
-      }
-    };
-    const postCallStateToChildren = (inCall) => {
-      for (let index = 0; index < window.frames.length; index += 1) {
-        const child = window.frames[index];
-        if (child) postCallState(child, inCall);
       }
     };
     const isDirectChild = (source) => {
@@ -384,6 +409,19 @@
       }
       return false;
     };
+    const childOrigins = /* @__PURE__ */ new Map();
+    const postCallState = (target, targetOrigin, inCall) => {
+      try {
+        target.postMessage({ type: CALL_STATE_MESSAGE, inCall }, targetOrigin);
+      } catch (_) {
+      }
+    };
+    const postCallStateToChildren = (inCall) => {
+      for (const [child, origin] of childOrigins) {
+        if (isDirectChild(child)) postCallState(child, origin, inCall);
+        else childOrigins.delete(child);
+      }
+    };
     window.addEventListener("carrier:protection-change", () => {
       const inCall = window.__carrierInCall === true;
       applyCallState(inCall);
@@ -391,11 +429,17 @@
     });
     window.addEventListener("message", (event) => {
       const data = event.data;
-      if (data?.type === CALL_STATE_REQUEST && isDirectChild(event.source)) {
-        postCallState(event.source, window.__carrierInCall === true);
+      if (data?.type === CALL_STATE_RELEASE && event.source !== null && childOrigins.get(event.source) === event.origin) {
+        childOrigins.delete(event.source);
         return;
       }
-      if (window.parent === window || event.source !== window.parent || data?.type !== CALL_STATE_MESSAGE || typeof data.inCall !== "boolean") {
+      if (data?.type === CALL_STATE_REQUEST && isDirectChild(event.source) && isTrustedWebAudioFrameOrigin(event.origin)) {
+        const child = event.source;
+        childOrigins.set(child, event.origin);
+        postCallState(child, event.origin, window.__carrierInCall === true);
+        return;
+      }
+      if (window.parent === window || event.source !== window.parent || !isTrustedWebAudioFrameOrigin(event.origin) || data?.type !== CALL_STATE_MESSAGE || typeof data.inCall !== "boolean") {
         return;
       }
       window.__carrierInCall = data.inCall;
@@ -403,7 +447,16 @@
       postCallStateToChildren(data.inCall);
     });
     if (window.parent !== window) {
-      window.parent.postMessage({ type: CALL_STATE_REQUEST }, "*");
+      const requestCallState = () => {
+        window.parent.postMessage({ type: CALL_STATE_REQUEST }, "*");
+      };
+      requestCallState();
+      window.addEventListener("pagehide", () => {
+        window.parent.postMessage({ type: CALL_STATE_RELEASE }, "*");
+      });
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) requestCallState();
+      });
     }
   }
 
@@ -421,13 +474,14 @@
   var isAudioOnlyFrame = isFbsbxHost(carrierHost) || !carrierHost && isFbsbxHost(carrierParentHost);
   if (isMessengerFrame || isAudioOnlyFrame) {
     const report = (() => {
-      if (window.top !== window.self) return (_key, _message) => {
+      if (window.top !== window.self) return (_diagnostic) => {
       };
       const lastSent = /* @__PURE__ */ new Map();
-      return (key, message) => {
+      return (diagnostic) => {
         try {
+          const { key, message } = formatWebAudioDiagnostic(diagnostic);
           const now = Date.now();
-          if (now - (lastSent.get(key) ?? 0) < 6e4) return;
+          if (now - (lastSent.get(key) ?? 0) < 3e4) return;
           lastSent.set(key, now);
           window.__TAURI_INTERNALS__?.invoke("plugin:event|emit", {
             event: "carrier:diag",
@@ -440,9 +494,8 @@
     })();
     try {
       initWebAudioIdle(report);
-    } catch (error) {
-      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-      report("init.web-audio-idle", detail.slice(0, 500));
+    } catch (_) {
+      report({ type: "initialization-failed" });
     }
   }
 })();

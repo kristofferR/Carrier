@@ -4,6 +4,7 @@
  * include it in fbsbx.com frames without exposing Carrier's privileged bridge.
  */
 import { initWebAudioIdle } from "./messenger/features/web-audio-idle";
+import { formatWebAudioDiagnostic, type WebAudioDiagnostic } from "./messenger/lib/web-audio-idle";
 
 const normalizeHost = (host: string) => host.toLowerCase().replace(/^www\./, "");
 const isMessengerHost = (host: string) =>
@@ -26,13 +27,14 @@ const isAudioOnlyFrame =
 
 if (isMessengerFrame || isAudioOnlyFrame) {
   const report = (() => {
-    if (window.top !== window.self) return (_key: string, _message: string) => {};
+    if (window.top !== window.self) return (_diagnostic: WebAudioDiagnostic) => {};
 
     const lastSent = new Map<string, number>();
-    return (key: string, message: string) => {
+    return (diagnostic: WebAudioDiagnostic) => {
       try {
+        const { key, message } = formatWebAudioDiagnostic(diagnostic);
         const now = Date.now();
-        if (now - (lastSent.get(key) ?? 0) < 60_000) return;
+        if (now - (lastSent.get(key) ?? 0) < 30_000) return;
         lastSent.set(key, now);
         window.__TAURI_INTERNALS__
           ?.invoke("plugin:event|emit", {
@@ -46,8 +48,7 @@ if (isMessengerFrame || isAudioOnlyFrame) {
 
   try {
     initWebAudioIdle(report);
-  } catch (error) {
-    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-    report("init.web-audio-idle", detail.slice(0, 500));
+  } catch (_) {
+    report({ type: "initialization-failed" });
   }
 }

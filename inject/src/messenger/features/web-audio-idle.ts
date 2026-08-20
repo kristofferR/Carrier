@@ -13,7 +13,11 @@
 // original methods captured here, so the page's own suspend()/resume() stay
 // distinguishable and are respected.
 import { LiveMediaTrackCounter } from "../lib/media-tracks";
-import { WebAudioIdleGate } from "../lib/web-audio-idle";
+import {
+  isTrustedWebAudioFrameOrigin,
+  type WebAudioDiagnostic,
+  WebAudioIdleGate,
+} from "../lib/web-audio-idle";
 
 interface Entry {
   gate: WebAudioIdleGate;
@@ -21,9 +25,10 @@ interface Entry {
 }
 
 type AudioContextCtor = typeof AudioContext;
-type Reporter = (key: string, message: string) => void;
+type Reporter = (diagnostic: WebAudioDiagnostic) => void;
 const CALL_STATE_MESSAGE = "carrier:web-audio-call-state:v1";
 const CALL_STATE_REQUEST = "carrier:web-audio-call-state-request:v1";
+const CALL_STATE_RELEASE = "carrier:web-audio-call-state-release:v1";
 
 export function initWebAudioIdle(report: Reporter) {
   const NativeAudioContext = window.AudioContext;
@@ -43,8 +48,12 @@ export function initWebAudioIdle(report: Reporter) {
   let resumes = 0;
   window.setInterval(() => {
     if (suspends || resumes) {
-      const states = [...live].map((c) => c.state).join(",");
-      report("web-audio.stats", `suspends=${suspends} pageResumes=${resumes} state=${states}`);
+      report({
+        type: "stats",
+        suspends,
+        pageResumes: resumes,
+        states: [...live].map((context) => context.state),
+      });
       suspends = 0;
       resumes = 0;
     }
@@ -68,7 +77,7 @@ export function initWebAudioIdle(report: Reporter) {
             // WebKit refused (autoplay policy or interruption); leave the page
             // in control rather than risk swallowing sound later.
             gate.giveUp();
-            report("web-audio.idle", "resume rejected; leaving the context alone");
+            report({ type: "resume-rejected" });
           },
         );
       }
@@ -293,21 +302,10 @@ export function initWebAudioIdle(report: Reporter) {
   };
 
   /* ---- calls ---- */
-  const applyCallState = (inCall = window.__carrierInCall === true) => {
+  const applyCallState = (inCall: boolean) => {
     for (const ctx of live) {
       gateOf(ctx)?.setInCall(inCall);
       sync(ctx);
-    }
-  };
-  const postCallState = (target: Window, inCall: boolean) => {
-    try {
-      target.postMessage({ type: CALL_STATE_MESSAGE, inCall }, "*");
-    } catch (_) {}
-  };
-  const postCallStateToChildren = (inCall: boolean) => {
-    for (let index = 0; index < window.frames.length; index += 1) {
-      const child = window.frames[index];
-      if (child) postCallState(child, inCall);
     }
   };
   const isDirectChild = (source: MessageEventSource | null) => {
@@ -315,6 +313,18 @@ export function initWebAudioIdle(report: Reporter) {
       if (window.frames[index] === source) return true;
     }
     return false;
+  };
+  const childOrigins = new Map<Window, string>();
+  const postCallState = (target: Window, targetOrigin: string, inCall: boolean) => {
+    try {
+      target.postMessage({ type: CALL_STATE_MESSAGE, inCall }, targetOrigin);
+    } catch (_) {}
+  };
+  const postCallStateToChildren = (inCall: boolean) => {
+    for (const [child, origin] of childOrigins) {
+      if (isDirectChild(child)) postCallState(child, origin, inCall);
+      else childOrigins.delete(child);
+    }
   };
 
   window.addEventListener("carrier:protection-change", () => {
@@ -324,13 +334,28 @@ export function initWebAudioIdle(report: Reporter) {
   });
   window.addEventListener("message", (event) => {
     const data = event.data as { type?: unknown; inCall?: unknown } | null;
-    if (data?.type === CALL_STATE_REQUEST && isDirectChild(event.source)) {
-      postCallState(event.source as Window, window.__carrierInCall === true);
+    if (
+      data?.type === CALL_STATE_RELEASE &&
+      event.source !== null &&
+      childOrigins.get(event.source as Window) === event.origin
+    ) {
+      childOrigins.delete(event.source as Window);
+      return;
+    }
+    if (
+      data?.type === CALL_STATE_REQUEST &&
+      isDirectChild(event.source) &&
+      isTrustedWebAudioFrameOrigin(event.origin)
+    ) {
+      const child = event.source as Window;
+      childOrigins.set(child, event.origin);
+      postCallState(child, event.origin, window.__carrierInCall === true);
       return;
     }
     if (
       window.parent === window ||
       event.source !== window.parent ||
+      !isTrustedWebAudioFrameOrigin(event.origin) ||
       data?.type !== CALL_STATE_MESSAGE ||
       typeof data.inCall !== "boolean"
     ) {
@@ -342,8 +367,19 @@ export function initWebAudioIdle(report: Reporter) {
   });
 
   // A call can already be active when a call-owned frame is created. Ask the
-  // parent for its current state; nested frames relay the reply downward.
+  // parent for its current state; nested frames relay the reply downward. The
+  // request contains no state, and the parent only answers a trusted origin
+  // using the exact origin recorded on this event.
   if (window.parent !== window) {
-    window.parent.postMessage({ type: CALL_STATE_REQUEST }, "*");
+    const requestCallState = () => {
+      window.parent.postMessage({ type: CALL_STATE_REQUEST }, "*");
+    };
+    requestCallState();
+    window.addEventListener("pagehide", () => {
+      window.parent.postMessage({ type: CALL_STATE_RELEASE }, "*");
+    });
+    window.addEventListener("pageshow", (event) => {
+      if (event.persisted) requestCallState();
+    });
   }
 }
