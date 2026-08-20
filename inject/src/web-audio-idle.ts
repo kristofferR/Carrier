@@ -4,7 +4,11 @@
  * include it in fbsbx.com frames without exposing Carrier's privileged bridge.
  */
 import { initWebAudioIdle } from "./messenger/features/web-audio-idle";
-import { formatWebAudioDiagnostic, type WebAudioDiagnostic } from "./messenger/lib/web-audio-idle";
+import {
+  firstAccessibleAncestorHost,
+  formatWebAudioDiagnostic,
+  type WebAudioDiagnostic,
+} from "./messenger/lib/web-audio-idle";
 
 const normalizeHost = (host: string) => host.toLowerCase().replace(/^www\./, "");
 const isMessengerHost = (host: string) =>
@@ -15,15 +19,13 @@ const isMessengerHost = (host: string) =>
 const isFbsbxHost = (host: string) => host === "fbsbx.com" || host.endsWith(".fbsbx.com");
 
 const carrierHost = normalizeHost(location.hostname);
-let carrierParentHost = "";
-try {
-  if (window.parent !== window) carrierParentHost = normalizeHost(window.parent.location.hostname);
-} catch (_) {}
+const carrierAncestorHost =
+  window.parent === window ? "" : normalizeHost(firstAccessibleAncestorHost(window.parent));
 
 const isMessengerFrame =
-  isMessengerHost(carrierHost) || (!carrierHost && isMessengerHost(carrierParentHost));
+  isMessengerHost(carrierHost) || (!carrierHost && isMessengerHost(carrierAncestorHost));
 const isAudioOnlyFrame =
-  isFbsbxHost(carrierHost) || (!carrierHost && isFbsbxHost(carrierParentHost));
+  isFbsbxHost(carrierHost) || (!carrierHost && isFbsbxHost(carrierAncestorHost));
 
 if (isMessengerFrame || isAudioOnlyFrame) {
   const report = (() => {

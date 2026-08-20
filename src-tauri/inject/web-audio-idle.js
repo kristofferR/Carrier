@@ -54,6 +54,21 @@
       return false;
     }
   }
+  function firstAccessibleAncestorHost(start) {
+    const seen = /* @__PURE__ */ new Set();
+    let ancestor = start;
+    while (!seen.has(ancestor)) {
+      seen.add(ancestor);
+      try {
+        if (ancestor.location.hostname) return ancestor.location.hostname;
+        if (ancestor.parent === ancestor) return "";
+        ancestor = ancestor.parent;
+      } catch (_) {
+        return "";
+      }
+    }
+    return "";
+  }
   var safeDiagnosticCount = (value) => Number.isFinite(value) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(value))) : 0;
   var AUDIO_CONTEXT_STATES = /* @__PURE__ */ new Set(["closed", "interrupted", "running", "suspended"]);
   function formatWebAudioDiagnostic(diagnostic) {
@@ -465,13 +480,9 @@
   var isMessengerHost = (host) => host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
   var isFbsbxHost = (host) => host === "fbsbx.com" || host.endsWith(".fbsbx.com");
   var carrierHost = normalizeHost(location.hostname);
-  var carrierParentHost = "";
-  try {
-    if (window.parent !== window) carrierParentHost = normalizeHost(window.parent.location.hostname);
-  } catch (_) {
-  }
-  var isMessengerFrame = isMessengerHost(carrierHost) || !carrierHost && isMessengerHost(carrierParentHost);
-  var isAudioOnlyFrame = isFbsbxHost(carrierHost) || !carrierHost && isFbsbxHost(carrierParentHost);
+  var carrierAncestorHost = window.parent === window ? "" : normalizeHost(firstAccessibleAncestorHost(window.parent));
+  var isMessengerFrame = isMessengerHost(carrierHost) || !carrierHost && isMessengerHost(carrierAncestorHost);
+  var isAudioOnlyFrame = isFbsbxHost(carrierHost) || !carrierHost && isFbsbxHost(carrierAncestorHost);
   if (isMessengerFrame || isAudioOnlyFrame) {
     const report = (() => {
       if (window.top !== window.self) return (_diagnostic) => {

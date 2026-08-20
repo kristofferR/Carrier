@@ -48,6 +48,23 @@ export function isTrustedWebAudioFrameOrigin(origin: string) {
   }
 }
 
+/** Resolve the first real host behind a same-origin about:blank/srcdoc chain. */
+export function firstAccessibleAncestorHost(start: Window) {
+  const seen = new Set<Window>();
+  let ancestor = start;
+  while (!seen.has(ancestor)) {
+    seen.add(ancestor);
+    try {
+      if (ancestor.location.hostname) return ancestor.location.hostname;
+      if (ancestor.parent === ancestor) return "";
+      ancestor = ancestor.parent;
+    } catch (_) {
+      return "";
+    }
+  }
+  return "";
+}
+
 const safeDiagnosticCount = (value: number) =>
   Number.isFinite(value) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(value))) : 0;
 

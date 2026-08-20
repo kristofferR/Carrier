@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  firstAccessibleAncestorHost,
   formatWebAudioDiagnostic,
   isTrustedWebAudioFrameOrigin,
   WEB_AUDIO_IDLE_MS,
@@ -10,6 +11,33 @@ import {
 const FIGHT_ROUNDS = 9;
 
 describe("Web Audio frame messages", () => {
+  test("walks nested blank-frame ancestry to the first real host", () => {
+    const top = { location: { hostname: "www.facebook.com" } } as unknown as Window;
+    Object.defineProperty(top, "parent", { value: top });
+    const blankParent = { location: { hostname: "" }, parent: top } as unknown as Window;
+    expect(firstAccessibleAncestorHost(blankParent)).toBe("www.facebook.com");
+
+    const inaccessible = {} as Window;
+    Object.defineProperty(inaccessible, "location", {
+      get: () => {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+    });
+    expect(firstAccessibleAncestorHost(inaccessible)).toBe("");
+  });
+
+  test("stops at empty top-level and cyclic ancestry", () => {
+    const topBlank = { location: { hostname: "" } } as unknown as Window;
+    Object.defineProperty(topBlank, "parent", { value: topBlank });
+    expect(firstAccessibleAncestorHost(topBlank)).toBe("");
+
+    const first = { location: { hostname: "" } } as unknown as Window;
+    const second = { location: { hostname: "" } } as unknown as Window;
+    Object.defineProperty(first, "parent", { value: second });
+    Object.defineProperty(second, "parent", { value: first });
+    expect(firstAccessibleAncestorHost(first)).toBe("");
+  });
+
   test("accepts only HTTPS Messenger and audio-frame origins", () => {
     expect(isTrustedWebAudioFrameOrigin("https://www.facebook.com")).toBe(true);
     expect(isTrustedWebAudioFrameOrigin("https://business.messenger.com")).toBe(true);
