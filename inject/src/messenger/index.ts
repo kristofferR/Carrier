@@ -41,7 +41,6 @@ import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
-import { initWebAudioIdle } from "./features/web-audio-idle";
 import { initZoom } from "./features/zoom";
 
 function initFeature(name: string, init: () => void) {
@@ -92,14 +91,6 @@ function main() {
   initFeature("fullscreen", initFullscreenPolyfill);
 }
 
-// The Web Audio idle gate must run in EVERY frame, not just the top document:
-// each iframe is its own realm with a pristine `AudioContext`, and Messenger
-// creates contexts inside iframes (call UI, embedded media). A context created
-// in a subframe the gate never saw kept rendering — and holding the Bluetooth
-// route — while the top-frame gate correctly reported its own context as
-// suspended (#234). The gate is self-contained and safe in any frame.
-initFeature("web-audio-idle", initWebAudioIdle);
-
 // Tauri injects initialization scripts into subframes too (notably on
-// Windows). Only enhance the top-level Messenger document with everything else.
+// Windows). Only enhance the top-level Messenger document.
 if (window.top === window.self) main();

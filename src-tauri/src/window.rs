@@ -23,7 +23,10 @@ use crate::settings::{
 };
 use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
-use crate::{user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL};
+use crate::{
+    user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL,
+    INJECT_WEB_AUDIO_IDLE,
+};
 
 fn notify_download_finished(
     app: &tauri::AppHandle,
@@ -127,6 +130,10 @@ pub(crate) fn build_app_window(
         // silences AirPods system-wide (#232). Carrier wants the page alive in
         // the background anyway (sync, notifications, badge), so opt out.
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
+        // Messenger owns Web Audio contexts in child frames, including a
+        // cross-origin fbsbx.com frame. Keep this origin-scoped audio script
+        // separate so privileged Carrier code remains main-frame-only.
+        .initialization_script_for_all_frames(audio_init_script())
         .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
         .on_page_load(move |window, payload| match payload.event() {
             tauri::webview::PageLoadEvent::Started => {
@@ -771,6 +778,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     }
 }
 
+fn audio_init_script() -> &'static str {
+    INJECT_WEB_AUDIO_IDLE
+}
+
 fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &str) -> String {
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
@@ -779,6 +790,9 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     format!(
         r#"(function () {{
   var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+  // WebView2 currently ignores Tauri's main-frame-only flag. Enforce it here
+  // too so native bridges never initialize in child frames.
+  if (window.top !== window.self) return;
   var carrierInjectable =
     carrierHost === 'facebook.com' ||
     carrierHost.endsWith('.facebook.com') ||
@@ -1230,16 +1244,32 @@ mod tests {
         let script = init_script(&Settings::default(), 42, "test-reveal-token");
         assert!(script.contains("window.__CARRIER_HEARTBEAT_ID__ = 42;"));
         assert!(script.contains("test-reveal-token"));
+        assert!(script.contains("if (window.top !== window.self) return;"));
         assert!(script.contains("if (!document.documentElement) return false;"));
         assert!(script.contains(").observe(document, { childList: true, subtree: true });"));
 
         let start = script.find("function startCarrier() {").unwrap();
-        let messenger = script.find("GENERATED FILE — DO NOT EDIT.").unwrap();
+        let messenger = script.find("Source: inject/src/messenger/").unwrap();
         let fallback = script
             .find("if (!startCarrier()) {\n    // Document itself")
             .unwrap();
         assert!(start < messenger);
         assert!(messenger < fallback);
+    }
+
+    #[test]
+    fn audio_init_script_is_origin_scoped_and_contains_no_privileged_bridge() {
+        let script = audio_init_script();
+
+        assert!(script.contains("isMessengerHost"));
+        assert!(script.contains("\"fbsbx.com\""));
+        assert!(script.contains("carrier:web-audio-call-state:v1"));
+        assert!(script.contains("event.source !== window.parent"));
+        assert!(script.contains("Source: inject/src/web-audio-idle.ts"));
+        assert!(script.find("\"use strict\";").unwrap() < script.find("isMessengerHost").unwrap());
+        assert!(!script.contains("__CARRIER_HEARTBEAT_ID__"));
+        assert!(!script.contains("carrierAuthorizedEmit"));
+        assert!(!script.contains("test-reveal-token"));
     }
 
     #[test]

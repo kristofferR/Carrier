@@ -27,6 +27,7 @@ const common = {
 } as const;
 
 for (const [entry, out, source] of [
+  ["inject/src/web-audio-idle.ts", "web-audio-idle", "inject/src/web-audio-idle.ts"],
   ["inject/src/messenger/index.ts", "messenger", "inject/src/messenger/"],
   ["inject/src/panel/index.ts", "panel", "inject/src/panel/index.ts"],
 ] as const) {

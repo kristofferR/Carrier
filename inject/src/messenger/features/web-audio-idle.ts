@@ -12,7 +12,6 @@
 // active call, or a short grace after any of those. Everything goes through the
 // original methods captured here, so the page's own suspend()/resume() stay
 // distinguishable and are respected.
-import { diag } from "../bridge";
 import { LiveMediaTrackCounter } from "../lib/media-tracks";
 import { WebAudioIdleGate } from "../lib/web-audio-idle";
 
@@ -22,8 +21,11 @@ interface Entry {
 }
 
 type AudioContextCtor = typeof AudioContext;
+type Reporter = (key: string, message: string) => void;
+const CALL_STATE_MESSAGE = "carrier:web-audio-call-state:v1";
+const CALL_STATE_REQUEST = "carrier:web-audio-call-state-request:v1";
 
-export function initWebAudioIdle() {
+export function initWebAudioIdle(report: Reporter) {
   const NativeAudioContext = window.AudioContext;
   if (typeof NativeAudioContext !== "function") return;
 
@@ -42,7 +44,7 @@ export function initWebAudioIdle() {
   window.setInterval(() => {
     if (suspends || resumes) {
       const states = [...live].map((c) => c.state).join(",");
-      diag("web-audio.stats", `suspends=${suspends} pageResumes=${resumes} state=${states}`);
+      report("web-audio.stats", `suspends=${suspends} pageResumes=${resumes} state=${states}`);
       suspends = 0;
       resumes = 0;
     }
@@ -66,7 +68,7 @@ export function initWebAudioIdle() {
             // WebKit refused (autoplay policy or interruption); leave the page
             // in control rather than risk swallowing sound later.
             gate.giveUp();
-            diag("web-audio.idle", "resume rejected; leaving the context alone");
+            report("web-audio.idle", "resume rejected; leaving the context alone");
           },
         );
       }
@@ -291,12 +293,57 @@ export function initWebAudioIdle() {
   };
 
   /* ---- calls ---- */
-  const applyCallState = () => {
-    const inCall = window.__carrierInCall === true;
+  const applyCallState = (inCall = window.__carrierInCall === true) => {
     for (const ctx of live) {
       gateOf(ctx)?.setInCall(inCall);
       sync(ctx);
     }
   };
-  window.addEventListener("carrier:protection-change", applyCallState);
+  const postCallState = (target: Window, inCall: boolean) => {
+    try {
+      target.postMessage({ type: CALL_STATE_MESSAGE, inCall }, "*");
+    } catch (_) {}
+  };
+  const postCallStateToChildren = (inCall: boolean) => {
+    for (let index = 0; index < window.frames.length; index += 1) {
+      const child = window.frames[index];
+      if (child) postCallState(child, inCall);
+    }
+  };
+  const isDirectChild = (source: MessageEventSource | null) => {
+    for (let index = 0; index < window.frames.length; index += 1) {
+      if (window.frames[index] === source) return true;
+    }
+    return false;
+  };
+
+  window.addEventListener("carrier:protection-change", () => {
+    const inCall = window.__carrierInCall === true;
+    applyCallState(inCall);
+    postCallStateToChildren(inCall);
+  });
+  window.addEventListener("message", (event) => {
+    const data = event.data as { type?: unknown; inCall?: unknown } | null;
+    if (data?.type === CALL_STATE_REQUEST && isDirectChild(event.source)) {
+      postCallState(event.source as Window, window.__carrierInCall === true);
+      return;
+    }
+    if (
+      window.parent === window ||
+      event.source !== window.parent ||
+      data?.type !== CALL_STATE_MESSAGE ||
+      typeof data.inCall !== "boolean"
+    ) {
+      return;
+    }
+    window.__carrierInCall = data.inCall;
+    applyCallState(data.inCall);
+    postCallStateToChildren(data.inCall);
+  });
+
+  // A call can already be active when a call-owned frame is created. Ask the
+  // parent for its current state; nested frames relay the reply downward.
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: CALL_STATE_REQUEST }, "*");
+  }
 }

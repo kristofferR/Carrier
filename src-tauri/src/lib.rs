@@ -787,6 +787,7 @@ const APP_TITLE: &str = if cfg!(debug_assertions) {
 const INJECT_CSS: &str = include_str!("../inject/messenger.css");
 const INJECT_JS: &str = include_str!("../inject/messenger.js");
 const INJECT_PANEL: &str = include_str!("../inject/panel.js");
+const INJECT_WEB_AUDIO_IDLE: &str = include_str!("../inject/web-audio-idle.js");
 
 // The `mcp` feature wires a JS-eval responder into the remote Facebook page and
 // opens a local control socket — strictly a dev tool. Enabling it in a release
