@@ -1,11 +1,70 @@
 import { describe, expect, test } from "bun:test";
 import {
+  firstAccessibleAncestorHost,
+  formatWebAudioDiagnostic,
+  isTrustedWebAudioFrameOrigin,
   WEB_AUDIO_IDLE_MS,
   WEB_AUDIO_PING_PONG_WINDOW_MS,
   WebAudioIdleGate,
 } from "./web-audio-idle";
 
 const FIGHT_ROUNDS = 9;
+
+describe("Web Audio frame messages", () => {
+  test("walks nested blank-frame ancestry to the first real host", () => {
+    const top = { location: { hostname: "www.facebook.com" } } as unknown as Window;
+    Object.defineProperty(top, "parent", { value: top });
+    const blankParent = { location: { hostname: "" }, parent: top } as unknown as Window;
+    expect(firstAccessibleAncestorHost(blankParent)).toBe("www.facebook.com");
+
+    const inaccessible = {} as Window;
+    Object.defineProperty(inaccessible, "location", {
+      get: () => {
+        throw new DOMException("Blocked", "SecurityError");
+      },
+    });
+    expect(firstAccessibleAncestorHost(inaccessible)).toBe("");
+  });
+
+  test("stops at empty top-level and cyclic ancestry", () => {
+    const topBlank = { location: { hostname: "" } } as unknown as Window;
+    Object.defineProperty(topBlank, "parent", { value: topBlank });
+    expect(firstAccessibleAncestorHost(topBlank)).toBe("");
+
+    const first = { location: { hostname: "" } } as unknown as Window;
+    const second = { location: { hostname: "" } } as unknown as Window;
+    Object.defineProperty(first, "parent", { value: second });
+    Object.defineProperty(second, "parent", { value: first });
+    expect(firstAccessibleAncestorHost(first)).toBe("");
+  });
+
+  test("accepts only HTTPS Messenger and audio-frame origins", () => {
+    expect(isTrustedWebAudioFrameOrigin("https://www.facebook.com")).toBe(true);
+    expect(isTrustedWebAudioFrameOrigin("https://business.messenger.com")).toBe(true);
+    expect(isTrustedWebAudioFrameOrigin("https://media.fbsbx.com")).toBe(true);
+    expect(isTrustedWebAudioFrameOrigin("http://www.facebook.com")).toBe(false);
+    expect(isTrustedWebAudioFrameOrigin("https://facebook.com.evil.example")).toBe(false);
+    expect(isTrustedWebAudioFrameOrigin("null")).toBe(false);
+  });
+
+  test("formats only fixed, content-free diagnostics", () => {
+    expect(
+      formatWebAudioDiagnostic({
+        type: "stats",
+        suspends: 2.9,
+        pageResumes: -1,
+        states: ["suspended", "running"],
+      }),
+    ).toEqual({
+      key: "web-audio.stats",
+      message: "suspends=2 pageResumes=0 state=suspended,running",
+    });
+    expect(formatWebAudioDiagnostic({ type: "initialization-failed" })).toEqual({
+      key: "init.web-audio-idle",
+      message: "initialization failed",
+    });
+  });
+});
 
 describe("WebAudioIdleGate", () => {
   test("a fresh context is idle: creating one is not activity", () => {
