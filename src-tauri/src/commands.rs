@@ -201,7 +201,9 @@ fn pacman_owns_carrier() -> bool {
     })
 }
 
-#[cfg(any(target_os = "linux", test))]
+// Unix-only under test: the path-shape checks (`/tmp` absoluteness, `.mount_*`
+// prefixes) are meaningless on Windows paths.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn appimage_runtime_paths_match(
     current_executable: &std::path::Path,
     appimage: &std::path::Path,
@@ -1095,11 +1097,13 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::appimage_runtime_paths_match;
     use super::{
-        appimage_runtime_paths_match, classify_messenger_preflight_attempt,
-        linux_update_install_mode, pacman_owns_carrier_with, should_surface_update,
-        LinuxUpdateEvidence, MessengerPreflightAttempt, MessengerPreflightDecision,
-        UpdateInstallGuard, UpdateInstallKind, MESSENGER_DNS_MAX_ATTEMPTS,
+        classify_messenger_preflight_attempt, linux_update_install_mode, pacman_owns_carrier_with,
+        should_surface_update, LinuxUpdateEvidence, MessengerPreflightAttempt,
+        MessengerPreflightDecision, UpdateInstallGuard, UpdateInstallKind,
+        MESSENGER_DNS_MAX_ATTEMPTS,
     };
     use crate::preflight::MessengerPreflightError;
     use std::io::ErrorKind;
@@ -1211,6 +1215,7 @@ mod tests {
 
     #[test]
     fn genuine_standalone_appimage_keeps_the_builtin_updater() {
+        #[cfg(unix)]
         assert!(appimage_runtime_paths_match(
             std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier"),
             std::path::Path::new("/home/user/Applications/Carrier.AppImage"),
@@ -1233,6 +1238,7 @@ mod tests {
 
     #[test]
     fn ambiguous_linux_install_fails_closed_to_manual_updates() {
+        #[cfg(unix)]
         assert!(!appimage_runtime_paths_match(
             std::path::Path::new("/usr/bin/carrier"),
             std::path::Path::new("/home/user/Carrier.AppImage"),
