@@ -16,10 +16,12 @@ use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const FLATPAK_UPDATE_URL: &str = "https://docs.flatpak.org/en/latest/using-flatpak.html#updating";
+#[cfg(any(target_os = "linux", test))]
+const RELEASES_URL: &str = "https://github.com/kristofferR/Carrier/releases/latest";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
 // existing recovery screen for persistent failures, but absorb that launch race.
 const MESSENGER_DNS_MAX_ATTEMPTS: usize = 6;
@@ -91,6 +93,8 @@ pub(crate) struct UpdateInstallMode {
     kind: UpdateInstallKind,
     button_label: Option<String>,
     instructions: Option<String>,
+    #[serde(skip)]
+    manual_url: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -106,6 +110,7 @@ impl UpdateInstallMode {
             kind: UpdateInstallKind::BuiltIn,
             button_label: None,
             instructions: None,
+            manual_url: None,
         }
     }
 
@@ -122,6 +127,7 @@ impl UpdateInstallMode {
             kind: UpdateInstallKind::Manual,
             button_label: Some("Open Carrier on AUR".into()),
             instructions: Some(instructions.into()),
+            manual_url: Some(AUR_PACKAGE_URL),
         }
     }
 
@@ -134,6 +140,19 @@ impl UpdateInstallMode {
                 "Update Carrier with your Flatpak software manager or run `flatpak update io.github.kristofferr.carrier`."
                     .into(),
             ),
+            manual_url: Some(FLATPAK_UPDATE_URL),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn manual_linux() -> Self {
+        Self {
+            kind: UpdateInstallKind::Manual,
+            button_label: Some("Open Carrier downloads".into()),
+            instructions: Some(
+                "Update Carrier with the package manager or installation method you used.".into(),
+            ),
+            manual_url: Some(RELEASES_URL),
         }
     }
 
@@ -153,32 +172,99 @@ fn command_available(program: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn pacman_owns_carrier_with(
+    current_executable: Option<&std::path::Path>,
+    mut owns: impl FnMut(&std::path::Path) -> bool,
+) -> bool {
+    let system_carrier = std::path::Path::new("/usr/bin/carrier");
+    let paths = [
+        Some(system_carrier),
+        current_executable.filter(|path| *path != system_carrier),
+    ];
+
+    paths.into_iter().flatten().any(&mut owns)
+}
+
 #[cfg(target_os = "linux")]
-fn pacman_owns_current_executable() -> bool {
-    let Ok(executable) = std::env::current_exe() else {
+fn pacman_owns_carrier() -> bool {
+    let current_executable = std::env::current_exe().ok();
+    pacman_owns_carrier_with(current_executable.as_deref(), |path| {
+        std::process::Command::new("/usr/bin/pacman")
+            .arg("-Qo")
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn appimage_runtime_paths_match(
+    current_executable: &std::path::Path,
+    appimage: &std::path::Path,
+    appdir: &std::path::Path,
+    temp_dir: &std::path::Path,
+) -> bool {
+    appimage.is_absolute()
+        && appdir.is_absolute()
+        && appdir.parent() == Some(temp_dir)
+        && appdir
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| name.starts_with(".mount_"))
+        && current_executable.starts_with(appdir)
+        && current_executable != appdir
+}
+
+#[cfg(target_os = "linux")]
+fn is_genuine_appimage_runtime() -> bool {
+    use tauri::utils::config::BundleType;
+
+    if tauri::utils::platform::bundle_type() != Some(BundleType::AppImage) {
+        return false;
+    }
+    let (Some(appimage), Some(appdir), Ok(current_executable)) = (
+        std::env::var_os("APPIMAGE"),
+        std::env::var_os("APPDIR"),
+        std::env::current_exe(),
+    ) else {
         return false;
     };
-    std::process::Command::new("pacman")
-        .arg("-Qo")
-        .arg(executable)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    let appimage = std::path::PathBuf::from(appimage);
+    let appdir = std::path::PathBuf::from(appdir);
+    appimage.is_file()
+        && appimage_runtime_paths_match(
+            &current_executable,
+            &appimage,
+            &appdir,
+            &std::env::temp_dir(),
+        )
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy)]
+struct LinuxUpdateEvidence {
+    flatpak: bool,
+    pacman_owned: bool,
+    system_carrier_exists: bool,
+    appimage_runtime: bool,
 }
 
 #[cfg(any(target_os = "linux", test))]
 fn linux_update_install_mode(
-    flatpak: bool,
-    pacman_owned: bool,
+    evidence: LinuxUpdateEvidence,
     has_paru: bool,
     has_yay: bool,
 ) -> UpdateInstallMode {
-    if flatpak {
+    if evidence.flatpak {
         UpdateInstallMode::flatpak()
-    } else if pacman_owned {
+    } else if evidence.pacman_owned {
         UpdateInstallMode::aur(has_paru, has_yay)
+    } else if evidence.system_carrier_exists || !evidence.appimage_runtime {
+        UpdateInstallMode::manual_linux()
     } else {
         UpdateInstallMode::built_in()
     }
@@ -188,8 +274,12 @@ fn current_update_install_mode() -> UpdateInstallMode {
     #[cfg(target_os = "linux")]
     {
         linux_update_install_mode(
-            is_flatpak(),
-            pacman_owns_current_executable(),
+            LinuxUpdateEvidence {
+                flatpak: is_flatpak(),
+                pacman_owned: pacman_owns_carrier(),
+                system_carrier_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
+                appimage_runtime: is_genuine_appimage_runtime(),
+            },
             command_available("paru"),
             command_available("yay"),
         )
@@ -393,10 +483,9 @@ pub(crate) async fn check_for_updates(app: tauri::AppHandle) -> Result<String, S
     }
 }
 
-/// Describe whether this installation can safely replace itself. AUR packages
-/// are managed by pacman even though they reuse Carrier's signed Debian bundle,
-/// so letting Tauri invoke `dpkg` would always fail and would bypass pacman's
-/// ownership database if forced.
+/// Describe whether this installation can safely replace itself. Linux updates
+/// fail closed unless the process has positive AppImage runtime evidence, and a
+/// package-owned canonical binary takes precedence over a shadowing AppImage.
 #[tauri::command]
 pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
     current_update_install_mode_off_main().await
@@ -407,22 +496,21 @@ pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
 /// accepted from the webview.
 #[tauri::command]
 pub(crate) async fn open_manual_update() -> Result<(), String> {
-    if !current_update_install_mode_off_main().await?.is_manual() {
+    let mode = current_update_install_mode_off_main().await?;
+    let Some(manual_url) = mode.manual_url else {
         return Err("This Carrier installation supports built-in updates.".into());
-    }
+    };
 
     #[cfg(target_os = "linux")]
     {
-        let package_url = if is_flatpak() {
-            FLATPAK_UPDATE_URL
-        } else {
-            AUR_PACKAGE_URL
-        };
-        open::that_detached(package_url).map_err(|error| error.to_string())
+        open::that_detached(manual_url).map_err(|error| error.to_string())
     }
 
     #[cfg(not(target_os = "linux"))]
-    Err("No manual update page is configured for this platform.".into())
+    {
+        let _ = manual_url;
+        Err("No manual update page is configured for this platform.".into())
+    }
 }
 
 /// Return the last version found by automatic/manual discovery without another
@@ -1008,9 +1096,10 @@ pub(crate) fn open_custom_css(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_messenger_preflight_attempt, linux_update_install_mode, should_surface_update,
-        MessengerPreflightAttempt, MessengerPreflightDecision, UpdateInstallGuard,
-        UpdateInstallKind, MESSENGER_DNS_MAX_ATTEMPTS,
+        appimage_runtime_paths_match, classify_messenger_preflight_attempt,
+        linux_update_install_mode, pacman_owns_carrier_with, should_surface_update,
+        LinuxUpdateEvidence, MessengerPreflightAttempt, MessengerPreflightDecision,
+        UpdateInstallGuard, UpdateInstallKind, MESSENGER_DNS_MAX_ATTEMPTS,
     };
     use crate::preflight::MessengerPreflightError;
     use std::io::ErrorKind;
@@ -1064,7 +1153,13 @@ mod tests {
 
     #[test]
     fn pacman_owned_install_uses_the_available_aur_helper() {
-        let paru = linux_update_install_mode(false, true, true, true);
+        let pacman_install = LinuxUpdateEvidence {
+            flatpak: false,
+            pacman_owned: true,
+            system_carrier_exists: true,
+            appimage_runtime: false,
+        };
+        let paru = linux_update_install_mode(pacman_install, true, true);
         assert_eq!(paru.kind, UpdateInstallKind::Manual);
         assert_eq!(
             paru.instructions.as_deref(),
@@ -1079,13 +1174,13 @@ mod tests {
             })
         );
 
-        let yay = linux_update_install_mode(false, true, false, true);
+        let yay = linux_update_install_mode(pacman_install, false, true);
         assert_eq!(
             yay.instructions.as_deref(),
             Some("Run yay -S carrier to update.")
         );
 
-        let generic = linux_update_install_mode(false, true, false, false);
+        let generic = linux_update_install_mode(pacman_install, false, false);
         assert_eq!(
             generic.instructions.as_deref(),
             Some("Update the carrier package with your AUR helper.")
@@ -1093,15 +1188,95 @@ mod tests {
     }
 
     #[test]
-    fn non_pacman_install_keeps_the_builtin_updater() {
-        let mode = linux_update_install_mode(false, false, true, true);
+    fn shadowing_appimage_does_not_hide_the_package_owned_system_binary() {
+        let shadowing_appimage = std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier");
+        let pacman_owned = pacman_owns_carrier_with(Some(shadowing_appimage), |path| {
+            path == std::path::Path::new("/usr/bin/carrier")
+        });
+        assert!(pacman_owned);
+
+        let mode = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: false,
+                pacman_owned,
+                system_carrier_exists: true,
+                appimage_runtime: true,
+            },
+            true,
+            false,
+        );
+        assert_eq!(mode.kind, UpdateInstallKind::Manual);
+        assert_eq!(mode.manual_url, Some(super::AUR_PACKAGE_URL));
+    }
+
+    #[test]
+    fn genuine_standalone_appimage_keeps_the_builtin_updater() {
+        assert!(appimage_runtime_paths_match(
+            std::path::Path::new("/tmp/.mount_Carrie/usr/bin/carrier"),
+            std::path::Path::new("/home/user/Applications/Carrier.AppImage"),
+            std::path::Path::new("/tmp/.mount_Carrie"),
+            std::path::Path::new("/tmp"),
+        ));
+        let mode = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: false,
+                pacman_owned: false,
+                system_carrier_exists: false,
+                appimage_runtime: true,
+            },
+            true,
+            true,
+        );
         assert_eq!(mode.kind, UpdateInstallKind::BuiltIn);
         assert_eq!(mode.instructions, None);
     }
 
     #[test]
+    fn ambiguous_linux_install_fails_closed_to_manual_updates() {
+        assert!(!appimage_runtime_paths_match(
+            std::path::Path::new("/usr/bin/carrier"),
+            std::path::Path::new("/home/user/Carrier.AppImage"),
+            std::path::Path::new("/tmp/.mount_Carrie"),
+            std::path::Path::new("/tmp"),
+        ));
+        let mode = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: false,
+                pacman_owned: false,
+                system_carrier_exists: false,
+                appimage_runtime: false,
+            },
+            true,
+            true,
+        );
+        assert_eq!(mode.kind, UpdateInstallKind::Manual);
+        assert_eq!(mode.manual_url, Some(super::RELEASES_URL));
+
+        let shadowed_system_install = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: false,
+                pacman_owned: false,
+                system_carrier_exists: true,
+                appimage_runtime: true,
+            },
+            true,
+            true,
+        );
+        assert_eq!(shadowed_system_install.kind, UpdateInstallKind::Manual);
+    }
+
+    #[test]
     fn flatpak_install_uses_distribution_owned_updates() {
-        let mode = linux_update_install_mode(true, true, true, true);
+        let mode = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: true,
+                pacman_owned: true,
+                system_carrier_exists: true,
+                appimage_runtime: true,
+            },
+            true,
+            true,
+        );
         assert_eq!(mode.kind, UpdateInstallKind::Manual);
         assert_eq!(
             mode.button_label.as_deref(),
