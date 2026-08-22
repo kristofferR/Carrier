@@ -148,7 +148,7 @@
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
+          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
@@ -271,6 +271,18 @@
           [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
           "Badge counts", "Whether the badge shows unread messages or unread conversations.",
           !settings.unread_badge,
+        );
+      }
+
+      // Linux: tiling WMs manage windows themselves, so Automatic drops the
+      // redundant title bar there and keeps it on floating desktops.
+      function titleBarRow() {
+        return selectRow(
+          "title_bar", "auto",
+          [["auto", "Automatic"], ["show", "Shown"], ["hide", "Hidden"]],
+          "Title Bar",
+          "Automatic hides the title bar on tiling window managers (Hyprland, Sway, i3…) and keeps it on regular desktops.",
+          false,
         );
       }
 
@@ -450,6 +462,7 @@
       const CUSTOM_ROWS = {
         theme: themeRow,
         zoom: zoomRow,
+        title_bar: titleBarRow,
         badge_mode: badgeModeRow,
         download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,
