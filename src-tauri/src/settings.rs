@@ -57,6 +57,11 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
+    /// Linux: window title bar visibility — "auto" (hidden on tiling window
+    /// managers, where the compositor moves/closes windows and the GTK header
+    /// bar is dead weight; shown on floating desktops, where it is also how
+    /// you drag and close the window), "show", or "hide".
+    pub(crate) title_bar: String,
     /// Windows: hide the main window into the tray when it is minimized.
     pub(crate) hide_on_minimize: bool,
     /// Windows: hide the main window into the tray when it loses focus.
@@ -132,6 +137,9 @@ impl Settings {
         if self.download_behavior != "downloads" && self.download_behavior != "ask" {
             self.download_behavior = "downloads".into();
         }
+        if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
+            self.title_bar = "auto".into();
+        }
         // Flatpak owns updates, and autostart requires the Background portal
         // rather than writing a host desktop file from the sandbox.
         if flatpak {
@@ -166,6 +174,7 @@ impl Default for Settings {
             theme: "system".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
+            title_bar: "auto".into(),
             hide_on_minimize: false,
             hide_on_focus_loss: false,
             hide_taskbar_icon: false,
@@ -618,6 +627,11 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = window.set_background_color(Some(splash_background(s)));
+        // Title-bar visibility follows the setting live, on every window —
+        // the Settings dialog carries the same redundant header bar on
+        // tiling WMs.
+        #[cfg(target_os = "linux")]
+        let _ = window.set_decorations(crate::window::show_title_bar(s));
         if label != "settings" {
             #[cfg(not(target_os = "macos"))]
             let _ = if s.hide_menu_bar {
@@ -754,6 +768,7 @@ mod tests {
         assert_eq!(s.theme, "system", "theme should default to 'system'");
         assert!(!s.menu_bar_only, "menu_bar_only should default to false");
         assert!(!s.hide_menu_bar, "hide_menu_bar should default to false");
+        assert_eq!(s.title_bar, "auto", "title_bar should default to 'auto'");
         assert!(
             !s.hide_on_minimize,
             "hide_on_minimize should default to false"
@@ -914,6 +929,21 @@ mod tests {
         // Pre-existing installs have no `hide_menu_bar` key in settings.json.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.hide_menu_bar);
+    }
+
+    #[test]
+    fn settings_json_missing_title_bar_defaults_to_auto() {
+        // Pre-existing installs have no `title_bar` key in settings.json.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.title_bar, "auto");
+    }
+
+    #[test]
+    fn title_bar_setting_sanitizes_unknown_values_to_auto() {
+        let s: Settings = serde_json::from_str(r#"{"title_bar":"maybe"}"#).unwrap();
+        assert_eq!(s.sanitized().title_bar, "auto");
+        let s: Settings = serde_json::from_str(r#"{"title_bar":"hide"}"#).unwrap();
+        assert_eq!(s.sanitized().title_bar, "hide");
     }
 
     #[test]

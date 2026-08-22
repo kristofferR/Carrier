@@ -30,6 +30,8 @@ interface CarrierSettings {
   theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
   hide_menu_bar?: boolean;
+  /** Linux only: "auto" hides the title bar on tiling window managers. */
+  title_bar?: "auto" | "show" | "hide";
   hide_on_minimize?: boolean;
   hide_on_focus_loss?: boolean;
   hide_taskbar_icon?: boolean;

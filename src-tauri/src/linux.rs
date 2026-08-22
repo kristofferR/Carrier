@@ -38,6 +38,54 @@ pub(crate) fn configure_messenger_webview_memory(window: &tauri::WebviewWindow) 
     }
 }
 
+/// Best-effort "is this session a tiling window manager?". Nothing in X11 or
+/// Wayland lets a client ask, so match the session's advertised desktop
+/// identifiers against the well-known tilers. Drives the "auto" title-bar
+/// default; Settings → Appearance → Title Bar overrides it either way.
+pub(crate) fn is_tiling_wm() -> bool {
+    static TILING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TILING.get_or_init(|| {
+        [
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+        ]
+        .iter()
+        .filter_map(|var| std::env::var(var).ok())
+        .any(|value| is_tiling_desktop(&value))
+    })
+}
+
+/// True when a desktop identifier (possibly colon-separated, as in
+/// XDG_CURRENT_DESKTOP) names a window manager that tiles by default.
+fn is_tiling_desktop(value: &str) -> bool {
+    const TILERS: &[&str] = &[
+        "hyprland",
+        "sway",
+        "swayfx",
+        "i3",
+        "i3wm",
+        "river",
+        "niri",
+        "bspwm",
+        "dwm",
+        "dwl",
+        "qtile",
+        "awesome",
+        "xmonad",
+        "herbstluftwm",
+        "leftwm",
+        "spectrwm",
+        "wmii",
+        "ratpoison",
+        "stumpwm",
+    ];
+    value
+        .split(':')
+        .map(|segment| segment.trim().to_ascii_lowercase())
+        .any(|segment| TILERS.contains(&segment.as_str()))
+}
+
 fn theme_for_color_scheme(scheme: ColorScheme) -> Option<tauri::Theme> {
     match scheme {
         ColorScheme::PreferDark => Some(tauri::Theme::Dark),
@@ -171,6 +219,22 @@ mod tests {
             Some(tauri::webview::Color(255, 255, 255, 255))
         );
         assert_eq!(background_for_color_scheme(ColorScheme::NoPreference), None);
+    }
+
+    #[test]
+    fn tiling_desktops_are_recognized_per_segment_case_insensitively() {
+        assert!(is_tiling_desktop("Hyprland"));
+        assert!(is_tiling_desktop("sway"));
+        assert!(is_tiling_desktop("niri"));
+        assert!(is_tiling_desktop("i3"));
+        assert!(is_tiling_desktop("wlroots:Sway"));
+        assert!(!is_tiling_desktop("GNOME"));
+        assert!(!is_tiling_desktop("KDE"));
+        assert!(!is_tiling_desktop("ubuntu:GNOME"));
+        assert!(!is_tiling_desktop("XFCE"));
+        assert!(!is_tiling_desktop(""));
+        // Substrings must not match — only whole identifiers.
+        assert!(!is_tiling_desktop("swayed"));
     }
 
     #[test]
