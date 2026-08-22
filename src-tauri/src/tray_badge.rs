@@ -353,8 +353,10 @@ mod tests {
 
     fn white_pixels(pixels: &[u8]) -> usize {
         pixels
-            .chunks_exact(4)
-            .filter(|pixel| *pixel == WHITE)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|&&pixel| pixel == WHITE)
             .count()
     }
 
@@ -377,7 +379,12 @@ mod tests {
     #[test]
     fn circle_covers_the_expected_corner_area() {
         let pixels = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Count(1));
-        let visible = pixels.chunks_exact(4).filter(|pixel| pixel[3] > 0).count();
+        let visible = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[3] > 0)
+            .count();
         assert!((2_600..3_200).contains(&visible));
     }
 
@@ -385,8 +392,10 @@ mod tests {
     fn fully_covered_badge_pixels_are_opaque() {
         let pixels = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Count(1));
         assert!(pixels
-            .chunks_exact(4)
-            .any(|pixel| pixel == BADGE_RED.as_slice()));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel == &BADGE_RED));
     }
 
     #[test]
@@ -414,8 +423,10 @@ mod tests {
         assert_eq!(badge.len(), 32 * 32 * 4);
         // The centre of the disc is fully covered, so it is opaque Messenger-red.
         assert!(badge
-            .chunks_exact(4)
-            .any(|pixel| pixel == BADGE_RED.as_slice()));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel == &BADGE_RED));
         // The corners fall outside the circle and stay transparent.
         assert_eq!(&badge[0..4], &[0, 0, 0, 0]);
     }

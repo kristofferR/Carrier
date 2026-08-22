@@ -256,7 +256,7 @@ fn rgba_to_argb(mut pixels: Vec<u8>) -> Vec<u8> {
         0,
         "bundled tray icon must contain complete RGBA pixels"
     );
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.rotate_right(1);
     }
     pixels
@@ -285,7 +285,7 @@ fn tint_symbolic_rgba(source: &[u8], dark_panel: bool) -> Vec<u8> {
         [55, 58, 64]
     };
     let mut pixels = source.to_vec();
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[..3].copy_from_slice(&tint);
     }
     pixels
@@ -602,7 +602,7 @@ fn tint_symbolic(rgba: &[u8], dark_taskbar: bool) -> Vec<u8> {
         [0x40, 0x40, 0x40]
     };
     let mut pixels = rgba.to_vec();
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[..3].copy_from_slice(&rgb);
     }
     pixels
@@ -781,8 +781,9 @@ mod tests {
             tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
                 .unwrap();
         assert_eq!((image.width(), image.height()), (128, 128));
-        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
-        assert!(image.rgba().chunks_exact(4).any(|pixel| pixel[3] == 255));
+        let (pixels, _) = image.rgba().as_chunks::<4>();
+        assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+        assert!(pixels.iter().any(|pixel| pixel[3] == 255));
     }
 
     #[test]
