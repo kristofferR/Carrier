@@ -134,7 +134,7 @@ tauri-plugin-deep-link = "2"
 # Raw WinRT for the toast module (text input, toast tag/group, Action Center
 # history removal — none of which notify-rust's backend exposes). Already in the
 # tree transitively via tauri-winrt-notification, so it adds no new build cost.
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Data_Xml_Dom",
     "Foundation",
     "Foundation_Collections",
