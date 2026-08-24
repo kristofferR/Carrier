@@ -1850,8 +1850,10 @@ pub fn run() {
 
             // A theme switch or blank-webview recovery destroys and rebuilds
             // windows; don't let the momentary zero-window state quit the app.
-            // The same last-window-closed event fires on macOS when the traffic
-            // light hides the window, so Hide on Close must prevent exit too.
+            // The same last-window-destroyed event (code: None) also fires on
+            // macOS after the traffic light closes the window, so Hide on Close
+            // must prevent that exit. Cmd+Q / Carrier menu Quit use NSApp
+            // terminate: and never reach this handler.
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
                 let state = app.state::<AppState>();
                 let recreating = state.recreating.load(Ordering::SeqCst);

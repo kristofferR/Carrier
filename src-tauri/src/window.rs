@@ -493,10 +493,16 @@ pub(crate) fn should_hide_on_close(hide_on_close: bool, has_tray: bool) -> bool 
     hide_on_close && (has_tray || cfg!(target_os = "macos"))
 }
 
-/// Whether a window-close-driven `ExitRequested` should keep the process alive.
+/// Whether a last-window `ExitRequested` should keep the process alive.
 ///
-/// `code: None` is the last-window-closed path (including the macOS traffic
-/// light). Explicit `app.exit` / Quit carry `Some(code)` and must still terminate.
+/// tauri-runtime-wry emits this event in two cases only:
+/// - `code: None` — the last window was destroyed (traffic-light / Cmd+W after
+///   the window actually goes away, or a themed rebuild's zero-window gap).
+/// - `code: Some(n)` — `AppHandle::exit(n)` (tray Quit, updater relaunch).
+///
+/// Native Carrier menu Quit / Cmd+Q do **not** hit this predicate. They use
+/// muda's predefined `.quit()`, which on macOS is `[NSApp terminate:]` and
+/// never emits `ExitRequested` (tauri#9198, tauri#13778).
 pub(crate) fn should_prevent_app_exit(
     recreating: bool,
     hide_on_close: bool,
@@ -1254,7 +1260,9 @@ mod tests {
     }
 
     #[test]
-    fn explicit_quit_is_not_prevented() {
+    fn app_exit_with_a_code_is_not_prevented() {
+        // Tray Quit and other AppHandle::exit(0) callers. Native Cmd+Q does not
+        // emit ExitRequested at all (see should_prevent_app_exit).
         assert!(!should_prevent_app_exit(false, true, true, Some(0)));
         assert!(!should_prevent_app_exit(true, true, true, Some(0)));
     }
