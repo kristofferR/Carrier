@@ -3,6 +3,7 @@ import {
   ConversationNotificationTracker,
   groupPreviewSender,
   isOwnMessagePreview,
+  NotificationCorrelationQueue,
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
@@ -15,6 +16,7 @@ import {
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  waitForPageNotificationMatch,
 } from "./notification-fallback";
 
 const memoryStorage = () => {
@@ -692,6 +694,74 @@ describe("PageNotificationQueue", () => {
   });
 });
 
+describe("NotificationCorrelationQueue", () => {
+  type RowSignal = {
+    key: string;
+    at: number;
+    title: string;
+    body: string;
+    threadPath: string;
+    muted: boolean;
+  };
+
+  test("settles a page-first signal when its muted row arrives", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    const deliveryGate = waitForPageNotificationMatch(signal, 100);
+    const matched = queue.consumePageForRow(
+      { key: "1", title: "Jane", body: "Hello" },
+      1_100,
+      3_000,
+    );
+    matched!.threadMuted = true;
+
+    expect(matched).toBe(signal);
+    expect(await deliveryGate).toBe("matched");
+    expect(signal.matched).toBe(true);
+    expect(signal.threadMuted).toBe(true);
+  });
+
+  test("holds an unmatched page-first signal until the correlation window closes", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
+  });
+
+  test("matches a row-first muted signal after its DOM row is virtualized", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Hello",
+      threadPath: "/t/1/",
+      muted: true,
+    });
+
+    const matched = queue.consumeRowForPage("Jane", "Hello", 1_500, 3_000);
+    expect(matched).toMatchObject({ key: "1", threadPath: "/t/1/", muted: true });
+    expect(queue.getRow("1")).toBeUndefined();
+  });
+
+  test("does not guess between indistinguishable row-first signals", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    for (const key of ["1", "2"]) {
+      queue.addRow({
+        key,
+        at: 1_000,
+        title: "Jane",
+        body: "Same",
+        threadPath: `/t/${key}/`,
+        muted: key === "1",
+      });
+    }
+
+    expect(queue.consumeRowForPage("Jane", "Same", 1_500, 3_000)).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
+    expect(queue.getRow("2")).toBeDefined();
+  });
+});
+
 describe("UnreadArrivalTracker", () => {
   test("returns the most recently changed rows when the unread count increases", () => {
     const tracker = new UnreadArrivalTracker();
@@ -739,6 +809,16 @@ describe("UnreadArrivalTracker", () => {
       tracker.observeUnreadCount(3, 1_200, 2_000, false, undefined, new Set(["new-message"])),
     ).toEqual([]);
     expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
+  test("uses the title delta but excludes muted rows from attribution", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted"], 1_100);
+    tracker.markRowsChanged(["unmuted"], 1_200);
+    expect(
+      tracker.observeUnreadCount(5, 1_300, 2_000, false, undefined, new Set(["unmuted"])),
+    ).toEqual(["unmuted"]);
   });
 
   test("expires retained mutations that outlive the attribution window", () => {

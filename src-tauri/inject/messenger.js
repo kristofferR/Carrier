@@ -3019,6 +3019,219 @@
     return weight >= 600 && text.trim().length > 1;
   }
 
+  // inject/src/messenger/lib/mute.ts
+  var MUTE_LABEL_LIMIT = 60;
+  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
+  var MUTE_ACTION_RE = /^mute(?:\s|$)/i;
+  var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
+  var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
+  var MUTED_ROW_ICON_SHAPE = 2001357332;
+  var MUTED_THREAD_LIMIT = 500;
+  function ignoresMutedConversations(settings) {
+    return settings?.ignore_muted_conversations !== false;
+  }
+  function suppressMutedDelivery(muted, settings) {
+    return muted && ignoresMutedConversations(settings);
+  }
+  function suppressNotificationDelivery(muted, settings) {
+    return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
+  }
+  function conversationMuteFromLabel(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
+    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
+    return null;
+  }
+  function isExplicitUnmuteAction(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    return text.length <= MUTE_LABEL_LIMIT && UNMUTE_ACTION_RE.test(text);
+  }
+  function muteSignalFromSource(source) {
+    if (source.attribute === "alt") return null;
+    const signal = conversationMuteFromLabel(source.value);
+    if (signal === null) return null;
+    const tag = source.tagName.toLowerCase();
+    const role = (source.role || "").toLowerCase();
+    if (UNMUTE_ACTION_RE.test(source.value) || MUTE_ACTION_RE.test(source.value)) {
+      return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
+    }
+    if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
+      return null;
+    }
+    return tag === "svg" || role === "img" || source.containsSvg === true ? signal : null;
+  }
+  function muteSignalFromLabels(labels) {
+    let muted = false;
+    let unmuted = false;
+    for (const label of labels) {
+      const signal = conversationMuteFromLabel(label);
+      if (signal === true) muted = true;
+      else if (signal === false) unmuted = true;
+    }
+    if (muted) return true;
+    if (unmuted) return false;
+    return null;
+  }
+  function isMutedRowIconShape(shape) {
+    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= 24 && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && shape.shapeHash === MUTED_ROW_ICON_SHAPE;
+  }
+  var svgShapeHash = (svg) => {
+    let shapeText = "";
+    for (const shape of svg.querySelectorAll("path, line, polyline, circle")) {
+      shapeText += `${shape.tagName}:${shape.getAttribute("d") || ""}:${shape.getAttribute("points") || ""}:${shape.getAttribute("cx") || ""}:${shape.getAttribute("cy") || ""};`;
+    }
+    let hash = 2166136261;
+    for (let index = 0; index < shapeText.length; index++) {
+      hash ^= shapeText.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  };
+  function hasMutedRowIcon(root) {
+    if (!(root instanceof Element)) return false;
+    const rootRect = root.getBoundingClientRect();
+    for (const svg of root.querySelectorAll("svg")) {
+      const rect = svg.getBoundingClientRect();
+      if (isMutedRowIconShape({
+        width: rect.width,
+        height: rect.height,
+        rightGap: rootRect.right - rect.right,
+        interactive: !!svg.closest(
+          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
+        ),
+        ariaHidden: svg.getAttribute("aria-hidden") === "true",
+        viewBox: svg.getAttribute("viewBox") || "",
+        pathCount: svg.querySelectorAll("path").length,
+        shapeHash: svgShapeHash(svg)
+      })) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function resolveMuteObservation(labels, unread) {
+    const signal = muteSignalFromLabels(labels);
+    if (signal !== null) return signal;
+    if (!unread) return false;
+    return void 0;
+  }
+  function collectMuteLabels(root, includeActions = true) {
+    const labels = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (value) => {
+      const text = (value || "").replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      labels.push(text);
+    };
+    const inspect = (el) => {
+      for (const attr of LABEL_ATTRS) {
+        const value = el.getAttribute(attr);
+        if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
+          continue;
+        }
+        if (value && muteSignalFromSource({
+          value,
+          tagName: el.tagName,
+          role: el.getAttribute("role"),
+          attribute: attr,
+          containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg")
+        }) !== null) {
+          push(value);
+        }
+      }
+    };
+    if (root instanceof Element) inspect(root);
+    for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
+      inspect(el);
+    }
+    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
+    return labels;
+  }
+  var MutedThreadStore = class {
+    constructor() {
+      __publicField(this, "states", /* @__PURE__ */ new Map());
+    }
+    observe(id, muted) {
+      if (!id || muted === void 0) return;
+      if (this.states.has(id)) this.states.delete(id);
+      this.states.set(id, muted);
+      if (this.states.size > MUTED_THREAD_LIMIT) {
+        this.states.delete(this.states.keys().next().value);
+      }
+    }
+    isMuted(id) {
+      return this.states.get(id) === true;
+    }
+    invalidateMute(id) {
+      if (id) this.observe(id, false);
+    }
+    knownMutedUnread(unreadIds) {
+      for (const id of unreadIds) {
+        if (this.states.get(id) === true) return true;
+      }
+      return false;
+    }
+  };
+  var mutedThreads = new MutedThreadStore();
+  var actionInvalidationStarted = false;
+  var threadIdFromActionTarget = (target) => {
+    const row = target.closest('[role="row"]');
+    const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
+    return /\/t\/([^/?#]+)/.exec(href)?.[1] || "";
+  };
+  function initMuteActionInvalidation() {
+    if (actionInvalidationStarted) return;
+    actionInvalidationStarted = true;
+    let recentRow = null;
+    const rememberRow = (target) => {
+      if (!(target instanceof Element)) return;
+      const id = threadIdFromActionTarget(target);
+      if (id) recentRow = { id, at: Date.now() };
+    };
+    document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
+    document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (!event.isTrusted) return;
+        if (!(event.target instanceof Element)) return;
+        rememberRow(event.target);
+        const action = event.target.closest(
+          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"]'
+        );
+        if (!action) return;
+        const label = action.getAttribute("aria-label") || action.getAttribute("title") || action.textContent || "";
+        if (!isExplicitUnmuteAction(label)) return;
+        const rowId = threadIdFromActionTarget(action);
+        const openId = /\/t\/([^/?#]+)/.exec(location.pathname)?.[1] || "";
+        const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
+        const id = rowId || recentId || openId;
+        if (id) mutedThreads.invalidateMute(id);
+      },
+      true
+    );
+  }
+  function observeConversationMute(id, root, unread) {
+    mutedThreads.observe(
+      id,
+      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false), unread)
+    );
+    return mutedThreads.isMuted(id);
+  }
+  function observeOpenThreadMute(id, roots) {
+    const labels = [];
+    for (const root of roots) {
+      for (const label of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label) !== null) labels.push(label);
+      }
+    }
+    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
+    return mutedThreads.isMuted(id);
+  }
+
   // inject/src/messenger/lib/notification-fallback.ts
   var READ_SINCE_LIMIT = 500;
   var ConversationNotificationTracker = class {
@@ -3502,6 +3715,11 @@
       __publicField(this, "signals", []);
     }
     add(signal) {
+      if (!signal.matchPromise) {
+        signal.matchPromise = new Promise((resolve) => {
+          signal.settleMatch = resolve;
+        });
+      }
       this.signals.push(signal);
       if (this.signals.length > 20) this.signals.shift();
       return signal;
@@ -3547,7 +3765,64 @@
       }
       this.signals.splice(index, 1);
       signal.matched = true;
+      signal.settleMatch?.();
       return signal;
+    }
+    discard(signal) {
+      const index = this.signals.indexOf(signal);
+      if (index !== -1) this.signals.splice(index, 1);
+    }
+  };
+  function waitForPageNotificationMatch(signal, timeoutMs) {
+    if (signal.matched) return Promise.resolve("matched");
+    if (!signal.matchPromise) return Promise.resolve("timeout");
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), timeoutMs);
+      signal.matchPromise.then(() => {
+        clearTimeout(timer);
+        resolve("matched");
+      });
+    });
+  }
+  var NotificationCorrelationQueue = class {
+    constructor() {
+      __publicField(this, "pages", new PageNotificationQueue());
+      __publicField(this, "rows", /* @__PURE__ */ new Map());
+    }
+    addPage(signal) {
+      return this.pages.add(signal);
+    }
+    consumePageForRow(row, rowChangeAt, matchWindowMs, candidateRows) {
+      return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+    }
+    discardPage(signal) {
+      this.pages.discard(signal);
+    }
+    addRow(row) {
+      const previous = this.rows.get(row.key);
+      this.rows.delete(row.key);
+      this.rows.set(row.key, row);
+      if (this.rows.size > 50) this.rows.delete(this.rows.keys().next().value);
+      return previous;
+    }
+    getRow(key) {
+      return this.rows.get(key);
+    }
+    removeRow(key) {
+      const row = this.rows.get(key);
+      this.rows.delete(key);
+      return row;
+    }
+    consumeRowForPage(title, body, at, matchWindowMs) {
+      for (const [key, row] of this.rows) {
+        const age = at - row.at;
+        if (age < 0 || age > matchWindowMs) this.rows.delete(key);
+      }
+      const matches = [...this.rows.values()].filter(
+        (row) => notificationTextMatches(title, body, row.title, row.body)
+      );
+      if (matches.length !== 1) return null;
+      return this.removeRow(matches[0].key) ?? null;
     }
   };
   var UnreadArrivalTracker = class {
@@ -3882,7 +4157,13 @@
     const m = (title || "").match(/^\s*\((\d+)\)/);
     return m ? parseInt(m[1], 10) : 0;
   }
-  function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy) {
+  function reconcileMutedUnreadKnowledge(previous, observedMutedUnread, conversationListTrustworthy) {
+    return conversationListTrustworthy ? observedMutedUnread : previous || observedMutedUnread;
+  }
+  function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy, mutedUnreadKnown = false, previousFilteredCount = null) {
+    if (mutedUnreadKnown) {
+      return conversationListTrustworthy ? unreadConversations : previousFilteredCount;
+    }
     if (!conversationListTrustworthy) return titleCount;
     if (unreadConversations === 0) return 0;
     return Math.max(titleCount, unreadConversations);
@@ -4136,36 +4417,29 @@
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
-    const pendingFallbacks = /* @__PURE__ */ new Map();
-    const unmatchedPageNotifications = new PageNotificationQueue();
+    const notificationCorrelations = new NotificationCorrelationQueue();
     const markPageNotification = (title, body) => {
-      let match = null;
-      let ambiguous = false;
-      for (const entry of pendingFallbacks) {
-        if (!notificationTextMatches(title, body, entry[1].title, entry[1].body)) continue;
-        if (match) {
-          ambiguous = true;
-          break;
-        }
-        match = entry;
-      }
-      if (ambiguous) return {};
+      const match = notificationCorrelations.consumeRowForPage(
+        title,
+        body,
+        Date.now(),
+        PAGE_NOTIFICATION_MATCH_MS
+      );
       if (match) {
-        const [key, pending] = match;
-        clearTimeout(pending.timer);
-        pendingFallbacks.delete(key);
+        clearTimeout(match.timer);
         return {
-          threadPath: pending.threadPath,
+          threadPath: match.threadPath,
+          threadMuted: mutedThreads.isMuted(match.key),
           deliver: {
-            key,
-            fingerprint: pending.fingerprint,
-            bodyHash: notificationDedupeKey("", pending.body),
-            expect: notifiedStore.notifiedFingerprint(key)
+            key: match.key,
+            fingerprint: match.fingerprint,
+            bodyHash: notificationDedupeKey("", match.body),
+            expect: notifiedStore.notifiedFingerprint(match.key)
           },
-          dedupeKey: pending.dedupeKey
+          dedupeKey: match.dedupeKey
         };
       }
-      return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
+      return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -4176,47 +4450,62 @@
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       if (!s.mute_notifications) {
-        const hidePreview = s.hide_notification_preview;
+        const hidePreviewAtConstruction = s.hide_notification_preview === true;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
         if (pageMatch.signal) pageMatch.signal.nativeId = id;
-        avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
-          if (pageMatch.signal && !pageMatch.signal.matched) {
-            pageNotificationReceipts.add(originalTitle, originalBody, id);
-          }
-          emitNotification(
-            id,
-            hidePreview ? "Messenger" : originalTitle,
-            hidePreview ? "New message" : originalBody,
-            icon,
-            pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
-            () => {
-              this.onclick?.(new Event("click"));
-            },
-            pageMatch.threadPath ?? pageMatch.signal?.threadPath,
-            pageMatch.signal ? (delivery) => {
-              pageMatch.signal.nativeDelivery = delivery;
-              const handler = pageMatch.signal.onNativeDelivery;
-              pageMatch.signal.onNativeDelivery = void 0;
-              handler?.(delivery);
-            } : void 0
-          );
-          if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-            notifiedStore.markNotified(
-              pageMatch.deliver.key,
-              pageMatch.deliver.fingerprint,
-              pageMatch.deliver.bodyHash
+        const matchWait = pageMatch.signal?.matchPromise ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS) : Promise.resolve();
+        Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
+          ([icon]) => {
+            if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+            const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+            const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+            const threadId = threadPathId(threadPath || "");
+            const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
+            if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+              if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
+              return;
+            }
+            const hidePreview = deliverySettings.hide_notification_preview === true;
+            if (pageMatch.signal && !pageMatch.signal.matched) {
+              pageNotificationReceipts.add(originalTitle, originalBody, id);
+            }
+            emitNotification(
+              id,
+              hidePreview ? "Messenger" : originalTitle,
+              hidePreview ? "New message" : originalBody,
+              icon,
+              pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
+              () => {
+                this.onclick?.(new Event("click"));
+              },
+              threadPath,
+              pageMatch.signal ? (delivery) => {
+                pageMatch.signal.nativeDelivery = delivery;
+                const handler = pageMatch.signal.onNativeDelivery;
+                pageMatch.signal.onNativeDelivery = void 0;
+                handler?.(delivery);
+              } : void 0
             );
-          }
-          if (pageMatch.signal) {
-            pageMatch.signal.emitted = true;
-            const delivery = pageMatch.signal.pendingDelivery;
-            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+            if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
+              notifiedStore.markNotified(
+                pageMatch.deliver.key,
+                pageMatch.deliver.fingerprint,
+                pageMatch.deliver.bodyHash
+              );
+            }
+            if (pageMatch.signal) {
+              pageMatch.signal.emitted = true;
+              const delivery = pageMatch.signal.pendingDelivery;
+              if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+                notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+              }
             }
           }
-        });
+        );
+      } else if (pageMatch.signal) {
+        notificationCorrelations.discardPage(pageMatch.signal);
       }
       try {
         window.__carrierOnNotification?.();
@@ -4391,6 +4680,7 @@
           break;
         }
       }
+      const muted = observeConversationMute(id, row, unread);
       return {
         key: id,
         threadPath: `/t/${id}/`,
@@ -4406,7 +4696,8 @@
         // A photo-less group draws its members side by side; one with a photo is
         // only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
-        unread
+        unread,
+        muted
       };
     };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
@@ -4416,21 +4707,24 @@
         confirmedRepeat ? `${conversation.key}:${detectedAt}` : void 0
       );
       const bodyHash = notificationDedupeKey("", conversation.body);
-      const previous = pendingFallbacks.get(conversation.key);
+      const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
-      const pageSignal = unmatchedPageNotifications.consumeMatching(
+      const pageSignal = notificationCorrelations.consumePageForRow(
         conversation,
         detectedAt,
         PAGE_NOTIFICATION_MATCH_MS,
         routeCandidates
       );
       if (pageSignal) {
+        pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
         if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
         if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
         if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
-        if (pageSignal.emitted) {
+        if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+          pageSignal.pendingDelivery = void 0;
+        } else if (pageSignal.emitted) {
           const finishDelivery = (delivery) => {
             if (confirmedRepeat && delivery === "duplicate") {
               scheduleFallback(conversation, detectedAt, true, routeCandidates);
@@ -4452,7 +4746,25 @@
           };
         }
         pageNotificationReceipts.consumeMatching(conversation, detectedAt);
-        pendingFallbacks.delete(conversation.key);
+        return;
+      }
+      if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+        const timer2 = setTimeout(() => {
+          if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
+            notificationCorrelations.removeRow(conversation.key);
+          }
+        }, PAGE_NOTIFICATION_MATCH_MS);
+        notificationCorrelations.addRow({
+          key: conversation.key,
+          at: detectedAt,
+          timer: timer2,
+          title: conversation.title,
+          body: conversation.body,
+          threadPath: conversation.threadPath,
+          fingerprint,
+          dedupeKey,
+          confirmedRepeat
+        });
         return;
       }
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
@@ -4463,9 +4775,9 @@
       ) : rowAvatar();
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
-        if (settings.mute_notifications) {
-          if (pendingFallbacks.get(conversation.key)?.timer === timer) {
-            pendingFallbacks.delete(conversation.key);
+        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+          if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
+            notificationCorrelations.removeRow(conversation.key);
           }
           return;
         }
@@ -4474,8 +4786,13 @@
         if (!hidePreview && !icon && conversation.isGroup) {
           diag("notify.avatar", "group notification resolved no sender face and no thread picture");
         }
-        if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
-        pendingFallbacks.delete(conversation.key);
+        if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
+        const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+          notificationCorrelations.removeRow(conversation.key);
+          return;
+        }
+        notificationCorrelations.removeRow(conversation.key);
         notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
         diag(
           "notify.fallback",
@@ -4493,7 +4810,9 @@
           conversation.threadPath
         );
       }, FALLBACK_DELAY_MS);
-      pendingFallbacks.set(conversation.key, {
+      notificationCorrelations.addRow({
+        key: conversation.key,
+        at: detectedAt,
         timer,
         title: conversation.title,
         body: conversation.body,
@@ -4523,12 +4842,23 @@
       scanRunning = true;
       try {
         harvestSenderAvatars(Date.now());
+        const openId = threadIdFromHref(location.pathname);
+        if (openId) {
+          observeOpenThreadMute(openId, [
+            ...document.querySelectorAll('[role="main"]'),
+            ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
+          ]);
+        }
         const links = chatRows();
         if (!links.length) return;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
+        );
+        const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+        const notifyKeys = new Set(
+          conversations.filter((conversation) => !(ignoreMuted && conversation.muted)).map(({ key }) => key)
         );
         const detectedAt = Date.now();
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
@@ -4600,7 +4930,7 @@
           // so a first arrival inside the settle window can still report.
           listHydrated && !observed.some(({ unread }) => unread),
           readObservedKeys,
-          new Set(conversations.map(({ key: key2 }) => key2))
+          notifyKeys
         )) {
           changed.add(key);
         }
@@ -4639,7 +4969,7 @@
           const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
           const bodyHash = notificationDedupeKey("", conversation.body);
           const pageReceipt = pageReceipts.get(conversation.key);
-          const pageSignal = pageReceipt ? unmatchedPageNotifications.consumeMatching(
+          const pageSignal = pageReceipt ? notificationCorrelations.consumePageForRow(
             conversation,
             detectedAt,
             PAGE_NOTIFICATION_MATCH_MS,
@@ -4656,9 +4986,9 @@
           const receiptSuppressedRepeat = pageReceipt !== void 0 && repeatedDelivery && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
           const receiptPendingRepeat = pageReceipt !== void 0 && repeatedDelivery && pageSignal !== null && pageSignal.nativeDelivery === void 0;
           if (receiptPendingRepeat) {
-            const pending = pendingFallbacks.get(conversation.key);
+            const pending = notificationCorrelations.getRow(conversation.key);
             if (pending) clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
+            notificationCorrelations.removeRow(conversation.key);
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             pageSignal.onNativeDelivery = (delivery) => {
               if (delivery === "duplicate") {
@@ -4676,9 +5006,9 @@
             continue;
           }
           if (pageReceipt) {
-            const pending = pendingFallbacks.get(conversation.key);
+            const pending = notificationCorrelations.getRow(conversation.key);
             if (pending) clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
+            notificationCorrelations.removeRow(conversation.key);
             notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             reconciliation = "matched";
@@ -4689,18 +5019,18 @@
           }
           if (reconciliation === "matched" || reconciliation === "migrated") {
             if (changed.has(conversation.key)) stale.add(conversation.key);
-            const pending = pendingFallbacks.get(conversation.key);
+            const pending = notificationCorrelations.getRow(conversation.key);
             if (pending && !pending.confirmedRepeat) {
               clearTimeout(pending.timer);
-              pendingFallbacks.delete(conversation.key);
+              notificationCorrelations.removeRow(conversation.key);
             }
           } else if (reconciliation === "mismatched") {
             changed.delete(conversation.key);
             mismatches.push([conversation.key, fingerprint]);
-            const pending = pendingFallbacks.get(conversation.key);
+            const pending = notificationCorrelations.getRow(conversation.key);
             if (pending && pending.fingerprint !== fingerprint) {
               clearTimeout(pending.timer);
-              pendingFallbacks.delete(conversation.key);
+              notificationCorrelations.removeRow(conversation.key);
             }
           }
         }
@@ -4787,7 +5117,7 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ["class", "src", "alt", "style"]
+        attributeFilter: ["class", "src", "alt", "style", "aria-label"]
       });
       scanUnreadConversations();
       return true;
@@ -6157,20 +6487,35 @@ ${text}`)) {
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
     const unreadConversationState = () => {
+      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const openId = threadIdFromHref(location.pathname);
+      if (openId) {
+        observeOpenThreadMute(openId, [
+          ...document.querySelectorAll('[role="main"]'),
+          ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
+        ]);
+      }
       const links = chatRows();
       const seen = /* @__PURE__ */ new Set();
       let count = 0;
+      const unreadIds = [];
       for (const a of links) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
+        let unread = false;
         for (const span of row.querySelectorAll("span")) {
           if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
-            count++;
+            unread = true;
             break;
           }
         }
+        const muted = observeConversationMute(id, row, unread);
+        if (!unread) continue;
+        unreadIds.push(id);
+        if (ignoreMuted && muted) continue;
+        count++;
       }
       let scrolledFromTop = false;
       const first = links[0];
@@ -6181,11 +6526,13 @@ ${text}`)) {
       }
       return {
         count,
+        mutedUnread: ignoreMuted && unreadIds.length > count,
         ready: links.length > 0,
         trustworthy: links.length > 0 && !scrolledFromTop
       };
     };
     let last = null;
+    let mutedUnreadKnown = false;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
       last = n;
@@ -6203,14 +6550,21 @@ ${text}`)) {
         return;
       }
       const conversations = unreadConversationState();
+      mutedUnreadKnown = ignoresMutedConversations(s) ? reconcileMutedUnreadKnowledge(
+        mutedUnreadKnown,
+        conversations.mutedUnread,
+        conversations.trustworthy
+      ) : false;
       const conv = s.badge_mode === "conversations";
       const n = conv ? conversations.count : reconcileUnreadMessageCount(
         unreadCountFromTitle(document.title || ""),
         conversations.count,
-        conversations.trustworthy
+        conversations.trustworthy,
+        mutedUnreadKnown,
+        last
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
-      if (n === 0 && !ready) return;
+      if (n === null || n === 0 && !ready) return;
       setBadge(n, force);
     };
     let pending = false;
@@ -6366,6 +6720,7 @@ ${text}`)) {
     initFeature("spellcheck", initSpellcheck);
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
+    initFeature("mute-action-invalidation", initMuteActionInvalidation);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);

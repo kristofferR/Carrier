@@ -122,6 +122,12 @@ export interface PageNotificationSignal extends NotificationText {
    * regressed to this older one.
    */
   pendingDelivery?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+  /** Resolves when a row has been correlated, so page-first delivery can wait
+   * for the row's route and mute state instead of racing it. */
+  matchPromise?: Promise<void>;
+  settleMatch?: () => void;
+  /** The correlated row's live Messenger mute state. */
+  threadMuted?: boolean;
 }
 
 const normalizeNotificationText = (value: string) =>
@@ -828,6 +834,11 @@ export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
 
   add(signal: PageNotificationSignal): PageNotificationSignal {
+    if (!signal.matchPromise) {
+      signal.matchPromise = new Promise((resolve) => {
+        signal.settleMatch = resolve;
+      });
+    }
     this.signals.push(signal);
     if (this.signals.length > 20) this.signals.shift();
     return signal;
@@ -883,7 +894,90 @@ export class PageNotificationQueue {
     }
     this.signals.splice(index, 1);
     signal.matched = true;
+    signal.settleMatch?.();
     return signal;
+  }
+
+  discard(signal: PageNotificationSignal): void {
+    const index = this.signals.indexOf(signal);
+    if (index !== -1) this.signals.splice(index, 1);
+  }
+}
+
+export interface CorrelatedRowNotification extends NotificationText {
+  key: string;
+  at: number;
+}
+
+export function waitForPageNotificationMatch(
+  signal: PageNotificationSignal,
+  timeoutMs: number,
+): Promise<"matched" | "timeout"> {
+  if (signal.matched) return Promise.resolve("matched");
+  if (!signal.matchPromise) return Promise.resolve("timeout");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve("timeout"), timeoutMs);
+    signal.matchPromise!.then(() => {
+      clearTimeout(timer);
+      resolve("matched");
+    });
+  });
+}
+
+/**
+ * Correlates page Notifications and row observations in either event order.
+ * Row entries remain keyed independently of Messenger's rendered list, so a
+ * virtualized row can disappear before the page signal arrives.
+ */
+export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification> {
+  private readonly pages = new PageNotificationQueue();
+  private readonly rows = new Map<string, Row>();
+
+  addPage(signal: PageNotificationSignal): PageNotificationSignal {
+    return this.pages.add(signal);
+  }
+
+  consumePageForRow(
+    row: NotificationText & { key?: string },
+    rowChangeAt: number,
+    matchWindowMs: number,
+    candidateRows?: Iterable<NotificationText & { key: string }>,
+  ): PageNotificationSignal | null {
+    return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+  }
+
+  discardPage(signal: PageNotificationSignal): void {
+    this.pages.discard(signal);
+  }
+
+  addRow(row: Row): Row | undefined {
+    const previous = this.rows.get(row.key);
+    this.rows.delete(row.key);
+    this.rows.set(row.key, row);
+    if (this.rows.size > 50) this.rows.delete(this.rows.keys().next().value!);
+    return previous;
+  }
+
+  getRow(key: string): Row | undefined {
+    return this.rows.get(key);
+  }
+
+  removeRow(key: string): Row | undefined {
+    const row = this.rows.get(key);
+    this.rows.delete(key);
+    return row;
+  }
+
+  consumeRowForPage(title: string, body: string, at: number, matchWindowMs: number): Row | null {
+    for (const [key, row] of this.rows) {
+      const age = at - row.at;
+      if (age < 0 || age > matchWindowMs) this.rows.delete(key);
+    }
+    const matches = [...this.rows.values()].filter((row) =>
+      notificationTextMatches(title, body, row.title, row.body),
+    );
+    if (matches.length !== 1) return null;
+    return this.removeRow(matches[0]!.key) ?? null;
   }
 }
 

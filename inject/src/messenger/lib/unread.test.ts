@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { reconcileUnreadMessageCount, unreadCountFromTitle } from "./unread";
+import {
+  reconcileMutedUnreadKnowledge,
+  reconcileUnreadMessageCount,
+  unreadCountFromTitle,
+} from "./unread";
 
 describe("unreadCountFromTitle", () => {
   test("parses Facebook's '(N)' title prefix", () => {
@@ -34,5 +38,33 @@ describe("reconcileUnreadMessageCount", () => {
   test("preserves per-message totals and never undercounts unread conversations", () => {
     expect(reconcileUnreadMessageCount(5, 2, true)).toBe(5);
     expect(reconcileUnreadMessageCount(1, 2, true)).toBe(2);
+  });
+
+  test("drops the title total when muted unreads contaminate it", () => {
+    expect(reconcileUnreadMessageCount(5, 1, true, true)).toBe(1);
+    expect(reconcileUnreadMessageCount(5, 0, true, true)).toBe(0);
+  });
+
+  test("retains the last filtered total while rows are virtualized", () => {
+    expect(reconcileUnreadMessageCount(5, 1, false, true, 3)).toBe(3);
+    expect(reconcileUnreadMessageCount(5, 1, false, true)).toBeNull();
+  });
+
+  test("keeps the title path when no muted unread is known", () => {
+    expect(reconcileUnreadMessageCount(5, 1, true, false)).toBe(5);
+    expect(reconcileUnreadMessageCount(5, 0, false, false)).toBe(5);
+  });
+});
+
+describe("reconcileMutedUnreadKnowledge", () => {
+  test("retains a trusted muted unread while the row is virtualized", () => {
+    let known = reconcileMutedUnreadKnowledge(false, true, true);
+    known = reconcileMutedUnreadKnowledge(known, false, false);
+    expect(known).toBe(true);
+    expect(reconcileUnreadMessageCount(5, 0, false, known, 3)).toBe(3);
+  });
+
+  test("clears retained knowledge after a trustworthy unmuted scan", () => {
+    expect(reconcileMutedUnreadKnowledge(true, false, true)).toBe(false);
   });
 });
