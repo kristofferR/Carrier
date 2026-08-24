@@ -79,7 +79,9 @@ use settings::{
 use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
-use window::{build_app_window, install_main_close_handler, show_settings_window};
+use window::{
+    build_app_window, install_main_close_handler, should_prevent_app_exit, show_settings_window,
+};
 
 pub(crate) fn refresh_unread_indicators(
     app: &tauri::AppHandle,
@@ -1848,12 +1850,16 @@ pub fn run() {
 
             // A theme switch or blank-webview recovery destroys and rebuilds
             // windows; don't let the momentary zero-window state quit the app.
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                if app
-                    .state::<AppState>()
-                    .recreating
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                {
+            // The same last-window-destroyed event (code: None) also fires on
+            // macOS after the traffic light closes the window, so Hide on Close
+            // must prevent that exit. Cmd+Q / Carrier menu Quit use NSApp
+            // terminate: and never reach this handler.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                let state = app.state::<AppState>();
+                let recreating = state.recreating.load(Ordering::SeqCst);
+                let has_tray = state.tray.lock().unwrap().is_some();
+                let hide_on_close = state.settings.lock().unwrap().hide_on_close;
+                if should_prevent_app_exit(recreating, hide_on_close, has_tray, code) {
                     api.prevent_exit();
                 }
             }
