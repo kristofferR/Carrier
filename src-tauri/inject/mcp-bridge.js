@@ -2362,21 +2362,37 @@
 
     // Mirror inject/src/messenger/lib/mute.ts — classifications only, never
     // the raw accessible name (it can carry a contact or a preview).
-    function muteLabelKind(value) {
-      var s = notifyNorm(value);
+    function mutePhraseKind(s) {
       if (!s || s.length > 60) return "";
       if (/^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i.test(s)) {
         return "unmute-action";
       }
       if (
-        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
+        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
           s,
         )
       ) {
         return "muted-status";
       }
-      if (/^mute(?:\s|$)/i.test(s) && !/\bmuted\b/i.test(s)) return "mute-action";
+      if ((/^mute(?:\s|$)/i.test(s) || /^turn off notifications\b/i.test(s)) && !/\bmuted\b/i.test(s)) {
+        return "mute-action";
+      }
       return "";
+    }
+
+    function muteLabelKind(value) {
+      var s = notifyNorm(value);
+      var kind = mutePhraseKind(s);
+      if (kind) return kind;
+      if (!s || s.length > 360) return "";
+      var parts = s.split(/[,;·•|/()[\]{}]|\s[-–—]\s|\.(?:\s+|$)/);
+      var found = "";
+      for (var i = 0; i < parts.length; i++) {
+        var next = mutePhraseKind(notifyNorm(parts[i]));
+        if (next === "muted-status" || next === "unmute-action") return next;
+        if (next) found = next;
+      }
+      return found;
     }
 
     function muteShape(container) {
@@ -2404,14 +2420,19 @@
       });
       var svgCount = 0;
       var smallSvgCount = 0;
+      var mutePath = false;
       container.querySelectorAll("svg").forEach(function (svg) {
         svgCount++;
         var box = rect(svg);
         var side = Math.max(box.w, box.h);
         if (side > 0 && side <= 22) smallSvgCount++;
       });
+      container.querySelectorAll("path[d]").forEach(function (path) {
+        var d = (path.getAttribute("d") || "").replace(/\s+/g, " ").trim();
+        if (d.indexOf("M29.676 7.746") === 0) mutePath = true;
+      });
       var status = "none";
-      if (labelled.mutedStatus || labelled.unmuteAction) status = "muted";
+      if (labelled.mutedStatus || labelled.unmuteAction || mutePath) status = "muted";
       else if (labelled.muteAction) status = "unmuted";
       return {
         status: status,

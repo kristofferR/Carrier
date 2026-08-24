@@ -314,6 +314,36 @@ export function initNotificationBridge() {
     return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
   };
 
+  // What each thread's row calls itself, so a harvest can check that the pane
+  // in front of it is the conversation the address bar names. In memory only.
+  const rowTitles = new Map<string, string>();
+  const ROW_TITLE_LIMIT = 300;
+  const rememberRowTitle = (key: string, title: string) => {
+    if (!key || !title) return;
+    rowTitles.delete(key);
+    rowTitles.set(key, title);
+    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
+  };
+
+  // Page-first Notifications often fire before the row pairing has a thread
+  // path. A unique muted row with this exact title is enough to suppress.
+  const mutedThreadFromTitle = (title: string): boolean => {
+    const needle = String(title || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (!needle) return false;
+    let match = false;
+    for (const [key, rowTitle] of rowTitles) {
+      if (!mutedThreads.isMuted(key)) continue;
+      const name = rowTitle.replace(/\s+/g, " ").trim().toLowerCase();
+      if (name !== needle) continue;
+      if (match) return false;
+      match = true;
+    }
+    return match;
+  };
+
   function CarrierNotification(
     this: CarrierNotificationInstance,
     title?: string,
@@ -330,7 +360,8 @@ export function initNotificationBridge() {
     );
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
     const mutedThread = suppressMutedDelivery(
-      !!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || ""),
+      (!!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || "")) ||
+        mutedThreadFromTitle(String(title || "")),
       s,
     );
     // Surface every new-message notification Facebook fires — even while
@@ -484,17 +515,6 @@ export function initNotificationBridge() {
     owner: string;
     photo: string;
   }
-
-  // What each thread's row calls itself, so a harvest can check that the pane
-  // in front of it is the conversation the address bar names. In memory only.
-  const rowTitles = new Map<string, string>();
-  const ROW_TITLE_LIMIT = 300;
-  const rememberRowTitle = (key: string, title: string) => {
-    if (!key || !title) return;
-    rowTitles.delete(key);
-    rowTitles.set(key, title);
-    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
-  };
 
   /**
    * Whether the thread pane is showing the conversation `title` names. The

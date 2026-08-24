@@ -2945,6 +2945,397 @@
     );
   }
 
+  // inject/src/messenger/lib/mute.ts
+  var MUTE_LABEL_LIMIT = 60;
+  var MUTE_COMPOSITE_LIMIT = MUTE_LABEL_LIMIT * 6;
+  var MUTED_THREAD_LIMIT = 500;
+  var MUTE_WALK_DEPTH = 24;
+  var MUTE_WALK_NODES = 4e4;
+  var MUTE_STORAGE_KEY = "__carrier_muted_threads";
+  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
+  var MUTE_ACTION_RE = /^mute(?:\s|$)|^turn off notifications\b/i;
+  var LABEL_ATTRS = ["aria-label", "title", "alt", "aria-description"];
+  var MUTE_HINT_RE = /mute|stumm|sourdine|silenci|silenzi|demp|gedempt|tyst/i;
+  var MUTE_SVG_PATH_PREFIXES = ["M29.676 7.746"];
+  var MUTE_UNTIL_KEYS = /* @__PURE__ */ new Set(["mute_until", "muteUntil", "mute_until_ms", "muteUntilMs"]);
+  var MUTED_BOOL_KEYS = /* @__PURE__ */ new Set(["is_muted", "isMuted"]);
+  function ignoresMutedConversations(settings) {
+    return settings?.ignore_muted_conversations !== false;
+  }
+  function suppressMutedDelivery(muted, settings) {
+    return muted && ignoresMutedConversations(settings);
+  }
+  function classifyMutePhrase(text) {
+    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
+    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
+    return null;
+  }
+  function muteLabelSegments(text) {
+    return text.split(/[,;·•|/()[\]{}]|\s[-–—]\s|\.(?:\s+|$)/).map((part) => part.replace(/\s+/g, " ").trim()).filter(Boolean);
+  }
+  function conversationMuteFromLabel(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text) return null;
+    const whole = classifyMutePhrase(text);
+    if (whole !== null) return whole;
+    if (text.length > MUTE_COMPOSITE_LIMIT) return null;
+    let muted = false;
+    let unmuted = false;
+    for (const segment of muteLabelSegments(text)) {
+      const signal = classifyMutePhrase(segment);
+      if (signal === true) muted = true;
+      else if (signal === false) unmuted = true;
+    }
+    if (muted) return true;
+    if (unmuted) return false;
+    return null;
+  }
+  function muteStateAfterMenuLabel(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > MUTE_COMPOSITE_LIMIT) return null;
+    const phrases = [text, ...muteLabelSegments(text)];
+    let muted = null;
+    for (const phrase of phrases) {
+      if (!phrase || phrase.length > MUTE_LABEL_LIMIT) continue;
+      if (UNMUTE_ACTION_RE.test(phrase)) muted = false;
+      else if (MUTE_ACTION_RE.test(phrase) && !/\bmuted\b/i.test(phrase)) muted = true;
+    }
+    return muted;
+  }
+  function muteSignalFromLabels(labels) {
+    let muted = false;
+    let unmuted = false;
+    for (const label of labels) {
+      const signal = conversationMuteFromLabel(label);
+      if (signal === true) muted = true;
+      else if (signal === false) unmuted = true;
+    }
+    if (muted) return true;
+    if (unmuted) return false;
+    return null;
+  }
+  function muteSignalFromSvgPaths(paths) {
+    for (const raw of paths) {
+      const d = (raw || "").replace(/\s+/g, " ").trim();
+      if (!d) continue;
+      if (MUTE_SVG_PATH_PREFIXES.some((prefix) => d.startsWith(prefix))) return true;
+    }
+    return null;
+  }
+  function resolveMuteObservation(labels, unread, svgPaths = []) {
+    const signal = muteSignalFromLabels(labels) ?? muteSignalFromSvgPaths(svgPaths);
+    if (signal !== null) return signal;
+    if (!unread) return false;
+    return void 0;
+  }
+  function collectMuteLabels(root) {
+    const labels = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (value) => {
+      const text = (value || "").replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      labels.push(text);
+    };
+    if (root instanceof Element) {
+      for (const attr of LABEL_ATTRS) push(root.getAttribute(attr));
+    }
+    for (const el of root.querySelectorAll("[aria-label], [title], [alt], [aria-description]")) {
+      for (const attr of LABEL_ATTRS) push(el.getAttribute(attr));
+    }
+    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
+    for (const el of root.querySelectorAll("span, div, i")) {
+      if (el.childElementCount > 0) continue;
+      const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (text && text.length <= MUTE_LABEL_LIMIT && MUTE_HINT_RE.test(text)) push(text);
+    }
+    return labels;
+  }
+  function collectMuteSvgPaths(root) {
+    const paths = [];
+    for (const el of root.querySelectorAll("path[d]")) {
+      const d = el.getAttribute("d");
+      if (d) paths.push(d);
+    }
+    return paths;
+  }
+  function isRecord(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value);
+  }
+  function isThreadId(value) {
+    if (typeof value === "number") return Number.isInteger(value) && value >= 1e6;
+    return typeof value === "string" && /^\d{6,}$/.test(value);
+  }
+  function threadIdFromMuteNode(rec) {
+    const key = rec.thread_key ?? rec.threadKey;
+    if (isRecord(key)) {
+      const fbid = key.thread_fbid ?? key.threadFbid;
+      if (isThreadId(fbid)) return String(fbid);
+      const other = key.other_user_id ?? key.otherUserId;
+      if (isThreadId(other)) return String(other);
+    }
+    for (const field of ["thread_fbid", "threadFbid", "thread_id", "threadId"]) {
+      if (isThreadId(rec[field])) return String(rec[field]);
+    }
+    return null;
+  }
+  function muteFlagFromNode(rec) {
+    for (const key of MUTED_BOOL_KEYS) {
+      if (typeof rec[key] === "boolean") return rec[key];
+    }
+    for (const key of MUTE_UNTIL_KEYS) {
+      const value = rec[key];
+      if (value === null || value === 0 || value === "0") return false;
+      if (typeof value === "number") return value !== 0;
+      if (typeof value === "string" && /^-?\d+$/.test(value)) return Number(value) !== 0;
+    }
+    return null;
+  }
+  function muteStatesFromPayload(payload) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    const walking = /* @__PURE__ */ new WeakSet();
+    let nodes = 0;
+    const walk = (node, depth) => {
+      if (depth > MUTE_WALK_DEPTH || nodes > MUTE_WALK_NODES || !node || typeof node !== "object") {
+        return;
+      }
+      if (walking.has(node)) return;
+      walking.add(node);
+      nodes += 1;
+      if (Array.isArray(node)) {
+        for (const item of node) walk(item, depth + 1);
+        return;
+      }
+      const rec = node;
+      const id = threadIdFromMuteNode(rec);
+      const muted = muteFlagFromNode(rec);
+      if (id && muted !== null && !seen.has(id)) {
+        seen.add(id);
+        out.push({ id, muted });
+      }
+      for (const value of Object.values(rec)) walk(value, depth + 1);
+    };
+    walk(payload, 0);
+    return out;
+  }
+  function parseFacebookPayload(text) {
+    const stripped = (text || "").replace(/^(?:for\s*\(;;\);\s*)+/, "").trim();
+    if (!stripped) return null;
+    try {
+      return JSON.parse(stripped);
+    } catch (_) {
+    }
+    const objects = [];
+    for (const line of stripped.split("\n")) {
+      const part = line.replace(/^(?:for\s*\(;;\);\s*)+/, "").trim();
+      if (!part) continue;
+      try {
+        objects.push(JSON.parse(part));
+      } catch (_) {
+      }
+    }
+    return objects.length ? objects : null;
+  }
+  var MutedThreadStore = class {
+    constructor(storage = null) {
+      __publicField(this, "storage", storage);
+      __publicField(this, "states", /* @__PURE__ */ new Map());
+      __publicField(this, "holdUntil", /* @__PURE__ */ new Map());
+      this.restore();
+    }
+    observe(id, muted, holdMs = 0) {
+      if (!id || muted === void 0) return;
+      const until = this.holdUntil.get(id) || 0;
+      if (holdMs <= 0 && Date.now() < until && this.states.get(id) !== muted) return;
+      const previous = this.states.get(id);
+      if (this.states.has(id)) this.states.delete(id);
+      this.states.set(id, muted);
+      if (this.states.size > MUTED_THREAD_LIMIT) {
+        this.states.delete(this.states.keys().next().value);
+      }
+      if (holdMs > 0) this.holdUntil.set(id, Date.now() + holdMs);
+      if (previous !== muted) this.persist();
+    }
+    isMuted(id) {
+      return this.states.get(id) === true;
+    }
+    knownMutedUnread(unreadIds) {
+      for (const id of unreadIds) {
+        if (this.states.get(id) === true) return true;
+      }
+      return false;
+    }
+    restore() {
+      if (!this.storage) return;
+      try {
+        const raw = JSON.parse(this.storage.getItem(MUTE_STORAGE_KEY) || "null");
+        if (!isRecord(raw)) return;
+        for (const [id, muted] of Object.entries(raw)) {
+          if (muted === true && /^\d+$/.test(id)) this.states.set(id, true);
+        }
+      } catch (_) {
+      }
+    }
+    persist() {
+      if (!this.storage) return;
+      try {
+        const raw = {};
+        for (const [id, muted] of this.states) {
+          if (muted) raw[id] = true;
+        }
+        this.storage.setItem(MUTE_STORAGE_KEY, JSON.stringify(raw));
+      } catch (_) {
+      }
+    }
+  };
+  var mutedThreads = new MutedThreadStore(
+    typeof localStorage === "undefined" ? null : localStorage
+  );
+  function observeConversationMute(id, root, unread) {
+    mutedThreads.observe(
+      id,
+      resolveMuteObservation(collectMuteLabels(root), unread, collectMuteSvgPaths(root))
+    );
+    return mutedThreads.isMuted(id);
+  }
+  function observeOpenThreadMute(id, roots) {
+    const labels = [];
+    const svgPaths = [];
+    for (const root of roots) {
+      for (const label of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label) !== null) labels.push(label);
+      }
+      svgPaths.push(...collectMuteSvgPaths(root));
+    }
+    mutedThreads.observe(
+      id,
+      muteSignalFromLabels(labels) ?? muteSignalFromSvgPaths(svgPaths) ?? void 0
+    );
+    return mutedThreads.isMuted(id);
+  }
+
+  // inject/src/messenger/features/mute-harvest.ts
+  var LOCAL_HOLD_MS = 1e4;
+  var MUTE_PAYLOAD_RE = /graphql|mercury|ls_req|lightspeed/i;
+  var MUTE_PAYLOAD_HINT_RE = /mute_until|muteUntil|is_muted|isMuted/;
+  var lastRowThreadId = null;
+  function harvestUrl(raw) {
+    if (!raw) return "";
+    if (typeof raw === "string") return raw;
+    if (raw instanceof URL) return raw.href;
+    if (typeof Request !== "undefined" && raw instanceof Request) return raw.url;
+    return String(raw.url || raw);
+  }
+  function shouldHarvest(raw) {
+    return MUTE_PAYLOAD_RE.test(raw);
+  }
+  function applyPayloadText(text) {
+    if (!text || !MUTE_PAYLOAD_HINT_RE.test(text)) return;
+    const payload = parseFacebookPayload(text);
+    if (!payload) return;
+    for (const { id, muted } of muteStatesFromPayload(payload)) {
+      mutedThreads.observe(id, muted);
+    }
+  }
+  function menuMuteState(item) {
+    const labels = collectMuteLabels(item);
+    labels.push((item.textContent || "").replace(/\s+/g, " ").trim());
+    let next = null;
+    for (const label of labels) {
+      const state = muteStateAfterMenuLabel(label);
+      if (state !== null) next = state;
+    }
+    return next;
+  }
+  function initMuteHarvest() {
+    try {
+      const origFetch = window.fetch;
+      window.fetch = function(...args) {
+        const pending = origFetch.apply(this, args);
+        try {
+          if (shouldHarvest(harvestUrl(args[0]))) {
+            pending.then(
+              (res) => {
+                try {
+                  if (!res.ok) return;
+                  res.clone().text().then(applyPayloadText, () => {
+                  });
+                } catch (_) {
+                }
+              },
+              () => {
+              }
+            );
+          }
+        } catch (_) {
+        }
+        return pending;
+      };
+    } catch (_) {
+    }
+    try {
+      const proto = XMLHttpRequest.prototype;
+      const origOpen = proto.open;
+      const origSend = proto.send;
+      proto.open = function(...args) {
+        try {
+          this.__carrierMuteHarvest = shouldHarvest(String(args[1] || ""));
+        } catch (_) {
+          this.__carrierMuteHarvest = false;
+        }
+        return origOpen.apply(this, args);
+      };
+      proto.send = function(...args) {
+        if (this.__carrierMuteHarvest) {
+          this.addEventListener(
+            "load",
+            () => {
+              try {
+                applyPayloadText(String(this.responseText || ""));
+              } catch (_) {
+              }
+            },
+            { once: true }
+          );
+        }
+        return origSend.apply(this, args);
+      };
+    } catch (_) {
+    }
+    document.addEventListener(
+      "pointerover",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const link = target.closest('a[href*="/t/"]');
+        const id = threadIdFromHref(link?.getAttribute("href"));
+        if (id) lastRowThreadId = id;
+      },
+      true
+    );
+    document.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const item = target.closest(
+          '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"]'
+        );
+        if (!item) return;
+        const next = menuMuteState(item);
+        if (next === null) return;
+        const row = item.closest('[role="row"]');
+        const href = row?.querySelector("a[href*='/t/']")?.getAttribute("href");
+        const id = threadIdFromHref(href) || lastRowThreadId || threadIdFromHref(location.pathname);
+        if (id) mutedThreads.observe(id, next, LOCAL_HOLD_MS);
+      },
+      true
+    );
+  }
+
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
   var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
@@ -3017,100 +3408,6 @@
   function isUnreadConversationText(fontWeight, text) {
     const weight = typeof fontWeight === "number" ? fontWeight : Number.parseInt(fontWeight, 10) || 0;
     return weight >= 600 && text.trim().length > 1;
-  }
-
-  // inject/src/messenger/lib/mute.ts
-  var MUTE_LABEL_LIMIT = 60;
-  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
-  var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
-  var MUTE_ACTION_RE = /^mute(?:\s|$)/i;
-  var LABEL_ATTRS = ["aria-label", "title", "alt", "aria-description"];
-  var MUTED_THREAD_LIMIT = 500;
-  function ignoresMutedConversations(settings) {
-    return settings?.ignore_muted_conversations !== false;
-  }
-  function suppressMutedDelivery(muted, settings) {
-    return muted && ignoresMutedConversations(settings);
-  }
-  function conversationMuteFromLabel(value) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
-    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
-    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
-    return null;
-  }
-  function muteSignalFromLabels(labels) {
-    let muted = false;
-    let unmuted = false;
-    for (const label of labels) {
-      const signal = conversationMuteFromLabel(label);
-      if (signal === true) muted = true;
-      else if (signal === false) unmuted = true;
-    }
-    if (muted) return true;
-    if (unmuted) return false;
-    return null;
-  }
-  function resolveMuteObservation(labels, unread) {
-    const signal = muteSignalFromLabels(labels);
-    if (signal !== null) return signal;
-    if (!unread) return false;
-    return void 0;
-  }
-  function collectMuteLabels(root) {
-    const labels = [];
-    const seen = /* @__PURE__ */ new Set();
-    const push = (value) => {
-      const text = (value || "").replace(/\s+/g, " ").trim();
-      if (!text || seen.has(text)) return;
-      seen.add(text);
-      labels.push(text);
-    };
-    if (root instanceof Element) {
-      for (const attr of LABEL_ATTRS) push(root.getAttribute(attr));
-    }
-    for (const el of root.querySelectorAll("[aria-label], [title], [alt], [aria-description]")) {
-      for (const attr of LABEL_ATTRS) push(el.getAttribute(attr));
-    }
-    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
-    return labels;
-  }
-  var MutedThreadStore = class {
-    constructor() {
-      __publicField(this, "states", /* @__PURE__ */ new Map());
-    }
-    observe(id, muted) {
-      if (!id || muted === void 0) return;
-      if (this.states.has(id)) this.states.delete(id);
-      this.states.set(id, muted);
-      if (this.states.size > MUTED_THREAD_LIMIT) {
-        this.states.delete(this.states.keys().next().value);
-      }
-    }
-    isMuted(id) {
-      return this.states.get(id) === true;
-    }
-    knownMutedUnread(unreadIds) {
-      for (const id of unreadIds) {
-        if (this.states.get(id) === true) return true;
-      }
-      return false;
-    }
-  };
-  var mutedThreads = new MutedThreadStore();
-  function observeConversationMute(id, root, unread) {
-    mutedThreads.observe(id, resolveMuteObservation(collectMuteLabels(root), unread));
-    return mutedThreads.isMuted(id);
-  }
-  function observeOpenThreadMute(id, roots) {
-    const labels = [];
-    for (const root of roots) {
-      for (const label of collectMuteLabels(root)) {
-        if (conversationMuteFromLabel(label) !== null) labels.push(label);
-      }
-    }
-    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
-    return mutedThreads.isMuted(id);
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
@@ -4262,6 +4559,27 @@
       }
       return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
     };
+    const rowTitles = /* @__PURE__ */ new Map();
+    const ROW_TITLE_LIMIT = 300;
+    const rememberRowTitle = (key, title) => {
+      if (!key || !title) return;
+      rowTitles.delete(key);
+      rowTitles.set(key, title);
+      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
+    };
+    const mutedThreadFromTitle = (title) => {
+      const needle = String(title || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (!needle) return false;
+      let match = false;
+      for (const [key, rowTitle] of rowTitles) {
+        if (!mutedThreads.isMuted(key)) continue;
+        const name = rowTitle.replace(/\s+/g, " ").trim().toLowerCase();
+        if (name !== needle) continue;
+        if (match) return false;
+        match = true;
+      }
+      return match;
+    };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
       const s = window.__CARRIER_SETTINGS__ || {};
@@ -4271,7 +4589,7 @@
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       const mutedThread = suppressMutedDelivery(
-        !!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || ""),
+        !!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || "") || mutedThreadFromTitle(String(title || "")),
         s
       );
       if (!s.mute_notifications && !mutedThread) {
@@ -4349,14 +4667,6 @@
     let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
-    const rowTitles = /* @__PURE__ */ new Map();
-    const ROW_TITLE_LIMIT = 300;
-    const rememberRowTitle = (key, title) => {
-      if (!key || !title) return;
-      rowTitles.delete(key);
-      rowTitles.set(key, title);
-      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
-    };
     const paneShowsThread = (title, leaving = []) => {
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
@@ -6500,6 +6810,7 @@ ${text}`)) {
     initFeature("download-anchors", initDownloadAnchors);
     initFeature("spellcheck", initSpellcheck);
     initFeature("telemetry", initTelemetryBlocking);
+    initFeature("mute-harvest", initMuteHarvest);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);

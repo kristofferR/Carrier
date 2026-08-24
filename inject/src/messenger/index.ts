@@ -27,6 +27,7 @@ import { initLoginTidy } from "./features/login-tidy";
 import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
+import { initMuteHarvest } from "./features/mute-harvest";
 import { initNotificationBridge } from "./features/notifications";
 import { initQuickReply } from "./features/quick-reply";
 import { initRecentThreads } from "./features/recent-threads";
@@ -71,6 +72,7 @@ function main() {
   initFeature("download-anchors", initDownloadAnchors);
   initFeature("spellcheck", initSpellcheck);
   initFeature("telemetry", initTelemetryBlocking);
+  initFeature("mute-harvest", initMuteHarvest);
   initFeature("media-autoplay", initMediaAutoplay);
   initFeature("notifications", initNotificationBridge);
   initFeature("share-intake", initShareIntake);
