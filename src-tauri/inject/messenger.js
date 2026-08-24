@@ -2957,7 +2957,7 @@
   var MUTE_ACTION_RE = /^mute(?:\s|$)|^turn off notifications\b/i;
   var LABEL_ATTRS = ["aria-label", "title", "alt", "aria-description"];
   var MUTE_HINT_RE = /mute|stumm|sourdine|silenci|silenzi|demp|gedempt|tyst/i;
-  var MUTE_SVG_PATH_PREFIXES = ["M29.676 7.746"];
+  var MUTE_SVG_PATH_PREFIXES = ["M29.676 7.746", "M2.5 6c0-.322"];
   var MUTE_UNTIL_KEYS = /* @__PURE__ */ new Set(["mute_until", "muteUntil", "mute_until_ms", "muteUntilMs"]);
   var MUTED_BOOL_KEYS = /* @__PURE__ */ new Set(["is_muted", "isMuted"]);
   function ignoresMutedConversations(settings) {

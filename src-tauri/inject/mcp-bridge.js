@@ -2429,7 +2429,7 @@
       });
       container.querySelectorAll("path[d]").forEach(function (path) {
         var d = (path.getAttribute("d") || "").replace(/\s+/g, " ").trim();
-        if (d.indexOf("M29.676 7.746") === 0) mutePath = true;
+        if (d.indexOf("M29.676 7.746") === 0 || d.indexOf("M2.5 6c0-.322") === 0) mutePath = true;
       });
       var status = "none";
       if (labelled.mutedStatus || labelled.unmuteAction || mutePath) status = "muted";

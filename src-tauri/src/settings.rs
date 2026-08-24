@@ -51,8 +51,10 @@ pub(crate) struct Settings {
     /// What the unread badge counts: "messages" (Facebook's total unread message
     /// count, from the page title) or "conversations" (unread chats in the list).
     pub(crate) badge_mode: String,
-    /// Skip Dock/taskbar badges and native notifications for conversations the
-    /// user has muted in Messenger.
+    /// Experimental: skip Dock/taskbar badges and native notifications for
+    /// conversations the user has muted in Messenger. Detection matches
+    /// Messenger's unlabeled mute glyph (and labels / GraphQL when present),
+    /// so it can break when Facebook restyles the icon.
     pub(crate) ignore_muted_conversations: bool,
     /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
     pub(crate) theme: String,

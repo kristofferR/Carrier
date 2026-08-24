@@ -16,6 +16,9 @@ import {
 const CAPRINE_MUTE_PATH =
   "M29.676 7.746c.353-.352.44-.92.15-1.324a1 1 0 00-1.524-.129L6.293 28.29a1 1 0 00.129 1.523c.404.29.972.204 1.324-.148l3.082-3.08A2.002 2.002 0 0112.242 26h15.244c.848 0 1.57-.695 1.527-1.541-.084-1.643-1.87-1.145-2.2-3.515l-1.073-8.157-.002-.01a1.976 1.976 0 01.562-1.656l3.376-3.375zm-9.165 20.252H15.51c-.313 0-.565.275-.506.575.274 1.38 1.516 2.422 3.007 2.422 1.49 0 2.731-1.042 3.005-2.422.06-.3-.193-.575-.505-.575zm-10.064-6.719L22.713 9.02a.997.997 0 00-.124-1.51 7.792 7.792 0 00-12.308 5.279l-1.04 7.897c-.089.672.726 1.074 1.206.594z";
 
+const MESSENGER_MUTE_PATH =
+  "M2.5 6c0-.322.028-.637.081-.943l8.296 8.296A3.001 3.001 0 0 1 5 12.5H2.432a.98.98 0 0 1-.816-1.525A5.268 5.268 0 0 1 2.5 6z";
+
 describe("suppressMutedDelivery", () => {
   test("skips muted threads only while the setting is on", () => {
     expect(suppressMutedDelivery(true, {})).toBe(true);
@@ -89,6 +92,12 @@ describe("muteSignalFromSvgPaths", () => {
     expect(muteSignalFromSvgPaths([CAPRINE_MUTE_PATH])).toBe(true);
     expect(muteSignalFromSvgPaths(["M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10"])).toBeNull();
   });
+
+  test("recognises the current Messenger muted-speaker path", () => {
+    expect(MUTE_SVG_PATH_PREFIXES[1]).toBe("M2.5 6c0-.322");
+    expect(muteSignalFromSvgPaths([MESSENGER_MUTE_PATH])).toBe(true);
+    expect(muteSignalFromSvgPaths(["M2.25 10a1.75 1.75 0 1 1 3.5 0"])).toBeNull();
+  });
 });
 
 describe("resolveMuteObservation", () => {
@@ -110,6 +119,7 @@ describe("resolveMuteObservation", () => {
   test("an unlabeled mute-icon path counts as muted", () => {
     expect(resolveMuteObservation([], true, [CAPRINE_MUTE_PATH])).toBe(true);
     expect(resolveMuteObservation([], false, [CAPRINE_MUTE_PATH])).toBe(true);
+    expect(resolveMuteObservation([], true, [MESSENGER_MUTE_PATH])).toBe(true);
   });
 });
 

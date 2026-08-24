@@ -5,6 +5,9 @@
  * Unmute control), the mute-icon SVG path, GraphQL `mute_until`, and Mute /
  * Unmute menu clicks, then remembers the thread id so a virtualized list or a
  * momentarily missing glyph does not forget a mute we already saw.
+ *
+ * This is experimental: the live row control is an unlabeled icon, so matching
+ * it is brittle when Messenger ships a new glyph.
  */
 
 const MUTE_LABEL_LIMIT = 60;
@@ -28,8 +31,12 @@ const LABEL_ATTRS = ["aria-label", "title", "alt", "aria-description"] as const;
 
 const MUTE_HINT_RE = /mute|stumm|sourdine|silenci|silenzi|demp|gedempt|tyst/i;
 
-/** Older Messenger speaker-off glyph (Caprine `muteIconNewDesign`). */
-export const MUTE_SVG_PATH_PREFIXES = ["M29.676 7.746"] as const;
+/**
+ * Unlabeled mute glyphs. Messenger does not put "Muted" on the row icon.
+ * - `M29.676 7.746`: older speaker-off (Caprine `muteIconNewDesign`)
+ * - `M2.5 6c0-.322`: current 16px speaker-off with slash (`--disabled-icon`)
+ */
+export const MUTE_SVG_PATH_PREFIXES = ["M29.676 7.746", "M2.5 6c0-.322"] as const;
 
 const MUTE_UNTIL_KEYS = new Set(["mute_until", "muteUntil", "mute_until_ms", "muteUntilMs"]);
 const MUTED_BOOL_KEYS = new Set(["is_muted", "isMuted"]);
