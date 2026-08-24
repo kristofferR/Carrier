@@ -35,4 +35,15 @@ describe("reconcileUnreadMessageCount", () => {
     expect(reconcileUnreadMessageCount(5, 2, true)).toBe(5);
     expect(reconcileUnreadMessageCount(1, 2, true)).toBe(2);
   });
+
+  test("drops the title total when muted unreads contaminate it", () => {
+    expect(reconcileUnreadMessageCount(5, 1, true, true)).toBe(1);
+    expect(reconcileUnreadMessageCount(5, 0, true, true)).toBe(0);
+    expect(reconcileUnreadMessageCount(5, 1, false, true)).toBe(1);
+  });
+
+  test("keeps the title path when no muted unread is known", () => {
+    expect(reconcileUnreadMessageCount(5, 1, true, false)).toBe(5);
+    expect(reconcileUnreadMessageCount(5, 0, false, false)).toBe(5);
+  });
 });

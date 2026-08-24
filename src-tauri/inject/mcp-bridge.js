@@ -2360,6 +2360,68 @@
         .trim();
     }
 
+    // Mirror inject/src/messenger/lib/mute.ts — classifications only, never
+    // the raw accessible name (it can carry a contact or a preview).
+    function muteLabelKind(value) {
+      var s = notifyNorm(value);
+      if (!s || s.length > 60) return "";
+      if (/^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i.test(s)) {
+        return "unmute-action";
+      }
+      if (
+        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
+          s,
+        )
+      ) {
+        return "muted-status";
+      }
+      if (/^mute(?:\s|$)/i.test(s) && !/\bmuted\b/i.test(s)) return "mute-action";
+      return "";
+    }
+
+    function muteShape(container) {
+      var labelled = { mutedStatus: 0, unmuteAction: 0, muteAction: 0 };
+      var labelledCount = 0;
+      container.querySelectorAll("[aria-label], [title], [alt], [aria-description]").forEach(
+        function (el) {
+          ["aria-label", "title", "alt", "aria-description"].forEach(function (attr) {
+            var kind = muteLabelKind(el.getAttribute(attr));
+            if (!kind) return;
+            labelledCount++;
+            if (kind === "muted-status") labelled.mutedStatus++;
+            else if (kind === "unmute-action") labelled.unmuteAction++;
+            else labelled.muteAction++;
+          });
+        },
+      );
+      container.querySelectorAll("svg title, svg desc").forEach(function (el) {
+        var kind = muteLabelKind(el.textContent);
+        if (!kind) return;
+        labelledCount++;
+        if (kind === "muted-status") labelled.mutedStatus++;
+        else if (kind === "unmute-action") labelled.unmuteAction++;
+        else labelled.muteAction++;
+      });
+      var svgCount = 0;
+      var smallSvgCount = 0;
+      container.querySelectorAll("svg").forEach(function (svg) {
+        svgCount++;
+        var box = rect(svg);
+        var side = Math.max(box.w, box.h);
+        if (side > 0 && side <= 22) smallSvgCount++;
+      });
+      var status = "none";
+      if (labelled.mutedStatus || labelled.unmuteAction) status = "muted";
+      else if (labelled.muteAction) status = "unmuted";
+      return {
+        status: status,
+        labelled: labelled,
+        labelledCount: labelledCount,
+        svgCount: svgCount,
+        smallSvgCount: smallSvgCount,
+      };
+    }
+
     // A container's own-text leaves, ordered the way the injected scraper
     // reads them (conversation rows, and the people lists shaped like them).
     function conversationRowLeaves(container) {
@@ -2616,8 +2678,9 @@
     }
 
     // Sanitized shape of the conversation rows the notification fallback reads:
-    // how emoji are embedded in a row's preview text, and whether a group row's
-    // avatar images can be attributed to the sender named in that preview.
+    // how emoji are embedded in a row's preview text, whether a group row's
+    // avatar images can be attributed to the sender named in that preview, and
+    // mute-shaped accessible names / glyphs (classifications only).
     // Reports classifications, counts, and rectangles only — never message
     // text, contact names, image URLs, or raw alt/aria-label contents.
     function notificationRowProbe() {
@@ -2791,6 +2854,7 @@
           leaves: leaves.slice(0, 6).map(leafShape),
           images: images,
           labelledAncestors: labelledAncestors,
+          mute: muteShape(container),
         });
       });
       return {
@@ -2800,6 +2864,29 @@
         senderAvatarCache: liveSenderAvatarStats(),
         rows: rows,
         threadArticles: threadArticles(10),
+        threadMuteControls: (function () {
+          var out = [];
+          document
+            .querySelectorAll(
+              '[role="complementary"] [aria-label], [role="dialog"] [aria-label], [role="complementary"] svg title, [role="dialog"] svg title',
+            )
+            .forEach(function (el) {
+              if (out.length >= 8 || (el.getBoundingClientRect && !visible(el))) return;
+              var kind = muteLabelKind(
+                el.getAttribute && el.getAttribute("aria-label")
+                  ? el.getAttribute("aria-label")
+                  : el.textContent,
+              );
+              if (!kind) return;
+              out.push({
+                kind: kind,
+                tag: el.tagName.toLowerCase(),
+                inComplementary: !!el.closest('[role="complementary"]'),
+                inDialog: !!el.closest('[role="dialog"]'),
+              });
+            });
+          return out;
+        })(),
         // Conversation-info sidebar / dialogs: the Chat members list pairs a
         // name with a face for every participant, including senders whose
         // messages are not currently rendered.

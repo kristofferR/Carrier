@@ -5,6 +5,11 @@
 // unread *conversations* (chats in the list rendered bold), per `badge_mode`.
 import { diag, invoke } from "../bridge";
 import { isUnreadConversationText } from "../lib/conversation-row";
+import {
+  ignoresMutedConversations,
+  observeConversationMute,
+  observeOpenThreadMute,
+} from "../lib/mute";
 import { threadIdFromHref } from "../lib/threads";
 import { reconcileUnreadMessageCount, unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -18,20 +23,34 @@ export function initUnreadBadge() {
   // visible links in the navigation list (`/t/<id>`), excluding duplicate or
   // unrelated thread links elsewhere in the page.
   const unreadConversationState = () => {
+    const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+    const openId = threadIdFromHref(location.pathname);
+    if (openId) {
+      observeOpenThreadMute(openId, [
+        ...document.querySelectorAll('[role="complementary"], [role="dialog"]'),
+      ]);
+    }
     const links = chatRows();
     const seen = new Set<string>();
     let count = 0;
+    const unreadIds: string[] = [];
     for (const a of links) {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
       seen.add(id);
       const row = a.closest('[role="row"]') || a;
+      let unread = false;
       for (const span of row.querySelectorAll("span")) {
         if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
-          count++;
+          unread = true;
           break;
         }
       }
+      const muted = observeConversationMute(id, row, unread);
+      if (!unread) continue;
+      unreadIds.push(id);
+      if (ignoreMuted && muted) continue;
+      count++;
     }
 
     // A virtualized list only represents the newest chats while it is at the
@@ -46,6 +65,7 @@ export function initUnreadBadge() {
     }
     return {
       count,
+      mutedUnread: ignoreMuted && unreadIds.length > count,
       ready: links.length > 0,
       trustworthy: links.length > 0 && !scrolledFromTop,
     };
@@ -82,6 +102,7 @@ export function initUnreadBadge() {
           unreadCountFromTitle(document.title || ""),
           conversations.count,
           conversations.trustworthy,
+          conversations.mutedUnread,
         );
     // While Facebook is reloading the page, the title carries no "(N)" and the
     // chat list hasn't rendered yet, so both counts read 0. The OS keeps the

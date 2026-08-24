@@ -10,6 +10,13 @@ import {
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
+  ignoresMutedConversations,
+  mutedThreads,
+  observeConversationMute,
+  observeOpenThreadMute,
+  suppressMutedDelivery,
+} from "../lib/mute";
+import {
   ConversationNotificationTracker,
   groupPreviewSender,
   isOwnMessagePreview,
@@ -27,7 +34,7 @@ import {
   UnreadArrivalTracker,
 } from "../lib/notification-fallback";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
-import { threadIdFromHref } from "../lib/threads";
+import { threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 
@@ -322,11 +329,15 @@ export function initNotificationBridge() {
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+    const mutedThread = suppressMutedDelivery(
+      !!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || ""),
+      s,
+    );
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
     // still runs when muted so the window keeps catching up.)
-    if (!s.mute_notifications) {
+    if (!s.mute_notifications && !mutedThread) {
       // Facebook assigns `this.onclick` right after construction; the callback
       // below captures this instance so a native click can call it later.
       // Hide preview: replace the sender name and message text with a generic
@@ -688,6 +699,7 @@ export function initNotificationBridge() {
         break;
       }
     }
+    const muted = observeConversationMute(id, row, unread);
     return {
       key: id,
       threadPath: `/t/${id}/`,
@@ -704,6 +716,7 @@ export function initNotificationBridge() {
       // only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
       unread,
+      muted,
     };
   };
 
@@ -715,6 +728,14 @@ export function initNotificationBridge() {
     confirmedRepeat = false,
     routeCandidates?: Iterable<Conversation>,
   ) => {
+    if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+      const pending = pendingFallbacks.get(conversation.key);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingFallbacks.delete(conversation.key);
+      }
+      return;
+    }
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
       fingerprint,
@@ -892,6 +913,12 @@ export function initNotificationBridge() {
     scanRunning = true;
     try {
       harvestSenderAvatars(Date.now());
+      const openId = threadIdFromHref(location.pathname);
+      if (openId) {
+        observeOpenThreadMute(openId, [
+          ...document.querySelectorAll('[role="complementary"], [role="dialog"]'),
+        ]);
+      }
       const links = chatRows();
       // A grid can exist briefly before its rows hydrate. Do not prime an empty
       // list or the first real render would look like a burst of new messages.
@@ -902,6 +929,12 @@ export function initNotificationBridge() {
       for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
+      );
+      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const notifyKeys = new Set(
+        conversations
+          .filter((conversation) => !(ignoreMuted && conversation.muted))
+          .map(({ key }) => key),
       );
       const detectedAt = Date.now();
       const mutationGrace = lastScanAt
@@ -996,7 +1029,9 @@ export function initNotificationBridge() {
         ),
       );
       for (const key of unreadArrivals.observeUnreadCount(
-        unreadCountFromTitle(document.title || ""),
+        ignoreMuted && observed.some((conversation) => conversation.unread && conversation.muted)
+          ? notifyKeys.size
+          : unreadCountFromTitle(document.title || ""),
         detectedAt,
         ROW_MUTATION_MATCH_MS + mutationGrace,
         // A fully hydrated list with no unread rows corroborates a zero
@@ -1004,7 +1039,7 @@ export function initNotificationBridge() {
         // so a first arrival inside the settle window can still report.
         listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
-        new Set(conversations.map(({ key }) => key)),
+        notifyKeys,
       )) {
         changed.add(key);
       }
@@ -1269,7 +1304,7 @@ export function initNotificationBridge() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["class", "src", "alt", "style"],
+      attributeFilter: ["class", "src", "alt", "style", "aria-label"],
     });
     scanUnreadConversations();
     return true;

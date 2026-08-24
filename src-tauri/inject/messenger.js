@@ -3019,6 +3019,100 @@
     return weight >= 600 && text.trim().length > 1;
   }
 
+  // inject/src/messenger/lib/mute.ts
+  var MUTE_LABEL_LIMIT = 60;
+  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
+  var MUTE_ACTION_RE = /^mute(?:\s|$)/i;
+  var LABEL_ATTRS = ["aria-label", "title", "alt", "aria-description"];
+  var MUTED_THREAD_LIMIT = 500;
+  function ignoresMutedConversations(settings) {
+    return settings?.ignore_muted_conversations !== false;
+  }
+  function suppressMutedDelivery(muted, settings) {
+    return muted && ignoresMutedConversations(settings);
+  }
+  function conversationMuteFromLabel(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
+    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
+    return null;
+  }
+  function muteSignalFromLabels(labels) {
+    let muted = false;
+    let unmuted = false;
+    for (const label of labels) {
+      const signal = conversationMuteFromLabel(label);
+      if (signal === true) muted = true;
+      else if (signal === false) unmuted = true;
+    }
+    if (muted) return true;
+    if (unmuted) return false;
+    return null;
+  }
+  function resolveMuteObservation(labels, unread) {
+    const signal = muteSignalFromLabels(labels);
+    if (signal !== null) return signal;
+    if (!unread) return false;
+    return void 0;
+  }
+  function collectMuteLabels(root) {
+    const labels = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (value) => {
+      const text = (value || "").replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      labels.push(text);
+    };
+    if (root instanceof Element) {
+      for (const attr of LABEL_ATTRS) push(root.getAttribute(attr));
+    }
+    for (const el of root.querySelectorAll("[aria-label], [title], [alt], [aria-description]")) {
+      for (const attr of LABEL_ATTRS) push(el.getAttribute(attr));
+    }
+    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
+    return labels;
+  }
+  var MutedThreadStore = class {
+    constructor() {
+      __publicField(this, "states", /* @__PURE__ */ new Map());
+    }
+    observe(id, muted) {
+      if (!id || muted === void 0) return;
+      if (this.states.has(id)) this.states.delete(id);
+      this.states.set(id, muted);
+      if (this.states.size > MUTED_THREAD_LIMIT) {
+        this.states.delete(this.states.keys().next().value);
+      }
+    }
+    isMuted(id) {
+      return this.states.get(id) === true;
+    }
+    knownMutedUnread(unreadIds) {
+      for (const id of unreadIds) {
+        if (this.states.get(id) === true) return true;
+      }
+      return false;
+    }
+  };
+  var mutedThreads = new MutedThreadStore();
+  function observeConversationMute(id, root, unread) {
+    mutedThreads.observe(id, resolveMuteObservation(collectMuteLabels(root), unread));
+    return mutedThreads.isMuted(id);
+  }
+  function observeOpenThreadMute(id, roots) {
+    const labels = [];
+    for (const root of roots) {
+      for (const label of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label) !== null) labels.push(label);
+      }
+    }
+    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
+    return mutedThreads.isMuted(id);
+  }
+
   // inject/src/messenger/lib/notification-fallback.ts
   var READ_SINCE_LIMIT = 500;
   var ConversationNotificationTracker = class {
@@ -3882,7 +3976,8 @@
     const m = (title || "").match(/^\s*\((\d+)\)/);
     return m ? parseInt(m[1], 10) : 0;
   }
-  function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy) {
+  function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy, mutedUnreadKnown = false) {
+    if (mutedUnreadKnown) return unreadConversations;
     if (!conversationListTrustworthy) return titleCount;
     if (unreadConversations === 0) return 0;
     return Math.max(titleCount, unreadConversations);
@@ -4175,7 +4270,11 @@
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
-      if (!s.mute_notifications) {
+      const mutedThread = suppressMutedDelivery(
+        !!pageMatch.threadPath && mutedThreads.isMuted(threadPathId(pageMatch.threadPath) || ""),
+        s
+      );
+      if (!s.mute_notifications && !mutedThread) {
         const hidePreview = s.hide_notification_preview;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
@@ -4391,6 +4490,7 @@
           break;
         }
       }
+      const muted = observeConversationMute(id, row, unread);
       return {
         key: id,
         threadPath: `/t/${id}/`,
@@ -4406,10 +4506,19 @@
         // A photo-less group draws its members side by side; one with a photo is
         // only known as a group once its thread has been read.
         isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
-        unread
+        unread,
+        muted
       };
     };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
+      if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+        const pending = pendingFallbacks.get(conversation.key);
+        if (pending) {
+          clearTimeout(pending.timer);
+          pendingFallbacks.delete(conversation.key);
+        }
+        return;
+      }
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -4523,12 +4632,22 @@
       scanRunning = true;
       try {
         harvestSenderAvatars(Date.now());
+        const openId = threadIdFromHref(location.pathname);
+        if (openId) {
+          observeOpenThreadMute(openId, [
+            ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
+          ]);
+        }
         const links = chatRows();
         if (!links.length) return;
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
+        );
+        const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+        const notifyKeys = new Set(
+          conversations.filter((conversation) => !(ignoreMuted && conversation.muted)).map(({ key }) => key)
         );
         const detectedAt = Date.now();
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
@@ -4592,7 +4711,7 @@
           )
         );
         for (const key of unreadArrivals.observeUnreadCount(
-          unreadCountFromTitle(document.title || ""),
+          ignoreMuted && observed.some((conversation) => conversation.unread && conversation.muted) ? notifyKeys.size : unreadCountFromTitle(document.title || ""),
           detectedAt,
           ROW_MUTATION_MATCH_MS + mutationGrace,
           // A fully hydrated list with no unread rows corroborates a zero
@@ -4600,7 +4719,7 @@
           // so a first arrival inside the settle window can still report.
           listHydrated && !observed.some(({ unread }) => unread),
           readObservedKeys,
-          new Set(conversations.map(({ key: key2 }) => key2))
+          notifyKeys
         )) {
           changed.add(key);
         }
@@ -4787,7 +4906,7 @@
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ["class", "src", "alt", "style"]
+        attributeFilter: ["class", "src", "alt", "style", "aria-label"]
       });
       scanUnreadConversations();
       return true;
@@ -6157,20 +6276,34 @@ ${text}`)) {
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
     const unreadConversationState = () => {
+      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const openId = threadIdFromHref(location.pathname);
+      if (openId) {
+        observeOpenThreadMute(openId, [
+          ...document.querySelectorAll('[role="complementary"], [role="dialog"]')
+        ]);
+      }
       const links = chatRows();
       const seen = /* @__PURE__ */ new Set();
       let count = 0;
+      const unreadIds = [];
       for (const a of links) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
+        let unread = false;
         for (const span of row.querySelectorAll("span")) {
           if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
-            count++;
+            unread = true;
             break;
           }
         }
+        const muted = observeConversationMute(id, row, unread);
+        if (!unread) continue;
+        unreadIds.push(id);
+        if (ignoreMuted && muted) continue;
+        count++;
       }
       let scrolledFromTop = false;
       const first = links[0];
@@ -6181,6 +6314,7 @@ ${text}`)) {
       }
       return {
         count,
+        mutedUnread: ignoreMuted && unreadIds.length > count,
         ready: links.length > 0,
         trustworthy: links.length > 0 && !scrolledFromTop
       };
@@ -6207,7 +6341,8 @@ ${text}`)) {
       const n = conv ? conversations.count : reconcileUnreadMessageCount(
         unreadCountFromTitle(document.title || ""),
         conversations.count,
-        conversations.trustworthy
+        conversations.trustworthy,
+        conversations.mutedUnread
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
       if (n === 0 && !ready) return;

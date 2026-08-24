@@ -51,6 +51,9 @@ pub(crate) struct Settings {
     /// What the unread badge counts: "messages" (Facebook's total unread message
     /// count, from the page title) or "conversations" (unread chats in the list).
     pub(crate) badge_mode: String,
+    /// Skip Dock/taskbar badges and native notifications for conversations the
+    /// user has muted in Messenger.
+    pub(crate) ignore_muted_conversations: bool,
     /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
     pub(crate) theme: String,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
@@ -171,6 +174,7 @@ impl Default for Settings {
             spellcheck: false,
             unread_badge: true,
             badge_mode: "messages".into(),
+            ignore_muted_conversations: true,
             theme: "system".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
@@ -761,6 +765,10 @@ mod tests {
     fn settings_default_new_fields_have_correct_values() {
         let s = Settings::default();
         assert!(s.unread_badge, "unread_badge should default to true");
+        assert!(
+            s.ignore_muted_conversations,
+            "ignore_muted_conversations should default to true"
+        );
         assert_eq!(s.tray_icon_style, "color");
         assert!(s.group_notifications_by_conversation);
         assert!(s.clear_notifications_on_view);
