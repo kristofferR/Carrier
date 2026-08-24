@@ -485,10 +485,31 @@ fn persist_tray_notice_shown(app: &tauri::AppHandle) {
     }
 }
 
-/// Install the `main` window's close behaviour: hide to the tray when
-/// `hide_on_close` is set and a tray exists, otherwise quit. Reinstalled on every
-/// `main` window the app creates (startup and after a themed rebuild) so the
-/// behaviour survives `recreate_themed_windows`.
+/// Whether closing the main window should hide it instead of quitting.
+///
+/// On Windows/Linux a tray is required so the app stays reachable. On macOS the
+/// Dock (and `RunEvent::Reopen`) is enough even if tray creation failed.
+pub(crate) fn should_hide_on_close(hide_on_close: bool, has_tray: bool) -> bool {
+    hide_on_close && (has_tray || cfg!(target_os = "macos"))
+}
+
+/// Whether a window-close-driven `ExitRequested` should keep the process alive.
+///
+/// `code: None` is the last-window-closed path (including the macOS traffic
+/// light). Explicit `app.exit` / Quit carry `Some(code)` and must still terminate.
+pub(crate) fn should_prevent_app_exit(
+    recreating: bool,
+    hide_on_close: bool,
+    has_tray: bool,
+    exit_code: Option<i32>,
+) -> bool {
+    exit_code.is_none() && (recreating || should_hide_on_close(hide_on_close, has_tray))
+}
+
+/// Install the `main` window's close behaviour: hide instead of quitting when
+/// [`should_hide_on_close`] says so, otherwise quit. Reinstalled on every `main`
+/// window the app creates (startup and after a themed rebuild) so the behaviour
+/// survives `recreate_themed_windows`.
 pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &WebviewWindow) {
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -506,11 +527,10 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                         .load(std::sync::atomic::Ordering::Acquire);
                 (hide, notice)
             };
-            // Only hide to the tray if one was actually created (tray creation can
-            // fail, e.g. on a Linux session without an AppIndicator); otherwise
-            // closing the main window quits the app (don't let an open Settings
-            // dialog keep it running).
-            if hide && has_tray {
+            // Only hide if a tray exists (or macOS, where the Dock remains).
+            // Otherwise closing the main window quits the app (don't let an
+            // open Settings dialog keep it running with no way back).
+            if should_hide_on_close(hide, has_tray) {
                 api.prevent_close();
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w.hide();
@@ -1198,6 +1218,50 @@ mod tests {
             splash_background(&with_theme("light")),
             Color(255, 255, 255, 255)
         );
+    }
+
+    #[test]
+    fn hide_on_close_with_a_tray_hides() {
+        assert!(should_hide_on_close(true, true));
+    }
+
+    #[test]
+    fn hide_on_close_off_quits_even_with_a_tray() {
+        assert!(!should_hide_on_close(false, true));
+        assert!(!should_hide_on_close(false, false));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn hide_on_close_without_a_tray_quits_off_macos() {
+        assert!(!should_hide_on_close(true, false));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn hide_on_close_without_a_tray_hides_on_macos() {
+        assert!(should_hide_on_close(true, false));
+    }
+
+    #[test]
+    fn exit_requested_from_window_close_is_prevented_when_hiding() {
+        assert!(should_prevent_app_exit(false, true, true, None));
+    }
+
+    #[test]
+    fn exit_requested_from_window_close_quits_when_hide_on_close_is_off() {
+        assert!(!should_prevent_app_exit(false, false, true, None));
+    }
+
+    #[test]
+    fn explicit_quit_is_not_prevented() {
+        assert!(!should_prevent_app_exit(false, true, true, Some(0)));
+        assert!(!should_prevent_app_exit(true, true, true, Some(0)));
+    }
+
+    #[test]
+    fn recreating_windows_prevents_a_window_close_exit() {
+        assert!(should_prevent_app_exit(true, false, false, None));
     }
 
     #[cfg(target_os = "windows")]
