@@ -1054,6 +1054,11 @@ export interface CorrelatedRowNotification extends NotificationText {
   at: number;
 }
 
+export interface CorrelationRowDisplacement<Row> {
+  row: Row;
+  reason: "replaced" | "capacity";
+}
+
 export function waitForPageNotificationMatch(
   signal: PageNotificationSignal,
   timeoutMs: number,
@@ -1078,6 +1083,8 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
   private readonly pages = new PageNotificationQueue();
   private readonly rows = new Map<string, Row>();
 
+  constructor(private readonly rowLimit = 50) {}
+
   addPage(signal: PageNotificationSignal): PageNotificationSignal {
     return this.pages.add(signal);
   }
@@ -1095,12 +1102,15 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     this.pages.discard(signal);
   }
 
-  addRow(row: Row): Row | undefined {
+  addRow(row: Row): CorrelationRowDisplacement<Row> | undefined {
     const previous = this.rows.get(row.key);
     this.rows.delete(row.key);
     this.rows.set(row.key, row);
-    if (this.rows.size > 50) this.rows.delete(this.rows.keys().next().value!);
-    return previous;
+    if (this.rows.size > this.rowLimit) {
+      const evicted = this.removeRow(this.rows.keys().next().value!);
+      if (evicted) return { row: evicted, reason: "capacity" };
+    }
+    return previous ? { row: previous, reason: "replaced" } : undefined;
   }
 
   getRow(key: string): Row | undefined {

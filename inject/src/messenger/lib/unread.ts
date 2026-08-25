@@ -35,9 +35,8 @@ export function reconcileMutedUnreadIds(
 ): Set<string> {
   const next = new Set(previous);
   for (const thread of observed) {
-    if (thread.hydrated === false) continue;
     if (thread.unread && thread.muted) next.add(thread.id);
-    else next.delete(thread.id);
+    else if (thread.hydrated !== false) next.delete(thread.id);
   }
   return next;
 }
@@ -85,16 +84,16 @@ export class MutedUnreadStore {
     }
     let changed = false;
     for (const thread of rows) {
-      if (thread.hydrated === false) {
-        this.clearCandidates.delete(thread.id);
-        continue;
-      }
       if (thread.unread && thread.muted) {
         this.clearCandidates.delete(thread.id);
         if (!this.ids.has(thread.id)) {
           this.ids.add(thread.id);
           changed = true;
         }
+        continue;
+      }
+      if (thread.hydrated === false) {
+        this.clearCandidates.delete(thread.id);
         continue;
       }
       if (!this.ids.has(thread.id)) {

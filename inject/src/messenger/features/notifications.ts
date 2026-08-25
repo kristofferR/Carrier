@@ -862,6 +862,46 @@ export function initNotificationBridge() {
     return true;
   }
 
+  // A reconnect burst can fill the bounded row-correlation queue before its
+  // short timers settle. Capacity must complete the displaced fallback, not
+  // merely remove its identity while leaving a timer that can no longer pass
+  // the map ownership check. Deliver without an avatar under pressure; native
+  // content dedupe still absorbs a page Notification that arrives afterward.
+  const completeCapacityEviction = (fallback: PendingFallback) => {
+    const settings = window.__CARRIER_SETTINGS__ || {};
+    if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
+      notifiedStore.markSuppressed(
+        fallback.key,
+        fallback.fingerprint,
+        notificationDedupeKey("", fallback.body),
+      );
+      return;
+    }
+    const hidePreview = settings.hide_notification_preview === true;
+    notifiedStore.markNotified(
+      fallback.key,
+      fallback.fingerprint,
+      notificationDedupeKey("", fallback.body),
+    );
+    diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+    emitNotification(
+      ++notifySeq,
+      hidePreview ? "Messenger" : fallback.title,
+      hidePreview ? "New message" : fallback.body,
+      "",
+      fallback.dedupeKey,
+      () => window.__carrierOpenThread?.(fallback.threadPath),
+      fallback.threadPath,
+    );
+  };
+
+  const retainPendingFallback = (fallback: PendingFallback) => {
+    const displaced = notificationCorrelations.addRow(fallback);
+    if (!displaced) return;
+    clearTimeout(displaced.row.timer);
+    if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+  };
+
   const scheduleFallback = (
     conversation: Conversation,
     detectedAt: number,
@@ -893,7 +933,7 @@ export function initNotificationBridge() {
           notificationCorrelations.removeRow(conversation.key);
         }
       }, PAGE_NOTIFICATION_MATCH_MS);
-      notificationCorrelations.addRow({
+      retainPendingFallback({
         key: conversation.key,
         at: detectedAt,
         timer,
@@ -980,7 +1020,7 @@ export function initNotificationBridge() {
         conversation.threadPath,
       );
     }, FALLBACK_DELAY_MS);
-    notificationCorrelations.addRow({
+    retainPendingFallback({
       key: conversation.key,
       at: detectedAt,
       timer,

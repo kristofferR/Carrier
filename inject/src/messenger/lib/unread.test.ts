@@ -117,10 +117,16 @@ describe("reconcileMutedUnreadIds", () => {
     expect([...known]).toEqual(["virtualized"]);
   });
 
-  test("treats an unhydrated row as inconclusive", () => {
+  test("keeps destructive hydration unknown while accepting a positive mute", () => {
     expect(
-      reconcileMutedUnreadIds(["1"], [{ id: "1", unread: false, muted: false, hydrated: false }]),
-    ).toEqual(new Set(["1"]));
+      reconcileMutedUnreadIds(
+        ["1"],
+        [
+          { id: "1", unread: false, muted: false, hydrated: false },
+          { id: "2", unread: true, muted: true, hydrated: false },
+        ],
+      ),
+    ).toEqual(new Set(["1", "2"]));
   });
 });
 
@@ -170,6 +176,14 @@ describe("MutedUnreadStore", () => {
       [{ id: "123", unread: false, muted: false, hydrated: false }],
       1_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS,
     );
+
+    expect(new MutedUnreadStore(storage).size).toBe(1);
+  });
+
+  test("records positive muted-unread evidence during partial hydration", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true, hydrated: false }], 1_000);
 
     expect(new MutedUnreadStore(storage).size).toBe(1);
   });

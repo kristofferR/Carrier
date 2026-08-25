@@ -192,11 +192,12 @@ export function initUnreadBadge() {
 
   window.addEventListener("carrier:thread-mute", (event) => {
     const detail = (event as CustomEvent<{ id?: unknown; muted?: unknown }>).detail;
-    if (detail?.muted !== false || typeof detail.id !== "string") return;
-    knownMutedUnreads.invalidate(detail.id);
+    if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
+    if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
     // The click is captured before Messenger updates aria-checked/the row icon.
-    // Repaint after that render so the old mute glyph cannot immediately add
-    // the just-invalidated identity back.
+    // Repaint both directions after that render: the old glyph must not add an
+    // explicitly unmuted identity back, and muting does not change the title
+    // count that normally drives badge updates.
     setTimeout(() => apply(true), 500);
   });
 

@@ -869,6 +869,25 @@ describe("NotificationCorrelationQueue", () => {
     expect(queue.getRow("1")).toBeDefined();
     expect(queue.getRow("2")).toBeDefined();
   });
+
+  test("returns a capacity displacement so its active fallback can be completed", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>(2);
+    const row = (key: string): RowSignal => ({
+      key,
+      at: 1_000,
+      title: key,
+      body: "message",
+      threadPath: `/t/${key}/`,
+      muted: false,
+    });
+    expect(queue.addRow(row("1"))).toBeUndefined();
+    expect(queue.addRow(row("2"))).toBeUndefined();
+
+    expect(queue.addRow(row("3"))).toEqual({ row: row("1"), reason: "capacity" });
+    expect(queue.getRow("1")).toBeUndefined();
+    expect(queue.getRow("2")).toBeDefined();
+    expect(queue.getRow("3")).toBeDefined();
+  });
 });
 
 describe("UnreadArrivalTracker", () => {

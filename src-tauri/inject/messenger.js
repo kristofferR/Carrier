@@ -3969,7 +3969,8 @@
     });
   }
   var NotificationCorrelationQueue = class {
-    constructor() {
+    constructor(rowLimit = 50) {
+      __publicField(this, "rowLimit", rowLimit);
       __publicField(this, "pages", new PageNotificationQueue());
       __publicField(this, "rows", /* @__PURE__ */ new Map());
     }
@@ -3986,8 +3987,11 @@
       const previous = this.rows.get(row.key);
       this.rows.delete(row.key);
       this.rows.set(row.key, row);
-      if (this.rows.size > 50) this.rows.delete(this.rows.keys().next().value);
-      return previous;
+      if (this.rows.size > this.rowLimit) {
+        const evicted = this.removeRow(this.rows.keys().next().value);
+        if (evicted) return { row: evicted, reason: "capacity" };
+      }
+      return previous ? { row: previous, reason: "replaced" } : void 0;
     }
     getRow(key) {
       return this.rows.get(key);
@@ -4410,16 +4414,16 @@
       }
       let changed = false;
       for (const thread of rows) {
-        if (thread.hydrated === false) {
-          this.clearCandidates.delete(thread.id);
-          continue;
-        }
         if (thread.unread && thread.muted) {
           this.clearCandidates.delete(thread.id);
           if (!this.ids.has(thread.id)) {
             this.ids.add(thread.id);
             changed = true;
           }
+          continue;
+        }
+        if (thread.hydrated === false) {
+          this.clearCandidates.delete(thread.id);
           continue;
         }
         if (!this.ids.has(thread.id)) {
@@ -5097,6 +5101,39 @@
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       return true;
     }
+    const completeCapacityEviction = (fallback) => {
+      const settings = window.__CARRIER_SETTINGS__ || {};
+      if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
+        notifiedStore.markSuppressed(
+          fallback.key,
+          fallback.fingerprint,
+          notificationDedupeKey("", fallback.body)
+        );
+        return;
+      }
+      const hidePreview = settings.hide_notification_preview === true;
+      notifiedStore.markNotified(
+        fallback.key,
+        fallback.fingerprint,
+        notificationDedupeKey("", fallback.body)
+      );
+      diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+      emitNotification(
+        ++notifySeq,
+        hidePreview ? "Messenger" : fallback.title,
+        hidePreview ? "New message" : fallback.body,
+        "",
+        fallback.dedupeKey,
+        () => window.__carrierOpenThread?.(fallback.threadPath),
+        fallback.threadPath
+      );
+    };
+    const retainPendingFallback = (fallback) => {
+      const displaced = notificationCorrelations.addRow(fallback);
+      if (!displaced) return;
+      clearTimeout(displaced.row.timer);
+      if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+    };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
@@ -5115,7 +5152,7 @@
             notificationCorrelations.removeRow(conversation.key);
           }
         }, PAGE_NOTIFICATION_MATCH_MS);
-        notificationCorrelations.addRow({
+        retainPendingFallback({
           key: conversation.key,
           at: detectedAt,
           timer: timer2,
@@ -5173,7 +5210,7 @@
           conversation.threadPath
         );
       }, FALLBACK_DELAY_MS);
-      notificationCorrelations.addRow({
+      retainPendingFallback({
         key: conversation.key,
         at: detectedAt,
         timer,
@@ -6997,8 +7034,8 @@ ${text}`)) {
     };
     window.addEventListener("carrier:thread-mute", (event) => {
       const detail = event.detail;
-      if (detail?.muted !== false || typeof detail.id !== "string") return;
-      knownMutedUnreads.invalidate(detail.id);
+      if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
+      if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
       setTimeout(() => apply(true), 500);
     });
     let pending = false;
