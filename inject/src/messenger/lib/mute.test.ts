@@ -7,8 +7,9 @@ import {
   MutedThreadStore,
   muteSignalFromLabels,
   muteSignalFromSource,
+  muteStateAfterExplicitAction,
+  resolveMuteActionThreadId,
   resolveMuteObservation,
-  resolveUnmuteActionThreadId,
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "./mute";
@@ -130,6 +131,16 @@ describe("isExplicitUnmuteAction", () => {
   });
 });
 
+describe("muteStateAfterExplicitAction", () => {
+  test("mirrors both mute action directions into cached state", () => {
+    expect(muteStateAfterExplicitAction("Mute notifications")).toBe(true);
+    expect(muteStateAfterExplicitAction("Turn off notifications")).toBe(true);
+    expect(muteStateAfterExplicitAction("Unmute notifications")).toBe(false);
+    expect(muteStateAfterExplicitAction("Notifications are off")).toBeUndefined();
+    expect(muteStateAfterExplicitAction("Muted")).toBeUndefined();
+  });
+});
+
 describe("muteSignalFromLabels", () => {
   test("prefers a muted signal when both action kinds are present", () => {
     expect(muteSignalFromLabels(["Mute", "Unmute"])).toBe(true);
@@ -189,17 +200,17 @@ describe("isMutedRowIconShape", () => {
   });
 });
 
-describe("resolveUnmuteActionThreadId", () => {
+describe("resolveMuteActionThreadId", () => {
   test("uses the row that directly owns an action", () => {
-    expect(resolveUnmuteActionThreadId("row", "open", "recent", true)).toBe("row");
+    expect(resolveMuteActionThreadId("row", "open", "recent", true)).toBe("row");
   });
 
   test("prefers the open thread for header and info surfaces", () => {
-    expect(resolveUnmuteActionThreadId("", "open", "unrelated-recent", true)).toBe("open");
+    expect(resolveMuteActionThreadId("", "open", "unrelated-recent", true)).toBe("open");
   });
 
   test("uses the recent row for its portalled context menu", () => {
-    expect(resolveUnmuteActionThreadId("", "open", "recent", false)).toBe("recent");
+    expect(resolveMuteActionThreadId("", "open", "recent", false)).toBe("recent");
   });
 });
 

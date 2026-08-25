@@ -736,6 +736,20 @@ describe("NotificationCorrelationQueue", () => {
     expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
   });
 
+  test("recovers a page-first signal when its virtualized row appears after the eager window", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    const deliveryGate = waitForPageNotificationMatch(signal, 100);
+    const matched = queue.consumePageForRow(
+      { key: "1", title: "Jane", body: "Hello" },
+      11_000,
+      63_000,
+    );
+
+    expect(matched).toBe(signal);
+    expect(await deliveryGate).toBe("matched");
+  });
+
   test("matches a row-first muted signal after its DOM row is virtualized", () => {
     const queue = new NotificationCorrelationQueue<RowSignal>();
     queue.addRow({

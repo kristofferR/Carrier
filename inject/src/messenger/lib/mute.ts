@@ -72,8 +72,16 @@ export function conversationMuteFromLabel(value: string): boolean | null {
 }
 
 export function isExplicitUnmuteAction(value: string): boolean {
+  return muteStateAfterExplicitAction(value) === false;
+}
+
+/** The mute state Messenger will have after this explicit action succeeds. */
+export function muteStateAfterExplicitAction(value: string): boolean | undefined {
   const text = (value || "").replace(/\s+/g, " ").trim();
-  return text.length <= MUTE_LABEL_LIMIT && UNMUTE_ACTION_RE.test(text);
+  if (!text || text.length > MUTE_LABEL_LIMIT) return undefined;
+  if (UNMUTE_ACTION_RE.test(text)) return false;
+  if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
+  return undefined;
 }
 
 /**
@@ -310,7 +318,7 @@ const threadIdFromActionTarget = (target: Element): string => {
   return threadIdFromHref(href) || "";
 };
 
-export function resolveUnmuteActionThreadId(
+export function resolveMuteActionThreadId(
   rowId: string,
   openId: string,
   recentRowId: string,
@@ -321,8 +329,8 @@ export function resolveUnmuteActionThreadId(
   return recentRowId || openId;
 }
 
-/** Clear cached mute state after Messenger's explicit Unmute action. */
-export function initMuteActionInvalidation(): void {
+/** Mirror Messenger's explicit Mute / Unmute action into the thread cache. */
+export function initMuteActionTracking(): void {
   if (actionInvalidationStarted) return;
   actionInvalidationStarted = true;
   let recentRow: { id: string; at: number } | null = null;
@@ -353,17 +361,18 @@ export function initMuteActionInvalidation(): void {
         action.getAttribute("title") ||
         action.textContent ||
         "";
-      if (!isExplicitUnmuteAction(label)) return;
+      const nextMuted = muteStateAfterExplicitAction(label);
+      if (nextMuted === undefined) return;
       const rowId = threadIdFromActionTarget(action);
       const openId = threadIdFromHref(location.pathname) || "";
       const recentId = recentRow && Date.now() - recentRow.at <= 15_000 ? recentRow.id : "";
-      const id = resolveUnmuteActionThreadId(
+      const id = resolveMuteActionThreadId(
         rowId,
         openId,
         recentId,
         !!action.closest('[role="main"], [role="complementary"], [role="dialog"]'),
       );
-      if (id) mutedThreads.invalidateMute(id);
+      if (id) mutedThreads.observe(id, nextMuted);
     },
     true,
   );

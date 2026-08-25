@@ -3048,8 +3048,14 @@
     return null;
   }
   function isExplicitUnmuteAction(value) {
+    return muteStateAfterExplicitAction(value) === false;
+  }
+  function muteStateAfterExplicitAction(value) {
     const text = (value || "").replace(/\s+/g, " ").trim();
-    return text.length <= MUTE_LABEL_LIMIT && UNMUTE_ACTION_RE.test(text);
+    if (!text || text.length > MUTE_LABEL_LIMIT) return void 0;
+    if (UNMUTE_ACTION_RE.test(text)) return false;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
+    return void 0;
   }
   function muteSignalFromSource(source) {
     if (source.attribute === "alt") return null;
@@ -3209,12 +3215,12 @@
     const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
     return threadIdFromHref(href) || "";
   };
-  function resolveUnmuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
+  function resolveMuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
     if (rowId) return rowId;
     if (actionIsInOpenSurface && openId) return openId;
     return recentRowId || openId;
   }
-  function initMuteActionInvalidation() {
+  function initMuteActionTracking() {
     if (actionInvalidationStarted) return;
     actionInvalidationStarted = true;
     let recentRow = null;
@@ -3238,17 +3244,18 @@
         );
         if (!action) return;
         const label = action.getAttribute("aria-label") || action.getAttribute("title") || action.textContent || "";
-        if (!isExplicitUnmuteAction(label)) return;
+        const nextMuted = muteStateAfterExplicitAction(label);
+        if (nextMuted === void 0) return;
         const rowId = threadIdFromActionTarget(action);
         const openId = threadIdFromHref(location.pathname) || "";
         const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
-        const id = resolveUnmuteActionThreadId(
+        const id = resolveMuteActionThreadId(
           rowId,
           openId,
           recentId,
           !!action.closest('[role="main"], [role="complementary"], [role="dialog"]')
         );
-        if (id) mutedThreads.invalidateMute(id);
+        if (id) mutedThreads.observe(id, nextMuted);
       },
       true
     );
@@ -4329,6 +4336,7 @@
   var PAGE_NOTIFICATION_MATCH_MS = 3e3;
   var FALLBACK_POLL_VISIBLE_MS = 1e4;
   var FALLBACK_POLL_HIDDEN_MS = 6e4;
+  var PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
   var ROW_MUTATION_MATCH_MS = 2e3;
   var MISMATCH_STABLE_MS = 1e3;
   var HYDRATION_SETTLE_MS = 1e4;
@@ -4500,7 +4508,7 @@
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
         if (pageMatch.signal) pageMatch.signal.nativeId = id;
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS) : Promise.resolve();
         Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
           ([icon]) => {
             if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
@@ -4577,6 +4585,7 @@
         window.__carrierOnNotification?.();
       } catch (_) {
       }
+      queueMicrotask(scanUnreadConversations);
       this.title = title;
       this.onclick = null;
       this.close = () => {
@@ -4766,6 +4775,55 @@
         muted
       };
     };
+    function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
+      const pageSignal = notificationCorrelations.consumePageForRow(
+        conversation,
+        detectedAt,
+        PAGE_NOTIFICATION_RECOVERY_MS,
+        routeCandidates
+      );
+      if (!pageSignal) return false;
+      const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+      const dedupeKey = notificationDeliveryDedupeKey(
+        fingerprint,
+        confirmedRepeat ? `${conversation.key}:${detectedAt}` : void 0
+      );
+      const bodyHash = notificationDedupeKey("", conversation.body);
+      const previous = notificationCorrelations.removeRow(conversation.key);
+      if (previous) clearTimeout(previous.timer);
+      pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
+      if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
+      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+      if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
+        updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+      }
+      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        pageSignal.pendingDelivery = void 0;
+      } else if (pageSignal.emitted) {
+        const finishDelivery = (delivery) => {
+          if (confirmedRepeat && delivery === "duplicate") {
+            scheduleFallback(conversation, detectedAt, true, routeCandidates);
+            return;
+          }
+          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        };
+        if (pageSignal.nativeDelivery) {
+          finishDelivery(pageSignal.nativeDelivery);
+        } else {
+          pageSignal.onNativeDelivery = finishDelivery;
+        }
+      } else {
+        pageSignal.pendingDelivery = {
+          key: conversation.key,
+          fingerprint,
+          bodyHash,
+          expect: notifiedStore.notifiedFingerprint(conversation.key)
+        };
+      }
+      pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+      return true;
+    }
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
@@ -4775,46 +4833,8 @@
       const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
-      const pageSignal = notificationCorrelations.consumePageForRow(
-        conversation,
-        detectedAt,
-        PAGE_NOTIFICATION_MATCH_MS,
-        routeCandidates
-      );
-      if (pageSignal) {
-        pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
-        if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-        if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
-        if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
-          updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
-        }
-        if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
-          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
-          pageSignal.pendingDelivery = void 0;
-        } else if (pageSignal.emitted) {
-          const finishDelivery = (delivery) => {
-            if (confirmedRepeat && delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true, routeCandidates);
-              return;
-            }
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-          };
-          if (pageSignal.nativeDelivery) {
-            finishDelivery(pageSignal.nativeDelivery);
-          } else {
-            pageSignal.onNativeDelivery = finishDelivery;
-          }
-        } else {
-          pageSignal.pendingDelivery = {
-            key: conversation.key,
-            fingerprint,
-            bodyHash,
-            expect: notifiedStore.notifiedFingerprint(conversation.key)
-          };
-        }
-        pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+      if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
         return;
-      }
       if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
@@ -5053,6 +5073,10 @@
             readTransitions.has(conversation.key) && !pageReceipt
           );
           const repeatedDelivery = readTransitions.has(conversation.key) || reconciliation === "repeated";
+          if (!pageReceipt && pairPendingPageNotification(conversation, detectedAt, repeatedDelivery, routeCandidates)) {
+            changed.delete(conversation.key);
+            continue;
+          }
           const receiptSuppressedRepeat = pageReceipt !== void 0 && repeatedDelivery && (pageSignal?.nativeDelivery ?? pageReceipt.nativeDelivery) === "duplicate";
           const receiptPendingRepeat = pageReceipt !== void 0 && repeatedDelivery && pageSignal !== null && pageSignal.nativeDelivery === void 0;
           if (receiptPendingRepeat) {
@@ -6801,7 +6825,7 @@ ${text}`)) {
     initFeature("spellcheck", initSpellcheck);
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
-    initFeature("mute-action-invalidation", initMuteActionInvalidation);
+    initFeature("mute-action-tracking", initMuteActionTracking);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);

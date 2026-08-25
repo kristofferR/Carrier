@@ -49,6 +49,10 @@ const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
+// Muted filtering cannot safely emit a page Notification until a row supplies
+// its thread identity. Retain that signal through one hidden-window poll so a
+// virtualized or delayed row can still resolve it instead of losing the alert.
+const PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
 const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
 // before it counts as new content (see StableMismatchTracker).
@@ -346,7 +350,7 @@ export function initNotificationBridge() {
       if (pageMatch.signal) pageMatch.signal.nativeId = id;
       const matchWait =
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
-          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS)
+          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS)
           : Promise.resolve();
       Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
         ([icon]) => {
@@ -462,6 +466,10 @@ export function initNotificationBridge() {
     try {
       window.__carrierOnNotification?.();
     } catch (_) {}
+    // A page Notification can precede any observable row mutation. Reconcile
+    // against the current list as soon as this constructor returns so an
+    // already-rendered row can supply its route and mute state immediately.
+    queueMicrotask(scanUnreadConversations);
     this.title = title;
     this.onclick = null;
     this.close = () => {};
@@ -762,6 +770,75 @@ export function initNotificationBridge() {
 
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
 
+  function pairPendingPageNotification(
+    conversation: Conversation,
+    detectedAt: number,
+    confirmedRepeat: boolean,
+    routeCandidates?: Iterable<Conversation>,
+  ): boolean {
+    const pageSignal = notificationCorrelations.consumePageForRow(
+      conversation,
+      detectedAt,
+      PAGE_NOTIFICATION_RECOVERY_MS,
+      routeCandidates,
+    );
+    if (!pageSignal) return false;
+
+    const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    const dedupeKey = notificationDeliveryDedupeKey(
+      fingerprint,
+      confirmedRepeat ? `${conversation.key}:${detectedAt}` : undefined,
+    );
+    const bodyHash = notificationDedupeKey("", conversation.body);
+    const previous = notificationCorrelations.removeRow(conversation.key);
+    if (previous) clearTimeout(previous.timer);
+    pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
+    // The page's async avatar conversion may still be in flight. Give that
+    // pending path the same fresh identity so it remains paired with this row
+    // while bypassing the native replay guard for a confirmed repeat. Once
+    // emitted, changing the signal cannot update the payload already sent.
+    if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
+    // If avatar conversion is still in flight, put the route directly into
+    // the initial native request. Otherwise retrofit the still-pending macOS
+    // request (and retain the route for click/clear fallback on every OS).
+    if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+    if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
+      updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+    }
+    if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+      pageSignal.pendingDelivery = undefined;
+    } else if (pageSignal.emitted) {
+      const finishDelivery = (delivery: NativeNotificationDelivery) => {
+        if (confirmedRepeat && delivery === "duplicate") {
+          // The page emitted with the old content fingerprint before this row
+          // confirmed a new, identical message. Retry only when native delivery
+          // reports that exact emit was suppressed.
+          scheduleFallback(conversation, detectedAt, true, routeCandidates);
+          return;
+        }
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+      };
+      if (pageSignal.nativeDelivery) {
+        finishDelivery(pageSignal.nativeDelivery);
+      } else {
+        pageSignal.onNativeDelivery = finishDelivery;
+      }
+    } else {
+      // The signal's native emit is still waiting on its row identity. A reload
+      // before it queues would leave no banner, so delivered state must ride
+      // the emitter rather than this pairing.
+      pageSignal.pendingDelivery = {
+        key: conversation.key,
+        fingerprint,
+        bodyHash,
+        expect: notifiedStore.notifiedFingerprint(conversation.key),
+      };
+    }
+    pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+    return true;
+  }
+
   const scheduleFallback = (
     conversation: Conversation,
     detectedAt: number,
@@ -779,59 +856,8 @@ export function initNotificationBridge() {
     // stale timer remains armed and later produces a duplicate.
     const previous = notificationCorrelations.removeRow(conversation.key);
     if (previous) clearTimeout(previous.timer);
-    const pageSignal = notificationCorrelations.consumePageForRow(
-      conversation,
-      detectedAt,
-      PAGE_NOTIFICATION_MATCH_MS,
-      routeCandidates,
-    );
-    if (pageSignal) {
-      pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
-      // The page's async avatar conversion may still be in flight. Give that
-      // pending path the same fresh identity so it remains paired with this row
-      // while bypassing the native replay guard for a confirmed repeat. Once
-      // emitted, changing the signal cannot update the payload already sent.
-      if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-      // If avatar conversion is still in flight, put the route directly into
-      // the initial native request. Otherwise retrofit the still-pending macOS
-      // request (and retain the route for click/clear fallback on every OS).
-      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
-      if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
-        updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
-      }
-      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
-        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
-        pageSignal.pendingDelivery = undefined;
-      } else if (pageSignal.emitted) {
-        const finishDelivery = (delivery: NativeNotificationDelivery) => {
-          if (confirmedRepeat && delivery === "duplicate") {
-            // The page emitted with the old content fingerprint before this
-            // row confirmed a new, identical message. Retry only when native
-            // delivery reports that exact emit was suppressed.
-            scheduleFallback(conversation, detectedAt, true, routeCandidates);
-            return;
-          }
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-        };
-        if (pageSignal.nativeDelivery) {
-          finishDelivery(pageSignal.nativeDelivery);
-        } else {
-          pageSignal.onNativeDelivery = finishDelivery;
-        }
-      } else {
-        // The signal's native emit is still waiting on the avatar conversion.
-        // A reload before it queues would leave no banner, so the delivered
-        // state must ride the emitter, not this pairing.
-        pageSignal.pendingDelivery = {
-          key: conversation.key,
-          fingerprint,
-          bodyHash,
-          expect: notifiedStore.notifiedFingerprint(conversation.key),
-        };
-      }
-      pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+    if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
       return;
-    }
 
     if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
       notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
@@ -1183,6 +1209,18 @@ export function initNotificationBridge() {
         );
         const repeatedDelivery =
           readTransitions.has(conversation.key) || reconciliation === "repeated";
+        // A page-first signal may have arrived while this row was virtualized,
+        // or after its DOM mutation escaped the observer. Match every hydrated
+        // unread row, not only rows the arrival trackers classified as changed.
+        // The batch candidate set still makes ambiguous display text fail
+        // closed instead of routing a notification to the wrong thread.
+        if (
+          !pageReceipt &&
+          pairPendingPageNotification(conversation, detectedAt, repeatedDelivery, routeCandidates)
+        ) {
+          changed.delete(conversation.key);
+          continue;
+        }
         // A receipt proves that the page queued an emit and persists the native
         // result. The same-document signal carries that result in memory too.
         // For a proven identical post-read message, "duplicate" means the old
