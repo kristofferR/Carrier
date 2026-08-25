@@ -884,6 +884,48 @@ describe("UnreadArrivalTracker", () => {
     ).toEqual(["unmuted"]);
   });
 
+  test("does not let a muted mutation already scanned without a delta consume a fresh arrival", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted-hydration"], 1_100);
+    expect(
+      tracker.observeUnreadCount(
+        4,
+        1_200,
+        2_000,
+        false,
+        undefined,
+        new Set(["muted-hydration"]),
+        new Set(["muted-hydration"]),
+      ),
+    ).toEqual([]);
+    tracker.markRowsChanged(["unmuted-arrival"], 1_300);
+    expect(
+      tracker.observeUnreadCount(
+        5,
+        1_400,
+        2_000,
+        false,
+        undefined,
+        new Set(["muted-hydration", "unmuted-arrival"]),
+        new Set(["muted-hydration"]),
+      ),
+    ).toEqual(["unmuted-arrival"]);
+  });
+
+  test("does not let fresh read-row churn supersede a delayed unread arrival", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["delayed-arrival"], 1_100);
+    expect(
+      tracker.observeUnreadCount(2, 1_200, 2_000, false, undefined, new Set(["delayed-arrival"])),
+    ).toEqual([]);
+    tracker.markRowsChanged(["read-row-churn"], 1_300);
+    expect(
+      tracker.observeUnreadCount(3, 1_400, 2_000, false, undefined, new Set(["delayed-arrival"])),
+    ).toEqual(["delayed-arrival"]);
+  });
+
   test("expires retained mutations that outlive the attribution window", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(2, 1_000, 2_000);

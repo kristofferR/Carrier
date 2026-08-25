@@ -992,7 +992,10 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
 
 /** Correlates unread-count increases with the rows most recently mutated. */
 export class UnreadArrivalTracker {
-  private readonly changedAt = new Map<string, { changedAt: number; eligibleUntil: number }>();
+  private readonly changedAt = new Map<
+    string,
+    { changedAt: number; eligibleUntil: number; deferred: boolean }
+  >();
   private unreadCount: number | null = null;
   private firstObservedAt: number | null = null;
   private sawDeferredZero = false;
@@ -1000,7 +1003,9 @@ export class UnreadArrivalTracker {
   constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
-    for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
+    for (const key of keys) {
+      this.changedAt.set(key, { changedAt: at, eligibleUntil: at, deferred: false });
+    }
   }
 
   /**
@@ -1091,11 +1096,34 @@ export class UnreadArrivalTracker {
     const eligible = [...this.changedAt].sort(
       (left, right) => right[1].changedAt - left[1].changedAt,
     );
+    if (delta === 0) {
+      // Messenger can update the title after its row. Retain mutations across
+      // a no-delta scan, but remember that they were already observed at the
+      // old count so a newer mutation gets first claim on a later increase.
+      for (const [, candidate] of eligible) candidate.deferred = true;
+      return [];
+    }
+    const attributable = eligible.filter(
+      ([key]) =>
+        blockedUnreadKeys?.has(key) ||
+        currentUnreadKeys === undefined ||
+        currentUnreadKeys.has(key),
+    );
+    const fresh = attributable.filter(([, candidate]) => !candidate.deferred);
+    const attributionPool = fresh.length > 0 ? fresh : attributable;
+    if (fresh.length > 0) {
+      // New mutations supersede candidates already scanned without a title
+      // increase. Otherwise stale muted hydration can consume an unrelated
+      // fresh arrival's aggregate delta indefinitely.
+      for (const [key, candidate] of attributable) {
+        if (candidate.deferred) this.changedAt.delete(key);
+      }
+    }
     // A muted row still contributes to Facebook's aggregate title count. Let
     // its mutation consume a delta slot before considering unmuted rows, or a
     // harmless hydration mutation on another row can inherit the muted alert.
-    const blocked = eligible.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
-    const candidates = eligible
+    const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+    const candidates = attributionPool
       .filter(
         ([key]) =>
           !blockedUnreadKeys?.has(key) &&
@@ -1107,6 +1135,7 @@ export class UnreadArrivalTracker {
       .map(([key]) => key);
     for (const [key] of blocked) this.changedAt.delete(key);
     for (const key of candidates) this.changedAt.delete(key);
+    for (const [, candidate] of attributionPool) candidate.deferred = true;
     return candidates;
   }
 }

@@ -3883,7 +3883,9 @@
       __publicField(this, "sawDeferredZero", false);
     }
     markRowsChanged(keys, at) {
-      for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
+      for (const key of keys) {
+        this.changedAt.set(key, { changedAt: at, eligibleUntil: at, deferred: false });
+      }
     }
     /**
      * `zeroCorroborated` — the caller observed a fully hydrated conversation
@@ -3936,12 +3938,27 @@
       const eligible = [...this.changedAt].sort(
         (left, right) => right[1].changedAt - left[1].changedAt
       );
-      const blocked = eligible.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
-      const candidates = eligible.filter(
+      if (delta === 0) {
+        for (const [, candidate] of eligible) candidate.deferred = true;
+        return [];
+      }
+      const attributable = eligible.filter(
+        ([key]) => blockedUnreadKeys?.has(key) || currentUnreadKeys === void 0 || currentUnreadKeys.has(key)
+      );
+      const fresh = attributable.filter(([, candidate]) => !candidate.deferred);
+      const attributionPool = fresh.length > 0 ? fresh : attributable;
+      if (fresh.length > 0) {
+        for (const [key, candidate] of attributable) {
+          if (candidate.deferred) this.changedAt.delete(key);
+        }
+      }
+      const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+      const candidates = attributionPool.filter(
         ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
       ).slice(0, Math.max(0, delta - blocked.length)).map(([key]) => key);
       for (const [key] of blocked) this.changedAt.delete(key);
       for (const key of candidates) this.changedAt.delete(key);
+      for (const [, candidate] of attributionPool) candidate.deferred = true;
       return candidates;
     }
   };
