@@ -80,6 +80,7 @@ export function initUnreadBadge() {
   let last: number | null = null;
   let filteredUnreadBaseline: number | null = null;
   let mutedUnreadKnown = false;
+  let contaminatedTitleCount: number | null = null;
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
     if (n === last && !force) return;
@@ -103,6 +104,7 @@ export function initUnreadBadge() {
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
       mutedUnreadKnown = false;
+      contaminatedTitleCount = null;
     }
     ignoreMutedPolicy = ignoreMuted;
     if (s.unread_badge === false) {
@@ -110,13 +112,22 @@ export function initUnreadBadge() {
       return;
     }
     const conversations = unreadConversationState();
+    const titleCount = unreadCountFromTitle(document.title || "");
+    if (
+      ignoreMuted &&
+      (conversations.mutedUnread || (mutedUnreadKnown && !conversations.trustworthy))
+    ) {
+      contaminatedTitleCount = titleCount;
+    }
     mutedUnreadKnown = ignoreMuted
       ? reconcileMutedUnreadKnowledge(
           mutedUnreadKnown,
           conversations.mutedUnread,
           conversations.trustworthy,
+          contaminatedTitleCount !== null && titleCount !== contaminatedTitleCount,
         )
       : false;
+    if (!mutedUnreadKnown) contaminatedTitleCount = null;
     if (ignoreMuted && conversations.trustworthy) {
       filteredUnreadBaseline = conversations.count;
     }
@@ -124,7 +135,7 @@ export function initUnreadBadge() {
     const n = conv
       ? conversations.count
       : reconcileUnreadMessageCount(
-          unreadCountFromTitle(document.title || ""),
+          titleCount,
           conversations.count,
           conversations.trustworthy,
           mutedUnreadKnown,

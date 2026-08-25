@@ -77,4 +77,9 @@ describe("reconcileMutedUnreadKnowledge", () => {
   test("clears retained knowledge after a trustworthy unmuted scan", () => {
     expect(reconcileMutedUnreadKnowledge(true, false, true)).toBe(false);
   });
+
+  test("retains contamination while the title still has its old count", () => {
+    expect(reconcileMutedUnreadKnowledge(true, false, true, false)).toBe(true);
+    expect(reconcileMutedUnreadKnowledge(true, false, true, true)).toBe(false);
+  });
 });

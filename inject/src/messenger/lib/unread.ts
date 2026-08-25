@@ -13,8 +13,12 @@ export function reconcileMutedUnreadKnowledge(
   previous: boolean,
   observedMutedUnread: boolean,
   conversationListTrustworthy: boolean,
+  titleChangedSinceContamination = true,
 ): boolean {
-  return conversationListTrustworthy ? observedMutedUnread : previous || observedMutedUnread;
+  if (observedMutedUnread) return true;
+  if (!previous) return false;
+  if (!conversationListTrustworthy) return true;
+  return !titleChangedSinceContamination;
 }
 
 /**

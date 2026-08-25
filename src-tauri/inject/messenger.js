@@ -4221,8 +4221,11 @@
   function didMutedFilterPolicyChange(previous, current) {
     return previous !== null && previous !== current;
   }
-  function reconcileMutedUnreadKnowledge(previous, observedMutedUnread, conversationListTrustworthy) {
-    return conversationListTrustworthy ? observedMutedUnread : previous || observedMutedUnread;
+  function reconcileMutedUnreadKnowledge(previous, observedMutedUnread, conversationListTrustworthy, titleChangedSinceContamination = true) {
+    if (observedMutedUnread) return true;
+    if (!previous) return false;
+    if (!conversationListTrustworthy) return true;
+    return !titleChangedSinceContamination;
   }
   function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy, mutedUnreadKnown = false, previousFilteredCount = null) {
     if (mutedUnreadKnown) {
@@ -6654,6 +6657,7 @@ ${text}`)) {
     let last = null;
     let filteredUnreadBaseline = null;
     let mutedUnreadKnown = false;
+    let contaminatedTitleCount = null;
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
@@ -6671,6 +6675,7 @@ ${text}`)) {
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
         mutedUnreadKnown = false;
+        contaminatedTitleCount = null;
       }
       ignoreMutedPolicy = ignoreMuted;
       if (s.unread_badge === false) {
@@ -6678,17 +6683,23 @@ ${text}`)) {
         return;
       }
       const conversations = unreadConversationState();
+      const titleCount = unreadCountFromTitle(document.title || "");
+      if (ignoreMuted && (conversations.mutedUnread || mutedUnreadKnown && !conversations.trustworthy)) {
+        contaminatedTitleCount = titleCount;
+      }
       mutedUnreadKnown = ignoreMuted ? reconcileMutedUnreadKnowledge(
         mutedUnreadKnown,
         conversations.mutedUnread,
-        conversations.trustworthy
+        conversations.trustworthy,
+        contaminatedTitleCount !== null && titleCount !== contaminatedTitleCount
       ) : false;
+      if (!mutedUnreadKnown) contaminatedTitleCount = null;
       if (ignoreMuted && conversations.trustworthy) {
         filteredUnreadBaseline = conversations.count;
       }
       const conv = s.badge_mode === "conversations";
       const n = conv ? conversations.count : reconcileUnreadMessageCount(
-        unreadCountFromTitle(document.title || ""),
+        titleCount,
         conversations.count,
         conversations.trustworthy,
         mutedUnreadKnown,
