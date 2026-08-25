@@ -295,6 +295,8 @@ export function initNotificationBridge() {
     deliverable: boolean;
   }
   const notificationCorrelations = new NotificationCorrelationQueue<PendingFallback>();
+  let currentPageRouteCandidates: () => Array<{ key: string; title: string; body: string }> =
+    () => [];
 
   const waitForPageMatchWhileFiltering = (signal: PageNotificationSignal) => {
     const cancel = new AbortController();
@@ -343,6 +345,7 @@ export function initNotificationBridge() {
       body,
       Date.now(),
       PAGE_NOTIFICATION_MATCH_MS,
+      currentPageRouteCandidates(),
     );
     if (match) {
       clearTimeout(match.timer);
@@ -845,6 +848,16 @@ export function initNotificationBridge() {
   };
 
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
+
+  // Row-first page matching needs the same current-list uniqueness proof as
+  // the opposite event ordering. Keep this callable empty until the scraper
+  // above has initialized; an unusually early page Notification then remains
+  // unresolved rather than guessing.
+  currentPageRouteCandidates = () =>
+    chatRows()
+      .map(conversationFromLink)
+      .filter((conversation): conversation is Conversation => Boolean(conversation?.body.length))
+      .map(({ key, title, body }) => ({ key, title, body }));
 
   function pairPendingPageNotification(
     conversation: Conversation,

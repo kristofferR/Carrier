@@ -151,15 +151,16 @@ export function initUnreadBadge() {
       filteredUnreadBaseline = null;
     }
     ignoreMutedPolicy = ignoreMuted;
+    const conversations = unreadConversationState();
+    // Persisted evidence remains an account-level fact even while the badge UI
+    // is disabled. Keep mounted-row read/unmute confirmation current so a
+    // later re-enable cannot resurrect stale virtualized state.
+    knownMutedUnreads.reconcile(conversations.muteObservations);
     if (s.unread_badge === false) {
       setBadge(0, force);
       return;
     }
-    const conversations = unreadConversationState();
     const titleCount = unreadCountFromTitle(document.title || "");
-    // Keep positive identity evidence and same-thread invalidation current even
-    // while filtering is off, so re-enabling it can handle virtualized rows.
-    knownMutedUnreads.reconcile(conversations.muteObservations);
     if (ignoreMuted && conversations.trustworthy) {
       filteredUnreadBaseline = conversations.count;
     }

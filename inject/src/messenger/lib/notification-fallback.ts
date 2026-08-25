@@ -1132,7 +1132,13 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     return row;
   }
 
-  consumeRowForPage(title: string, body: string, at: number, matchWindowMs: number): Row | null {
+  consumeRowForPage(
+    title: string,
+    body: string,
+    at: number,
+    matchWindowMs: number,
+    candidateRows?: Iterable<NotificationText & { key: string }>,
+  ): Row | null {
     const matches = [...this.rows.values()].filter((row) => {
       const age = at - row.at;
       return (
@@ -1142,6 +1148,15 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
       );
     });
     if (matches.length !== 1) return null;
+    if (candidateRows) {
+      const candidateKeys = new Set<string>();
+      for (const candidate of candidateRows) {
+        if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
+          candidateKeys.add(candidate.key);
+        }
+      }
+      if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0]!.key)) return null;
+    }
     return this.removeRow(matches[0]!.key) ?? null;
   }
 }

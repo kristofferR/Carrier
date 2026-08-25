@@ -4013,12 +4013,21 @@
       this.rows.delete(key);
       return row;
     }
-    consumeRowForPage(title, body, at, matchWindowMs) {
+    consumeRowForPage(title, body, at, matchWindowMs, candidateRows) {
       const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
         return age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
       });
       if (matches.length !== 1) return null;
+      if (candidateRows) {
+        const candidateKeys = /* @__PURE__ */ new Set();
+        for (const candidate of candidateRows) {
+          if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
+            candidateKeys.add(candidate.key);
+          }
+        }
+        if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0].key)) return null;
+      }
       return this.removeRow(matches[0].key) ?? null;
     }
   };
@@ -4761,6 +4770,7 @@
     };
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
+    let currentPageRouteCandidates = () => [];
     const waitForPageMatchWhileFiltering = (signal) => {
       const cancel = new AbortController();
       const cancelWhenFilteringIsDisabled = () => {
@@ -4781,7 +4791,8 @@
         title,
         body,
         Date.now(),
-        PAGE_NOTIFICATION_MATCH_MS
+        PAGE_NOTIFICATION_MATCH_MS,
+        currentPageRouteCandidates()
       );
       if (match) {
         clearTimeout(match.timer);
@@ -5104,6 +5115,7 @@
         muted
       };
     };
+    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter((conversation) => Boolean(conversation?.body.length)).map(({ key, title, body }) => ({ key, title, body }));
     function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
       const pageSignal = notificationCorrelations.consumePageForRow(
         conversation,
@@ -7058,13 +7070,13 @@ ${text}`)) {
         filteredUnreadBaseline = null;
       }
       ignoreMutedPolicy = ignoreMuted;
+      const conversations = unreadConversationState();
+      knownMutedUnreads.reconcile(conversations.muteObservations);
       if (s.unread_badge === false) {
         setBadge(0, force);
         return;
       }
-      const conversations = unreadConversationState();
       const titleCount = unreadCountFromTitle(document.title || "");
-      knownMutedUnreads.reconcile(conversations.muteObservations);
       if (ignoreMuted && conversations.trustworthy) {
         filteredUnreadBaseline = conversations.count;
       }

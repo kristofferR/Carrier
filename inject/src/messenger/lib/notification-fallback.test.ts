@@ -892,7 +892,10 @@ describe("NotificationCorrelationQueue", () => {
       muted: true,
     });
 
-    const matched = queue.consumeRowForPage("Jane", "Hello", 1_500, 3_000);
+    const matched = queue.consumeRowForPage("Jane", "Hello", 1_500, 3_000, [
+      { key: "1", title: "Jane", body: "Hello" },
+      { key: "2", title: "John", body: "Other" },
+    ]);
     expect(matched).toMatchObject({ key: "1", threadPath: "/t/1/", muted: true });
     expect(queue.getRow("1")).toBeUndefined();
   });
@@ -928,6 +931,26 @@ describe("NotificationCorrelationQueue", () => {
     expect(queue.consumeRowForPage("Jane", "Same", 1_500, 3_000)).toBeNull();
     expect(queue.getRow("1")).toBeDefined();
     expect(queue.getRow("2")).toBeDefined();
+  });
+
+  test("does not consume a queued row when visible content identity is ambiguous", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Same",
+      threadPath: "/t/1/",
+      muted: true,
+    });
+
+    expect(
+      queue.consumeRowForPage("Jane", "Same", 1_500, 3_000, [
+        { key: "1", title: "Jane", body: "Same" },
+        { key: "2", title: "Jane", body: "Same" },
+      ]),
+    ).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
   });
 
   test("returns a capacity displacement so its active fallback can be completed", () => {
