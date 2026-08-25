@@ -3022,8 +3022,8 @@
   // inject/src/messenger/lib/mute.ts
   var MUTE_LABEL_LIMIT = 60;
   var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
-  var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
-  var MUTE_ACTION_RE = /^(?:mute(?:\s|$)|turn off notifications\b)/i;
+  var UNMUTE_ACTION_RE = /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
+  var MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
   var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
   var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
   var MUTED_ROW_ICON_SHAPE = 2001357332;
@@ -3898,7 +3898,7 @@
      * (hydrating rows are never observed read first), so it can be reported
      * even inside the settle window after an uncorroborated zero.
      */
-    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys, currentUnreadKeys) {
+    observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys, currentUnreadKeys, blockedUnreadKeys) {
       for (const [key, candidate] of this.changedAt) {
         candidate.eligibleUntil = Math.max(
           candidate.eligibleUntil,
@@ -3917,7 +3917,11 @@
       if (previous === null) {
         if (!(this.sawDeferredZero && settled && count > 0)) {
           if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-            const transitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, count).map(([key]) => key);
+            const eligibleTransitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt);
+            const blockedTransitions = eligibleTransitions.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, count).length;
+            const transitions = eligibleTransitions.filter(
+              ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
+            ).slice(0, Math.max(0, count - blockedTransitions)).map(([key]) => key);
             if (transitions.length) {
               this.changedAt.clear();
               return transitions;
@@ -3928,7 +3932,15 @@
         }
         previous = 0;
       }
-      const candidates = [...this.changedAt].filter(([key]) => currentUnreadKeys === void 0 || currentUnreadKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt).slice(0, Math.max(0, count - previous)).map(([key]) => key);
+      const delta = Math.max(0, count - previous);
+      const eligible = [...this.changedAt].sort(
+        (left, right) => right[1].changedAt - left[1].changedAt
+      );
+      const blocked = eligible.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+      const candidates = eligible.filter(
+        ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
+      ).slice(0, Math.max(0, delta - blocked.length)).map(([key]) => key);
+      for (const [key] of blocked) this.changedAt.delete(key);
       for (const key of candidates) this.changedAt.delete(key);
       return candidates;
     }
@@ -4508,10 +4520,19 @@
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
         if (pageMatch.signal) pageMatch.signal.nativeId = id;
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS) : Promise.resolve();
         Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-          ([icon]) => {
-            if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+          ([icon, matchResult]) => {
+            const signal = pageMatch.signal;
+            const recoveringIdentity = signal !== void 0 && matchResult === "timeout" && !signal.matched;
+            if (signal && !recoveringIdentity) {
+              notificationCorrelations.discardPage(signal);
+            } else if (signal) {
+              setTimeout(
+                () => notificationCorrelations.discardPage(signal),
+                PAGE_NOTIFICATION_RECOVERY_MS - PAGE_NOTIFICATION_MATCH_MS
+              );
+            }
             const deliverySettings = window.__CARRIER_SETTINGS__ || {};
             const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
             const threadId = threadPathId(threadPath || "");
@@ -4532,6 +4553,7 @@
                 );
               }
               if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
+              if (recoveringIdentity && signal) notificationCorrelations.discardPage(signal);
               return;
             }
             const hidePreview = deliverySettings.hide_notification_preview === true;
@@ -4950,6 +4972,9 @@
         const notifyKeys = new Set(
           conversations.filter((conversation) => !(ignoreMuted && conversation.muted)).map(({ key }) => key)
         );
+        const mutedUnreadKeys = new Set(
+          ignoreMuted ? conversations.filter(({ muted }) => muted).map(({ key }) => key) : void 0
+        );
         const detectedAt = Date.now();
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
         lastScanAt = detectedAt;
@@ -5020,7 +5045,8 @@
           // so a first arrival inside the settle window can still report.
           listHydrated && !observed.some(({ unread }) => unread),
           readObservedKeys,
-          notifyKeys
+          notifyKeys,
+          mutedUnreadKeys
         )) {
           changed.add(key);
         }
@@ -5062,7 +5088,7 @@
           const pageSignal = pageReceipt ? notificationCorrelations.consumePageForRow(
             conversation,
             detectedAt,
-            PAGE_NOTIFICATION_MATCH_MS,
+            PAGE_NOTIFICATION_RECOVERY_MS,
             routeCandidates
           ) : null;
           let reconciliation = notifiedStore.reconcileFingerprint(

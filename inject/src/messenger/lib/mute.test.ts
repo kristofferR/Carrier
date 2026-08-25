@@ -68,6 +68,8 @@ describe("conversationMuteFromLabel", () => {
 
   test("ignores names and unrelated chrome", () => {
     expect(conversationMuteFromLabel("Muted Group")).toBeNull();
+    expect(conversationMuteFromLabel("Mute microphone")).toBeNull();
+    expect(conversationMuteFromLabel("Unmute microphone")).toBeNull();
     expect(conversationMuteFromLabel("Jane")).toBeNull();
     expect(conversationMuteFromLabel("Search")).toBeNull();
     expect(conversationMuteFromLabel("")).toBeNull();
@@ -133,6 +135,8 @@ describe("muteStateAfterExplicitAction", () => {
     expect(muteStateAfterExplicitAction("Mute notifications")).toBe(true);
     expect(muteStateAfterExplicitAction("Turn off notifications")).toBe(true);
     expect(muteStateAfterExplicitAction("Unmute notifications")).toBe(false);
+    expect(muteStateAfterExplicitAction("Mute microphone")).toBeUndefined();
+    expect(muteStateAfterExplicitAction("Unmute microphone")).toBeUndefined();
     expect(muteStateAfterExplicitAction("Notifications are off")).toBeUndefined();
     expect(muteStateAfterExplicitAction("Muted")).toBeUndefined();
   });

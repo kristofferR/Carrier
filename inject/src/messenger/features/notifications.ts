@@ -49,9 +49,8 @@ const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
-// Muted filtering cannot safely emit a page Notification until a row supplies
-// its thread identity. Retain that signal through one hidden-window poll so a
-// virtualized or delayed row can still resolve it instead of losing the alert.
+// After the eager delivery wait, retain a page signal through one hidden-window
+// poll so a virtualized or delayed row can still attach its route and mute state.
 const PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
 const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
@@ -350,11 +349,24 @@ export function initNotificationBridge() {
       if (pageMatch.signal) pageMatch.signal.nativeId = id;
       const matchWait =
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
-          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS)
+          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS)
           : Promise.resolve();
       Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-        ([icon]) => {
-          if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+        ([icon, matchResult]) => {
+          const signal = pageMatch.signal;
+          const recoveringIdentity =
+            signal !== undefined && matchResult === "timeout" && !signal.matched;
+          if (signal && !recoveringIdentity) {
+            notificationCorrelations.discardPage(signal);
+          } else if (signal) {
+            // The banner must not wait past the native dedupe window. Keep only
+            // its content match in memory so a later row can still attach the
+            // route and refresh mute state after the bounded eager wait.
+            setTimeout(
+              () => notificationCorrelations.discardPage(signal),
+              PAGE_NOTIFICATION_RECOVERY_MS - PAGE_NOTIFICATION_MATCH_MS,
+            );
+          }
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
           const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
           const threadId = threadPathId(threadPath || "");
@@ -380,6 +392,7 @@ export function initNotificationBridge() {
               );
             }
             if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
+            if (recoveringIdentity && signal) notificationCorrelations.discardPage(signal);
             return;
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
@@ -1032,6 +1045,9 @@ export function initNotificationBridge() {
           .filter((conversation) => !(ignoreMuted && conversation.muted))
           .map(({ key }) => key),
       );
+      const mutedUnreadKeys = new Set(
+        ignoreMuted ? conversations.filter(({ muted }) => muted).map(({ key }) => key) : undefined,
+      );
       const detectedAt = Date.now();
       const mutationGrace = lastScanAt
         ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt))
@@ -1134,6 +1150,7 @@ export function initNotificationBridge() {
         listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
         notifyKeys,
+        mutedUnreadKeys,
       )) {
         changed.add(key);
       }
@@ -1196,7 +1213,7 @@ export function initNotificationBridge() {
           ? notificationCorrelations.consumePageForRow(
               conversation,
               detectedAt,
-              PAGE_NOTIFICATION_MATCH_MS,
+              PAGE_NOTIFICATION_RECOVERY_MS,
               routeCandidates,
             )
           : null;

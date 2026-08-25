@@ -13,10 +13,11 @@ const MUTED_STATUS_RE =
   /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
 
 /** Action that un-silences a thread — the conversation is currently muted. */
-const UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
+const UNMUTE_ACTION_RE =
+  /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
 
 /** Action that silences a thread — the conversation is currently unmuted. */
-const MUTE_ACTION_RE = /^(?:mute(?:\s|$)|turn off notifications\b)/i;
+const MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
 
 const LABEL_ATTRS = ["aria-label", "title", "aria-description"] as const;
 const MUTE_ACTION_ROLES = new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);

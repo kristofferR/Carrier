@@ -1023,6 +1023,7 @@ export class UnreadArrivalTracker {
     zeroCorroborated = false,
     readObservedKeys?: ReadonlySet<string>,
     currentUnreadKeys?: ReadonlySet<string>,
+    blockedUnreadKeys?: ReadonlySet<string>,
   ): string[] {
     for (const [key, candidate] of this.changedAt) {
       // A delayed hidden-webview scan grants the mutation a longer absolute
@@ -1059,10 +1060,19 @@ export class UnreadArrivalTracker {
         // transition — report it even before the window settles. Everything
         // else primes silently below.
         if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-          const transitions = [...this.changedAt]
+          const eligibleTransitions = [...this.changedAt]
             .filter(([key]) => readObservedKeys.has(key))
-            .sort((left, right) => right[1].changedAt - left[1].changedAt)
-            .slice(0, count)
+            .sort((left, right) => right[1].changedAt - left[1].changedAt);
+          const blockedTransitions = eligibleTransitions
+            .filter(([key]) => blockedUnreadKeys?.has(key))
+            .slice(0, count).length;
+          const transitions = eligibleTransitions
+            .filter(
+              ([key]) =>
+                !blockedUnreadKeys?.has(key) &&
+                (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
+            )
+            .slice(0, Math.max(0, count - blockedTransitions))
             .map(([key]) => key);
           if (transitions.length) {
             this.changedAt.clear();
@@ -1077,13 +1087,25 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    const candidates = [...this.changedAt]
-      .filter(([key]) => currentUnreadKeys === undefined || currentUnreadKeys.has(key))
-      .sort((left, right) => right[1].changedAt - left[1].changedAt)
+    const delta = Math.max(0, count - previous);
+    const eligible = [...this.changedAt].sort(
+      (left, right) => right[1].changedAt - left[1].changedAt,
+    );
+    // A muted row still contributes to Facebook's aggregate title count. Let
+    // its mutation consume a delta slot before considering unmuted rows, or a
+    // harmless hydration mutation on another row can inherit the muted alert.
+    const blocked = eligible.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+    const candidates = eligible
+      .filter(
+        ([key]) =>
+          !blockedUnreadKeys?.has(key) &&
+          (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
+      )
       // Current unread styling narrows attribution, but an aggregate increase
       // is still required: scrolling can mutate a pre-existing unread row.
-      .slice(0, Math.max(0, count - previous))
+      .slice(0, Math.max(0, delta - blocked.length))
       .map(([key]) => key);
+    for (const [key] of blocked) this.changedAt.delete(key);
     for (const key of candidates) this.changedAt.delete(key);
     return candidates;
   }

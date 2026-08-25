@@ -736,10 +736,10 @@ describe("NotificationCorrelationQueue", () => {
     expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
   });
 
-  test("recovers a page-first signal when its virtualized row appears after the eager window", async () => {
+  test("recovers a page-first signal after its eager delivery wait timed out", async () => {
     const queue = new NotificationCorrelationQueue<RowSignal>();
     const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
-    const deliveryGate = waitForPageNotificationMatch(signal, 100);
+    expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
     const matched = queue.consumePageForRow(
       { key: "1", title: "Jane", body: "Hello" },
       11_000,
@@ -747,7 +747,6 @@ describe("NotificationCorrelationQueue", () => {
     );
 
     expect(matched).toBe(signal);
-    expect(await deliveryGate).toBe("matched");
   });
 
   test("matches a row-first muted signal after its DOM row is virtualized", () => {
@@ -849,13 +848,39 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
   });
 
-  test("uses the title delta but excludes muted rows from attribution", () => {
+  test("does not reassign a muted title delta to an unrelated unmuted row", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(4, 1_000, 2_000);
     tracker.markRowsChanged(["muted"], 1_100);
     tracker.markRowsChanged(["unmuted"], 1_200);
     expect(
-      tracker.observeUnreadCount(5, 1_300, 2_000, false, undefined, new Set(["unmuted"])),
+      tracker.observeUnreadCount(
+        5,
+        1_300,
+        2_000,
+        false,
+        undefined,
+        new Set(["unmuted"]),
+        new Set(["muted"]),
+      ),
+    ).toEqual([]);
+  });
+
+  test("attributes only title-delta slots not accounted for by muted rows", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted"], 1_100);
+    tracker.markRowsChanged(["unmuted"], 1_200);
+    expect(
+      tracker.observeUnreadCount(
+        6,
+        1_300,
+        2_000,
+        false,
+        undefined,
+        new Set(["unmuted"]),
+        new Set(["muted"]),
+      ),
     ).toEqual(["unmuted"]);
   });
 
