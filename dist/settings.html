@@ -270,7 +270,8 @@
         return selectRow(
           "badge_mode", "messages",
           [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
-          "Badge counts", "Whether the badge shows unread messages or unread conversations.",
+          "Badge counts",
+          "Shows unread messages when Messenger exposes an exact total. While muted chats are filtered, Carrier uses unread conversations because Messenger exposes only the combined message total.",
           !settings.unread_badge,
         );
       }

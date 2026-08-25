@@ -8,6 +8,7 @@ import {
   muteSignalFromLabels,
   muteSignalFromSource,
   resolveMuteObservation,
+  resolveUnmuteActionThreadId,
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "./mute";
@@ -48,6 +49,7 @@ describe("conversationMuteFromLabel", () => {
     expect(conversationMuteFromLabel("Muted")).toBe(true);
     expect(conversationMuteFromLabel("notifications muted")).toBe(true);
     expect(conversationMuteFromLabel("Muted notifications")).toBe(true);
+    expect(conversationMuteFromLabel("Notifications are off")).toBe(true);
     expect(conversationMuteFromLabel("Stummgeschaltet")).toBe(true);
   });
 
@@ -56,6 +58,7 @@ describe("conversationMuteFromLabel", () => {
     expect(conversationMuteFromLabel("Unmute notifications")).toBe(true);
     expect(conversationMuteFromLabel("Mute")).toBe(false);
     expect(conversationMuteFromLabel("Mute notifications")).toBe(false);
+    expect(conversationMuteFromLabel("Turn off notifications")).toBe(false);
   });
 
   test("ignores names and unrelated chrome", () => {
@@ -138,10 +141,29 @@ describe("isMutedRowIconShape", () => {
     viewBox: "0 0 16 16",
     pathCount: 1,
     shapeHash: 0x774a4a14,
+    pathPrefixMatched: false,
   };
 
   test("recognizes Messenger's live unlabeled slashed-bell row icon", () => {
     expect(isMutedRowIconShape(mutedBell)).toBe(true);
+  });
+
+  test("accepts the current path prefix only inside the verified row-icon geometry", () => {
+    expect(
+      isMutedRowIconShape({
+        ...mutedBell,
+        shapeHash: 0x12345678,
+        pathPrefixMatched: true,
+      }),
+    ).toBe(true);
+    expect(
+      isMutedRowIconShape({
+        ...mutedBell,
+        width: 20,
+        shapeHash: 0x12345678,
+        pathPrefixMatched: true,
+      }),
+    ).toBe(false);
   });
 
   test("rejects the adjacent interactive row action and lookalike status icons", () => {
@@ -160,25 +182,34 @@ describe("isMutedRowIconShape", () => {
   });
 });
 
+describe("resolveUnmuteActionThreadId", () => {
+  test("uses the row that directly owns an action", () => {
+    expect(resolveUnmuteActionThreadId("row", "open", "recent", true)).toBe("row");
+  });
+
+  test("prefers the open thread for header and info surfaces", () => {
+    expect(resolveUnmuteActionThreadId("", "open", "unrelated-recent", true)).toBe("open");
+  });
+
+  test("uses the recent row for its portalled context menu", () => {
+    expect(resolveUnmuteActionThreadId("", "open", "recent", false)).toBe("recent");
+  });
+});
+
 describe("resolveMuteObservation", () => {
-  test("keeps an unread row without a glyph as unknown", () => {
-    expect(resolveMuteObservation([], true)).toBeUndefined();
-    expect(resolveMuteObservation(["Jane"], true)).toBeUndefined();
+  test("treats a mounted row without a scoped mute signal as unmuted", () => {
+    expect(resolveMuteObservation([])).toBe(false);
+    expect(resolveMuteObservation(["Jane"])).toBe(false);
   });
 
-  test("treats a read row without a glyph as unmuted", () => {
-    expect(resolveMuteObservation([], false)).toBe(false);
-  });
-
-  test("an explicit glyph wins over read/unread", () => {
-    expect(resolveMuteObservation(["Muted"], true)).toBe(true);
-    expect(resolveMuteObservation(["Muted"], false)).toBe(true);
-    expect(resolveMuteObservation(["Mute"], false)).toBe(false);
+  test("an explicit mute signal wins", () => {
+    expect(resolveMuteObservation(["Muted"])).toBe(true);
+    expect(resolveMuteObservation(["Mute"])).toBe(false);
   });
 });
 
 describe("MutedThreadStore", () => {
-  test("remembers mute until an unmuted observation", () => {
+  test("remembers mute while a row is virtualized, then accepts an unmuted observation", () => {
     const store = new MutedThreadStore();
     store.observe("1", true);
     expect(store.isMuted("1")).toBe(true);

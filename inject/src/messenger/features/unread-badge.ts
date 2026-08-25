@@ -51,7 +51,7 @@ export function initUnreadBadge() {
           break;
         }
       }
-      const muted = observeConversationMute(id, row, unread);
+      const muted = observeConversationMute(id, row);
       if (!unread) continue;
       unreadIds.push(id);
       if (ignoreMuted && muted) continue;

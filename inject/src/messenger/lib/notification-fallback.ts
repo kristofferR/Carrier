@@ -251,8 +251,8 @@ export type FingerprintReconciliation =
   | "repeated";
 
 /**
- * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
- * never raw text) that produced a native notification per conversation,
+ * Remembers the last handled preview fingerprint (a [[notificationDedupeKey]]
+ * hash — never raw text) per conversation,
  * persisted via the given storage (localStorage in production) so the memory
  * survives the auto-refresh reload and app restarts. Without it, re-priming
  * the trackers after a reload races Facebook's hydration and can re-notify a
@@ -378,7 +378,7 @@ export class NotifiedSignatureStore {
     return this.entries.get(conversationKey)?.fingerprint === fingerprint;
   }
 
-  /** The fingerprint last delivered for this conversation, if any. */
+  /** The fingerprint last delivered or deliberately suppressed, if any. */
   notifiedFingerprint(conversationKey: string): string | undefined {
     return this.entries.get(conversationKey)?.fingerprint;
   }
@@ -451,7 +451,15 @@ export class NotifiedSignatureStore {
   }
 
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
-    // A fresh delivery means the row is unread again — cancel read confirmation.
+    this.markHandled(conversationKey, fingerprint, bodyHash);
+  }
+
+  markSuppressed(conversationKey: string, fingerprint: string, bodyHash?: string): void {
+    this.markHandled(conversationKey, fingerprint, bodyHash);
+  }
+
+  private markHandled(conversationKey: string, fingerprint: string, bodyHash?: string): void {
+    // A fresh handled preview means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
     const retired = this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);

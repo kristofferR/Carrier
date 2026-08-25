@@ -357,6 +357,23 @@ export function initNotificationBridge() {
             ? mutedThreads.isMuted(threadId)
             : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
           if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+            if (
+              suppressed &&
+              notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect
+            ) {
+              notifiedStore.markSuppressed(
+                suppressed.key,
+                suppressed.fingerprint,
+                suppressed.bodyHash,
+              );
+            } else if (threadId && !suppressed) {
+              notifiedStore.markSuppressed(
+                threadId,
+                notificationDedupeKey(originalTitle, originalBody),
+                notificationDedupeKey("", originalBody),
+              );
+            }
             if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
             return;
           }
@@ -426,8 +443,18 @@ export function initNotificationBridge() {
           }
         },
       );
-    } else if (pageMatch.signal) {
-      notificationCorrelations.discardPage(pageMatch.signal);
+    } else {
+      if (
+        pageMatch.deliver &&
+        notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+      ) {
+        notifiedStore.markSuppressed(
+          pageMatch.deliver.key,
+          pageMatch.deliver.fingerprint,
+          pageMatch.deliver.bodyHash,
+        );
+      }
+      if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
     }
     // Nudge the auto-refresh so the conversation view catches up even when
     // Facebook's in-WebView live sync stalls.
@@ -711,7 +738,7 @@ export function initNotificationBridge() {
         break;
       }
     }
-    const muted = observeConversationMute(id, row, unread);
+    const muted = observeConversationMute(id, row);
     return {
       key: id,
       threadPath: `/t/${id}/`,
@@ -772,6 +799,7 @@ export function initNotificationBridge() {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         pageSignal.pendingDelivery = undefined;
       } else if (pageSignal.emitted) {
         const finishDelivery = (delivery: NativeNotificationDelivery) => {
@@ -805,6 +833,7 @@ export function initNotificationBridge() {
     }
 
     if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       // Keep a content-only row candidate for the opposite event ordering.
       // Messenger can virtualize the row away before constructing its page
       // Notification; the candidate lets that later signal recover the mute
@@ -855,6 +884,7 @@ export function initNotificationBridge() {
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
           notificationCorrelations.removeRow(conversation.key);
         }
@@ -876,6 +906,7 @@ export function initNotificationBridge() {
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const deliverySettings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         notificationCorrelations.removeRow(conversation.key);
         return;
       }

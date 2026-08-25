@@ -150,6 +150,15 @@ describe("NotifiedSignatureStore", () => {
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 
+  test("retires a deliberately suppressed preview across reloads", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markSuppressed("1", "aaaa", "body");
+
+    const reloaded = new NotifiedSignatureStore(storage);
+    expect(reloaded.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(reloaded.reconcileFingerprint("1", "Jane", "aaaa", "body")).toBe("matched");
+  });
+
   test("silently migrates placeholder fingerprints only from the legacy schema", () => {
     const storage = memoryStorage();
     const placeholder = notificationDedupeKey("Jane", "New message");

@@ -2394,13 +2394,15 @@
         return "unmute-action";
       }
       if (
-        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
+        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
           s,
         )
       ) {
         return "muted-status";
       }
-      if (/^mute(?:\s|$)/i.test(s) && !/\bmuted\b/i.test(s)) return "mute-action";
+      if (/^(?:mute(?:\s|$)|turn off notifications\b)/i.test(s) && !/\bmuted\b/i.test(s)) {
+        return "mute-action";
+      }
       return "";
     }
 
@@ -2426,7 +2428,13 @@
               role === "row" ||
               role === "gridcell";
             var iconSurface = tag === "svg" || role === "img" || directSvg;
-            if (action || contentSurface || !iconSurface) {
+            var actionSurface =
+              tag === "button" ||
+              role === "button" ||
+              role === "menuitem" ||
+              role === "menuitemcheckbox" ||
+              role === "switch";
+            if (action ? !actionSurface : contentSurface || !iconSurface) {
               rejectedContentLabels++;
               return;
             }
@@ -2474,6 +2482,7 @@
             hash ^= shapeText.charCodeAt(i);
             hash = Math.imul(hash, 16777619);
           }
+          var firstPath = svg.querySelector("path[d]");
           svgShapes.push({
             w: box.w,
             h: box.h,
@@ -2485,6 +2494,10 @@
             viewBox: svg.getAttribute("viewBox") || "",
             pathCount: svg.querySelectorAll("path").length,
             shapeHash: (hash >>> 0).toString(16),
+            pathPrefixMatched:
+              notifyNorm((firstPath && firstPath.getAttribute("d")) || "").indexOf(
+                "M2.5 6c0-.322",
+              ) === 0,
           });
         }
       });
@@ -2501,7 +2514,7 @@
           shape.ariaHidden &&
           String(shape.viewBox).replace(/\s+/g, " ").trim() === "0 0 16 16" &&
           shape.pathCount === 1 &&
-          shape.shapeHash === "774a4a14"
+          (shape.shapeHash === "774a4a14" || shape.pathPrefixMatched)
         );
       });
       if (labelled.mutedStatus || labelled.unmuteAction || rowIconMuted) status = "muted";

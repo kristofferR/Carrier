@@ -3021,12 +3021,13 @@
 
   // inject/src/messenger/lib/mute.ts
   var MUTE_LABEL_LIMIT = 60;
-  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
   var UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
-  var MUTE_ACTION_RE = /^mute(?:\s|$)/i;
+  var MUTE_ACTION_RE = /^(?:mute(?:\s|$)|turn off notifications\b)/i;
   var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
   var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
   var MUTED_ROW_ICON_SHAPE = 2001357332;
+  var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
   var MUTED_THREAD_LIMIT = 500;
   function ignoresMutedConversations(settings) {
     return settings?.ignore_muted_conversations !== false;
@@ -3075,7 +3076,7 @@
     return null;
   }
   function isMutedRowIconShape(shape) {
-    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= 24 && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && shape.shapeHash === MUTED_ROW_ICON_SHAPE;
+    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= 24 && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
   }
   var svgShapeHash = (svg) => {
     let shapeText = "";
@@ -3104,18 +3105,18 @@
         ariaHidden: svg.getAttribute("aria-hidden") === "true",
         viewBox: svg.getAttribute("viewBox") || "",
         pathCount: svg.querySelectorAll("path").length,
-        shapeHash: svgShapeHash(svg)
+        shapeHash: svgShapeHash(svg),
+        pathPrefixMatched: svg.querySelector("path[d]")?.getAttribute("d")?.replace(/\s+/g, " ").trim().startsWith(MUTED_ROW_ICON_PATH_PREFIX) === true
       })) {
         return true;
       }
     }
     return false;
   }
-  function resolveMuteObservation(labels, unread) {
+  function resolveMuteObservation(labels) {
     const signal = muteSignalFromLabels(labels);
     if (signal !== null) return signal;
-    if (!unread) return false;
-    return void 0;
+    return false;
   }
   function collectMuteLabels(root, includeActions = true) {
     const labels = [];
@@ -3182,17 +3183,24 @@
     const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
     return /\/t\/([^/?#]+)/.exec(href)?.[1] || "";
   };
+  function resolveUnmuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
+    if (rowId) return rowId;
+    if (actionIsInOpenSurface && openId) return openId;
+    return recentRowId || openId;
+  }
   function initMuteActionInvalidation() {
     if (actionInvalidationStarted) return;
     actionInvalidationStarted = true;
     let recentRow = null;
     const rememberRow = (target) => {
       if (!(target instanceof Element)) return;
+      if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
       const id = threadIdFromActionTarget(target);
-      if (id) recentRow = { id, at: Date.now() };
+      recentRow = id ? { id, at: Date.now() } : null;
     };
     document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
     document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
+    document.addEventListener("focusin", (event) => rememberRow(event.target), true);
     document.addEventListener(
       "click",
       (event) => {
@@ -3208,16 +3216,21 @@
         const rowId = threadIdFromActionTarget(action);
         const openId = /\/t\/([^/?#]+)/.exec(location.pathname)?.[1] || "";
         const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
-        const id = rowId || recentId || openId;
+        const id = resolveUnmuteActionThreadId(
+          rowId,
+          openId,
+          recentId,
+          !!action.closest('[role="main"], [role="complementary"], [role="dialog"]')
+        );
         if (id) mutedThreads.invalidateMute(id);
       },
       true
     );
   }
-  function observeConversationMute(id, root, unread) {
+  function observeConversationMute(id, root) {
     mutedThreads.observe(
       id,
-      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false), unread)
+      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false))
     );
     return mutedThreads.isMuted(id);
   }
@@ -3398,7 +3411,7 @@
     alreadyNotified(conversationKey, fingerprint) {
       return this.entries.get(conversationKey)?.fingerprint === fingerprint;
     }
-    /** The fingerprint last delivered for this conversation, if any. */
+    /** The fingerprint last delivered or deliberately suppressed, if any. */
     notifiedFingerprint(conversationKey) {
       return this.entries.get(conversationKey)?.fingerprint;
     }
@@ -3443,6 +3456,12 @@
       return "migrated";
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
+      this.markHandled(conversationKey, fingerprint, bodyHash);
+    }
+    markSuppressed(conversationKey, fingerprint, bodyHash) {
+      this.markHandled(conversationKey, fingerprint, bodyHash);
+    }
+    markHandled(conversationKey, fingerprint, bodyHash) {
       this.readStreaks.delete(conversationKey);
       const retired = this.readFingerprints.delete(conversationKey);
       const current = this.entries.get(conversationKey);
@@ -4464,6 +4483,20 @@
             const threadId = threadPathId(threadPath || "");
             const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
             if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+              const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+              if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
+                notifiedStore.markSuppressed(
+                  suppressed.key,
+                  suppressed.fingerprint,
+                  suppressed.bodyHash
+                );
+              } else if (threadId && !suppressed) {
+                notifiedStore.markSuppressed(
+                  threadId,
+                  notificationDedupeKey(originalTitle, originalBody),
+                  notificationDedupeKey("", originalBody)
+                );
+              }
               if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
               return;
             }
@@ -4504,8 +4537,15 @@
             }
           }
         );
-      } else if (pageMatch.signal) {
-        notificationCorrelations.discardPage(pageMatch.signal);
+      } else {
+        if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
+          notifiedStore.markSuppressed(
+            pageMatch.deliver.key,
+            pageMatch.deliver.fingerprint,
+            pageMatch.deliver.bodyHash
+          );
+        }
+        if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
       }
       try {
         window.__carrierOnNotification?.();
@@ -4680,7 +4720,7 @@
           break;
         }
       }
-      const muted = observeConversationMute(id, row, unread);
+      const muted = observeConversationMute(id, row);
       return {
         key: id,
         threadPath: `/t/${id}/`,
@@ -4723,6 +4763,7 @@
           updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
         }
         if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           pageSignal.pendingDelivery = void 0;
         } else if (pageSignal.emitted) {
           const finishDelivery = (delivery) => {
@@ -4749,6 +4790,7 @@
         return;
       }
       if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
             notificationCorrelations.removeRow(conversation.key);
@@ -4776,6 +4818,7 @@
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
           }
@@ -4789,6 +4832,7 @@
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
           return;
         }
@@ -6511,7 +6555,7 @@ ${text}`)) {
             break;
           }
         }
-        const muted = observeConversationMute(id, row, unread);
+        const muted = observeConversationMute(id, row);
         if (!unread) continue;
         unreadIds.push(id);
         if (ignoreMuted && muted) continue;

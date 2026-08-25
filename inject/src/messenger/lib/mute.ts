@@ -2,26 +2,26 @@
  *
  * Facebook's title "(N)" and bold chat rows still count muted chats. Carrier
  * reads mute from accessible names on the row (and the open-thread Mute /
- * Unmute control), then remembers the thread id so a virtualized list or a
- * momentarily missing glyph does not forget a mute we already saw.
+ * Unmute control), then remembers the thread id while its row is virtualized.
  */
 
 const MUTE_LABEL_LIMIT = 60;
 
 /** Localized status words that sit alone on Messenger's mute glyph. */
 const MUTED_STATUS_RE =
-  /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are muted|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
 
 /** Action that un-silences a thread — the conversation is currently muted. */
 const UNMUTE_ACTION_RE = /^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i;
 
 /** Action that silences a thread — the conversation is currently unmuted. */
-const MUTE_ACTION_RE = /^mute(?:\s|$)/i;
+const MUTE_ACTION_RE = /^(?:mute(?:\s|$)|turn off notifications\b)/i;
 
 const LABEL_ATTRS = ["aria-label", "title", "aria-description"] as const;
 const MUTE_ACTION_ROLES = new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
 
 const MUTED_ROW_ICON_SHAPE = 0x774a4a14;
+const MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
 
 const MUTED_THREAD_LIMIT = 500;
 
@@ -117,6 +117,7 @@ export interface MutedRowIconShape {
   viewBox: string;
   pathCount: number;
   shapeHash: number;
+  pathPrefixMatched: boolean;
 }
 
 /** Messenger's unlabeled, aria-hidden 16px slashed-bell row status icon. */
@@ -132,7 +133,7 @@ export function isMutedRowIconShape(shape: MutedRowIconShape): boolean {
     shape.ariaHidden &&
     shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" &&
     shape.pathCount === 1 &&
-    shape.shapeHash === MUTED_ROW_ICON_SHAPE
+    (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched)
   );
 }
 
@@ -166,6 +167,13 @@ export function hasMutedRowIcon(root: ParentNode): boolean {
         viewBox: svg.getAttribute("viewBox") || "",
         pathCount: svg.querySelectorAll("path").length,
         shapeHash: svgShapeHash(svg),
+        pathPrefixMatched:
+          svg
+            .querySelector("path[d]")
+            ?.getAttribute("d")
+            ?.replace(/\s+/g, " ")
+            .trim()
+            .startsWith(MUTED_ROW_ICON_PATH_PREFIX) === true,
       })
     ) {
       return true;
@@ -177,18 +185,14 @@ export function hasMutedRowIcon(root: ParentNode): boolean {
 /**
  * Turn this scan's labels into a cache write.
  *
- * Unread rows sometimes omit the mute glyph (the same failure Caprine hit),
- * so "no label" on an unread row is unknown. A read row would still show the
- * icon if the thread were muted, so "no label" there means unmuted.
+ * A mounted Messenger row without a scoped mute signal is unmuted. Missing
+ * virtualized rows are never observed here, so their last positive state is
+ * retained until the row mounts again or an explicit Unmute action clears it.
  */
-export function resolveMuteObservation(
-  labels: Iterable<string>,
-  unread: boolean,
-): boolean | undefined {
+export function resolveMuteObservation(labels: Iterable<string>): boolean {
   const signal = muteSignalFromLabels(labels);
   if (signal !== null) return signal;
-  if (!unread) return false;
-  return undefined;
+  return false;
 }
 
 export function collectMuteLabels(root: ParentNode, includeActions = true): string[] {
@@ -271,6 +275,17 @@ const threadIdFromActionTarget = (target: Element): string => {
   return /\/t\/([^/?#]+)/.exec(href)?.[1] || "";
 };
 
+export function resolveUnmuteActionThreadId(
+  rowId: string,
+  openId: string,
+  recentRowId: string,
+  actionIsInOpenSurface: boolean,
+): string {
+  if (rowId) return rowId;
+  if (actionIsInOpenSurface && openId) return openId;
+  return recentRowId || openId;
+}
+
 /** Clear cached mute state after Messenger's explicit Unmute action. */
 export function initMuteActionInvalidation(): void {
   if (actionInvalidationStarted) return;
@@ -278,11 +293,16 @@ export function initMuteActionInvalidation(): void {
   let recentRow: { id: string; at: number } | null = null;
   const rememberRow = (target: EventTarget | null) => {
     if (!(target instanceof Element)) return;
+    // The action itself is often rendered in a portal. Preserve the row that
+    // opened that menu, but clear it when an unrelated header/info trigger is
+    // used so an old list interaction cannot invalidate the wrong thread.
+    if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
     const id = threadIdFromActionTarget(target);
-    if (id) recentRow = { id, at: Date.now() };
+    recentRow = id ? { id, at: Date.now() } : null;
   };
   document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
   document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
+  document.addEventListener("focusin", (event) => rememberRow(event.target), true);
   document.addEventListener(
     "click",
     (event) => {
@@ -302,17 +322,22 @@ export function initMuteActionInvalidation(): void {
       const rowId = threadIdFromActionTarget(action);
       const openId = /\/t\/([^/?#]+)/.exec(location.pathname)?.[1] || "";
       const recentId = recentRow && Date.now() - recentRow.at <= 15_000 ? recentRow.id : "";
-      const id = rowId || recentId || openId;
+      const id = resolveUnmuteActionThreadId(
+        rowId,
+        openId,
+        recentId,
+        !!action.closest('[role="main"], [role="complementary"], [role="dialog"]'),
+      );
       if (id) mutedThreads.invalidateMute(id);
     },
     true,
   );
 }
 
-export function observeConversationMute(id: string, root: ParentNode, unread: boolean): boolean {
+export function observeConversationMute(id: string, root: ParentNode): boolean {
   mutedThreads.observe(
     id,
-    hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false), unread),
+    hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false)),
   );
   return mutedThreads.isMuted(id);
 }
