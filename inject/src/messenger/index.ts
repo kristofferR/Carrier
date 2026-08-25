@@ -42,6 +42,7 @@ import { initThreadNav } from "./features/thread-nav";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
 import { initZoom } from "./features/zoom";
+import { initMuteActionTracking } from "./lib/mute";
 
 function initFeature(name: string, init: () => void) {
   try {
@@ -72,6 +73,7 @@ function main() {
   initFeature("spellcheck", initSpellcheck);
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
+  initFeature("mute-action-tracking", initMuteActionTracking);
   initFeature("notifications", initNotificationBridge);
   initFeature("share-intake", initShareIntake);
   initFeature("sync-health", initSyncHealth);

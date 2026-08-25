@@ -13,6 +13,12 @@ export function threadPathId(href: unknown): string | null {
   return m ? m[1]! : null;
 }
 
+/** A localStorage key isolated to the logged-in Facebook account. */
+export function accountScopedStorageKey(baseKey: string, cookie: string): string | null {
+  const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
+  return accountId ? `${baseKey}:${accountId}` : null;
+}
+
 /** Whether a pathname is a Messenger inbox/thread surface that should render controls. */
 export function isMessengerContentPath(pathname: unknown): boolean {
   const path = String(pathname || "");

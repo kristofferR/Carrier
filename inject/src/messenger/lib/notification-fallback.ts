@@ -122,6 +122,12 @@ export interface PageNotificationSignal extends NotificationText {
    * regressed to this older one.
    */
   pendingDelivery?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+  /** Resolves when a row has been correlated, so page-first delivery can wait
+   * for the row's route and mute state instead of racing it. */
+  matchPromise?: Promise<void>;
+  settleMatch?: () => void;
+  /** The correlated row's live Messenger mute state. */
+  threadMuted?: boolean;
 }
 
 const normalizeNotificationText = (value: string) =>
@@ -175,7 +181,10 @@ export function notificationDeliveryDedupeKey(fingerprint: string, generation?: 
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
-const NOTIFIED_STORE_VERSION = 3;
+const NOTIFIED_STORE_VERSION = 4;
+// Version 3 added persisted retired-read fingerprints but did not distinguish
+// native delivery from a mute-policy suppression.
+const NOTIFIED_STORE_RETIRED_VERSION = 3;
 // Version 2 was written by the scraper that dropped emoji from a preview. Its
 // entries are kept rather than discarded, so a message that arrives while the
 // app is updating still has something to differ from and still notifies. A row
@@ -230,6 +239,8 @@ interface NotifiedEntry {
    * persisted before the field existed.
    */
   bodyHash?: string;
+  /** The preview was handled by mute policy, not shown as a native banner. */
+  suppressed: boolean;
 }
 
 interface RetiredFingerprint {
@@ -240,13 +251,14 @@ interface RetiredFingerprint {
 export type FingerprintReconciliation =
   | "missing"
   | "matched"
+  | "suppressed"
   | "migrated"
   | "mismatched"
   | "repeated";
 
 /**
- * Remembers the last preview fingerprint (a [[notificationDedupeKey]] hash —
- * never raw text) that produced a native notification per conversation,
+ * Remembers the last handled preview fingerprint (a [[notificationDedupeKey]]
+ * hash — never raw text) per conversation,
  * persisted via the given storage (localStorage in production) so the memory
  * survives the auto-refresh reload and app restarts. Without it, re-priming
  * the trackers after a reload races Facebook's hydration and can re-notify a
@@ -285,7 +297,9 @@ export class NotifiedSignatureStore {
           : null;
       const persistedEntries =
         legacy ||
-        ((version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) &&
+        ((version === NOTIFIED_STORE_VERSION ||
+          version === NOTIFIED_STORE_RETIRED_VERSION ||
+          version === NOTIFIED_STORE_TEXT_VERSION) &&
           parsed &&
           typeof parsed === "object" &&
           "entries" in parsed &&
@@ -305,11 +319,15 @@ export class NotifiedSignatureStore {
             fingerprint: entry[1],
             legacy: legacy || entry[2],
             bodyHash: typeof entry[3] === "string" ? entry[3] : undefined,
+            suppressed:
+              version === NOTIFIED_STORE_VERSION && typeof entry[4] === "boolean"
+                ? entry[4]
+                : false,
           });
         }
       }
       if (
-        version === NOTIFIED_STORE_VERSION &&
+        (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_RETIRED_VERSION) &&
         parsed &&
         typeof parsed === "object" &&
         "retired" in parsed &&
@@ -353,11 +371,13 @@ export class NotifiedSignatureStore {
         this.storageKey,
         JSON.stringify({
           version: NOTIFIED_STORE_VERSION,
-          entries: [...this.entries].map(([key, entry]) =>
-            entry.bodyHash === undefined
-              ? [key, entry.fingerprint, entry.legacy]
-              : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
-          ),
+          entries: [...this.entries].map(([key, entry]) => [
+            key,
+            entry.fingerprint,
+            entry.legacy,
+            entry.bodyHash ?? null,
+            entry.suppressed,
+          ]),
           retired: [...this.readFingerprints].map(([key, retired]) => [
             key,
             retired.fingerprint,
@@ -372,7 +392,7 @@ export class NotifiedSignatureStore {
     return this.entries.get(conversationKey)?.fingerprint === fingerprint;
   }
 
-  /** The fingerprint last delivered for this conversation, if any. */
+  /** The fingerprint last delivered or deliberately suppressed, if any. */
   notifiedFingerprint(conversationKey: string): string | undefined {
     return this.entries.get(conversationKey)?.fingerprint;
   }
@@ -421,7 +441,7 @@ export class NotifiedSignatureStore {
         if (bodyHash !== undefined) entry.bodyHash = bodyHash;
         this.persist();
       }
-      return "matched";
+      return entry.suppressed ? "suppressed" : "matched";
     }
     if (bodyHash !== undefined && entry.bodyHash !== undefined && entry.bodyHash === bodyHash) {
       // Title-only drift: the delivered content is unchanged but the thread
@@ -430,7 +450,7 @@ export class NotifiedSignatureStore {
       entry.fingerprint = fingerprint;
       entry.legacy = false;
       this.persist();
-      return "matched";
+      return entry.suppressed ? "suppressed" : "matched";
     }
     const legacyPlaceholder =
       entry.legacy &&
@@ -445,22 +465,39 @@ export class NotifiedSignatureStore {
   }
 
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
-    // A fresh delivery means the row is unread again — cancel read confirmation.
+    this.markHandled(conversationKey, fingerprint, bodyHash, false);
+  }
+
+  markSuppressed(conversationKey: string, fingerprint: string, bodyHash?: string): void {
+    this.markHandled(conversationKey, fingerprint, bodyHash, true);
+  }
+
+  private markHandled(
+    conversationKey: string,
+    fingerprint: string,
+    bodyHash: string | undefined,
+    suppressed: boolean,
+  ): void {
+    // A fresh handled preview means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
     const retired = this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);
     if (current?.fingerprint === fingerprint && !current.legacy) {
+      let changed = false;
       if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
         current.bodyHash = bodyHash;
-        this.persist();
-      } else if (retired) {
-        this.persist();
+        changed = true;
       }
+      if (current.suppressed !== suppressed) {
+        current.suppressed = suppressed;
+        changed = true;
+      }
+      if (changed || retired) this.persist();
       return;
     }
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
-    this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash });
+    this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash, suppressed });
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);
@@ -653,6 +690,143 @@ const validOpaqueNotificationIdentity = (value: unknown): value is OpaqueNotific
   );
 };
 
+interface PendingPageNotificationReceipt {
+  at: number;
+  id: number;
+  identity: OpaqueNotificationIdentity;
+}
+
+/**
+ * Content-opaque page signals that have not reached native delivery yet. They
+ * survive Carrier's stale-view reload so the hydrated row can recover the
+ * arrival, route it, and still apply its live mute state.
+ */
+export class PendingPageNotificationStore {
+  private readonly receipts: PendingPageNotificationReceipt[] = [];
+
+  constructor(
+    private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
+    private readonly storageKey = "__carrier_pending_page_notifications__",
+    private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
+    now = Date.now(),
+  ) {
+    try {
+      const parsed: unknown = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
+      if (Array.isArray(parsed)) {
+        for (const receipt of parsed) {
+          if (!receipt || typeof receipt !== "object") continue;
+          const candidate = receipt as Partial<PendingPageNotificationReceipt>;
+          if (
+            typeof candidate.at === "number" &&
+            Number.isFinite(candidate.at) &&
+            typeof candidate.id === "number" &&
+            Number.isSafeInteger(candidate.id) &&
+            candidate.id > 0 &&
+            validOpaqueNotificationIdentity(candidate.identity) &&
+            now - candidate.at >= 0 &&
+            now - candidate.at <= this.ttlMs
+          ) {
+            this.receipts.push(candidate as PendingPageNotificationReceipt);
+          }
+        }
+      }
+    } catch (_) {}
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
+      this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
+    }
+    this.persist();
+  }
+
+  private persist(): void {
+    try {
+      this.storage?.setItem(this.storageKey, JSON.stringify(this.receipts));
+    } catch (_) {}
+  }
+
+  private prune(now: number): void {
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const age = now - this.receipts[index]!.at;
+      if (age < 0 || age > this.ttlMs) {
+        this.receipts.splice(index, 1);
+        changed = true;
+      }
+    }
+    if (changed) this.persist();
+  }
+
+  add(title: string, body: string, id: number, at = Date.now()): void {
+    this.prune(at);
+    this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+    this.persist();
+  }
+
+  remove(id: number): void {
+    const index = this.receipts.findIndex((receipt) => receipt.id === id);
+    if (index === -1) return;
+    this.receipts.splice(index, 1);
+    this.persist();
+  }
+
+  consumeUniquelyMatching(
+    rows: Iterable<NotificationText & { key: string }>,
+    now = Date.now(),
+  ): Set<string> {
+    this.prune(now);
+    const recovered = new Set<string>();
+    if (!this.receipts.length) return recovered;
+    const identities = new Map<string, OpaqueNotificationIdentity>();
+    for (const row of rows) {
+      if (!identities.has(row.key)) {
+        identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
+      }
+    }
+    const remove: number[] = [];
+    for (let index = 0; index < this.receipts.length; index++) {
+      const receipt = this.receipts[index]!;
+      let match: string | null = null;
+      let ambiguous = false;
+      for (const [key, identity] of identities) {
+        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (match !== null && match !== key) {
+          ambiguous = true;
+          break;
+        }
+        match = key;
+      }
+      if (match === null) continue;
+      remove.push(index);
+      if (!ambiguous) recovered.add(match);
+    }
+    for (let index = remove.length - 1; index >= 0; index--) {
+      this.receipts.splice(remove[index]!, 1);
+    }
+    if (remove.length) this.persist();
+    return recovered;
+  }
+
+  discardReadMatches(readRows: Iterable<NotificationText>, now = Date.now()): void {
+    this.prune(now);
+    if (!this.receipts.length) return;
+    const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    if (!read.length) return;
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      if (
+        !read.some((identity) =>
+          opaqueNotificationMatches(this.receipts[index]!.identity, identity),
+        )
+      ) {
+        continue;
+      }
+      this.receipts.splice(index, 1);
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+}
+
 /**
  * Short-lived, content-opaque receipts for page notifications. They survive a
  * reload so the first hydrated row can attach its route and mark the per-thread
@@ -828,6 +1002,11 @@ export class PageNotificationQueue {
   private readonly signals: PageNotificationSignal[] = [];
 
   add(signal: PageNotificationSignal): PageNotificationSignal {
+    if (!signal.matchPromise) {
+      signal.matchPromise = new Promise((resolve) => {
+        signal.settleMatch = resolve;
+      });
+    }
     this.signals.push(signal);
     if (this.signals.length > 20) this.signals.shift();
     return signal;
@@ -883,13 +1062,134 @@ export class PageNotificationQueue {
     }
     this.signals.splice(index, 1);
     signal.matched = true;
+    signal.settleMatch?.();
     return signal;
+  }
+
+  discard(signal: PageNotificationSignal): void {
+    const index = this.signals.indexOf(signal);
+    if (index !== -1) this.signals.splice(index, 1);
+  }
+}
+
+export interface CorrelatedRowNotification extends NotificationText {
+  key: string;
+  at: number;
+}
+
+export interface CorrelationRowDisplacement<Row> {
+  row: Row;
+  reason: "replaced" | "capacity";
+}
+
+export function waitForPageNotificationMatch(
+  signal: PageNotificationSignal,
+  timeoutMs: number,
+  cancel?: AbortSignal,
+): Promise<"matched" | "timeout" | "cancelled"> {
+  if (signal.matched) return Promise.resolve("matched");
+  if (!signal.matchPromise) return Promise.resolve("timeout");
+  if (cancel?.aborted) return Promise.resolve("cancelled");
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: "matched" | "timeout" | "cancelled") => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      cancel?.removeEventListener("abort", onCancel);
+      resolve(result);
+    };
+    const onCancel = () => finish("cancelled");
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    cancel?.addEventListener("abort", onCancel, { once: true });
+    signal.matchPromise!.then(() => finish("matched"));
+  });
+}
+
+/**
+ * Correlates page Notifications and row observations in either event order.
+ * Row entries remain keyed independently of Messenger's rendered list, so a
+ * virtualized row can disappear before the page signal arrives.
+ */
+export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification> {
+  private readonly pages = new PageNotificationQueue();
+  private readonly rows = new Map<string, Row>();
+
+  constructor(private readonly rowLimit = 50) {}
+
+  addPage(signal: PageNotificationSignal): PageNotificationSignal {
+    return this.pages.add(signal);
+  }
+
+  consumePageForRow(
+    row: NotificationText & { key?: string },
+    rowChangeAt: number,
+    matchWindowMs: number,
+    candidateRows?: Iterable<NotificationText & { key: string }>,
+  ): PageNotificationSignal | null {
+    return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+  }
+
+  discardPage(signal: PageNotificationSignal): void {
+    this.pages.discard(signal);
+  }
+
+  addRow(row: Row): CorrelationRowDisplacement<Row> | undefined {
+    const previous = this.rows.get(row.key);
+    this.rows.delete(row.key);
+    this.rows.set(row.key, row);
+    if (this.rows.size > this.rowLimit) {
+      const evicted = this.removeRow(this.rows.keys().next().value!);
+      if (evicted) return { row: evicted, reason: "capacity" };
+    }
+    return previous ? { row: previous, reason: "replaced" } : undefined;
+  }
+
+  getRow(key: string): Row | undefined {
+    return this.rows.get(key);
+  }
+
+  removeRow(key: string): Row | undefined {
+    const row = this.rows.get(key);
+    this.rows.delete(key);
+    return row;
+  }
+
+  consumeRowForPage(
+    title: string,
+    body: string,
+    at: number,
+    matchWindowMs: number,
+    candidateRows?: Iterable<NotificationText & { key: string }>,
+  ): Row | null {
+    const matches = [...this.rows.values()].filter((row) => {
+      const age = at - row.at;
+      return (
+        age >= 0 &&
+        age <= matchWindowMs &&
+        notificationTextMatches(title, body, row.title, row.body)
+      );
+    });
+    if (matches.length !== 1) return null;
+    if (candidateRows) {
+      const candidateKeys = new Set<string>();
+      for (const candidate of candidateRows) {
+        if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
+          candidateKeys.add(candidate.key);
+        }
+      }
+      if (candidateKeys.size !== 1 || !candidateKeys.has(matches[0]!.key)) return null;
+    }
+    return this.removeRow(matches[0]!.key) ?? null;
   }
 }
 
 /** Correlates unread-count increases with the rows most recently mutated. */
 export class UnreadArrivalTracker {
-  private readonly changedAt = new Map<string, { changedAt: number; eligibleUntil: number }>();
+  private readonly changedAt = new Map<
+    string,
+    { changedAt: number; eligibleUntil: number; deferred: boolean }
+  >();
   private unreadCount: number | null = null;
   private firstObservedAt: number | null = null;
   private sawDeferredZero = false;
@@ -897,7 +1197,9 @@ export class UnreadArrivalTracker {
   constructor(private readonly settleMs = 0) {}
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
-    for (const key of keys) this.changedAt.set(key, { changedAt: at, eligibleUntil: at });
+    for (const key of keys) {
+      this.changedAt.set(key, { changedAt: at, eligibleUntil: at, deferred: false });
+    }
   }
 
   /**
@@ -920,6 +1222,7 @@ export class UnreadArrivalTracker {
     zeroCorroborated = false,
     readObservedKeys?: ReadonlySet<string>,
     currentUnreadKeys?: ReadonlySet<string>,
+    blockedUnreadKeys?: ReadonlySet<string>,
   ): string[] {
     for (const [key, candidate] of this.changedAt) {
       // A delayed hidden-webview scan grants the mutation a longer absolute
@@ -956,10 +1259,19 @@ export class UnreadArrivalTracker {
         // transition — report it even before the window settles. Everything
         // else primes silently below.
         if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-          const transitions = [...this.changedAt]
+          const eligibleTransitions = [...this.changedAt]
             .filter(([key]) => readObservedKeys.has(key))
-            .sort((left, right) => right[1].changedAt - left[1].changedAt)
-            .slice(0, count)
+            .sort((left, right) => right[1].changedAt - left[1].changedAt);
+          const blockedTransitions = eligibleTransitions
+            .filter(([key]) => blockedUnreadKeys?.has(key))
+            .slice(0, count).length;
+          const transitions = eligibleTransitions
+            .filter(
+              ([key]) =>
+                !blockedUnreadKeys?.has(key) &&
+                (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
+            )
+            .slice(0, Math.max(0, count - blockedTransitions))
             .map(([key]) => key);
           if (transitions.length) {
             this.changedAt.clear();
@@ -974,14 +1286,55 @@ export class UnreadArrivalTracker {
       }
       previous = 0;
     }
-    const candidates = [...this.changedAt]
-      .filter(([key]) => currentUnreadKeys === undefined || currentUnreadKeys.has(key))
-      .sort((left, right) => right[1].changedAt - left[1].changedAt)
+    const delta = Math.max(0, count - previous);
+    const eligible = [...this.changedAt].sort(
+      (left, right) => right[1].changedAt - left[1].changedAt,
+    );
+    if (delta === 0) {
+      // Messenger can update the title after its row. Retain mutations across
+      // a no-delta scan, but remember that they were already observed at the
+      // old count so a newer mutation gets first claim on a later increase.
+      for (const [, candidate] of eligible) candidate.deferred = true;
+      return [];
+    }
+    const attributable = eligible.filter(
+      ([key]) =>
+        blockedUnreadKeys?.has(key) ||
+        currentUnreadKeys === undefined ||
+        currentUnreadKeys.has(key),
+    );
+    const fresh = attributable.filter(([, candidate]) => !candidate.deferred);
+    const attributionPool = fresh.length > 0 ? fresh : attributable;
+    if (fresh.length > 0) {
+      // New mutations supersede candidates already scanned without a title
+      // increase. Otherwise stale muted hydration can consume an unrelated
+      // fresh arrival's aggregate delta indefinitely.
+      for (const [key, candidate] of attributable) {
+        if (candidate.deferred) this.changedAt.delete(key);
+      }
+    }
+    // A muted row still contributes to Facebook's aggregate title count, and
+    // one row mutation can represent several messages. If this causal group
+    // contains a muted candidate, the aggregate delta cannot be split safely;
+    // strong page/preview/read-transition evidence still reports unmuted rows
+    // through the sibling trackers.
+    const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key));
+    if (blocked.length > 0) {
+      for (const [key] of attributionPool) this.changedAt.delete(key);
+      return [];
+    }
+    const candidates = attributionPool
+      .filter(
+        ([key]) =>
+          !blockedUnreadKeys?.has(key) &&
+          (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
+      )
       // Current unread styling narrows attribution, but an aggregate increase
       // is still required: scrolling can mutate a pre-existing unread row.
-      .slice(0, Math.max(0, count - previous))
+      .slice(0, delta)
       .map(([key]) => key);
     for (const key of candidates) this.changedAt.delete(key);
+    for (const [, candidate] of attributionPool) candidate.deferred = true;
     return candidates;
   }
 }

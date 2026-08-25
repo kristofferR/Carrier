@@ -10,24 +10,33 @@ import {
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
+  ignoresMutedConversations,
+  mutedThreads,
+  observeConversationMute,
+  observeOpenThreadMute,
+  suppressMutedDelivery,
+  suppressNotificationDelivery,
+} from "../lib/mute";
+import {
   ConversationNotificationTracker,
   groupPreviewSender,
   isOwnMessagePreview,
   type NativeNotificationDelivery,
+  NotificationCorrelationQueue,
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
-  notificationTextMatches,
-  PageNotificationQueue,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
+  PendingPageNotificationStore,
   READ_TRANSITION_CONFIRM_MS,
   READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
-import { threadIdFromHref } from "../lib/threads";
+import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 
@@ -41,6 +50,9 @@ const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
+// Keep an unresolved page signal through one hidden-window poll so a
+// virtualized or delayed row can still supply its route and mute state.
+const PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
 const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
 // before it counts as new content (see StableMismatchTracker).
@@ -158,7 +170,24 @@ export function initNotificationBridge() {
       return null;
     }
   })();
-  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+  const pageReceiptKey = accountScopedStorageKey(
+    "__carrier_page_notification_receipts__",
+    document.cookie,
+  );
+  const pendingPageKey = accountScopedStorageKey(
+    "__carrier_pending_page_notifications__",
+    document.cookie,
+  );
+  // Login/logout is a full navigation, so c_user is the document's stable
+  // account boundary. On auth/checkpoint pages no receipt is persisted.
+  const pageNotificationReceipts = new PageNotificationReceiptStore(
+    pageReceiptKey ? notificationStorage : null,
+    pageReceiptKey || "__carrier_page_notification_receipts_anonymous__",
+  );
+  const pendingPageNotifications = new PendingPageNotificationStore(
+    pendingPageKey ? notificationStorage : null,
+    pendingPageKey || "__carrier_pending_page_notifications_anonymous__",
+  );
 
   // Clicking a native notification routes back here by id: bring the
   // conversation up by invoking the original `onclick` Facebook assigned to its
@@ -232,6 +261,18 @@ export function initNotificationBridge() {
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   const senderAvatars = new SenderAvatarStore(notificationStorage);
+  // Validated thread ids and their latest exact row titles, used only to bind
+  // sender-avatar harvesting to the open conversation. A display title never
+  // establishes page-notification identity: names can collide or change while
+  // a row is virtualized.
+  const rowTitles = new Map<string, string>();
+  const ROW_TITLE_LIMIT = 300;
+  const rememberRowTitle = (key: string, title: string) => {
+    if (!key || !title) return;
+    rowTitles.delete(key);
+    rowTitles.set(key, title);
+    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
+  };
   // For the dev-only MCP probe: cache sizes, or the verdict for a sender the
   // probe already read from the DOM. Nothing but counts and classifications
   // crosses this boundary — no names, no URLs.
@@ -241,6 +282,8 @@ export function initNotificationBridge() {
       : { resolves: senderAvatars.describe(thread, sender || "") };
 
   interface PendingFallback {
+    key: string;
+    at: number;
     timer: number;
     title: string;
     body: string;
@@ -248,9 +291,28 @@ export function initNotificationBridge() {
     fingerprint: string;
     dedupeKey: string;
     confirmedRepeat: boolean;
+    /** False when this row exists only to correlate an already-suppressed page signal. */
+    deliverable: boolean;
   }
-  const pendingFallbacks = new Map<string, PendingFallback>();
-  const unmatchedPageNotifications = new PageNotificationQueue();
+  const notificationCorrelations = new NotificationCorrelationQueue<PendingFallback>();
+  let currentPageRouteCandidates: () => Array<{ key: string; title: string; body: string }> =
+    () => [];
+
+  const waitForPageMatchWhileFiltering = (signal: PageNotificationSignal) => {
+    const cancel = new AbortController();
+    const cancelWhenFilteringIsDisabled = () => {
+      if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__)) cancel.abort();
+    };
+    window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+    cancelWhenFilteringIsDisabled();
+    return waitForPageNotificationMatch(
+      signal,
+      PAGE_NOTIFICATION_RECOVERY_MS,
+      cancel.signal,
+    ).finally(() => {
+      window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+    });
+  };
 
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
@@ -265,7 +327,9 @@ export function initNotificationBridge() {
     body: string,
   ): {
     threadPath?: string;
+    threadMuted?: boolean;
     deliver?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+    suppressed?: { key: string; fingerprint: string; bodyHash?: string };
     dedupeKey?: string;
     signal?: PageNotificationSignal;
   } => {
@@ -276,35 +340,41 @@ export function initNotificationBridge() {
     // still fire with their own routes and the native dedupe absorbs the
     // copies, which beats misrouting (mirrors the page-first uniqueness check
     // in `PageNotificationQueue.consumeMatching`).
-    let match: [string, PendingFallback] | null = null;
-    let ambiguous = false;
-    for (const entry of pendingFallbacks) {
-      if (!notificationTextMatches(title, body, entry[1].title, entry[1].body)) continue;
-      if (match) {
-        ambiguous = true;
-        break;
-      }
-      match = entry;
-    }
-    if (ambiguous) return {};
+    const match = notificationCorrelations.consumeRowForPage(
+      title,
+      body,
+      Date.now(),
+      PAGE_NOTIFICATION_MATCH_MS,
+      currentPageRouteCandidates(),
+    );
     if (match) {
-      const [key, pending] = match;
-      clearTimeout(pending.timer);
-      pendingFallbacks.delete(key);
+      clearTimeout(match.timer);
+      if (!match.deliverable) {
+        return {
+          threadPath: match.threadPath,
+          suppressed: {
+            key: match.key,
+            fingerprint: match.fingerprint,
+            bodyHash: notificationDedupeKey("", match.body),
+          },
+          dedupeKey: match.dedupeKey,
+        };
+      }
       return {
-        threadPath: pending.threadPath,
+        threadPath: match.threadPath,
+        threadMuted: mutedThreads.isMuted(match.key),
         deliver: {
-          key,
-          fingerprint: pending.fingerprint,
-          bodyHash: notificationDedupeKey("", pending.body),
-          expect: notifiedStore.notifiedFingerprint(key),
+          key: match.key,
+          fingerprint: match.fingerprint,
+          bodyHash: notificationDedupeKey("", match.body),
+          expect: notifiedStore.notifiedFingerprint(match.key),
         },
-        dedupeKey: pending.dedupeKey,
+        dedupeKey: match.dedupeKey,
       };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
-    return { signal: unmatchedPageNotifications.add({ at: Date.now(), title, body }) };
+    return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
   };
 
   function CarrierNotification(
@@ -331,7 +401,7 @@ export function initNotificationBridge() {
       // below captures this instance so a native click can call it later.
       // Hide preview: replace the sender name and message text with a generic
       // notification, and skip the avatar so the sender's face never leaks.
-      const hidePreview = s.hide_notification_preview;
+      const hidePreviewAtConstruction = s.hide_notification_preview === true;
       const originalTitle = String(title || "Messenger");
       const originalBody = String(opts.body || "");
       // Reserve the native id synchronously and stamp it onto the queued
@@ -339,78 +409,157 @@ export function initNotificationBridge() {
       // fast row match could consume the signal before it learned its id and the
       // reload-safe route would never be attached.
       const id = ++notifySeq;
-      if (pageMatch.signal) pageMatch.signal.nativeId = id;
-      avatarToDataUrl(hidePreview ? "" : opts.icon).then((icon) => {
-        // Persist only content-opaque matching hashes, and only now that the
-        // native emit is actually queued. If a reload destroys the in-memory
-        // page queue before the row appears, the next document's first
-        // hydrated scan can still attach the route and suppress the fallback
-        // copy — but a reload that lands during the avatar conversion (before
-        // any banner exists) must leave no receipt, or the fallback would be
-        // suppressed for a notification that was never shown. Likewise a
-        // signal a row already consumed during the conversion is delivered
-        // and done — a receipt written now would outlive it and swallow a
-        // later same-text message.
-        if (pageMatch.signal && !pageMatch.signal.matched) {
-          pageNotificationReceipts.add(originalTitle, originalBody, id);
-        }
-        emitNotification(
-          id,
-          hidePreview ? "Messenger" : originalTitle,
-          hidePreview ? "New message" : originalBody,
-          icon,
-          pageMatch.dedupeKey ??
-            pageMatch.signal?.dedupeKey ??
-            notificationDedupeKey(originalTitle, originalBody),
-          () => {
-            // Facebook's onclick expects the click Event (it can read it / call
-            // preventDefault); a native notification click carries no DOM
-            // event, so hand it a synthetic one. Called through the captured
-            // instance so `this` stays bound to the Notification.
-            this.onclick?.(new Event("click"));
-          },
-          pageMatch.threadPath ?? pageMatch.signal?.threadPath,
-          pageMatch.signal
-            ? (delivery) => {
-                pageMatch.signal!.nativeDelivery = delivery;
-                const handler = pageMatch.signal!.onNativeDelivery;
-                pageMatch.signal!.onNativeDelivery = undefined;
-                handler?.(delivery);
-              }
-            : undefined,
-        );
-        // The banner is queued — only now is it safe to persist "delivered"
-        // for the pairings this signal absorbed, whether the row matched
-        // before construction (deliver) or during the conversion
-        // (pendingDelivery, parked by scheduleFallback). Each write is
-        // conditional on the store still holding what it held at pairing
-        // time: if a NEWER message in the thread was delivered during the
-        // conversion, this late write must not regress the store to the
-        // older fingerprint (the next scan would mismatch and replay).
-        if (
-          pageMatch.deliver &&
-          notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
-        ) {
-          notifiedStore.markNotified(
-            pageMatch.deliver.key,
-            pageMatch.deliver.fingerprint,
-            pageMatch.deliver.bodyHash,
-          );
-        }
-        if (pageMatch.signal) {
-          pageMatch.signal.emitted = true;
-          const delivery = pageMatch.signal.pendingDelivery;
-          if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-            notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+      if (pageMatch.signal) {
+        pageMatch.signal.nativeId = id;
+        pendingPageNotifications.add(originalTitle, originalBody, id);
+      }
+      const matchWait =
+        pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
+          ? waitForPageMatchWhileFiltering(pageMatch.signal)
+          : Promise.resolve();
+      Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
+        ([icon]) => {
+          const signal = pageMatch.signal;
+          const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
+          if (signal) notificationCorrelations.discardPage(signal);
+          const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          // A delivery-boundary global mute is final for this logical page
+          // notification. Do not let its cross-reload receipt revive it after
+          // notifications are enabled again.
+          if (deliverySettings.mute_notifications === true) {
+            pendingPageNotifications.remove(id);
           }
-        }
-      });
+          if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+            // The page gives Carrier content but no trustworthy thread id. An
+            // unresolved banner cannot be retracted if a later row proves it
+            // muted, so fail closed while muted filtering is enabled. A later
+            // row mutation still takes the ordinary routed fallback path.
+            diag("notify.unresolved", "page notification had no correlated thread identity");
+            return;
+          }
+          pendingPageNotifications.remove(id);
+          if (pageMatch.suppressed) {
+            notifiedStore.markSuppressed(
+              pageMatch.suppressed.key,
+              pageMatch.suppressed.fingerprint,
+              pageMatch.suppressed.bodyHash,
+            );
+            return;
+          }
+          const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+          const threadId = threadPathId(threadPath || "");
+          const threadMuted = threadId
+            ? mutedThreads.isMuted(threadId)
+            : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
+          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+            if (
+              suppressed &&
+              notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect
+            ) {
+              notifiedStore.markSuppressed(
+                suppressed.key,
+                suppressed.fingerprint,
+                suppressed.bodyHash,
+              );
+            } else if (threadId && !suppressed) {
+              notifiedStore.markSuppressed(
+                threadId,
+                notificationDedupeKey(originalTitle, originalBody),
+                notificationDedupeKey("", originalBody),
+              );
+            }
+            if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
+            return;
+          }
+          const hidePreview = deliverySettings.hide_notification_preview === true;
+          // Persist only content-opaque matching hashes, and only now that the
+          // native emit is actually queued. If a reload destroys the in-memory
+          // page queue before the row appears, the next document's first
+          // hydrated scan can still attach the route and suppress the fallback
+          // copy — but a reload that lands during the avatar conversion (before
+          // any banner exists) must leave no receipt, or the fallback would be
+          // suppressed for a notification that was never shown. Likewise a
+          // signal a row already consumed during the conversion is delivered
+          // and done — a receipt written now would outlive it and swallow a
+          // later same-text message.
+          if (pageMatch.signal && !pageMatch.signal.matched) {
+            pageNotificationReceipts.add(originalTitle, originalBody, id);
+          }
+          emitNotification(
+            id,
+            hidePreview ? "Messenger" : originalTitle,
+            hidePreview ? "New message" : originalBody,
+            hidePreview ? "" : icon,
+            pageMatch.dedupeKey ??
+              pageMatch.signal?.dedupeKey ??
+              notificationDedupeKey(originalTitle, originalBody),
+            () => {
+              // Facebook's onclick expects the click Event (it can read it / call
+              // preventDefault); a native notification click carries no DOM
+              // event, so hand it a synthetic one. Called through the captured
+              // instance so `this` stays bound to the Notification.
+              this.onclick?.(new Event("click"));
+            },
+            threadPath,
+            pageMatch.signal
+              ? (delivery) => {
+                  pageMatch.signal!.nativeDelivery = delivery;
+                  const handler = pageMatch.signal!.onNativeDelivery;
+                  pageMatch.signal!.onNativeDelivery = undefined;
+                  handler?.(delivery);
+                }
+              : undefined,
+          );
+          // The banner is queued — only now is it safe to persist "delivered"
+          // for the pairings this signal absorbed, whether the row matched
+          // before construction (deliver) or during the conversion
+          // (pendingDelivery, parked by scheduleFallback). Each write is
+          // conditional on the store still holding what it held at pairing
+          // time: if a NEWER message in the thread was delivered during the
+          // conversion, this late write must not regress the store to the
+          // older fingerprint (the next scan would mismatch and replay).
+          if (
+            pageMatch.deliver &&
+            notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+          ) {
+            notifiedStore.markNotified(
+              pageMatch.deliver.key,
+              pageMatch.deliver.fingerprint,
+              pageMatch.deliver.bodyHash,
+            );
+          }
+          if (pageMatch.signal) {
+            pageMatch.signal.emitted = true;
+            const delivery = pageMatch.signal.pendingDelivery;
+            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+            }
+          }
+        },
+      );
+    } else {
+      if (
+        pageMatch.deliver &&
+        notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+      ) {
+        notifiedStore.markSuppressed(
+          pageMatch.deliver.key,
+          pageMatch.deliver.fingerprint,
+          pageMatch.deliver.bodyHash,
+        );
+      }
+      if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
     }
     // Nudge the auto-refresh so the conversation view catches up even when
     // Facebook's in-WebView live sync stalls.
     try {
       window.__carrierOnNotification?.();
     } catch (_) {}
+    // A page Notification can precede any observable row mutation. Reconcile
+    // against the current list as soon as this constructor returns so an
+    // already-rendered row can supply its route and mute state immediately.
+    queueMicrotask(scanUnreadConversations);
     this.title = title;
     this.onclick = null;
     this.close = () => {};
@@ -473,17 +622,6 @@ export function initNotificationBridge() {
     owner: string;
     photo: string;
   }
-
-  // What each thread's row calls itself, so a harvest can check that the pane
-  // in front of it is the conversation the address bar names. In memory only.
-  const rowTitles = new Map<string, string>();
-  const ROW_TITLE_LIMIT = 300;
-  const rememberRowTitle = (key: string, title: string) => {
-    if (!key || !title) return;
-    rowTitles.delete(key);
-    rowTitles.set(key, title);
-    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
-  };
 
   /**
    * Whether the thread pane is showing the conversation `title` names. The
@@ -688,6 +826,7 @@ export function initNotificationBridge() {
         break;
       }
     }
+    const muted = observeConversationMute(id, row);
     return {
       key: id,
       threadPath: `/t/${id}/`,
@@ -704,10 +843,135 @@ export function initNotificationBridge() {
       // only known as a group once its thread has been read.
       isGroup: images.length > 1 || senderAvatars.isGroupThread(id),
       unread,
+      muted,
     };
   };
 
   type Conversation = NonNullable<ReturnType<typeof conversationFromLink>>;
+
+  // Row-first page matching needs the same current-list uniqueness proof as
+  // the opposite event ordering. Keep this callable empty until the scraper
+  // above has initialized; an unusually early page Notification then remains
+  // unresolved rather than guessing.
+  currentPageRouteCandidates = () =>
+    chatRows()
+      .map(conversationFromLink)
+      .filter((conversation): conversation is Conversation => Boolean(conversation?.body.length))
+      .map(({ key, title, body }) => ({ key, title, body }));
+
+  function pairPendingPageNotification(
+    conversation: Conversation,
+    detectedAt: number,
+    confirmedRepeat: boolean,
+    routeCandidates?: Iterable<Conversation>,
+  ): boolean {
+    const pageSignal = notificationCorrelations.consumePageForRow(
+      conversation,
+      detectedAt,
+      PAGE_NOTIFICATION_RECOVERY_MS,
+      routeCandidates,
+    );
+    if (!pageSignal) return false;
+
+    const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
+    const dedupeKey = notificationDeliveryDedupeKey(
+      fingerprint,
+      confirmedRepeat ? `${conversation.key}:${detectedAt}` : undefined,
+    );
+    const bodyHash = notificationDedupeKey("", conversation.body);
+    const previous = notificationCorrelations.removeRow(conversation.key);
+    if (previous) clearTimeout(previous.timer);
+    pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
+    // The page's async avatar conversion may still be in flight. Give that
+    // pending path the same fresh identity so it remains paired with this row
+    // while bypassing the native replay guard for a confirmed repeat. Once
+    // emitted, changing the signal cannot update the payload already sent.
+    if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
+    // If avatar conversion is still in flight, put the route directly into
+    // the initial native request. Otherwise retrofit the still-pending macOS
+    // request (and retain the route for click/clear fallback on every OS).
+    if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+    if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
+      updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
+    }
+    if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+      pageSignal.pendingDelivery = undefined;
+    } else if (pageSignal.emitted) {
+      const finishDelivery = (delivery: NativeNotificationDelivery) => {
+        if (confirmedRepeat && delivery === "duplicate") {
+          // The page emitted with the old content fingerprint before this row
+          // confirmed a new, identical message. Retry only when native delivery
+          // reports that exact emit was suppressed.
+          scheduleFallback(conversation, detectedAt, true, routeCandidates);
+          return;
+        }
+        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+      };
+      if (pageSignal.nativeDelivery) {
+        finishDelivery(pageSignal.nativeDelivery);
+      } else {
+        pageSignal.onNativeDelivery = finishDelivery;
+      }
+    } else {
+      // The signal's native emit is still waiting on its row identity. A reload
+      // before it queues would leave no banner, so both the pending receipt and
+      // delivered state must ride the emitter rather than this pairing. The
+      // emitter removes the receipt in the same task that queues native IPC.
+      pageSignal.pendingDelivery = {
+        key: conversation.key,
+        fingerprint,
+        bodyHash,
+        expect: notifiedStore.notifiedFingerprint(conversation.key),
+      };
+    }
+    pageNotificationReceipts.consumeMatching(conversation, detectedAt);
+    return true;
+  }
+
+  // A reconnect burst can fill the bounded row-correlation queue before its
+  // short timers settle. Capacity must complete the displaced fallback, not
+  // merely remove its identity while leaving a timer that can no longer pass
+  // the map ownership check. Deliver without an avatar under pressure; native
+  // content dedupe still absorbs a page Notification that arrives afterward.
+  const completeCapacityEviction = (fallback: PendingFallback) => {
+    // This arrival already crossed its delivery boundary as suppressed. A
+    // later settings change must not revive it merely because queue pressure
+    // retires its opposite-order correlation window.
+    if (!fallback.deliverable) return;
+    const settings = window.__CARRIER_SETTINGS__ || {};
+    if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
+      notifiedStore.markSuppressed(
+        fallback.key,
+        fallback.fingerprint,
+        notificationDedupeKey("", fallback.body),
+      );
+      return;
+    }
+    const hidePreview = settings.hide_notification_preview === true;
+    notifiedStore.markNotified(
+      fallback.key,
+      fallback.fingerprint,
+      notificationDedupeKey("", fallback.body),
+    );
+    diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+    emitNotification(
+      ++notifySeq,
+      hidePreview ? "Messenger" : fallback.title,
+      hidePreview ? "New message" : fallback.body,
+      "",
+      fallback.dedupeKey,
+      () => window.__carrierOpenThread?.(fallback.threadPath),
+      fallback.threadPath,
+    );
+  };
+
+  const retainPendingFallback = (fallback: PendingFallback) => {
+    const displaced = notificationCorrelations.addRow(fallback);
+    if (!displaced) return;
+    clearTimeout(displaced.row.timer);
+    if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+  };
 
   const scheduleFallback = (
     conversation: Conversation,
@@ -724,56 +988,34 @@ export function initNotificationBridge() {
     // Clear an older pending preview for this thread before checking the page
     // queue. Otherwise a page Notification can consume the new row while the
     // stale timer remains armed and later produces a duplicate.
-    const previous = pendingFallbacks.get(conversation.key);
+    const previous = notificationCorrelations.removeRow(conversation.key);
     if (previous) clearTimeout(previous.timer);
-    const pageSignal = unmatchedPageNotifications.consumeMatching(
-      conversation,
-      detectedAt,
-      PAGE_NOTIFICATION_MATCH_MS,
-      routeCandidates,
-    );
-    if (pageSignal) {
-      // The page's async avatar conversion may still be in flight. Give that
-      // pending path the same fresh identity so it remains paired with this row
-      // while bypassing the native replay guard for a confirmed repeat. Once
-      // emitted, changing the signal cannot update the payload already sent.
-      if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-      // If avatar conversion is still in flight, put the route directly into
-      // the initial native request. Otherwise retrofit the still-pending macOS
-      // request (and retain the route for click/clear fallback on every OS).
-      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
-      if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
-        updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
-      }
-      if (pageSignal.emitted) {
-        const finishDelivery = (delivery: NativeNotificationDelivery) => {
-          if (confirmedRepeat && delivery === "duplicate") {
-            // The page emitted with the old content fingerprint before this
-            // row confirmed a new, identical message. Retry only when native
-            // delivery reports that exact emit was suppressed.
-            scheduleFallback(conversation, detectedAt, true, routeCandidates);
-            return;
-          }
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-        };
-        if (pageSignal.nativeDelivery) {
-          finishDelivery(pageSignal.nativeDelivery);
-        } else {
-          pageSignal.onNativeDelivery = finishDelivery;
+    if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
+      return;
+
+    if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+      // Keep a content-only row candidate for the opposite event ordering.
+      // Messenger can virtualize the row away before constructing its page
+      // Notification; the candidate lets that later signal recover the mute
+      // state without ever arming a native fallback.
+      const timer = setTimeout(() => {
+        if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
+          notificationCorrelations.removeRow(conversation.key);
         }
-      } else {
-        // The signal's native emit is still waiting on the avatar conversion.
-        // A reload before it queues would leave no banner, so the delivered
-        // state must ride the emitter, not this pairing.
-        pageSignal.pendingDelivery = {
-          key: conversation.key,
-          fingerprint,
-          bodyHash,
-          expect: notifiedStore.notifiedFingerprint(conversation.key),
-        };
-      }
-      pageNotificationReceipts.consumeMatching(conversation, detectedAt);
-      pendingFallbacks.delete(conversation.key);
+      }, PAGE_NOTIFICATION_MATCH_MS);
+      retainPendingFallback({
+        key: conversation.key,
+        at: detectedAt,
+        timer,
+        title: conversation.title,
+        body: conversation.body,
+        threadPath: conversation.threadPath,
+        fingerprint,
+        dedupeKey,
+        confirmedRepeat,
+        deliverable: false,
+      });
       return;
     }
     // Start the bounded avatar conversion during the pairing grace period.
@@ -803,9 +1045,10 @@ export function initNotificationBridge() {
         : rowAvatar();
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
-      if (settings.mute_notifications) {
-        if (pendingFallbacks.get(conversation.key)?.timer === timer) {
-          pendingFallbacks.delete(conversation.key);
+      if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
+          notificationCorrelations.removeRow(conversation.key);
         }
         return;
       }
@@ -822,8 +1065,14 @@ export function initNotificationBridge() {
       // Keep the entry cancellable until the avatar conversion finishes. A
       // late page Notification must still win instead of producing a second
       // native notification while this fallback is in flight.
-      if (pendingFallbacks.get(conversation.key)?.timer !== timer) return;
-      pendingFallbacks.delete(conversation.key);
+      if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
+      const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+      if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        notificationCorrelations.removeRow(conversation.key);
+        return;
+      }
+      notificationCorrelations.removeRow(conversation.key);
       // Mark only at the actual delivery boundary. A reload before this point
       // must not persist a false "already delivered" state.
       notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
@@ -843,7 +1092,9 @@ export function initNotificationBridge() {
         conversation.threadPath,
       );
     }, FALLBACK_DELAY_MS);
-    pendingFallbacks.set(conversation.key, {
+    retainPendingFallback({
+      key: conversation.key,
+      at: detectedAt,
       timer,
       title: conversation.title,
       body: conversation.body,
@@ -851,6 +1102,7 @@ export function initNotificationBridge() {
       fingerprint,
       dedupeKey,
       confirmedRepeat,
+      deliverable: true,
     });
   };
 
@@ -892,6 +1144,13 @@ export function initNotificationBridge() {
     scanRunning = true;
     try {
       harvestSenderAvatars(Date.now());
+      const openId = threadIdFromHref(location.pathname);
+      if (openId) {
+        observeOpenThreadMute(openId, [
+          ...document.querySelectorAll('[role="main"]'),
+          ...document.querySelectorAll('[role="complementary"], [role="dialog"]'),
+        ]);
+      }
       const links = chatRows();
       // A grid can exist briefly before its rows hydrate. Do not prime an empty
       // list or the first real render would look like a burst of new messages.
@@ -902,6 +1161,15 @@ export function initNotificationBridge() {
       for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
         (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
+      );
+      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const notifyKeys = new Set(
+        conversations
+          .filter((conversation) => !(ignoreMuted && conversation.muted))
+          .map(({ key }) => key),
+      );
+      const mutedUnreadKeys = new Set(
+        ignoreMuted ? conversations.filter(({ muted }) => muted).map(({ key }) => key) : undefined,
       );
       const detectedAt = Date.now();
       const mutationGrace = lastScanAt
@@ -1004,7 +1272,8 @@ export function initNotificationBridge() {
         // so a first arrival inside the settle window can still report.
         listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
-        new Set(conversations.map(({ key }) => key)),
+        notifyKeys,
+        mutedUnreadKeys,
       )) {
         changed.add(key);
       }
@@ -1041,7 +1310,16 @@ export function initNotificationBridge() {
         observed.filter(({ unread, body }) => !unread && body.length > 0),
         detectedAt,
       );
+      pendingPageNotifications.discardReadMatches(
+        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        detectedAt,
+      );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
+      const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
+        hydrated,
+        detectedAt,
+      );
+      for (const key of pendingPageArrivals) changed.add(key);
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
       const unhydrated = new Set<string>();
@@ -1064,10 +1342,10 @@ export function initNotificationBridge() {
 
         const pageReceipt = pageReceipts.get(conversation.key);
         const pageSignal = pageReceipt
-          ? unmatchedPageNotifications.consumeMatching(
+          ? notificationCorrelations.consumePageForRow(
               conversation,
               detectedAt,
-              PAGE_NOTIFICATION_MATCH_MS,
+              PAGE_NOTIFICATION_RECOVERY_MS,
               routeCandidates,
             )
           : null;
@@ -1080,6 +1358,18 @@ export function initNotificationBridge() {
         );
         const repeatedDelivery =
           readTransitions.has(conversation.key) || reconciliation === "repeated";
+        // A page-first signal may have arrived while this row was virtualized,
+        // or after its DOM mutation escaped the observer. Match every hydrated
+        // unread row, not only rows the arrival trackers classified as changed.
+        // The batch candidate set still makes ambiguous display text fail
+        // closed instead of routing a notification to the wrong thread.
+        if (
+          !pageReceipt &&
+          pairPendingPageNotification(conversation, detectedAt, repeatedDelivery, routeCandidates)
+        ) {
+          changed.delete(conversation.key);
+          continue;
+        }
         // A receipt proves that the page queued an emit and persists the native
         // result. The same-document signal carries that result in memory too.
         // For a proven identical post-read message, "duplicate" means the old
@@ -1100,9 +1390,9 @@ export function initNotificationBridge() {
           // native layer says whether the page's old content key was accepted.
           // A duplicate needs the fresh-key fallback; accepted/suppressed
           // results can safely retire the transition.
-          const pending = pendingFallbacks.get(conversation.key);
+          const pending = notificationCorrelations.getRow(conversation.key);
           if (pending) clearTimeout(pending.timer);
-          pendingFallbacks.delete(conversation.key);
+          notificationCorrelations.removeRow(conversation.key);
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           pageSignal.onNativeDelivery = (delivery) => {
             if (delivery === "duplicate") {
@@ -1126,9 +1416,9 @@ export function initNotificationBridge() {
           // An earlier scan may have armed a fallback while this receipt was
           // still ambiguous — the page already emitted this notification, so
           // that timer must not fire a possible duplicate.
-          const pending = pendingFallbacks.get(conversation.key);
+          const pending = notificationCorrelations.getRow(conversation.key);
           if (pending) clearTimeout(pending.timer);
-          pendingFallbacks.delete(conversation.key);
+          notificationCorrelations.removeRow(conversation.key);
           notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           // The receipt proved this fingerprint was already emitted. Treat it
@@ -1148,6 +1438,10 @@ export function initNotificationBridge() {
           // consumes the retired entry, so no later scan gets a second chance.
           changed.add(conversation.key);
         }
+        // A suppressed fingerprint deliberately skips both branches below: the
+        // original muted message remains retired, while a newly attributed
+        // identical arrival stays in `changed` (or keeps its fallback armed)
+        // until a real emit converts the state to delivered.
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
           // The current content is already delivered — an armed fallback for
@@ -1155,10 +1449,10 @@ export function initNotificationBridge() {
           // would only replay it or emit an outdated preview. A confirmed
           // repeated message is the exception: its intentionally identical
           // fingerprint must stay armed until its fresh-key delivery fires.
-          const pending = pendingFallbacks.get(conversation.key);
+          const pending = notificationCorrelations.getRow(conversation.key);
           if (pending && !pending.confirmedRepeat) {
             clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
+            notificationCorrelations.removeRow(conversation.key);
           }
         } else if (reconciliation === "mismatched") {
           // A raw row/title change cannot bypass the hydration-stability guard.
@@ -1168,10 +1462,10 @@ export function initNotificationBridge() {
           // If the preview moved on while a fallback for the old text was
           // armed, that timer would deliver a stale preview — cancel it; the
           // mismatch tracker re-arms once the new fingerprint stabilizes.
-          const pending = pendingFallbacks.get(conversation.key);
+          const pending = notificationCorrelations.getRow(conversation.key);
           if (pending && pending.fingerprint !== fingerprint) {
             clearTimeout(pending.timer);
-            pendingFallbacks.delete(conversation.key);
+            notificationCorrelations.removeRow(conversation.key);
           }
         }
       }
@@ -1269,7 +1563,7 @@ export function initNotificationBridge() {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["class", "src", "alt", "style"],
+      attributeFilter: ["class", "src", "alt", "style", "aria-label"],
     });
     scanUnreadConversations();
     return true;

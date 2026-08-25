@@ -3,6 +3,7 @@ import {
   ConversationNotificationTracker,
   groupPreviewSender,
   isOwnMessagePreview,
+  NotificationCorrelationQueue,
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
@@ -10,11 +11,13 @@ import {
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
   PageNotificationReceiptStore,
+  PendingPageNotificationStore,
   READ_DROP_CONFIRM_MS,
   RETIRED_FINGERPRINT_TTL_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  waitForPageNotificationMatch,
 } from "./notification-fallback";
 
 const memoryStorage = () => {
@@ -146,6 +149,53 @@ describe("NotifiedSignatureStore", () => {
     new NotifiedSignatureStore(storage).markNotified("1", "aaaa");
     // A reload constructs a fresh store over the same storage.
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
+  });
+
+  test("distinguishes a deliberately suppressed preview across reloads", () => {
+    const storage = memoryStorage();
+    new NotifiedSignatureStore(storage).markSuppressed("1", "aaaa", "body");
+
+    const reloaded = new NotifiedSignatureStore(storage);
+    expect(reloaded.alreadyNotified("1", "aaaa")).toBe(true);
+    expect(reloaded.reconcileFingerprint("1", "Jane", "aaaa", "body")).toBe("suppressed");
+  });
+
+  test("turns a suppressed preview into delivered state after a real emit", () => {
+    const storage = memoryStorage();
+    const store = new NotifiedSignatureStore(storage);
+    store.markSuppressed("1", "aaaa", "body");
+    store.markNotified("1", "aaaa", "body");
+
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", "aaaa", "body"),
+    ).toBe("matched");
+  });
+
+  test("keeps suppression state through title-only drift", () => {
+    const bodyHash = notificationDedupeKey("", "Hello");
+    const store = new NotifiedSignatureStore();
+    store.markSuppressed("1", notificationDedupeKey("Old name", "Hello"), bodyHash);
+
+    expect(
+      store.reconcileFingerprint(
+        "1",
+        "New name",
+        notificationDedupeKey("New name", "Hello"),
+        bodyHash,
+      ),
+    ).toBe("suppressed");
+  });
+
+  test("loads version 3 handled entries as delivered", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "__carrier_notified_previews__",
+      JSON.stringify({ version: 3, entries: [["1", "aaaa", false, "body"]], retired: [] }),
+    );
+
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", "aaaa", "body"),
+    ).toBe("matched");
   });
 
   test("silently migrates placeholder fingerprints only from the legacy schema", () => {
@@ -443,7 +493,7 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("k0", "f")).toBe(false);
     expect(store.alreadyNotified("k300", "f")).toBe(true);
     const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.entries).toHaveLength(300);
   });
 
@@ -611,6 +661,127 @@ describe("PageNotificationReceiptStore", () => {
       ),
     ).toBeNull();
   });
+
+  test("isolates delivered receipts between account-scoped keys", () => {
+    const storage = memoryStorage();
+    new PageNotificationReceiptStore(storage, "delivered:account-1", undefined, 1_000).add(
+      "Jane",
+      "Hello",
+      42,
+      1_000,
+    );
+
+    expect(
+      new PageNotificationReceiptStore(
+        storage,
+        "delivered:account-2",
+        undefined,
+        1_100,
+      ).consumeMatching({ title: "Jane", body: "Hello" }, 1_100),
+    ).toBeNull();
+    expect(
+      new PageNotificationReceiptStore(
+        storage,
+        "delivered:account-1",
+        undefined,
+        1_100,
+      ).consumeMatching({ title: "Jane", body: "Hello" }, 1_100),
+    ).toEqual({ nativeId: 42 });
+  });
+});
+
+describe("PendingPageNotificationStore", () => {
+  test("recovers an unresolved page signal after reload without persisting content", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Project group", "Jane: Deployment finished", 42, 1_000);
+    const persisted = storage.getItem("__carrier_pending_page_notifications__")!;
+    expect(persisted).not.toContain("Project group");
+    expect(persisted).not.toContain("Deployment finished");
+
+    const reloaded = new PendingPageNotificationStore(storage, undefined, undefined, 1_100);
+    expect(
+      reloaded.consumeUniquelyMatching(
+        [{ key: "1", title: "Project group", body: "Jane: Deployment finished" }],
+        1_100,
+      ),
+    ).toEqual(new Set(["1"]));
+  });
+
+  test("removes a signal once its in-memory delivery path settles", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Jane", "OK", 42, 1_000);
+    pending.remove(42);
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        undefined,
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_100).size,
+    ).toBe(0);
+  });
+
+  test("fails closed for ambiguous rows and drops read matches", () => {
+    const pending = new PendingPageNotificationStore();
+    pending.add("Jane", "Same", 42, 1_000);
+    expect(
+      pending.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Same" },
+          { key: "2", title: "Jane", body: "Same" },
+        ],
+        1_100,
+      ).size,
+    ).toBe(0);
+
+    pending.add("Jane", "Read", 43, 1_200);
+    pending.discardReadMatches([{ title: "Jane", body: "Read" }], 1_300);
+    expect(
+      pending.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Read" }], 1_400).size,
+    ).toBe(0);
+  });
+
+  test("expires stale and future-dated signals", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, 100, 1_000);
+    pending.add("Jane", "Old", 41, 1_000);
+    pending.add("Jane", "Future", 42, 1_201);
+    const reloaded = new PendingPageNotificationStore(storage, undefined, 100, 1_101);
+    expect(
+      reloaded.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Old" },
+          { key: "2", title: "Jane", body: "Future" },
+        ],
+        1_101,
+      ).size,
+    ).toBe(0);
+  });
+
+  test("isolates unresolved receipts between account-scoped keys", () => {
+    const storage = memoryStorage();
+    const first = new PendingPageNotificationStore(storage, "pending:account-1", undefined, 1_000);
+    first.add("Jane", "Hello", 42, 1_000);
+
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        "pending:account-2",
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "2", title: "Jane", body: "Hello" }], 1_100).size,
+    ).toBe(0);
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        "pending:account-1",
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Hello" }], 1_100),
+    ).toEqual(new Set(["1"]));
+  });
 });
 
 describe("PageNotificationQueue", () => {
@@ -692,6 +863,169 @@ describe("PageNotificationQueue", () => {
   });
 });
 
+describe("NotificationCorrelationQueue", () => {
+  type RowSignal = {
+    key: string;
+    at: number;
+    title: string;
+    body: string;
+    threadPath: string;
+    muted: boolean;
+  };
+
+  test("settles a page-first signal when its muted row arrives", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    const deliveryGate = waitForPageNotificationMatch(signal, 100);
+    const matched = queue.consumePageForRow(
+      { key: "1", title: "Jane", body: "Hello" },
+      1_100,
+      3_000,
+    );
+    matched!.threadMuted = true;
+
+    expect(matched).toBe(signal);
+    expect(await deliveryGate).toBe("matched");
+    expect(signal.matched).toBe(true);
+    expect(signal.threadMuted).toBe(true);
+  });
+
+  test("holds an unmatched page-first signal until the correlation window closes", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
+  });
+
+  test("cancels an unresolved wait when mute filtering becomes irrelevant", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    const cancel = new AbortController();
+    const deliveryGate = waitForPageNotificationMatch(signal, 10_000, cancel.signal);
+    cancel.abort();
+
+    expect(await deliveryGate).toBe("cancelled");
+  });
+
+  test("recovers a page-first signal after its eager delivery wait timed out", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
+    const matched = queue.consumePageForRow(
+      { key: "1", title: "Jane", body: "Hello" },
+      11_000,
+      63_000,
+    );
+
+    expect(matched).toBe(signal);
+  });
+
+  test("matches a row-first muted signal after its DOM row is virtualized", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Hello",
+      threadPath: "/t/1/",
+      muted: true,
+    });
+
+    const matched = queue.consumeRowForPage("Jane", "Hello", 1_500, 3_000, [
+      { key: "1", title: "Jane", body: "Hello" },
+      { key: "2", title: "John", body: "Other" },
+    ]);
+    expect(matched).toMatchObject({ key: "1", threadPath: "/t/1/", muted: true });
+    expect(queue.getRow("1")).toBeUndefined();
+  });
+
+  test("leaves an out-of-window row for its owning fallback timer", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Hello",
+      threadPath: "/t/1/",
+      muted: false,
+    });
+
+    expect(queue.consumeRowForPage("Jane", "Hello", 4_001, 3_000)).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
+  });
+
+  test("does not guess between indistinguishable row-first signals", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    for (const key of ["1", "2"]) {
+      queue.addRow({
+        key,
+        at: 1_000,
+        title: "Jane",
+        body: "Same",
+        threadPath: `/t/${key}/`,
+        muted: key === "1",
+      });
+    }
+
+    expect(queue.consumeRowForPage("Jane", "Same", 1_500, 3_000)).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
+    expect(queue.getRow("2")).toBeDefined();
+  });
+
+  test("does not consume a queued row when visible content identity is ambiguous", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Same",
+      threadPath: "/t/1/",
+      muted: true,
+    });
+
+    expect(
+      queue.consumeRowForPage("Jane", "Same", 1_500, 3_000, [
+        { key: "1", title: "Jane", body: "Same" },
+        { key: "2", title: "Jane", body: "Same" },
+      ]),
+    ).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
+  });
+
+  test("returns a capacity displacement so its active fallback can be completed", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>(2);
+    const row = (key: string): RowSignal => ({
+      key,
+      at: 1_000,
+      title: key,
+      body: "message",
+      threadPath: `/t/${key}/`,
+      muted: false,
+    });
+    expect(queue.addRow(row("1"))).toBeUndefined();
+    expect(queue.addRow(row("2"))).toBeUndefined();
+
+    expect(queue.addRow(row("3"))).toEqual({ row: row("1"), reason: "capacity" });
+    expect(queue.getRow("1")).toBeUndefined();
+    expect(queue.getRow("2")).toBeDefined();
+    expect(queue.getRow("3")).toBeDefined();
+  });
+
+  test("preserves a correlation-only suppression marker through row-first matching", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal & { deliverable: boolean }>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Muted message",
+      threadPath: "/t/1/",
+      muted: true,
+      deliverable: false,
+    });
+
+    expect(queue.consumeRowForPage("Jane", "Muted message", 1_500, 3_000)?.deliverable).toBe(false);
+  });
+});
+
 describe("UnreadArrivalTracker", () => {
   test("returns the most recently changed rows when the unread count increases", () => {
     const tracker = new UnreadArrivalTracker();
@@ -739,6 +1073,84 @@ describe("UnreadArrivalTracker", () => {
       tracker.observeUnreadCount(3, 1_200, 2_000, false, undefined, new Set(["new-message"])),
     ).toEqual([]);
     expect(tracker.observeUnreadCount(4, 1_300, 2_000)).toEqual(["new-message"]);
+  });
+
+  test("does not reassign a muted title delta to an unrelated unmuted row", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted"], 1_100);
+    tracker.markRowsChanged(["unmuted"], 1_200);
+    expect(
+      tracker.observeUnreadCount(
+        5,
+        1_300,
+        2_000,
+        false,
+        undefined,
+        new Set(["unmuted"]),
+        new Set(["muted"]),
+      ),
+    ).toEqual([]);
+  });
+
+  test("does not split a multi-message title delta while a muted row could own it", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted"], 1_100);
+    tracker.markRowsChanged(["unmuted"], 1_200);
+    expect(
+      tracker.observeUnreadCount(
+        6,
+        1_300,
+        2_000,
+        false,
+        undefined,
+        new Set(["unmuted"]),
+        new Set(["muted"]),
+      ),
+    ).toEqual([]);
+  });
+
+  test("does not let a muted mutation already scanned without a delta consume a fresh arrival", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(4, 1_000, 2_000);
+    tracker.markRowsChanged(["muted-hydration"], 1_100);
+    expect(
+      tracker.observeUnreadCount(
+        4,
+        1_200,
+        2_000,
+        false,
+        undefined,
+        new Set(["muted-hydration"]),
+        new Set(["muted-hydration"]),
+      ),
+    ).toEqual([]);
+    tracker.markRowsChanged(["unmuted-arrival"], 1_300);
+    expect(
+      tracker.observeUnreadCount(
+        5,
+        1_400,
+        2_000,
+        false,
+        undefined,
+        new Set(["muted-hydration", "unmuted-arrival"]),
+        new Set(["muted-hydration"]),
+      ),
+    ).toEqual(["unmuted-arrival"]);
+  });
+
+  test("does not let fresh read-row churn supersede a delayed unread arrival", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(2, 1_000, 2_000);
+    tracker.markRowsChanged(["delayed-arrival"], 1_100);
+    expect(
+      tracker.observeUnreadCount(2, 1_200, 2_000, false, undefined, new Set(["delayed-arrival"])),
+    ).toEqual([]);
+    tracker.markRowsChanged(["read-row-churn"], 1_300);
+    expect(
+      tracker.observeUnreadCount(3, 1_400, 2_000, false, undefined, new Set(["delayed-arrival"])),
+    ).toEqual(["delayed-arrival"]);
   });
 
   test("expires retained mutations that outlive the attribution window", () => {

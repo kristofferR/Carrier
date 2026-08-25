@@ -1,5 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { isMessengerContentPath, SEPARATOR_RE, threadIdFromHref, threadPathId } from "./threads";
+import {
+  accountScopedStorageKey,
+  isMessengerContentPath,
+  SEPARATOR_RE,
+  threadIdFromHref,
+  threadPathId,
+} from "./threads";
+
+describe("accountScopedStorageKey", () => {
+  test("uses c_user as the account boundary", () => {
+    expect(accountScopedStorageKey("carrier", "locale=en; c_user=123; xs=secret")).toBe(
+      "carrier:123",
+    );
+    expect(accountScopedStorageKey("carrier", "locale=en")).toBeNull();
+    expect(accountScopedStorageKey("carrier", "c_user=invalid")).toBeNull();
+  });
+});
 
 describe("threadIdFromHref", () => {
   test("extracts the id from chat-list hrefs", () => {

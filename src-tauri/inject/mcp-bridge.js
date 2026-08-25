@@ -552,6 +552,31 @@
           reply(notificationRowProbe());
           return;
         }
+        if (code === "__carrier_mcp_notification_info_toggle__") {
+          reply({
+            applied:
+              typeof window.__carrierToggleInfo === "function" &&
+              window.__carrierToggleInfo() === true,
+          });
+          return;
+        }
+        if (code === "__carrier_mcp_notification_open_muted_row__") {
+          var mutedRow = null;
+          document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (row) {
+            if (mutedRow || !visible(row)) return;
+            var container = row.closest('[role="row"]') || row;
+            if (muteShape(container).rowIconMuted) mutedRow = row;
+          });
+          if (mutedRow) mutedRow.click();
+          reply({ applied: !!mutedRow });
+          return;
+        }
+        var notificationRowsScroll =
+          /^__carrier_mcp_notification_rows_scroll__:(next|reset)$/.exec(code);
+        if (notificationRowsScroll) {
+          reply(scrollNotificationRows(notificationRowsScroll[1]));
+          return;
+        }
         // Media-capture plumbing checks for call/screen-share verification.
         if (code === "__carrier_mcp_media_capture_probe__") {
           reply(mediaCaptureProbe());
@@ -2360,6 +2385,169 @@
         .trim();
     }
 
+    // Mirror inject/src/messenger/lib/mute.ts — classifications only, never
+    // the raw accessible name (it can carry a contact or a preview).
+    function muteLabelKind(value, role, ariaChecked) {
+      var s = notifyNorm(value);
+      role = String(role || "").toLowerCase();
+      if (!s || s.length > 60) return "";
+      if (
+        /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i.test(
+          s,
+        )
+      ) {
+        return "unmute-action";
+      }
+      if (
+        /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i.test(
+          s,
+        )
+      ) {
+        return "muted-status";
+      }
+      if (
+        /^(?:mute(?: notifications?)?|turn off notifications)$/i.test(s) &&
+        !/\bmuted\b/i.test(s)
+      ) {
+        if (role === "switch" || role === "menuitemcheckbox") {
+          if (ariaChecked === "true") return "muted-status";
+          if (ariaChecked !== "false") return "";
+        }
+        return "mute-action";
+      }
+      return "";
+    }
+
+    function muteShape(container) {
+      var labelled = { mutedStatus: 0, unmuteAction: 0, muteAction: 0 };
+      var rejectedContentLabels = 0;
+      var labelledCount = 0;
+      container.querySelectorAll("[aria-label], [title], [aria-description]").forEach(
+        function (el) {
+          ["aria-label", "title", "aria-description"].forEach(function (attr) {
+            var tag = el.tagName.toLowerCase();
+            var role = String(el.getAttribute("role") || "").toLowerCase();
+            var checked = el.getAttribute("aria-checked");
+            var kind = muteLabelKind(el.getAttribute(attr), role, checked);
+            if (!kind) return;
+            var action = kind === "unmute-action" || kind === "mute-action";
+            var statefulStatus =
+              kind === "muted-status" &&
+              (role === "switch" || role === "menuitemcheckbox") &&
+              checked === "true";
+            var directSvg = Array.prototype.some.call(el.children || [], function (child) {
+              return child.tagName && child.tagName.toLowerCase() === "svg";
+            });
+            var contentSurface =
+              tag === "a" ||
+              tag === "img" ||
+              role === "link" ||
+              role === "row" ||
+              role === "gridcell";
+            var iconSurface = tag === "svg" || role === "img" || directSvg;
+            var actionSurface =
+              tag === "button" ||
+              role === "button" ||
+              role === "menuitem" ||
+              role === "menuitemcheckbox" ||
+              role === "switch";
+            if (action ? !actionSurface : !statefulStatus && (contentSurface || !iconSurface)) {
+              rejectedContentLabels++;
+              return;
+            }
+            labelledCount++;
+            if (kind === "muted-status") labelled.mutedStatus++;
+            else if (kind === "unmute-action") labelled.unmuteAction++;
+            else labelled.muteAction++;
+          });
+        },
+      );
+      container.querySelectorAll("svg title, svg desc").forEach(function (el) {
+        var kind = muteLabelKind(el.textContent);
+        if (!kind) return;
+        labelledCount++;
+        if (kind === "muted-status") labelled.mutedStatus++;
+        else if (kind === "unmute-action") labelled.unmuteAction++;
+        else labelled.muteAction++;
+      });
+      var svgCount = 0;
+      var smallSvgCount = 0;
+      var svgShapes = [];
+      var containerBox = rect(container);
+      container.querySelectorAll("svg").forEach(function (svg) {
+        svgCount++;
+        var box = rect(svg);
+        var side = Math.max(box.w, box.h);
+        if (side > 0 && side <= 22) {
+          smallSvgCount++;
+          var shapeText = "";
+          svg.querySelectorAll("path, line, polyline, circle").forEach(function (shape) {
+            shapeText +=
+              shape.tagName +
+              ":" +
+              (shape.getAttribute("d") || "") +
+              ":" +
+              (shape.getAttribute("points") || "") +
+              ":" +
+              (shape.getAttribute("cx") || "") +
+              ":" +
+              (shape.getAttribute("cy") || "") +
+              ";";
+          });
+          var hash = 2166136261;
+          for (var i = 0; i < shapeText.length; i++) {
+            hash ^= shapeText.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+          }
+          var firstPath = svg.querySelector("path[d]");
+          svgShapes.push({
+            w: box.w,
+            h: box.h,
+            rightGap: Math.round(containerBox.x + containerBox.w - box.x - box.w),
+            interactive: !!svg.closest(
+              'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]',
+            ),
+            ariaHidden: svg.getAttribute("aria-hidden") === "true",
+            viewBox: svg.getAttribute("viewBox") || "",
+            pathCount: svg.querySelectorAll("path").length,
+            shapeHash: (hash >>> 0).toString(16),
+            pathPrefixMatched:
+              notifyNorm((firstPath && firstPath.getAttribute("d")) || "").indexOf(
+                "M2.5 6c0-.322",
+              ) === 0,
+          });
+        }
+      });
+      var status = "none";
+      var rowIconMuted = svgShapes.some(function (shape) {
+        return (
+          shape.w >= 14 &&
+          shape.w <= 18 &&
+          shape.h >= 14 &&
+          shape.h <= 18 &&
+          shape.rightGap >= 8 &&
+          shape.rightGap <= 24 &&
+          !shape.interactive &&
+          shape.ariaHidden &&
+          String(shape.viewBox).replace(/\s+/g, " ").trim() === "0 0 16 16" &&
+          shape.pathCount === 1 &&
+          (shape.shapeHash === "774a4a14" || shape.pathPrefixMatched)
+        );
+      });
+      if (labelled.mutedStatus || labelled.unmuteAction || rowIconMuted) status = "muted";
+      else if (labelled.muteAction) status = "unmuted";
+      return {
+        status: status,
+        rowIconMuted: rowIconMuted,
+        labelled: labelled,
+        labelledCount: labelledCount,
+        rejectedContentLabels: rejectedContentLabels,
+        svgCount: svgCount,
+        smallSvgCount: smallSvgCount,
+        svgShapes: svgShapes,
+      };
+    }
+
     // A container's own-text leaves, ordered the way the injected scraper
     // reads them (conversation rows, and the people lists shaped like them).
     function conversationRowLeaves(container) {
@@ -2616,8 +2804,9 @@
     }
 
     // Sanitized shape of the conversation rows the notification fallback reads:
-    // how emoji are embedded in a row's preview text, and whether a group row's
-    // avatar images can be attributed to the sender named in that preview.
+    // how emoji are embedded in a row's preview text, whether a group row's
+    // avatar images can be attributed to the sender named in that preview, and
+    // mute-shaped accessible names / glyphs (classifications only).
     // Reports classifications, counts, and rectangles only — never message
     // text, contact names, image URLs, or raw alt/aria-label contents.
     function notificationRowProbe() {
@@ -2783,6 +2972,9 @@
         }
         rows.push({
           route: threadRouteKind(row),
+          selected:
+            row.getAttribute("aria-current") === "page" ||
+            row.getAttribute("aria-current") === "true",
           senderPrefix: {
             present: !!sender,
             length: sender.length,
@@ -2791,6 +2983,7 @@
           leaves: leaves.slice(0, 6).map(leafShape),
           images: images,
           labelledAncestors: labelledAncestors,
+          mute: muteShape(container),
         });
       });
       return {
@@ -2800,6 +2993,38 @@
         senderAvatarCache: liveSenderAvatarStats(),
         rows: rows,
         threadArticles: threadArticles(10),
+        threadMuteControls: (function () {
+          var out = [];
+          document
+            .querySelectorAll(
+              'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"], svg title',
+            )
+            .forEach(function (el) {
+              if (out.length >= 8 || (el.getBoundingClientRect && !visible(el))) return;
+              var kind = muteLabelKind(
+                (el.getAttribute &&
+                  (el.getAttribute("aria-label") ||
+                    el.getAttribute("title") ||
+                    el.getAttribute("aria-description"))) ||
+                  el.textContent,
+                el.getAttribute && el.getAttribute("role"),
+                el.getAttribute && el.getAttribute("aria-checked"),
+              );
+              if (!kind) return;
+              out.push({
+                kind: kind,
+                tag: el.tagName.toLowerCase(),
+                inMain: !!el.closest('[role="main"]'),
+                inComplementary: !!el.closest('[role="complementary"]'),
+                inDialog: !!el.closest('[role="dialog"]'),
+                nearestRole: (function () {
+                  var owner = el.closest("[role]");
+                  return owner ? owner.getAttribute("role") || "" : "";
+                })(),
+              });
+            });
+          return out;
+        })(),
         // Conversation-info sidebar / dialogs: the Chat members list pairs a
         // name with a face for every participant, including senders whose
         // messages are not currently rendered.
@@ -2849,6 +3074,29 @@
             });
           return out;
         })(),
+      };
+    }
+
+    function scrollNotificationRows(action) {
+      var row = document.querySelector(NOTIFY_ROW_SEL);
+      var scroller = null;
+      for (var el = row && row.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (el.scrollHeight <= el.clientHeight + 16) continue;
+        scroller = el;
+        break;
+      }
+      if (!scroller) return { found: false, moved: false, atEnd: true };
+      var before = scroller.scrollTop;
+      var maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      scroller.scrollTop =
+        action === "reset"
+          ? 0
+          : Math.min(maximum, before + Math.max(1, Math.floor(scroller.clientHeight * 0.8)));
+      return {
+        found: true,
+        moved: scroller.scrollTop !== before,
+        atEnd: scroller.scrollTop >= maximum - 2,
+        position: maximum > 0 ? Math.round((scroller.scrollTop / maximum) * 100) : 100,
       };
     }
 

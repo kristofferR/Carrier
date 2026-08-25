@@ -93,6 +93,7 @@
         ["autostart", "Start on System Startup", "Launch Carrier when you log in."],
         ["hide_on_close", "Hide on Close", "Closing the window hides it instead of quitting."],
         ["unread_badge", "Unread Badge", "Show the unread count on the Dock / taskbar icon."],
+        ["ignore_muted_conversations", "Ignore muted conversations", "Don't badge or notify for chats you've muted in Messenger, including muted communities."],
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
         ["notification_sound", "Notification sound", "Play the system sound when a notification arrives."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
@@ -160,7 +161,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    ...(IS_MAC ? ["group_notifications_by_conversation"] : []),
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
-                   "unread_badge", "badge_mode"] },
+                   "unread_badge", "ignore_muted_conversations", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
       ];
@@ -269,7 +270,8 @@
         return selectRow(
           "badge_mode", "messages",
           [["messages", "Unread messages"], ["conversations", "Unread conversations"]],
-          "Badge counts", "Whether the badge shows unread messages or unread conversations.",
+          "Badge counts",
+          "Shows unread messages when Messenger exposes an exact total. While muted chats are filtered, Carrier uses unread conversations because Messenger exposes only the combined message total.",
           !settings.unread_badge,
         );
       }
