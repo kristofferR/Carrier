@@ -344,9 +344,10 @@ export function initNotificationBridge() {
       // reload-safe route would never be attached.
       const id = ++notifySeq;
       if (pageMatch.signal) pageMatch.signal.nativeId = id;
-      const matchWait = pageMatch.signal?.matchPromise
-        ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS)
-        : Promise.resolve();
+      const matchWait =
+        pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
+          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS)
+          : Promise.resolve();
       Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
         ([icon]) => {
           if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
@@ -395,7 +396,7 @@ export function initNotificationBridge() {
             id,
             hidePreview ? "Messenger" : originalTitle,
             hidePreview ? "New message" : originalBody,
-            icon,
+            hidePreview ? "" : icon,
             pageMatch.dedupeKey ??
               pageMatch.signal?.dedupeKey ??
               notificationDedupeKey(originalTitle, originalBody),
