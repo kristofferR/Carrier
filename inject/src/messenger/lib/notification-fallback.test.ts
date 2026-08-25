@@ -623,6 +623,33 @@ describe("PageNotificationReceiptStore", () => {
       ),
     ).toBeNull();
   });
+
+  test("isolates delivered receipts between account-scoped keys", () => {
+    const storage = memoryStorage();
+    new PageNotificationReceiptStore(storage, "delivered:account-1", undefined, 1_000).add(
+      "Jane",
+      "Hello",
+      42,
+      1_000,
+    );
+
+    expect(
+      new PageNotificationReceiptStore(
+        storage,
+        "delivered:account-2",
+        undefined,
+        1_100,
+      ).consumeMatching({ title: "Jane", body: "Hello" }, 1_100),
+    ).toBeNull();
+    expect(
+      new PageNotificationReceiptStore(
+        storage,
+        "delivered:account-1",
+        undefined,
+        1_100,
+      ).consumeMatching({ title: "Jane", body: "Hello" }, 1_100),
+    ).toEqual({ nativeId: 42 });
+  });
 });
 
 describe("PendingPageNotificationStore", () => {
@@ -693,6 +720,29 @@ describe("PendingPageNotificationStore", () => {
         1_101,
       ).size,
     ).toBe(0);
+  });
+
+  test("isolates unresolved receipts between account-scoped keys", () => {
+    const storage = memoryStorage();
+    const first = new PendingPageNotificationStore(storage, "pending:account-1", undefined, 1_000);
+    first.add("Jane", "Hello", 42, 1_000);
+
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        "pending:account-2",
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "2", title: "Jane", body: "Hello" }], 1_100).size,
+    ).toBe(0);
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        "pending:account-1",
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Hello" }], 1_100),
+    ).toEqual(new Set(["1"]));
   });
 });
 
@@ -806,6 +856,16 @@ describe("NotificationCorrelationQueue", () => {
     const queue = new NotificationCorrelationQueue<RowSignal>();
     const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
     expect(await waitForPageNotificationMatch(signal, 1)).toBe("timeout");
+  });
+
+  test("cancels an unresolved wait when mute filtering becomes irrelevant", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });
+    const cancel = new AbortController();
+    const deliveryGate = waitForPageNotificationMatch(signal, 10_000, cancel.signal);
+    cancel.abort();
+
+    expect(await deliveryGate).toBe("cancelled");
   });
 
   test("recovers a page-first signal after its eager delivery wait timed out", async () => {

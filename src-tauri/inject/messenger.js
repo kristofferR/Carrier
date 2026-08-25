@@ -373,6 +373,10 @@
     const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
     return m ? m[1] : null;
   }
+  function accountScopedStorageKey(baseKey, cookie) {
+    const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
+    return accountId ? `${baseKey}:${accountId}` : null;
+  }
   function isMessengerContentPath(pathname) {
     const path = String(pathname || "");
     return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
@@ -3957,15 +3961,23 @@
       if (index !== -1) this.signals.splice(index, 1);
     }
   };
-  function waitForPageNotificationMatch(signal, timeoutMs) {
+  function waitForPageNotificationMatch(signal, timeoutMs, cancel) {
     if (signal.matched) return Promise.resolve("matched");
     if (!signal.matchPromise) return Promise.resolve("timeout");
+    if (cancel?.aborted) return Promise.resolve("cancelled");
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve("timeout"), timeoutMs);
-      signal.matchPromise.then(() => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        resolve("matched");
-      });
+        cancel?.removeEventListener("abort", onCancel);
+        resolve(result);
+      };
+      const onCancel = () => finish("cancelled");
+      const timer = setTimeout(() => finish("timeout"), timeoutMs);
+      cancel?.addEventListener("abort", onCancel, { once: true });
+      signal.matchPromise.then(() => finish("matched"));
     });
   }
   var NotificationCorrelationQueue = class {
@@ -4383,8 +4395,7 @@
   var MUTED_UNREAD_CLEAR_CONFIRM_MS = 2e4;
   var MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
   function mutedUnreadStorageKey(cookie) {
-    const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
-    return accountId ? `__carrier_muted_unreads__:${accountId}` : null;
+    return accountScopedStorageKey("__carrier_muted_unreads__", cookie);
   }
   var MutedUnreadStore = class {
     constructor(storage = null, storageKey = "__carrier_muted_unreads__") {
@@ -4682,8 +4693,22 @@
         return null;
       }
     })();
-    const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
-    const pendingPageNotifications = new PendingPageNotificationStore(notificationStorage);
+    const pageReceiptKey = accountScopedStorageKey(
+      "__carrier_page_notification_receipts__",
+      document.cookie
+    );
+    const pendingPageKey = accountScopedStorageKey(
+      "__carrier_pending_page_notifications__",
+      document.cookie
+    );
+    const pageNotificationReceipts = new PageNotificationReceiptStore(
+      pageReceiptKey ? notificationStorage : null,
+      pageReceiptKey || "__carrier_page_notification_receipts_anonymous__"
+    );
+    const pendingPageNotifications = new PendingPageNotificationStore(
+      pendingPageKey ? notificationStorage : null,
+      pendingPageKey || "__carrier_pending_page_notifications_anonymous__"
+    );
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
@@ -4742,6 +4767,21 @@
     };
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
+    const waitForPageMatchWhileFiltering = (signal) => {
+      const cancel = new AbortController();
+      const cancelWhenFilteringIsDisabled = () => {
+        if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__)) cancel.abort();
+      };
+      window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+      cancelWhenFilteringIsDisabled();
+      return waitForPageNotificationMatch(
+        signal,
+        PAGE_NOTIFICATION_RECOVERY_MS,
+        cancel.signal
+      ).finally(() => {
+        window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+      });
+    };
     const markPageNotification = (title, body) => {
       const match = notificationCorrelations.consumeRowForPage(
         title,
@@ -4782,7 +4822,7 @@
           pageMatch.signal.nativeId = id;
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
         Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
           ([icon]) => {
             const signal = pageMatch.signal;
@@ -5102,6 +5142,7 @@
       return true;
     }
     const completeCapacityEviction = (fallback) => {
+      if (!fallback.deliverable) return;
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
         notifiedStore.markSuppressed(
@@ -5161,7 +5202,8 @@
           threadPath: conversation.threadPath,
           fingerprint,
           dedupeKey,
-          confirmedRepeat
+          confirmedRepeat,
+          deliverable: false
         });
         return;
       }
@@ -5219,7 +5261,8 @@
         threadPath: conversation.threadPath,
         fingerprint,
         dedupeKey,
-        confirmedRepeat
+        confirmedRepeat,
+        deliverable: true
       });
     };
     let scanRunning = false;
@@ -6975,8 +7018,8 @@ ${text}`)) {
           ...observation,
           hydrated: listHydrated
         })),
-        ready: links.length > 0,
-        trustworthy: links.length > 0 && !scrolledFromTop
+        ready: links.length > 0 && listHydrated,
+        trustworthy: links.length > 0 && listHydrated && !scrolledFromTop
       };
     };
     let last = null;

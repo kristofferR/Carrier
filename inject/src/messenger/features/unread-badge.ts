@@ -116,8 +116,8 @@ export function initUnreadBadge() {
         ...observation,
         hydrated: listHydrated,
       })),
-      ready: links.length > 0,
-      trustworthy: links.length > 0 && !scrolledFromTop,
+      ready: links.length > 0 && listHydrated,
+      trustworthy: links.length > 0 && listHydrated && !scrolledFromTop,
     };
   };
 

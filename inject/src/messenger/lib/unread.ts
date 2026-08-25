@@ -1,3 +1,5 @@
+import { accountScopedStorageKey } from "./threads";
+
 /** Unread messages: Facebook prefixes the page title with "(N)". */
 export function unreadCountFromTitle(title: string): number {
   const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -24,8 +26,7 @@ export const MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
 
 /** Namespace persisted unread evidence to the logged-in Facebook account. */
 export function mutedUnreadStorageKey(cookie: string): string | null {
-  const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
-  return accountId ? `__carrier_muted_unreads__:${accountId}` : null;
+  return accountScopedStorageKey("__carrier_muted_unreads__", cookie);
 }
 
 /** Retain each muted unread until that same thread is observed read or unmuted. */

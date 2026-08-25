@@ -36,7 +36,7 @@ import {
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
-import { threadIdFromHref, threadPathId } from "../lib/threads";
+import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 
@@ -170,8 +170,24 @@ export function initNotificationBridge() {
       return null;
     }
   })();
-  const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
-  const pendingPageNotifications = new PendingPageNotificationStore(notificationStorage);
+  const pageReceiptKey = accountScopedStorageKey(
+    "__carrier_page_notification_receipts__",
+    document.cookie,
+  );
+  const pendingPageKey = accountScopedStorageKey(
+    "__carrier_pending_page_notifications__",
+    document.cookie,
+  );
+  // Login/logout is a full navigation, so c_user is the document's stable
+  // account boundary. On auth/checkpoint pages no receipt is persisted.
+  const pageNotificationReceipts = new PageNotificationReceiptStore(
+    pageReceiptKey ? notificationStorage : null,
+    pageReceiptKey || "__carrier_page_notification_receipts_anonymous__",
+  );
+  const pendingPageNotifications = new PendingPageNotificationStore(
+    pendingPageKey ? notificationStorage : null,
+    pendingPageKey || "__carrier_pending_page_notifications_anonymous__",
+  );
 
   // Clicking a native notification routes back here by id: bring the
   // conversation up by invoking the original `onclick` Facebook assigned to its
@@ -275,8 +291,26 @@ export function initNotificationBridge() {
     fingerprint: string;
     dedupeKey: string;
     confirmedRepeat: boolean;
+    /** False when this row exists only to correlate an already-suppressed page signal. */
+    deliverable: boolean;
   }
   const notificationCorrelations = new NotificationCorrelationQueue<PendingFallback>();
+
+  const waitForPageMatchWhileFiltering = (signal: PageNotificationSignal) => {
+    const cancel = new AbortController();
+    const cancelWhenFilteringIsDisabled = () => {
+      if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__)) cancel.abort();
+    };
+    window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+    cancelWhenFilteringIsDisabled();
+    return waitForPageNotificationMatch(
+      signal,
+      PAGE_NOTIFICATION_RECOVERY_MS,
+      cancel.signal,
+    ).finally(() => {
+      window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+    });
+  };
 
   // Facebook may construct its Notification just before or just after its
   // conversation row changes. Pair the two signals so the row-driven safety
@@ -366,7 +400,7 @@ export function initNotificationBridge() {
       }
       const matchWait =
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
-          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS)
+          ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
       Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
         ([icon]) => {
@@ -868,6 +902,10 @@ export function initNotificationBridge() {
   // the map ownership check. Deliver without an avatar under pressure; native
   // content dedupe still absorbs a page Notification that arrives afterward.
   const completeCapacityEviction = (fallback: PendingFallback) => {
+    // This arrival already crossed its delivery boundary as suppressed. A
+    // later settings change must not revive it merely because queue pressure
+    // retires its opposite-order correlation window.
+    if (!fallback.deliverable) return;
     const settings = window.__CARRIER_SETTINGS__ || {};
     if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
       notifiedStore.markSuppressed(
@@ -943,6 +981,7 @@ export function initNotificationBridge() {
         fingerprint,
         dedupeKey,
         confirmedRepeat,
+        deliverable: false,
       });
       return;
     }
@@ -1030,6 +1069,7 @@ export function initNotificationBridge() {
       fingerprint,
       dedupeKey,
       confirmedRepeat,
+      deliverable: true,
     });
   };
 

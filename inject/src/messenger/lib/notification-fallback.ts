@@ -1062,15 +1062,24 @@ export interface CorrelationRowDisplacement<Row> {
 export function waitForPageNotificationMatch(
   signal: PageNotificationSignal,
   timeoutMs: number,
-): Promise<"matched" | "timeout"> {
+  cancel?: AbortSignal,
+): Promise<"matched" | "timeout" | "cancelled"> {
   if (signal.matched) return Promise.resolve("matched");
   if (!signal.matchPromise) return Promise.resolve("timeout");
+  if (cancel?.aborted) return Promise.resolve("cancelled");
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve("timeout"), timeoutMs);
-    signal.matchPromise!.then(() => {
+    let settled = false;
+    const finish = (result: "matched" | "timeout" | "cancelled") => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve("matched");
-    });
+      cancel?.removeEventListener("abort", onCancel);
+      resolve(result);
+    };
+    const onCancel = () => finish("cancelled");
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    cancel?.addEventListener("abort", onCancel, { once: true });
+    signal.matchPromise!.then(() => finish("matched"));
   });
 }
 
