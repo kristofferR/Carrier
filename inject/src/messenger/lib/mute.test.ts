@@ -7,6 +7,7 @@ import {
   MutedThreadStore,
   muteSignalFromLabels,
   muteSignalFromSource,
+  muteStateAfterControlAction,
   muteStateAfterExplicitAction,
   resolveMuteActionThreadId,
   resolveMuteObservation,
@@ -120,6 +121,35 @@ describe("muteSignalFromSource", () => {
       }),
     ).toBe(false);
   });
+
+  test("uses aria-checked for stateful mute controls", () => {
+    expect(
+      muteSignalFromSource({
+        value: "Mute notifications",
+        tagName: "div",
+        role: "switch",
+        attribute: "aria-label",
+        ariaChecked: "true",
+      }),
+    ).toBe(true);
+    expect(
+      muteSignalFromSource({
+        value: "Mute notifications",
+        tagName: "div",
+        role: "menuitemcheckbox",
+        attribute: "aria-label",
+        ariaChecked: "false",
+      }),
+    ).toBe(false);
+    expect(
+      muteSignalFromSource({
+        value: "Mute notifications",
+        tagName: "div",
+        role: "switch",
+        attribute: "aria-label",
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("isExplicitUnmuteAction", () => {
@@ -139,6 +169,21 @@ describe("muteStateAfterExplicitAction", () => {
     expect(muteStateAfterExplicitAction("Unmute microphone")).toBeUndefined();
     expect(muteStateAfterExplicitAction("Notifications are off")).toBeUndefined();
     expect(muteStateAfterExplicitAction("Muted")).toBeUndefined();
+  });
+});
+
+describe("muteStateAfterControlAction", () => {
+  test("inverts the current checked state before a toggle click is handled", () => {
+    expect(muteStateAfterControlAction("Mute notifications", "switch", "false")).toBe(true);
+    expect(muteStateAfterControlAction("Mute notifications", "switch", "true")).toBe(false);
+    expect(
+      muteStateAfterControlAction("Mute notifications", "menuitemcheckbox", null),
+    ).toBeUndefined();
+  });
+
+  test("retains ordinary button action semantics", () => {
+    expect(muteStateAfterControlAction("Mute notifications", "button", null)).toBe(true);
+    expect(muteStateAfterControlAction("Unmute notifications", "button", null)).toBe(false);
   });
 });
 

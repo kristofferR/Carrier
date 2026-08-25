@@ -21,6 +21,7 @@ const MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
 
 const LABEL_ATTRS = ["aria-label", "title", "aria-description"] as const;
 const MUTE_ACTION_ROLES = new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
+const STATEFUL_MUTE_ROLES = new Set(["menuitemcheckbox", "switch"]);
 
 const MUTED_ROW_ICON_SHAPE = 0x774a4a14;
 const MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
@@ -80,6 +81,22 @@ export function muteStateAfterExplicitAction(value: string): boolean | undefined
   return undefined;
 }
 
+/** Predict the post-click state of a mute action or stateful mute toggle. */
+export function muteStateAfterControlAction(
+  value: string,
+  role?: string | null,
+  ariaChecked?: string | null,
+): boolean | undefined {
+  const text = (value || "").replace(/\s+/g, " ").trim();
+  const normalizedRole = (role || "").toLowerCase();
+  if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
+    if (ariaChecked === "true") return false;
+    if (ariaChecked === "false") return true;
+    return undefined;
+  }
+  return muteStateAfterExplicitAction(text);
+}
+
 /**
  * Accessible labels qualify only when they belong to mute UI, never message
  * content or an avatar. This prevents a contact whose image alt is "Muted"
@@ -91,13 +108,20 @@ export function muteSignalFromSource(source: {
   role?: string | null;
   attribute: string;
   containsSvg?: boolean;
+  ariaChecked?: string | null;
 }): boolean | null {
   if (source.attribute === "alt") return null;
-  const signal = conversationMuteFromLabel(source.value);
+  const text = (source.value || "").replace(/\s+/g, " ").trim();
+  const signal = conversationMuteFromLabel(text);
   if (signal === null) return null;
   const tag = source.tagName.toLowerCase();
   const role = (source.role || "").toLowerCase();
-  if (UNMUTE_ACTION_RE.test(source.value) || MUTE_ACTION_RE.test(source.value)) {
+  if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
+    if (source.ariaChecked === "true") return true;
+    if (source.ariaChecked === "false") return false;
+    return null;
+  }
+  if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
     return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
   }
   if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
@@ -225,17 +249,18 @@ export function collectMuteLabels(root: ParentNode, includeActions = true): stri
       ) {
         continue;
       }
-      if (
-        value &&
-        muteSignalFromSource({
+      if (value) {
+        const signal = muteSignalFromSource({
           value,
           tagName: el.tagName,
           role: el.getAttribute("role"),
           attribute: attr,
           containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
-        }) !== null
-      ) {
-        push(value);
+          ariaChecked: el.getAttribute("aria-checked"),
+        });
+        // Preserve the resolved state, not the static label: a switch named
+        // "Mute notifications" uses aria-checked as its only state signal.
+        if (signal !== null) push(signal ? "Muted" : "Mute");
       }
     }
   };
@@ -349,7 +374,7 @@ export function initMuteActionTracking(): void {
       if (!(event.target instanceof Element)) return;
       rememberRow(event.target);
       const action = event.target.closest<HTMLElement>(
-        'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"]',
+        'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]',
       );
       if (!action) return;
       const label =
@@ -357,7 +382,11 @@ export function initMuteActionTracking(): void {
         action.getAttribute("title") ||
         action.textContent ||
         "";
-      const nextMuted = muteStateAfterExplicitAction(label);
+      const nextMuted = muteStateAfterControlAction(
+        label,
+        action.getAttribute("role"),
+        action.getAttribute("aria-checked"),
+      );
       if (nextMuted === undefined) return;
       const rowId = threadIdFromActionTarget(action);
       const openId = threadIdFromHref(location.pathname) || "";
@@ -368,7 +397,12 @@ export function initMuteActionTracking(): void {
         recentId,
         !!action.closest('[role="main"], [role="complementary"], [role="dialog"]'),
       );
-      if (id) mutedThreads.observe(id, nextMuted);
+      if (id) {
+        mutedThreads.observe(id, nextMuted);
+        window.dispatchEvent(
+          new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } }),
+        );
+      }
     },
     true,
   );

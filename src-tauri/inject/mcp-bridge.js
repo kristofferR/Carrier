@@ -2387,8 +2387,9 @@
 
     // Mirror inject/src/messenger/lib/mute.ts — classifications only, never
     // the raw accessible name (it can carry a contact or a preview).
-    function muteLabelKind(value) {
+    function muteLabelKind(value, role, ariaChecked) {
       var s = notifyNorm(value);
+      role = String(role || "").toLowerCase();
       if (!s || s.length > 60) return "";
       if (
         /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i.test(
@@ -2408,6 +2409,10 @@
         /^(?:mute(?: notifications?)?|turn off notifications)$/i.test(s) &&
         !/\bmuted\b/i.test(s)
       ) {
+        if (role === "switch" || role === "menuitemcheckbox") {
+          if (ariaChecked === "true") return "muted-status";
+          if (ariaChecked !== "false") return "";
+        }
         return "mute-action";
       }
       return "";
@@ -2420,11 +2425,16 @@
       container.querySelectorAll("[aria-label], [title], [aria-description]").forEach(
         function (el) {
           ["aria-label", "title", "aria-description"].forEach(function (attr) {
-            var kind = muteLabelKind(el.getAttribute(attr));
-            if (!kind) return;
             var tag = el.tagName.toLowerCase();
             var role = String(el.getAttribute("role") || "").toLowerCase();
+            var checked = el.getAttribute("aria-checked");
+            var kind = muteLabelKind(el.getAttribute(attr), role, checked);
+            if (!kind) return;
             var action = kind === "unmute-action" || kind === "mute-action";
+            var statefulStatus =
+              kind === "muted-status" &&
+              (role === "switch" || role === "menuitemcheckbox") &&
+              checked === "true";
             var directSvg = Array.prototype.some.call(el.children || [], function (child) {
               return child.tagName && child.tagName.toLowerCase() === "svg";
             });
@@ -2441,7 +2451,7 @@
               role === "menuitem" ||
               role === "menuitemcheckbox" ||
               role === "switch";
-            if (action ? !actionSurface : contentSurface || !iconSurface) {
+            if (action ? !actionSurface : !statefulStatus && (contentSurface || !iconSurface)) {
               rejectedContentLabels++;
               return;
             }
@@ -2997,6 +3007,8 @@
                     el.getAttribute("title") ||
                     el.getAttribute("aria-description"))) ||
                   el.textContent,
+                el.getAttribute && el.getAttribute("role"),
+                el.getAttribute && el.getAttribute("aria-checked"),
               );
               if (!kind) return;
               out.push({

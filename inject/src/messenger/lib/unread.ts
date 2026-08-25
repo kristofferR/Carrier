@@ -12,11 +12,21 @@ export interface MutedUnreadObservation {
   id: string;
   unread: boolean;
   muted: boolean;
+  /** False while the row/list can still be missing preview text or styling. */
+  hydrated?: boolean;
 }
 
 const MUTED_UNREAD_STORE_VERSION = 1;
 const MUTED_UNREAD_STORE_LIMIT = 500;
 const VALID_THREAD_ID_RE = /^\d{1,32}$/;
+export const MUTED_UNREAD_CLEAR_CONFIRM_MS = 20_000;
+export const MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
+
+/** Namespace persisted unread evidence to the logged-in Facebook account. */
+export function mutedUnreadStorageKey(cookie: string): string | null {
+  const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
+  return accountId ? `__carrier_muted_unreads__:${accountId}` : null;
+}
 
 /** Retain each muted unread until that same thread is observed read or unmuted. */
 export function reconcileMutedUnreadIds(
@@ -25,6 +35,7 @@ export function reconcileMutedUnreadIds(
 ): Set<string> {
   const next = new Set(previous);
   for (const thread of observed) {
+    if (thread.hydrated === false) continue;
     if (thread.unread && thread.muted) next.add(thread.id);
     else next.delete(thread.id);
   }
@@ -38,6 +49,7 @@ export function reconcileMutedUnreadIds(
  */
 export class MutedUnreadStore {
   private ids = new Set<string>();
+  private readonly clearCandidates = new Map<string, { since: number; observations: number }>();
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
@@ -65,17 +77,64 @@ export class MutedUnreadStore {
     return this.ids.size;
   }
 
-  reconcile(observed: Iterable<MutedUnreadObservation>): void {
-    const next = reconcileMutedUnreadIds(this.ids, observed);
-    while (next.size > MUTED_UNREAD_STORE_LIMIT) next.delete(next.values().next().value!);
-    if (next.size === this.ids.size && [...next].every((id) => this.ids.has(id))) return;
-    this.ids = next;
+  reconcile(observed: Iterable<MutedUnreadObservation>, observedAt = Date.now()): void {
+    const rows = [...observed].filter(({ id }) => VALID_THREAD_ID_RE.test(id));
+    const observedIds = new Set(rows.map(({ id }) => id));
+    for (const id of this.clearCandidates.keys()) {
+      if (!observedIds.has(id)) this.clearCandidates.delete(id);
+    }
+    let changed = false;
+    for (const thread of rows) {
+      if (thread.hydrated === false) {
+        this.clearCandidates.delete(thread.id);
+        continue;
+      }
+      if (thread.unread && thread.muted) {
+        this.clearCandidates.delete(thread.id);
+        if (!this.ids.has(thread.id)) {
+          this.ids.add(thread.id);
+          changed = true;
+        }
+        continue;
+      }
+      if (!this.ids.has(thread.id)) {
+        this.clearCandidates.delete(thread.id);
+        continue;
+      }
+      const candidate = this.clearCandidates.get(thread.id);
+      if (candidate === undefined || observedAt < candidate.since) {
+        this.clearCandidates.set(thread.id, { since: observedAt, observations: 1 });
+        continue;
+      }
+      candidate.observations += 1;
+      if (
+        observedAt - candidate.since >= MUTED_UNREAD_CLEAR_CONFIRM_MS &&
+        candidate.observations >= MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS
+      ) {
+        this.clearCandidates.delete(thread.id);
+        this.ids.delete(thread.id);
+        changed = true;
+      }
+    }
+    while (this.ids.size > MUTED_UNREAD_STORE_LIMIT) {
+      const oldest = this.ids.values().next().value!;
+      this.ids.delete(oldest);
+      this.clearCandidates.delete(oldest);
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
+  invalidate(id: string): void {
+    this.clearCandidates.delete(id);
+    if (!this.ids.delete(id)) return;
     this.persist();
   }
 
   clear(): void {
     if (this.ids.size === 0) return;
     this.ids.clear();
+    this.clearCandidates.clear();
     this.persist();
   }
 

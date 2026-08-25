@@ -3026,6 +3026,7 @@
   var MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
   var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
   var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
+  var STATEFUL_MUTE_ROLES = /* @__PURE__ */ new Set(["menuitemcheckbox", "switch"]);
   var MUTED_ROW_ICON_SHAPE = 2001357332;
   var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
   var MUTED_THREAD_LIMIT = 500;
@@ -3057,13 +3058,29 @@
     if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
     return void 0;
   }
+  function muteStateAfterControlAction(value, role, ariaChecked) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    const normalizedRole = (role || "").toLowerCase();
+    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
+      if (ariaChecked === "true") return false;
+      if (ariaChecked === "false") return true;
+      return void 0;
+    }
+    return muteStateAfterExplicitAction(text);
+  }
   function muteSignalFromSource(source) {
     if (source.attribute === "alt") return null;
-    const signal = conversationMuteFromLabel(source.value);
+    const text = (source.value || "").replace(/\s+/g, " ").trim();
+    const signal = conversationMuteFromLabel(text);
     if (signal === null) return null;
     const tag = source.tagName.toLowerCase();
     const role = (source.role || "").toLowerCase();
-    if (UNMUTE_ACTION_RE.test(source.value) || MUTE_ACTION_RE.test(source.value)) {
+    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
+      if (source.ariaChecked === "true") return true;
+      if (source.ariaChecked === "false") return false;
+      return null;
+    }
+    if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
       return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
     }
     if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
@@ -3141,14 +3158,16 @@
         if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
           continue;
         }
-        if (value && muteSignalFromSource({
-          value,
-          tagName: el.tagName,
-          role: el.getAttribute("role"),
-          attribute: attr,
-          containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg")
-        }) !== null) {
-          push(value);
+        if (value) {
+          const signal = muteSignalFromSource({
+            value,
+            tagName: el.tagName,
+            role: el.getAttribute("role"),
+            attribute: attr,
+            containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
+            ariaChecked: el.getAttribute("aria-checked")
+          });
+          if (signal !== null) push(signal ? "Muted" : "Mute");
         }
       }
     };
@@ -3240,11 +3259,15 @@
         if (!(event.target instanceof Element)) return;
         rememberRow(event.target);
         const action = event.target.closest(
-          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"]'
+          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
         );
         if (!action) return;
         const label = action.getAttribute("aria-label") || action.getAttribute("title") || action.textContent || "";
-        const nextMuted = muteStateAfterExplicitAction(label);
+        const nextMuted = muteStateAfterControlAction(
+          label,
+          action.getAttribute("role"),
+          action.getAttribute("aria-checked")
+        );
         if (nextMuted === void 0) return;
         const rowId = threadIdFromActionTarget(action);
         const openId = threadIdFromHref(location.pathname) || "";
@@ -3255,7 +3278,12 @@
           recentId,
           !!action.closest('[role="main"], [role="complementary"], [role="dialog"]')
         );
-        if (id) mutedThreads.observe(id, nextMuted);
+        if (id) {
+          mutedThreads.observe(id, nextMuted);
+          window.dispatchEvent(
+            new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } })
+          );
+        }
       },
       true
     );
@@ -4348,19 +4376,18 @@
   var MUTED_UNREAD_STORE_VERSION = 1;
   var MUTED_UNREAD_STORE_LIMIT = 500;
   var VALID_THREAD_ID_RE = /^\d{1,32}$/;
-  function reconcileMutedUnreadIds(previous, observed) {
-    const next = new Set(previous);
-    for (const thread of observed) {
-      if (thread.unread && thread.muted) next.add(thread.id);
-      else next.delete(thread.id);
-    }
-    return next;
+  var MUTED_UNREAD_CLEAR_CONFIRM_MS = 2e4;
+  var MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
+  function mutedUnreadStorageKey(cookie) {
+    const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
+    return accountId ? `__carrier_muted_unreads__:${accountId}` : null;
   }
   var MutedUnreadStore = class {
     constructor(storage = null, storageKey = "__carrier_muted_unreads__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey);
       __publicField(this, "ids", /* @__PURE__ */ new Set());
+      __publicField(this, "clearCandidates", /* @__PURE__ */ new Map());
       try {
         const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "null");
         if (parsed && typeof parsed === "object" && "version" in parsed && parsed.version === MUTED_UNREAD_STORE_VERSION && "ids" in parsed && Array.isArray(parsed.ids)) {
@@ -4375,16 +4402,59 @@
     get size() {
       return this.ids.size;
     }
-    reconcile(observed) {
-      const next = reconcileMutedUnreadIds(this.ids, observed);
-      while (next.size > MUTED_UNREAD_STORE_LIMIT) next.delete(next.values().next().value);
-      if (next.size === this.ids.size && [...next].every((id) => this.ids.has(id))) return;
-      this.ids = next;
+    reconcile(observed, observedAt = Date.now()) {
+      const rows = [...observed].filter(({ id }) => VALID_THREAD_ID_RE.test(id));
+      const observedIds = new Set(rows.map(({ id }) => id));
+      for (const id of this.clearCandidates.keys()) {
+        if (!observedIds.has(id)) this.clearCandidates.delete(id);
+      }
+      let changed = false;
+      for (const thread of rows) {
+        if (thread.hydrated === false) {
+          this.clearCandidates.delete(thread.id);
+          continue;
+        }
+        if (thread.unread && thread.muted) {
+          this.clearCandidates.delete(thread.id);
+          if (!this.ids.has(thread.id)) {
+            this.ids.add(thread.id);
+            changed = true;
+          }
+          continue;
+        }
+        if (!this.ids.has(thread.id)) {
+          this.clearCandidates.delete(thread.id);
+          continue;
+        }
+        const candidate = this.clearCandidates.get(thread.id);
+        if (candidate === void 0 || observedAt < candidate.since) {
+          this.clearCandidates.set(thread.id, { since: observedAt, observations: 1 });
+          continue;
+        }
+        candidate.observations += 1;
+        if (observedAt - candidate.since >= MUTED_UNREAD_CLEAR_CONFIRM_MS && candidate.observations >= MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS) {
+          this.clearCandidates.delete(thread.id);
+          this.ids.delete(thread.id);
+          changed = true;
+        }
+      }
+      while (this.ids.size > MUTED_UNREAD_STORE_LIMIT) {
+        const oldest = this.ids.values().next().value;
+        this.ids.delete(oldest);
+        this.clearCandidates.delete(oldest);
+        changed = true;
+      }
+      if (changed) this.persist();
+    }
+    invalidate(id) {
+      this.clearCandidates.delete(id);
+      if (!this.ids.delete(id)) return;
       this.persist();
     }
     clear() {
       if (this.ids.size === 0) return;
       this.ids.clear();
+      this.clearCandidates.clear();
       this.persist();
     }
     persist() {
@@ -6803,6 +6873,7 @@ ${text}`)) {
         return null;
       }
     })();
+    const accountStorageKey = mutedUnreadStorageKey(document.cookie);
     const unreadConversationState = () => {
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
@@ -6815,21 +6886,37 @@ ${text}`)) {
       const links = chatRows();
       const seen = /* @__PURE__ */ new Set();
       let count = 0;
-      const muteObservations = [];
+      const rowObservations = [];
       for (const a of links) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
         seen.add(id);
         const row = a.closest('[role="row"]') || a;
+        const spans = [...row.querySelectorAll("span")];
         let unread = false;
-        for (const span of row.querySelectorAll("span")) {
-          if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
+        for (const span of spans) {
+          if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
             unread = true;
             break;
           }
         }
+        const hydrated = conversationTextParts(
+          spans.map((span) => {
+            const rect = span.getBoundingClientRect();
+            return {
+              text: conversationNodeText(span),
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+              ariaHidden: span.getAttribute("aria-hidden") === "true",
+              inAbbreviation: !!span.closest("abbr"),
+              hasTextChild: hasCandidateTextChild(span)
+            };
+          })
+        ).body.length > 0;
         const muted = observeConversationMute(id, row);
-        muteObservations.push({ id, unread, muted });
+        rowObservations.push({ id, unread, muted, hydrated });
         if (!unread) continue;
         if (ignoreMuted && muted) continue;
         count++;
@@ -6841,16 +6928,26 @@ ${text}`)) {
         scrolledFromTop = el.scrollTop > 8;
         break;
       }
+      const listHydrated = rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
       return {
         count,
-        muteObservations,
+        // A partly hydrated list proves nothing about any row's read styling.
+        // Keep every persisted identity until the complete rendered list has
+        // preview text, then require stable observations in MutedUnreadStore.
+        muteObservations: rowObservations.map((observation) => ({
+          ...observation,
+          hydrated: listHydrated
+        })),
         ready: links.length > 0,
         trustworthy: links.length > 0 && !scrolledFromTop
       };
     };
     let last = null;
     let filteredUnreadBaseline = null;
-    const knownMutedUnreads = new MutedUnreadStore(unreadStorage);
+    const knownMutedUnreads = new MutedUnreadStore(
+      accountStorageKey ? unreadStorage : null,
+      accountStorageKey || "__carrier_muted_unreads_anonymous__"
+    );
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
@@ -6898,6 +6995,12 @@ ${text}`)) {
       if (n === null || n === 0 && !ready) return;
       setBadge(n, force);
     };
+    window.addEventListener("carrier:thread-mute", (event) => {
+      const detail = event.detail;
+      if (detail?.muted !== false || typeof detail.id !== "string") return;
+      knownMutedUnreads.invalidate(detail.id);
+      setTimeout(() => apply(true), 500);
+    });
     let pending = false;
     const schedule = () => {
       if (pending) return;

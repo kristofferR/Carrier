@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   didMutedFilterPolicyChange,
+  MUTED_UNREAD_CLEAR_CONFIRM_MS,
   MutedUnreadStore,
+  mutedUnreadStorageKey,
   reconcileMutedUnreadIds,
   reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
@@ -114,6 +116,22 @@ describe("reconcileMutedUnreadIds", () => {
     );
     expect([...known]).toEqual(["virtualized"]);
   });
+
+  test("treats an unhydrated row as inconclusive", () => {
+    expect(
+      reconcileMutedUnreadIds(["1"], [{ id: "1", unread: false, muted: false, hydrated: false }]),
+    ).toEqual(new Set(["1"]));
+  });
+});
+
+describe("mutedUnreadStorageKey", () => {
+  test("scopes persisted evidence to the Facebook account cookie", () => {
+    expect(mutedUnreadStorageKey("locale=en; c_user=12345; xs=secret")).toBe(
+      "__carrier_muted_unreads__:12345",
+    );
+    expect(mutedUnreadStorageKey("locale=en")).toBeNull();
+    expect(mutedUnreadStorageKey("c_user=not-an-id")).toBeNull();
+  });
 });
 
 describe("MutedUnreadStore", () => {
@@ -125,17 +143,63 @@ describe("MutedUnreadStore", () => {
     expect(new MutedUnreadStore(storage).size).toBe(1);
   });
 
-  test("persists positive same-thread read and unmute invalidation", () => {
+  test("persists stable same-thread read and unmute invalidation", () => {
     const storage = memoryStorage();
     const current = new MutedUnreadStore(storage);
     current.reconcile([
       { id: "123", unread: true, muted: true },
       { id: "456", unread: true, muted: true },
     ]);
-    current.reconcile([
-      { id: "123", unread: false, muted: true },
-      { id: "456", unread: true, muted: false },
-    ]);
+    const observations = [
+      { id: "123", unread: false, muted: true, hydrated: true },
+      { id: "456", unread: true, muted: false, hydrated: true },
+    ];
+    current.reconcile(observations, 1_000);
+    current.reconcile(observations, 1_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS - 1);
+    expect(new MutedUnreadStore(storage).size).toBe(2);
+    current.reconcile(observations, 1_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS);
+
+    expect(new MutedUnreadStore(storage).size).toBe(0);
+  });
+
+  test("does not retire persisted evidence from an unhydrated reload scan", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }], 1_000);
+    current.reconcile(
+      [{ id: "123", unread: false, muted: false, hydrated: false }],
+      1_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS,
+    );
+
+    expect(new MutedUnreadStore(storage).size).toBe(1);
+  });
+
+  test("resets retirement evidence when the row virtualizes", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }], 1_000);
+    const read = [{ id: "123", unread: false, muted: true, hydrated: true }];
+    current.reconcile(read, 2_000);
+    current.reconcile([], 2_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS);
+    current.reconcile(read, 2_000 + MUTED_UNREAD_CLEAR_CONFIRM_MS + 1);
+
+    expect(new MutedUnreadStore(storage).size).toBe(1);
+  });
+
+  test("isolates persisted evidence between Facebook accounts", () => {
+    const storage = memoryStorage();
+    const first = new MutedUnreadStore(storage, "__carrier_muted_unreads__:1");
+    first.reconcile([{ id: "123", unread: true, muted: true }]);
+
+    expect(new MutedUnreadStore(storage, "__carrier_muted_unreads__:1").size).toBe(1);
+    expect(new MutedUnreadStore(storage, "__carrier_muted_unreads__:2").size).toBe(0);
+  });
+
+  test("immediately persists explicit unmute invalidation", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }]);
+    current.invalidate("123");
 
     expect(new MutedUnreadStore(storage).size).toBe(0);
   });

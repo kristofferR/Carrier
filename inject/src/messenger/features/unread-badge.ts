@@ -4,7 +4,12 @@
 // (Facebook's total, parsed from the "(N)" it puts in the page title) or
 // unread *conversations* (chats in the list rendered bold), per `badge_mode`.
 import { diag, invoke } from "../bridge";
-import { isUnreadConversationText } from "../lib/conversation-row";
+import {
+  conversationNodeText,
+  conversationTextParts,
+  hasCandidateTextChild,
+  isUnreadConversationText,
+} from "../lib/conversation-row";
 import {
   ignoresMutedConversations,
   observeConversationMute,
@@ -15,6 +20,7 @@ import {
   didMutedFilterPolicyChange,
   type MutedUnreadObservation,
   MutedUnreadStore,
+  mutedUnreadStorageKey,
   reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
@@ -31,6 +37,7 @@ export function initUnreadBadge() {
       return null;
     }
   })();
+  const accountStorageKey = mutedUnreadStorageKey(document.cookie);
 
   // Unread conversations: Facebook renders a chat's name/preview bold only
   // while it has unread messages. The class names are hashed and unstable, so
@@ -49,21 +56,40 @@ export function initUnreadBadge() {
     const links = chatRows();
     const seen = new Set<string>();
     let count = 0;
-    const muteObservations: MutedUnreadObservation[] = [];
+    const rowObservations: MutedUnreadObservation[] = [];
     for (const a of links) {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
       seen.add(id);
       const row = a.closest('[role="row"]') || a;
+      const spans = [...row.querySelectorAll<HTMLElement>("span")];
       let unread = false;
-      for (const span of row.querySelectorAll("span")) {
-        if (isUnreadConversationText(getComputedStyle(span).fontWeight, span.textContent || "")) {
+      for (const span of spans) {
+        if (
+          isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))
+        ) {
           unread = true;
           break;
         }
       }
+      const hydrated =
+        conversationTextParts(
+          spans.map((span) => {
+            const rect = span.getBoundingClientRect();
+            return {
+              text: conversationNodeText(span),
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+              ariaHidden: span.getAttribute("aria-hidden") === "true",
+              inAbbreviation: !!span.closest("abbr"),
+              hasTextChild: hasCandidateTextChild(span),
+            };
+          }),
+        ).body.length > 0;
       const muted = observeConversationMute(id, row);
-      muteObservations.push({ id, unread, muted });
+      rowObservations.push({ id, unread, muted, hydrated });
       if (!unread) continue;
       if (ignoreMuted && muted) continue;
       count++;
@@ -79,9 +105,17 @@ export function initUnreadBadge() {
       scrolledFromTop = el.scrollTop > 8;
       break;
     }
+    const listHydrated =
+      rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
     return {
       count,
-      muteObservations,
+      // A partly hydrated list proves nothing about any row's read styling.
+      // Keep every persisted identity until the complete rendered list has
+      // preview text, then require stable observations in MutedUnreadStore.
+      muteObservations: rowObservations.map((observation) => ({
+        ...observation,
+        hydrated: listHydrated,
+      })),
       ready: links.length > 0,
       trustworthy: links.length > 0 && !scrolledFromTop,
     };
@@ -89,7 +123,10 @@ export function initUnreadBadge() {
 
   let last: number | null = null;
   let filteredUnreadBaseline: number | null = null;
-  const knownMutedUnreads = new MutedUnreadStore(unreadStorage);
+  const knownMutedUnreads = new MutedUnreadStore(
+    accountStorageKey ? unreadStorage : null,
+    accountStorageKey || "__carrier_muted_unreads_anonymous__",
+  );
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
     if (n === last && !force) return;
@@ -152,6 +189,16 @@ export function initUnreadBadge() {
     if (n === null || (n === 0 && !ready)) return;
     setBadge(n, force);
   };
+
+  window.addEventListener("carrier:thread-mute", (event) => {
+    const detail = (event as CustomEvent<{ id?: unknown; muted?: unknown }>).detail;
+    if (detail?.muted !== false || typeof detail.id !== "string") return;
+    knownMutedUnreads.invalidate(detail.id);
+    // The click is captured before Messenger updates aria-checked/the row icon.
+    // Repaint after that render so the old mute glyph cannot immediately add
+    // the just-invalidated identity back.
+    setTimeout(() => apply(true), 500);
+  });
 
   // Re-evaluate whenever the title changes — Facebook updates "(N)" the moment a
   // message arrives or is read, which is exactly when the unread count (and the
