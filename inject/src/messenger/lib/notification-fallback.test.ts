@@ -752,6 +752,21 @@ describe("NotificationCorrelationQueue", () => {
     expect(queue.getRow("1")).toBeUndefined();
   });
 
+  test("leaves an out-of-window row for its owning fallback timer", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Hello",
+      threadPath: "/t/1/",
+      muted: false,
+    });
+
+    expect(queue.consumeRowForPage("Jane", "Hello", 4_001, 3_000)).toBeNull();
+    expect(queue.getRow("1")).toBeDefined();
+  });
+
   test("does not guess between indistinguishable row-first signals", () => {
     const queue = new NotificationCorrelationQueue<RowSignal>();
     for (const key of ["1", "2"]) {

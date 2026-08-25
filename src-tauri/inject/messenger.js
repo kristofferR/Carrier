@@ -3029,14 +3029,16 @@
   var MUTED_ROW_ICON_SHAPE = 2001357332;
   var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
   var MUTED_THREAD_LIMIT = 500;
+  var MUTE_ABSENCE_CONFIRM_MS = 1e3;
+  var MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
   function ignoresMutedConversations(settings) {
     return settings?.ignore_muted_conversations !== false;
   }
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
   }
-  function suppressNotificationDelivery(muted, settings) {
-    return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
+  function suppressNotificationDelivery(muted, settings, muteStateKnown = true) {
+    return settings?.mute_notifications === true || !muteStateKnown && ignoresMutedConversations(settings) || suppressMutedDelivery(muted, settings);
   }
   function conversationMuteFromLabel(value) {
     const text = (value || "").replace(/\s+/g, " ").trim();
@@ -3116,7 +3118,7 @@
   function resolveMuteObservation(labels) {
     const signal = muteSignalFromLabels(labels);
     if (signal !== null) return signal;
-    return false;
+    return void 0;
   }
   function collectMuteLabels(root, includeActions = true) {
     const labels = [];
@@ -3154,13 +3156,37 @@
   var MutedThreadStore = class {
     constructor() {
       __publicField(this, "states", /* @__PURE__ */ new Map());
+      __publicField(this, "rowAbsences", /* @__PURE__ */ new Map());
     }
     observe(id, muted) {
       if (!id || muted === void 0) return;
+      this.rowAbsences.delete(id);
       if (this.states.has(id)) this.states.delete(id);
       this.states.set(id, muted);
       if (this.states.size > MUTED_THREAD_LIMIT) {
-        this.states.delete(this.states.keys().next().value);
+        const oldest = this.states.keys().next().value;
+        this.states.delete(oldest);
+        this.rowAbsences.delete(oldest);
+      }
+    }
+    observeMountedRow(id, muted, observedAt = Date.now()) {
+      if (!id) return;
+      if (muted !== void 0) {
+        this.observe(id, muted);
+        return;
+      }
+      if (!this.isMuted(id)) {
+        this.rowAbsences.delete(id);
+        return;
+      }
+      const absence = this.rowAbsences.get(id);
+      if (absence === void 0 || observedAt < absence.since) {
+        this.rowAbsences.set(id, { since: observedAt, observations: 1 });
+        return;
+      }
+      absence.observations += 1;
+      if (observedAt - absence.since >= MUTE_ABSENCE_CONFIRM_MS && absence.observations >= MUTE_ABSENCE_MIN_OBSERVATIONS) {
+        this.observe(id, false);
       }
     }
     isMuted(id) {
@@ -3181,7 +3207,7 @@
   var threadIdFromActionTarget = (target) => {
     const row = target.closest('[role="row"]');
     const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
-    return /\/t\/([^/?#]+)/.exec(href)?.[1] || "";
+    return threadIdFromHref(href) || "";
   };
   function resolveUnmuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
     if (rowId) return rowId;
@@ -3214,7 +3240,7 @@
         const label = action.getAttribute("aria-label") || action.getAttribute("title") || action.textContent || "";
         if (!isExplicitUnmuteAction(label)) return;
         const rowId = threadIdFromActionTarget(action);
-        const openId = /\/t\/([^/?#]+)/.exec(location.pathname)?.[1] || "";
+        const openId = threadIdFromHref(location.pathname) || "";
         const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
         const id = resolveUnmuteActionThreadId(
           rowId,
@@ -3228,7 +3254,7 @@
     );
   }
   function observeConversationMute(id, root) {
-    mutedThreads.observe(
+    mutedThreads.observeMountedRow(
       id,
       hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false))
     );
@@ -3833,13 +3859,10 @@
       return row;
     }
     consumeRowForPage(title, body, at, matchWindowMs) {
-      for (const [key, row] of this.rows) {
+      const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
-        if (age < 0 || age > matchWindowMs) this.rows.delete(key);
-      }
-      const matches = [...this.rows.values()].filter(
-        (row) => notificationTextMatches(title, body, row.title, row.body)
-      );
+        return age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
+      });
       if (matches.length !== 1) return null;
       return this.removeRow(matches[0].key) ?? null;
     }
@@ -4176,6 +4199,9 @@
     const m = (title || "").match(/^\s*\((\d+)\)/);
     return m ? parseInt(m[1], 10) : 0;
   }
+  function didMutedFilterPolicyChange(previous, current) {
+    return previous !== null && previous !== current;
+  }
   function reconcileMutedUnreadKnowledge(previous, observedMutedUnread, conversationListTrustworthy) {
     return conversationListTrustworthy ? observedMutedUnread : previous || observedMutedUnread;
   }
@@ -4482,7 +4508,7 @@
             const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
             const threadId = threadPathId(threadPath || "");
             const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-            if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            if (suppressNotificationDelivery(threadMuted, deliverySettings, !!threadId)) {
               const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
               if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
                 notifiedStore.markSuppressed(
@@ -6576,7 +6602,9 @@ ${text}`)) {
       };
     };
     let last = null;
+    let filteredUnreadBaseline = null;
     let mutedUnreadKnown = false;
+    let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
       last = n;
@@ -6589,23 +6617,32 @@ ${text}`)) {
     };
     const apply = (force) => {
       const s = window.__CARRIER_SETTINGS__ || {};
+      const ignoreMuted = ignoresMutedConversations(s);
+      if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
+        filteredUnreadBaseline = null;
+        mutedUnreadKnown = false;
+      }
+      ignoreMutedPolicy = ignoreMuted;
       if (s.unread_badge === false) {
         setBadge(0, force);
         return;
       }
       const conversations = unreadConversationState();
-      mutedUnreadKnown = ignoresMutedConversations(s) ? reconcileMutedUnreadKnowledge(
+      mutedUnreadKnown = ignoreMuted ? reconcileMutedUnreadKnowledge(
         mutedUnreadKnown,
         conversations.mutedUnread,
         conversations.trustworthy
       ) : false;
+      if (ignoreMuted && conversations.trustworthy) {
+        filteredUnreadBaseline = conversations.count;
+      }
       const conv = s.badge_mode === "conversations";
       const n = conv ? conversations.count : reconcileUnreadMessageCount(
         unreadCountFromTitle(document.title || ""),
         conversations.count,
         conversations.trustworthy,
         mutedUnreadKnown,
-        last
+        filteredUnreadBaseline
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
       if (n === null || n === 0 && !ready) return;

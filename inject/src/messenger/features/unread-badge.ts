@@ -12,6 +12,7 @@ import {
 } from "../lib/mute";
 import { threadIdFromHref } from "../lib/threads";
 import {
+  didMutedFilterPolicyChange,
   reconcileMutedUnreadKnowledge,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
@@ -77,7 +78,9 @@ export function initUnreadBadge() {
   };
 
   let last: number | null = null;
+  let filteredUnreadBaseline: number | null = null;
   let mutedUnreadKnown = false;
+  let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
     if (n === last && !force) return;
     last = n;
@@ -96,18 +99,27 @@ export function initUnreadBadge() {
   // (it lands shortly after launch) and the chat list's first render.
   const apply = (force: boolean) => {
     const s = window.__CARRIER_SETTINGS__ || {};
+    const ignoreMuted = ignoresMutedConversations(s);
+    if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
+      filteredUnreadBaseline = null;
+      mutedUnreadKnown = false;
+    }
+    ignoreMutedPolicy = ignoreMuted;
     if (s.unread_badge === false) {
       setBadge(0, force);
       return;
     }
     const conversations = unreadConversationState();
-    mutedUnreadKnown = ignoresMutedConversations(s)
+    mutedUnreadKnown = ignoreMuted
       ? reconcileMutedUnreadKnowledge(
           mutedUnreadKnown,
           conversations.mutedUnread,
           conversations.trustworthy,
         )
       : false;
+    if (ignoreMuted && conversations.trustworthy) {
+      filteredUnreadBaseline = conversations.count;
+    }
     const conv = s.badge_mode === "conversations";
     const n = conv
       ? conversations.count
@@ -116,7 +128,7 @@ export function initUnreadBadge() {
           conversations.count,
           conversations.trustworthy,
           mutedUnreadKnown,
-          last,
+          filteredUnreadBaseline,
         );
     // While Facebook is reloading the page, the title carries no "(N)" and the
     // chat list hasn't rendered yet, so both counts read 0. The OS keeps the

@@ -4,6 +4,10 @@ export function unreadCountFromTitle(title: string): number {
   return m ? parseInt(m[1]!, 10) : 0;
 }
 
+export function didMutedFilterPolicyChange(previous: boolean | null, current: boolean): boolean {
+  return previous !== null && previous !== current;
+}
+
 /** Retain title-contamination knowledge while Messenger virtualizes the list. */
 export function reconcileMutedUnreadKnowledge(
   previous: boolean,

@@ -30,6 +30,13 @@ describe("suppressNotificationDelivery", () => {
     settings.mute_notifications = true;
     expect(suppressNotificationDelivery(false, settings)).toBe(true);
   });
+
+  test("defers an uncorrelated page notification while muted chats are filtered", () => {
+    expect(suppressNotificationDelivery(false, {}, false)).toBe(true);
+    expect(suppressNotificationDelivery(false, { ignore_muted_conversations: false }, false)).toBe(
+      false,
+    );
+  });
 });
 
 describe("ignoresMutedConversations", () => {
@@ -197,9 +204,9 @@ describe("resolveUnmuteActionThreadId", () => {
 });
 
 describe("resolveMuteObservation", () => {
-  test("treats a mounted row without a scoped mute signal as unmuted", () => {
-    expect(resolveMuteObservation([])).toBe(false);
-    expect(resolveMuteObservation(["Jane"])).toBe(false);
+  test("keeps a row without a scoped mute signal inconclusive", () => {
+    expect(resolveMuteObservation([])).toBeUndefined();
+    expect(resolveMuteObservation(["Jane"])).toBeUndefined();
   });
 
   test("an explicit mute signal wins", () => {
@@ -217,6 +224,27 @@ describe("MutedThreadStore", () => {
     expect(store.isMuted("1")).toBe(true);
     store.observe("1", false);
     expect(store.isMuted("1")).toBe(false);
+  });
+
+  test("clears a cached mute only after mounted signal absence is stable", () => {
+    const store = new MutedThreadStore();
+    store.observe("1", true);
+    store.observeMountedRow("1", undefined, 1_000);
+    expect(store.isMuted("1")).toBe(true);
+    store.observeMountedRow("1", undefined, 1_999);
+    expect(store.isMuted("1")).toBe(true);
+    store.observeMountedRow("1", undefined, 2_000);
+    expect(store.isMuted("1")).toBe(false);
+  });
+
+  test("a positive row signal cancels pending absence confirmation", () => {
+    const store = new MutedThreadStore();
+    store.observe("1", true);
+    store.observeMountedRow("1", undefined, 1_000);
+    store.observeMountedRow("1", true, 1_500);
+    store.observeMountedRow("1", undefined, 2_000);
+    store.observeMountedRow("1", undefined, 2_500);
+    expect(store.isMuted("1")).toBe(true);
   });
 
   test("invalidates a cached mute after an explicit unmute action", () => {

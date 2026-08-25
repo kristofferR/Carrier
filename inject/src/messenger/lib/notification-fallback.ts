@@ -977,13 +977,14 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
   }
 
   consumeRowForPage(title: string, body: string, at: number, matchWindowMs: number): Row | null {
-    for (const [key, row] of this.rows) {
+    const matches = [...this.rows.values()].filter((row) => {
       const age = at - row.at;
-      if (age < 0 || age > matchWindowMs) this.rows.delete(key);
-    }
-    const matches = [...this.rows.values()].filter((row) =>
-      notificationTextMatches(title, body, row.title, row.body),
-    );
+      return (
+        age >= 0 &&
+        age <= matchWindowMs &&
+        notificationTextMatches(title, body, row.title, row.body)
+      );
+    });
     if (matches.length !== 1) return null;
     return this.removeRow(matches[0]!.key) ?? null;
   }

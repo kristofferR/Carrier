@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
+  didMutedFilterPolicyChange,
   reconcileMutedUnreadKnowledge,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "./unread";
+
+describe("didMutedFilterPolicyChange", () => {
+  test("invalidates state in both policy directions, but not on initialization", () => {
+    expect(didMutedFilterPolicyChange(null, true)).toBe(false);
+    expect(didMutedFilterPolicyChange(true, true)).toBe(false);
+    expect(didMutedFilterPolicyChange(true, false)).toBe(true);
+    expect(didMutedFilterPolicyChange(false, true)).toBe(true);
+  });
+});
 
 describe("unreadCountFromTitle", () => {
   test("parses Facebook's '(N)' title prefix", () => {

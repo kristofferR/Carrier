@@ -4,6 +4,7 @@
  * reads mute from accessible names on the row (and the open-thread Mute /
  * Unmute control), then remembers the thread id while its row is virtualized.
  */
+import { threadIdFromHref } from "./threads";
 
 const MUTE_LABEL_LIMIT = 60;
 
@@ -24,6 +25,8 @@ const MUTED_ROW_ICON_SHAPE = 0x774a4a14;
 const MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
 
 const MUTED_THREAD_LIMIT = 500;
+const MUTE_ABSENCE_CONFIRM_MS = 1_000;
+const MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
 
 export function ignoresMutedConversations(
   settings: { ignore_muted_conversations?: boolean } | null | undefined,
@@ -44,8 +47,13 @@ export function suppressNotificationDelivery(
     | { mute_notifications?: boolean; ignore_muted_conversations?: boolean }
     | null
     | undefined,
+  muteStateKnown = true,
 ): boolean {
-  return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
+  return (
+    settings?.mute_notifications === true ||
+    (!muteStateKnown && ignoresMutedConversations(settings)) ||
+    suppressMutedDelivery(muted, settings)
+  );
 }
 
 /**
@@ -185,14 +193,13 @@ export function hasMutedRowIcon(root: ParentNode): boolean {
 /**
  * Turn this scan's labels into a cache write.
  *
- * A mounted Messenger row without a scoped mute signal is unmuted. Missing
- * virtualized rows are never observed here, so their last positive state is
- * retained until the row mounts again or an explicit Unmute action clears it.
+ * A row without a scoped signal is inconclusive until the store observes that
+ * absence as stable. Missing virtualized rows are never observed here.
  */
-export function resolveMuteObservation(labels: Iterable<string>): boolean {
+export function resolveMuteObservation(labels: Iterable<string>): boolean | undefined {
   const signal = muteSignalFromLabels(labels);
   if (signal !== null) return signal;
-  return false;
+  return undefined;
 }
 
 export function collectMuteLabels(root: ParentNode, includeActions = true): string[] {
@@ -238,13 +245,41 @@ export function collectMuteLabels(root: ParentNode, includeActions = true): stri
 
 export class MutedThreadStore {
   private readonly states = new Map<string, boolean>();
+  private readonly rowAbsences = new Map<string, { since: number; observations: number }>();
 
   observe(id: string, muted: boolean | undefined): void {
     if (!id || muted === undefined) return;
+    this.rowAbsences.delete(id);
     if (this.states.has(id)) this.states.delete(id);
     this.states.set(id, muted);
     if (this.states.size > MUTED_THREAD_LIMIT) {
-      this.states.delete(this.states.keys().next().value!);
+      const oldest = this.states.keys().next().value!;
+      this.states.delete(oldest);
+      this.rowAbsences.delete(oldest);
+    }
+  }
+
+  observeMountedRow(id: string, muted: boolean | undefined, observedAt = Date.now()): void {
+    if (!id) return;
+    if (muted !== undefined) {
+      this.observe(id, muted);
+      return;
+    }
+    if (!this.isMuted(id)) {
+      this.rowAbsences.delete(id);
+      return;
+    }
+    const absence = this.rowAbsences.get(id);
+    if (absence === undefined || observedAt < absence.since) {
+      this.rowAbsences.set(id, { since: observedAt, observations: 1 });
+      return;
+    }
+    absence.observations += 1;
+    if (
+      observedAt - absence.since >= MUTE_ABSENCE_CONFIRM_MS &&
+      absence.observations >= MUTE_ABSENCE_MIN_OBSERVATIONS
+    ) {
+      this.observe(id, false);
     }
   }
 
@@ -272,7 +307,7 @@ let actionInvalidationStarted = false;
 const threadIdFromActionTarget = (target: Element): string => {
   const row = target.closest('[role="row"]');
   const href = row?.querySelector<HTMLAnchorElement>('a[href*="/t/"]')?.getAttribute("href") || "";
-  return /\/t\/([^/?#]+)/.exec(href)?.[1] || "";
+  return threadIdFromHref(href) || "";
 };
 
 export function resolveUnmuteActionThreadId(
@@ -320,7 +355,7 @@ export function initMuteActionInvalidation(): void {
         "";
       if (!isExplicitUnmuteAction(label)) return;
       const rowId = threadIdFromActionTarget(action);
-      const openId = /\/t\/([^/?#]+)/.exec(location.pathname)?.[1] || "";
+      const openId = threadIdFromHref(location.pathname) || "";
       const recentId = recentRow && Date.now() - recentRow.at <= 15_000 ? recentRow.id : "";
       const id = resolveUnmuteActionThreadId(
         rowId,
@@ -335,7 +370,7 @@ export function initMuteActionInvalidation(): void {
 }
 
 export function observeConversationMute(id: string, root: ParentNode): boolean {
-  mutedThreads.observe(
+  mutedThreads.observeMountedRow(
     id,
     hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false)),
   );
