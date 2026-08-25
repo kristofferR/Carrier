@@ -4466,12 +4466,6 @@
       if (!this.ids.delete(id)) return;
       this.persist();
     }
-    clear() {
-      if (this.ids.size === 0) return;
-      this.ids.clear();
-      this.clearCandidates.clear();
-      this.persist();
-    }
     persist() {
       try {
         this.storage?.setItem(
@@ -5118,7 +5112,6 @@
         routeCandidates
       );
       if (!pageSignal) return false;
-      if (pageSignal.nativeId !== void 0) pendingPageNotifications.remove(pageSignal.nativeId);
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -7063,17 +7056,15 @@ ${text}`)) {
       const ignoreMuted = ignoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
-        knownMutedUnreads.clear();
       }
       ignoreMutedPolicy = ignoreMuted;
-      if (!ignoreMuted) knownMutedUnreads.clear();
       if (s.unread_badge === false) {
         setBadge(0, force);
         return;
       }
       const conversations = unreadConversationState();
       const titleCount = unreadCountFromTitle(document.title || "");
-      if (ignoreMuted) knownMutedUnreads.reconcile(conversations.muteObservations);
+      knownMutedUnreads.reconcile(conversations.muteObservations);
       if (ignoreMuted && conversations.trustworthy) {
         filteredUnreadBaseline = conversations.count;
       }
@@ -7087,7 +7078,7 @@ ${text}`)) {
         titleCount,
         conversations.count,
         conversations.trustworthy,
-        knownMutedUnreads.size > 0,
+        ignoreMuted && knownMutedUnreads.size > 0,
         filteredUnreadBaseline
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;

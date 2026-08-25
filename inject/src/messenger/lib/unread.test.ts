@@ -19,7 +19,7 @@ const memoryStorage = () => {
 };
 
 describe("didMutedFilterPolicyChange", () => {
-  test("invalidates state in both policy directions, but not on initialization", () => {
+  test("detects both policy transition directions, but not initialization", () => {
     expect(didMutedFilterPolicyChange(null, true)).toBe(false);
     expect(didMutedFilterPolicyChange(true, true)).toBe(false);
     expect(didMutedFilterPolicyChange(true, false)).toBe(true);
@@ -218,6 +218,16 @@ describe("MutedUnreadStore", () => {
     expect(new MutedUnreadStore(storage).size).toBe(0);
   });
 
+  test("preserves evidence while filtering is temporarily disabled", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }]);
+
+    expect(reconcileUnreadMessageCount(5, 1, true, false)).toBe(5);
+    expect(current.size).toBe(1);
+    expect(reconcileUnreadMessageCount(5, 1, true, current.size > 0)).toBe(1);
+  });
+
   test("rejects malformed persisted thread identities", () => {
     const storage = memoryStorage();
     storage.setItem(
@@ -226,14 +236,5 @@ describe("MutedUnreadStore", () => {
     );
 
     expect(new MutedUnreadStore(storage).size).toBe(1);
-  });
-
-  test("clears persisted evidence on a policy reset", () => {
-    const storage = memoryStorage();
-    const current = new MutedUnreadStore(storage);
-    current.reconcile([{ id: "123", unread: true, muted: true }]);
-    current.clear();
-
-    expect(new MutedUnreadStore(storage).size).toBe(0);
   });
 });

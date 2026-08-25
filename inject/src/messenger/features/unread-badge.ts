@@ -149,17 +149,17 @@ export function initUnreadBadge() {
     const ignoreMuted = ignoresMutedConversations(s);
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
-      knownMutedUnreads.clear();
     }
     ignoreMutedPolicy = ignoreMuted;
-    if (!ignoreMuted) knownMutedUnreads.clear();
     if (s.unread_badge === false) {
       setBadge(0, force);
       return;
     }
     const conversations = unreadConversationState();
     const titleCount = unreadCountFromTitle(document.title || "");
-    if (ignoreMuted) knownMutedUnreads.reconcile(conversations.muteObservations);
+    // Keep positive identity evidence and same-thread invalidation current even
+    // while filtering is off, so re-enabling it can handle virtualized rows.
+    knownMutedUnreads.reconcile(conversations.muteObservations);
     if (ignoreMuted && conversations.trustworthy) {
       filteredUnreadBaseline = conversations.count;
     }
@@ -175,7 +175,7 @@ export function initUnreadBadge() {
           titleCount,
           conversations.count,
           conversations.trustworthy,
-          knownMutedUnreads.size > 0,
+          ignoreMuted && knownMutedUnreads.size > 0,
           filteredUnreadBaseline,
         );
     // While Facebook is reloading the page, the title carries no "(N)" and the

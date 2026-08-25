@@ -859,7 +859,6 @@ export function initNotificationBridge() {
       routeCandidates,
     );
     if (!pageSignal) return false;
-    if (pageSignal.nativeId !== undefined) pendingPageNotifications.remove(pageSignal.nativeId);
 
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -903,8 +902,9 @@ export function initNotificationBridge() {
       }
     } else {
       // The signal's native emit is still waiting on its row identity. A reload
-      // before it queues would leave no banner, so delivered state must ride
-      // the emitter rather than this pairing.
+      // before it queues would leave no banner, so both the pending receipt and
+      // delivered state must ride the emitter rather than this pairing. The
+      // emitter removes the receipt in the same task that queues native IPC.
       pageSignal.pendingDelivery = {
         key: conversation.key,
         fingerprint,

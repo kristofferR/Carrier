@@ -45,7 +45,7 @@ export function reconcileMutedUnreadIds(
 /**
  * Keeps positive muted-unread evidence across Carrier's periodic page reloads.
  * Missing virtualized rows are inconclusive; a stored id is removed only when
- * that same thread is rendered read or unmuted, or the filtering policy resets.
+ * that same thread is rendered stably read or unmuted, or the account changes.
  */
 export class MutedUnreadStore {
   private ids = new Set<string>();
@@ -128,13 +128,6 @@ export class MutedUnreadStore {
   invalidate(id: string): void {
     this.clearCandidates.delete(id);
     if (!this.ids.delete(id)) return;
-    this.persist();
-  }
-
-  clear(): void {
-    if (this.ids.size === 0) return;
-    this.ids.clear();
-    this.clearCandidates.clear();
     this.persist();
   }
 
