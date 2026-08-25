@@ -181,7 +181,10 @@ export function notificationDeliveryDedupeKey(fingerprint: string, generation?: 
 }
 
 const NOTIFIED_STORE_LIMIT = 300;
-const NOTIFIED_STORE_VERSION = 3;
+const NOTIFIED_STORE_VERSION = 4;
+// Version 3 added persisted retired-read fingerprints but did not distinguish
+// native delivery from a mute-policy suppression.
+const NOTIFIED_STORE_RETIRED_VERSION = 3;
 // Version 2 was written by the scraper that dropped emoji from a preview. Its
 // entries are kept rather than discarded, so a message that arrives while the
 // app is updating still has something to differ from and still notifies. A row
@@ -236,6 +239,8 @@ interface NotifiedEntry {
    * persisted before the field existed.
    */
   bodyHash?: string;
+  /** The preview was handled by mute policy, not shown as a native banner. */
+  suppressed: boolean;
 }
 
 interface RetiredFingerprint {
@@ -246,6 +251,7 @@ interface RetiredFingerprint {
 export type FingerprintReconciliation =
   | "missing"
   | "matched"
+  | "suppressed"
   | "migrated"
   | "mismatched"
   | "repeated";
@@ -291,7 +297,9 @@ export class NotifiedSignatureStore {
           : null;
       const persistedEntries =
         legacy ||
-        ((version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) &&
+        ((version === NOTIFIED_STORE_VERSION ||
+          version === NOTIFIED_STORE_RETIRED_VERSION ||
+          version === NOTIFIED_STORE_TEXT_VERSION) &&
           parsed &&
           typeof parsed === "object" &&
           "entries" in parsed &&
@@ -311,11 +319,15 @@ export class NotifiedSignatureStore {
             fingerprint: entry[1],
             legacy: legacy || entry[2],
             bodyHash: typeof entry[3] === "string" ? entry[3] : undefined,
+            suppressed:
+              version === NOTIFIED_STORE_VERSION && typeof entry[4] === "boolean"
+                ? entry[4]
+                : false,
           });
         }
       }
       if (
-        version === NOTIFIED_STORE_VERSION &&
+        (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_RETIRED_VERSION) &&
         parsed &&
         typeof parsed === "object" &&
         "retired" in parsed &&
@@ -359,11 +371,13 @@ export class NotifiedSignatureStore {
         this.storageKey,
         JSON.stringify({
           version: NOTIFIED_STORE_VERSION,
-          entries: [...this.entries].map(([key, entry]) =>
-            entry.bodyHash === undefined
-              ? [key, entry.fingerprint, entry.legacy]
-              : [key, entry.fingerprint, entry.legacy, entry.bodyHash],
-          ),
+          entries: [...this.entries].map(([key, entry]) => [
+            key,
+            entry.fingerprint,
+            entry.legacy,
+            entry.bodyHash ?? null,
+            entry.suppressed,
+          ]),
           retired: [...this.readFingerprints].map(([key, retired]) => [
             key,
             retired.fingerprint,
@@ -427,7 +441,7 @@ export class NotifiedSignatureStore {
         if (bodyHash !== undefined) entry.bodyHash = bodyHash;
         this.persist();
       }
-      return "matched";
+      return entry.suppressed ? "suppressed" : "matched";
     }
     if (bodyHash !== undefined && entry.bodyHash !== undefined && entry.bodyHash === bodyHash) {
       // Title-only drift: the delivered content is unchanged but the thread
@@ -436,7 +450,7 @@ export class NotifiedSignatureStore {
       entry.fingerprint = fingerprint;
       entry.legacy = false;
       this.persist();
-      return "matched";
+      return entry.suppressed ? "suppressed" : "matched";
     }
     const legacyPlaceholder =
       entry.legacy &&
@@ -451,30 +465,39 @@ export class NotifiedSignatureStore {
   }
 
   markNotified(conversationKey: string, fingerprint: string, bodyHash?: string): void {
-    this.markHandled(conversationKey, fingerprint, bodyHash);
+    this.markHandled(conversationKey, fingerprint, bodyHash, false);
   }
 
   markSuppressed(conversationKey: string, fingerprint: string, bodyHash?: string): void {
-    this.markHandled(conversationKey, fingerprint, bodyHash);
+    this.markHandled(conversationKey, fingerprint, bodyHash, true);
   }
 
-  private markHandled(conversationKey: string, fingerprint: string, bodyHash?: string): void {
+  private markHandled(
+    conversationKey: string,
+    fingerprint: string,
+    bodyHash: string | undefined,
+    suppressed: boolean,
+  ): void {
     // A fresh handled preview means the row is unread again — cancel read confirmation.
     this.readStreaks.delete(conversationKey);
     const retired = this.readFingerprints.delete(conversationKey);
     const current = this.entries.get(conversationKey);
     if (current?.fingerprint === fingerprint && !current.legacy) {
+      let changed = false;
       if (bodyHash !== undefined && current.bodyHash !== bodyHash) {
         current.bodyHash = bodyHash;
-        this.persist();
-      } else if (retired) {
-        this.persist();
+        changed = true;
       }
+      if (current.suppressed !== suppressed) {
+        current.suppressed = suppressed;
+        changed = true;
+      }
+      if (changed || retired) this.persist();
       return;
     }
     // Re-insert so the map stays ordered oldest-notified-first for eviction.
     this.entries.delete(conversationKey);
-    this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash });
+    this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash, suppressed });
     while (this.entries.size > NOTIFIED_STORE_LIMIT) {
       const oldest = this.entries.keys().next().value!;
       this.entries.delete(oldest);

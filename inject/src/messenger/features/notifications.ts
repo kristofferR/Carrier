@@ -1438,6 +1438,10 @@ export function initNotificationBridge() {
           // consumes the retired entry, so no later scan gets a second chance.
           changed.add(conversation.key);
         }
+        // A suppressed fingerprint deliberately skips both branches below: the
+        // original muted message remains retired, while a newly attributed
+        // identical arrival stays in `changed` (or keeps its fallback armed)
+        // until a real emit converts the state to delivered.
         if (reconciliation === "matched" || reconciliation === "migrated") {
           if (changed.has(conversation.key)) stale.add(conversation.key);
           // The current content is already delivered — an armed fallback for

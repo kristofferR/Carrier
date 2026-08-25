@@ -3387,7 +3387,8 @@
     return generation === void 0 ? fingerprint : notificationDedupeKey(fingerprint, generation);
   }
   var NOTIFIED_STORE_LIMIT = 300;
-  var NOTIFIED_STORE_VERSION = 3;
+  var NOTIFIED_STORE_VERSION = 4;
+  var NOTIFIED_STORE_RETIRED_VERSION = 3;
   var NOTIFIED_STORE_TEXT_VERSION = 2;
   var LEGACY_PLACEHOLDER_BODY = "New message";
   var STABLE_READ_MS = 3e4;
@@ -3420,17 +3421,18 @@
         const parsed = JSON.parse(raw);
         const legacy = Array.isArray(parsed);
         const version = !legacy && parsed && typeof parsed === "object" && "version" in parsed ? parsed.version : null;
-        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
+        const persistedEntries = legacy || (version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_RETIRED_VERSION || version === NOTIFIED_STORE_TEXT_VERSION) && parsed && typeof parsed === "object" && "entries" in parsed && Array.isArray(parsed.entries) ? legacy ? parsed : parsed.entries ?? [] : [];
         for (const entry of persistedEntries) {
           if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && (legacy || typeof entry[2] === "boolean")) {
             this.entries.set(entry[0], {
               fingerprint: entry[1],
               legacy: legacy || entry[2],
-              bodyHash: typeof entry[3] === "string" ? entry[3] : void 0
+              bodyHash: typeof entry[3] === "string" ? entry[3] : void 0,
+              suppressed: version === NOTIFIED_STORE_VERSION && typeof entry[4] === "boolean" ? entry[4] : false
             });
           }
         }
-        if (version === NOTIFIED_STORE_VERSION && parsed && typeof parsed === "object" && "retired" in parsed && Array.isArray(parsed.retired)) {
+        if ((version === NOTIFIED_STORE_VERSION || version === NOTIFIED_STORE_RETIRED_VERSION) && parsed && typeof parsed === "object" && "retired" in parsed && Array.isArray(parsed.retired)) {
           const now = Date.now();
           for (const retired of parsed.retired) {
             if (Array.isArray(retired) && typeof retired[0] === "string" && typeof retired[1] === "string" && typeof retired[2] === "number" && now - retired[2] <= RETIRED_FINGERPRINT_TTL_MS) {
@@ -3460,9 +3462,13 @@
           this.storageKey,
           JSON.stringify({
             version: NOTIFIED_STORE_VERSION,
-            entries: [...this.entries].map(
-              ([key, entry]) => entry.bodyHash === void 0 ? [key, entry.fingerprint, entry.legacy] : [key, entry.fingerprint, entry.legacy, entry.bodyHash]
-            ),
+            entries: [...this.entries].map(([key, entry]) => [
+              key,
+              entry.fingerprint,
+              entry.legacy,
+              entry.bodyHash ?? null,
+              entry.suppressed
+            ]),
             retired: [...this.readFingerprints].map(([key, retired]) => [
               key,
               retired.fingerprint,
@@ -3504,13 +3510,13 @@
           if (bodyHash !== void 0) entry.bodyHash = bodyHash;
           this.persist();
         }
-        return "matched";
+        return entry.suppressed ? "suppressed" : "matched";
       }
       if (bodyHash !== void 0 && entry.bodyHash !== void 0 && entry.bodyHash === bodyHash) {
         entry.fingerprint = fingerprint;
         entry.legacy = false;
         this.persist();
-        return "matched";
+        return entry.suppressed ? "suppressed" : "matched";
       }
       const legacyPlaceholder = entry.legacy && (entry.fingerprint === notificationDedupeKey(title, LEGACY_PLACEHOLDER_BODY) || entry.fingerprint === notificationDedupeKey("Messenger", LEGACY_PLACEHOLDER_BODY));
       if (!legacyPlaceholder) return "mismatched";
@@ -3521,26 +3527,30 @@
       return "migrated";
     }
     markNotified(conversationKey, fingerprint, bodyHash) {
-      this.markHandled(conversationKey, fingerprint, bodyHash);
+      this.markHandled(conversationKey, fingerprint, bodyHash, false);
     }
     markSuppressed(conversationKey, fingerprint, bodyHash) {
-      this.markHandled(conversationKey, fingerprint, bodyHash);
+      this.markHandled(conversationKey, fingerprint, bodyHash, true);
     }
-    markHandled(conversationKey, fingerprint, bodyHash) {
+    markHandled(conversationKey, fingerprint, bodyHash, suppressed) {
       this.readStreaks.delete(conversationKey);
       const retired = this.readFingerprints.delete(conversationKey);
       const current = this.entries.get(conversationKey);
       if (current?.fingerprint === fingerprint && !current.legacy) {
+        let changed = false;
         if (bodyHash !== void 0 && current.bodyHash !== bodyHash) {
           current.bodyHash = bodyHash;
-          this.persist();
-        } else if (retired) {
-          this.persist();
+          changed = true;
         }
+        if (current.suppressed !== suppressed) {
+          current.suppressed = suppressed;
+          changed = true;
+        }
+        if (changed || retired) this.persist();
         return;
       }
       this.entries.delete(conversationKey);
-      this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash });
+      this.entries.set(conversationKey, { fingerprint, legacy: false, bodyHash, suppressed });
       while (this.entries.size > NOTIFIED_STORE_LIMIT) {
         const oldest = this.entries.keys().next().value;
         this.entries.delete(oldest);

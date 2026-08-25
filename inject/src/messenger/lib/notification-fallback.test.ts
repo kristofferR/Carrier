@@ -151,13 +151,51 @@ describe("NotifiedSignatureStore", () => {
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(true);
   });
 
-  test("retires a deliberately suppressed preview across reloads", () => {
+  test("distinguishes a deliberately suppressed preview across reloads", () => {
     const storage = memoryStorage();
     new NotifiedSignatureStore(storage).markSuppressed("1", "aaaa", "body");
 
     const reloaded = new NotifiedSignatureStore(storage);
     expect(reloaded.alreadyNotified("1", "aaaa")).toBe(true);
-    expect(reloaded.reconcileFingerprint("1", "Jane", "aaaa", "body")).toBe("matched");
+    expect(reloaded.reconcileFingerprint("1", "Jane", "aaaa", "body")).toBe("suppressed");
+  });
+
+  test("turns a suppressed preview into delivered state after a real emit", () => {
+    const storage = memoryStorage();
+    const store = new NotifiedSignatureStore(storage);
+    store.markSuppressed("1", "aaaa", "body");
+    store.markNotified("1", "aaaa", "body");
+
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", "aaaa", "body"),
+    ).toBe("matched");
+  });
+
+  test("keeps suppression state through title-only drift", () => {
+    const bodyHash = notificationDedupeKey("", "Hello");
+    const store = new NotifiedSignatureStore();
+    store.markSuppressed("1", notificationDedupeKey("Old name", "Hello"), bodyHash);
+
+    expect(
+      store.reconcileFingerprint(
+        "1",
+        "New name",
+        notificationDedupeKey("New name", "Hello"),
+        bodyHash,
+      ),
+    ).toBe("suppressed");
+  });
+
+  test("loads version 3 handled entries as delivered", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "__carrier_notified_previews__",
+      JSON.stringify({ version: 3, entries: [["1", "aaaa", false, "body"]], retired: [] }),
+    );
+
+    expect(
+      new NotifiedSignatureStore(storage).reconcileFingerprint("1", "Jane", "aaaa", "body"),
+    ).toBe("matched");
   });
 
   test("silently migrates placeholder fingerprints only from the legacy schema", () => {
@@ -455,7 +493,7 @@ describe("NotifiedSignatureStore", () => {
     expect(store.alreadyNotified("k0", "f")).toBe(false);
     expect(store.alreadyNotified("k300", "f")).toBe(true);
     const persisted = JSON.parse(storage.getItem("__carrier_notified_previews__")!);
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.entries).toHaveLength(300);
   });
 
