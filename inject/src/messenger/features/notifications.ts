@@ -327,6 +327,7 @@ export function initNotificationBridge() {
     threadPath?: string;
     threadMuted?: boolean;
     deliver?: { key: string; fingerprint: string; bodyHash?: string; expect?: string };
+    suppressed?: { key: string; fingerprint: string; bodyHash?: string };
     dedupeKey?: string;
     signal?: PageNotificationSignal;
   } => {
@@ -345,6 +346,17 @@ export function initNotificationBridge() {
     );
     if (match) {
       clearTimeout(match.timer);
+      if (!match.deliverable) {
+        return {
+          threadPath: match.threadPath,
+          suppressed: {
+            key: match.key,
+            fingerprint: match.fingerprint,
+            bodyHash: notificationDedupeKey("", match.body),
+          },
+          dedupeKey: match.dedupeKey,
+        };
+      }
       return {
         threadPath: match.threadPath,
         threadMuted: mutedThreads.isMuted(match.key),
@@ -423,6 +435,14 @@ export function initNotificationBridge() {
             return;
           }
           pendingPageNotifications.remove(id);
+          if (pageMatch.suppressed) {
+            notifiedStore.markSuppressed(
+              pageMatch.suppressed.key,
+              pageMatch.suppressed.fingerprint,
+              pageMatch.suppressed.bodyHash,
+            );
+            return;
+          }
           const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId

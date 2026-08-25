@@ -4791,6 +4791,17 @@
       );
       if (match) {
         clearTimeout(match.timer);
+        if (!match.deliverable) {
+          return {
+            threadPath: match.threadPath,
+            suppressed: {
+              key: match.key,
+              fingerprint: match.fingerprint,
+              bodyHash: notificationDedupeKey("", match.body)
+            },
+            dedupeKey: match.dedupeKey
+          };
+        }
         return {
           threadPath: match.threadPath,
           threadMuted: mutedThreads.isMuted(match.key),
@@ -4837,6 +4848,14 @@
               return;
             }
             pendingPageNotifications.remove(id);
+            if (pageMatch.suppressed) {
+              notifiedStore.markSuppressed(
+                pageMatch.suppressed.key,
+                pageMatch.suppressed.fingerprint,
+                pageMatch.suppressed.bodyHash
+              );
+              return;
+            }
             const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
             const threadId = threadPathId(threadPath || "");
             const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;

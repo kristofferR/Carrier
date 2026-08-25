@@ -948,6 +948,21 @@ describe("NotificationCorrelationQueue", () => {
     expect(queue.getRow("2")).toBeDefined();
     expect(queue.getRow("3")).toBeDefined();
   });
+
+  test("preserves a correlation-only suppression marker through row-first matching", () => {
+    const queue = new NotificationCorrelationQueue<RowSignal & { deliverable: boolean }>();
+    queue.addRow({
+      key: "1",
+      at: 1_000,
+      title: "Jane",
+      body: "Muted message",
+      threadPath: "/t/1/",
+      muted: true,
+      deliverable: false,
+    });
+
+    expect(queue.consumeRowForPage("Jane", "Muted message", 1_500, 3_000)?.deliverable).toBe(false);
+  });
 });
 
 describe("UnreadArrivalTracker", () => {
