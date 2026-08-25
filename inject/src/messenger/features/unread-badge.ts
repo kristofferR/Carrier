@@ -13,7 +13,8 @@ import {
 import { threadIdFromHref } from "../lib/threads";
 import {
   didMutedFilterPolicyChange,
-  reconcileMutedUnreadKnowledge,
+  type MutedUnreadObservation,
+  reconcileMutedUnreadIds,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "../lib/unread";
@@ -39,7 +40,7 @@ export function initUnreadBadge() {
     const links = chatRows();
     const seen = new Set<string>();
     let count = 0;
-    const unreadIds: string[] = [];
+    const muteObservations: MutedUnreadObservation[] = [];
     for (const a of links) {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
@@ -53,8 +54,8 @@ export function initUnreadBadge() {
         }
       }
       const muted = observeConversationMute(id, row);
+      muteObservations.push({ id, unread, muted });
       if (!unread) continue;
-      unreadIds.push(id);
       if (ignoreMuted && muted) continue;
       count++;
     }
@@ -71,7 +72,7 @@ export function initUnreadBadge() {
     }
     return {
       count,
-      mutedUnread: ignoreMuted && unreadIds.length > count,
+      muteObservations,
       ready: links.length > 0,
       trustworthy: links.length > 0 && !scrolledFromTop,
     };
@@ -79,8 +80,7 @@ export function initUnreadBadge() {
 
   let last: number | null = null;
   let filteredUnreadBaseline: number | null = null;
-  let mutedUnreadKnown = false;
-  let contaminatedTitleCount: number | null = null;
+  let knownMutedUnreadIds = new Set<string>();
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
     if (n === last && !force) return;
@@ -103,8 +103,7 @@ export function initUnreadBadge() {
     const ignoreMuted = ignoresMutedConversations(s);
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
-      mutedUnreadKnown = false;
-      contaminatedTitleCount = null;
+      knownMutedUnreadIds.clear();
     }
     ignoreMutedPolicy = ignoreMuted;
     if (s.unread_badge === false) {
@@ -113,21 +112,9 @@ export function initUnreadBadge() {
     }
     const conversations = unreadConversationState();
     const titleCount = unreadCountFromTitle(document.title || "");
-    if (
-      ignoreMuted &&
-      (conversations.mutedUnread || (mutedUnreadKnown && !conversations.trustworthy))
-    ) {
-      contaminatedTitleCount = titleCount;
-    }
-    mutedUnreadKnown = ignoreMuted
-      ? reconcileMutedUnreadKnowledge(
-          mutedUnreadKnown,
-          conversations.mutedUnread,
-          conversations.trustworthy,
-          contaminatedTitleCount !== null && titleCount !== contaminatedTitleCount,
-        )
-      : false;
-    if (!mutedUnreadKnown) contaminatedTitleCount = null;
+    knownMutedUnreadIds = ignoreMuted
+      ? reconcileMutedUnreadIds(knownMutedUnreadIds, conversations.muteObservations)
+      : new Set();
     if (ignoreMuted && conversations.trustworthy) {
       filteredUnreadBaseline = conversations.count;
     }
@@ -138,7 +125,7 @@ export function initUnreadBadge() {
           titleCount,
           conversations.count,
           conversations.trustworthy,
-          mutedUnreadKnown,
+          knownMutedUnreadIds.size > 0,
           filteredUnreadBaseline,
         );
     // While Facebook is reloading the page, the title carries no "(N)" and the

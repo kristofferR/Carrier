@@ -8,17 +8,23 @@ export function didMutedFilterPolicyChange(previous: boolean | null, current: bo
   return previous !== null && previous !== current;
 }
 
-/** Retain title-contamination knowledge while Messenger virtualizes the list. */
-export function reconcileMutedUnreadKnowledge(
-  previous: boolean,
-  observedMutedUnread: boolean,
-  conversationListTrustworthy: boolean,
-  titleChangedSinceContamination = true,
-): boolean {
-  if (observedMutedUnread) return true;
-  if (!previous) return false;
-  if (!conversationListTrustworthy) return true;
-  return !titleChangedSinceContamination;
+export interface MutedUnreadObservation {
+  id: string;
+  unread: boolean;
+  muted: boolean;
+}
+
+/** Retain each muted unread until that same thread is observed read or unmuted. */
+export function reconcileMutedUnreadIds(
+  previous: Iterable<string>,
+  observed: Iterable<MutedUnreadObservation>,
+): Set<string> {
+  const next = new Set(previous);
+  for (const thread of observed) {
+    if (thread.unread && thread.muted) next.add(thread.id);
+    else next.delete(thread.id);
+  }
+  return next;
 }
 
 /**

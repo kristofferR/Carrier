@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   didMutedFilterPolicyChange,
-  reconcileMutedUnreadKnowledge,
+  reconcileMutedUnreadIds,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "./unread";
@@ -66,20 +66,30 @@ describe("reconcileUnreadMessageCount", () => {
   });
 });
 
-describe("reconcileMutedUnreadKnowledge", () => {
-  test("retains a trusted muted unread while the row is virtualized", () => {
-    let known = reconcileMutedUnreadKnowledge(false, true, true);
-    known = reconcileMutedUnreadKnowledge(known, false, false);
-    expect(known).toBe(true);
-    expect(reconcileUnreadMessageCount(5, 0, false, known, 3)).toBe(3);
+describe("reconcileMutedUnreadIds", () => {
+  test("retains a muted unread while its row is virtualized", () => {
+    let known = reconcileMutedUnreadIds([], [{ id: "1", unread: true, muted: true }]);
+    known = reconcileMutedUnreadIds(known, []);
+    expect([...known]).toEqual(["1"]);
+    expect(reconcileUnreadMessageCount(5, 0, false, known.size > 0, 3)).toBe(3);
   });
 
-  test("clears retained knowledge after a trustworthy unmuted scan", () => {
-    expect(reconcileMutedUnreadKnowledge(true, false, true)).toBe(false);
+  test("clears only after that thread is observed read or unmuted", () => {
+    const known = reconcileMutedUnreadIds(
+      ["1", "2"],
+      [
+        { id: "1", unread: false, muted: true },
+        { id: "2", unread: true, muted: false },
+      ],
+    );
+    expect(known.size).toBe(0);
   });
 
-  test("retains contamination while the title still has its old count", () => {
-    expect(reconcileMutedUnreadKnowledge(true, false, true, false)).toBe(true);
-    expect(reconcileMutedUnreadKnowledge(true, false, true, true)).toBe(false);
+  test("keeps virtualized ids while reconciling other visible threads", () => {
+    const known = reconcileMutedUnreadIds(
+      ["virtualized"],
+      [{ id: "visible", unread: true, muted: false }],
+    );
+    expect([...known]).toEqual(["virtualized"]);
   });
 });

@@ -4221,11 +4221,13 @@
   function didMutedFilterPolicyChange(previous, current) {
     return previous !== null && previous !== current;
   }
-  function reconcileMutedUnreadKnowledge(previous, observedMutedUnread, conversationListTrustworthy, titleChangedSinceContamination = true) {
-    if (observedMutedUnread) return true;
-    if (!previous) return false;
-    if (!conversationListTrustworthy) return true;
-    return !titleChangedSinceContamination;
+  function reconcileMutedUnreadIds(previous, observed) {
+    const next = new Set(previous);
+    for (const thread of observed) {
+      if (thread.unread && thread.muted) next.add(thread.id);
+      else next.delete(thread.id);
+    }
+    return next;
   }
   function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy, mutedUnreadKnown = false, previousFilteredCount = null) {
     if (mutedUnreadKnown) {
@@ -6621,7 +6623,7 @@ ${text}`)) {
       const links = chatRows();
       const seen = /* @__PURE__ */ new Set();
       let count = 0;
-      const unreadIds = [];
+      const muteObservations = [];
       for (const a of links) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
@@ -6635,8 +6637,8 @@ ${text}`)) {
           }
         }
         const muted = observeConversationMute(id, row);
+        muteObservations.push({ id, unread, muted });
         if (!unread) continue;
-        unreadIds.push(id);
         if (ignoreMuted && muted) continue;
         count++;
       }
@@ -6649,15 +6651,14 @@ ${text}`)) {
       }
       return {
         count,
-        mutedUnread: ignoreMuted && unreadIds.length > count,
+        muteObservations,
         ready: links.length > 0,
         trustworthy: links.length > 0 && !scrolledFromTop
       };
     };
     let last = null;
     let filteredUnreadBaseline = null;
-    let mutedUnreadKnown = false;
-    let contaminatedTitleCount = null;
+    let knownMutedUnreadIds = /* @__PURE__ */ new Set();
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
@@ -6674,8 +6675,7 @@ ${text}`)) {
       const ignoreMuted = ignoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
-        mutedUnreadKnown = false;
-        contaminatedTitleCount = null;
+        knownMutedUnreadIds.clear();
       }
       ignoreMutedPolicy = ignoreMuted;
       if (s.unread_badge === false) {
@@ -6684,16 +6684,7 @@ ${text}`)) {
       }
       const conversations = unreadConversationState();
       const titleCount = unreadCountFromTitle(document.title || "");
-      if (ignoreMuted && (conversations.mutedUnread || mutedUnreadKnown && !conversations.trustworthy)) {
-        contaminatedTitleCount = titleCount;
-      }
-      mutedUnreadKnown = ignoreMuted ? reconcileMutedUnreadKnowledge(
-        mutedUnreadKnown,
-        conversations.mutedUnread,
-        conversations.trustworthy,
-        contaminatedTitleCount !== null && titleCount !== contaminatedTitleCount
-      ) : false;
-      if (!mutedUnreadKnown) contaminatedTitleCount = null;
+      knownMutedUnreadIds = ignoreMuted ? reconcileMutedUnreadIds(knownMutedUnreadIds, conversations.muteObservations) : /* @__PURE__ */ new Set();
       if (ignoreMuted && conversations.trustworthy) {
         filteredUnreadBaseline = conversations.count;
       }
@@ -6702,7 +6693,7 @@ ${text}`)) {
         titleCount,
         conversations.count,
         conversations.trustworthy,
-        mutedUnreadKnown,
+        knownMutedUnreadIds.size > 0,
         filteredUnreadBaseline
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
