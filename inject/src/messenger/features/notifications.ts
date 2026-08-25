@@ -33,7 +33,6 @@ import {
   READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
-  uniqueThreadIdForTitle,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
@@ -246,9 +245,10 @@ export function initNotificationBridge() {
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   const senderAvatars = new SenderAvatarStore(notificationStorage);
-  // Validated thread ids and their latest exact row titles. A known-muted
-  // cached match can suppress a page Notification even after virtualization;
-  // duplicate titles remain unresolved and continue through row correlation.
+  // Validated thread ids and their latest exact row titles, used only to bind
+  // sender-avatar harvesting to the open conversation. A display title never
+  // establishes page-notification identity: names can collide or change while
+  // a row is virtualized.
   const rowTitles = new Map<string, string>();
   const ROW_TITLE_LIMIT = 300;
   const rememberRowTitle = (key: string, title: string) => {
@@ -323,15 +323,6 @@ export function initNotificationBridge() {
         dedupeKey: match.dedupeKey,
       };
     }
-    // A muted row can be virtualized before Facebook constructs its page
-    // Notification. An exact title match is used only to suppress a thread
-    // already known muted; it never authorizes an unresolved native emit.
-    const rememberedMutedId = uniqueThreadIdForTitle(title, rowTitles);
-    if (rememberedMutedId && mutedThreads.isMuted(rememberedMutedId)) {
-      // Title identity is sufficient to fail closed, but not to write a
-      // per-thread fingerprint: an unseen namesake could still exist.
-      return { threadMuted: true };
-    }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
     return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
@@ -383,6 +374,12 @@ export function initNotificationBridge() {
           const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
           if (signal) notificationCorrelations.discardPage(signal);
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          // A delivery-boundary global mute is final for this logical page
+          // notification. Do not let its cross-reload receipt revive it after
+          // notifications are enabled again.
+          if (deliverySettings.mute_notifications === true) {
+            pendingPageNotifications.remove(id);
+          }
           if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
             // The page gives Carrier content but no trustworthy thread id. An
             // unresolved banner cannot be retracted if a later row proves it

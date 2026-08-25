@@ -133,22 +133,6 @@ export interface PageNotificationSignal extends NotificationText {
 const normalizeNotificationText = (value: string) =>
   value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 
-/** Resolve an exact page title only when one cached thread owns it. */
-export function uniqueThreadIdForTitle(
-  title: string,
-  threadTitles: Iterable<readonly [string, string]>,
-): string {
-  const normalized = normalizeNotificationText(title);
-  if (!normalized) return "";
-  let match = "";
-  for (const [id, candidate] of threadTitles) {
-    if (normalizeNotificationText(candidate) !== normalized) continue;
-    if (match && match !== id) return "";
-    match = id;
-  }
-  return match;
-}
-
 const hashText = (value: string): string => {
   let hash = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;

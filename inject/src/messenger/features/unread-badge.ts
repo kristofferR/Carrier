@@ -14,7 +14,7 @@ import { threadIdFromHref } from "../lib/threads";
 import {
   didMutedFilterPolicyChange,
   type MutedUnreadObservation,
-  reconcileMutedUnreadIds,
+  MutedUnreadStore,
   reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
@@ -23,6 +23,14 @@ import { chatRows } from "./conversation-actions";
 
 export function initUnreadBadge() {
   if (!window.__TAURI_INTERNALS__) return;
+
+  const unreadStorage = (() => {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      return null;
+    }
+  })();
 
   // Unread conversations: Facebook renders a chat's name/preview bold only
   // while it has unread messages. The class names are hashed and unstable, so
@@ -81,7 +89,7 @@ export function initUnreadBadge() {
 
   let last: number | null = null;
   let filteredUnreadBaseline: number | null = null;
-  let knownMutedUnreadIds = new Set<string>();
+  const knownMutedUnreads = new MutedUnreadStore(unreadStorage);
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
     if (n === last && !force) return;
@@ -104,18 +112,17 @@ export function initUnreadBadge() {
     const ignoreMuted = ignoresMutedConversations(s);
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
-      knownMutedUnreadIds.clear();
+      knownMutedUnreads.clear();
     }
     ignoreMutedPolicy = ignoreMuted;
+    if (!ignoreMuted) knownMutedUnreads.clear();
     if (s.unread_badge === false) {
       setBadge(0, force);
       return;
     }
     const conversations = unreadConversationState();
     const titleCount = unreadCountFromTitle(document.title || "");
-    knownMutedUnreadIds = ignoreMuted
-      ? reconcileMutedUnreadIds(knownMutedUnreadIds, conversations.muteObservations)
-      : new Set();
+    if (ignoreMuted) knownMutedUnreads.reconcile(conversations.muteObservations);
     if (ignoreMuted && conversations.trustworthy) {
       filteredUnreadBaseline = conversations.count;
     }
@@ -131,7 +138,7 @@ export function initUnreadBadge() {
           titleCount,
           conversations.count,
           conversations.trustworthy,
-          knownMutedUnreadIds.size > 0,
+          knownMutedUnreads.size > 0,
           filteredUnreadBaseline,
         );
     // While Facebook is reloading the page, the title carries no "(N)" and the

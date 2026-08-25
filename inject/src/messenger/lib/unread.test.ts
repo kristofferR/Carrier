@@ -1,11 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
   didMutedFilterPolicyChange,
+  MutedUnreadStore,
   reconcileMutedUnreadIds,
   reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "./unread";
+
+const memoryStorage = () => {
+  const data = new Map<string, string>();
+  return {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => void data.set(key, value),
+  };
+};
 
 describe("didMutedFilterPolicyChange", () => {
   test("invalidates state in both policy directions, but not on initialization", () => {
@@ -104,5 +113,49 @@ describe("reconcileMutedUnreadIds", () => {
       [{ id: "visible", unread: true, muted: false }],
     );
     expect([...known]).toEqual(["virtualized"]);
+  });
+});
+
+describe("MutedUnreadStore", () => {
+  test("retains muted unread evidence across a document reload", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }]);
+
+    expect(new MutedUnreadStore(storage).size).toBe(1);
+  });
+
+  test("persists positive same-thread read and unmute invalidation", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([
+      { id: "123", unread: true, muted: true },
+      { id: "456", unread: true, muted: true },
+    ]);
+    current.reconcile([
+      { id: "123", unread: false, muted: true },
+      { id: "456", unread: true, muted: false },
+    ]);
+
+    expect(new MutedUnreadStore(storage).size).toBe(0);
+  });
+
+  test("rejects malformed persisted thread identities", () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "__carrier_muted_unreads__",
+      JSON.stringify({ version: 1, ids: ["123", "group-name", "", 456] }),
+    );
+
+    expect(new MutedUnreadStore(storage).size).toBe(1);
+  });
+
+  test("clears persisted evidence on a policy reset", () => {
+    const storage = memoryStorage();
+    const current = new MutedUnreadStore(storage);
+    current.reconcile([{ id: "123", unread: true, muted: true }]);
+    current.clear();
+
+    expect(new MutedUnreadStore(storage).size).toBe(0);
   });
 });

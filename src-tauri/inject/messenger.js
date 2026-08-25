@@ -3328,17 +3328,6 @@
     }
   };
   var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-  function uniqueThreadIdForTitle(title, threadTitles) {
-    const normalized = normalizeNotificationText(title);
-    if (!normalized) return "";
-    let match = "";
-    for (const [id, candidate] of threadTitles) {
-      if (normalizeNotificationText(candidate) !== normalized) continue;
-      if (match && match !== id) return "";
-      match = id;
-    }
-    return match;
-  }
   var hashText = (value) => {
     let hash = 0xcbf29ce484222325n;
     const prime = 0x100000001b3n;
@@ -4356,6 +4345,9 @@
   function didMutedFilterPolicyChange(previous, current) {
     return previous !== null && previous !== current;
   }
+  var MUTED_UNREAD_STORE_VERSION = 1;
+  var MUTED_UNREAD_STORE_LIMIT = 500;
+  var VALID_THREAD_ID_RE = /^\d{1,32}$/;
   function reconcileMutedUnreadIds(previous, observed) {
     const next = new Set(previous);
     for (const thread of observed) {
@@ -4364,6 +4356,47 @@
     }
     return next;
   }
+  var MutedUnreadStore = class {
+    constructor(storage = null, storageKey = "__carrier_muted_unreads__") {
+      __publicField(this, "storage", storage);
+      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "ids", /* @__PURE__ */ new Set());
+      try {
+        const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "null");
+        if (parsed && typeof parsed === "object" && "version" in parsed && parsed.version === MUTED_UNREAD_STORE_VERSION && "ids" in parsed && Array.isArray(parsed.ids)) {
+          for (const id of parsed.ids.slice(-MUTED_UNREAD_STORE_LIMIT)) {
+            if (typeof id === "string" && VALID_THREAD_ID_RE.test(id)) this.ids.add(id);
+          }
+        }
+      } catch (_) {
+      }
+      this.persist();
+    }
+    get size() {
+      return this.ids.size;
+    }
+    reconcile(observed) {
+      const next = reconcileMutedUnreadIds(this.ids, observed);
+      while (next.size > MUTED_UNREAD_STORE_LIMIT) next.delete(next.values().next().value);
+      if (next.size === this.ids.size && [...next].every((id) => this.ids.has(id))) return;
+      this.ids = next;
+      this.persist();
+    }
+    clear() {
+      if (this.ids.size === 0) return;
+      this.ids.clear();
+      this.persist();
+    }
+    persist() {
+      try {
+        this.storage?.setItem(
+          this.storageKey,
+          JSON.stringify({ version: MUTED_UNREAD_STORE_VERSION, ids: [...this.ids] })
+        );
+      } catch (_) {
+      }
+    }
+  };
   function reconcileUnreadMessageCount(titleCount, unreadConversations, conversationListTrustworthy, mutedUnreadKnown = false, previousFilteredCount = null) {
     if (mutedUnreadKnown) {
       return conversationListTrustworthy ? unreadConversations : previousFilteredCount;
@@ -4656,10 +4689,6 @@
           dedupeKey: match.dedupeKey
         };
       }
-      const rememberedMutedId = uniqueThreadIdForTitle(title, rowTitles);
-      if (rememberedMutedId && mutedThreads.isMuted(rememberedMutedId)) {
-        return { threadMuted: true };
-      }
       return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
@@ -4686,6 +4715,9 @@
             const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
             if (signal) notificationCorrelations.discardPage(signal);
             const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+            if (deliverySettings.mute_notifications === true) {
+              pendingPageNotifications.remove(id);
+            }
             if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
               diag("notify.unresolved", "page notification had no correlated thread identity");
               return;
@@ -6764,6 +6796,13 @@ ${text}`)) {
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
+    const unreadStorage = (() => {
+      try {
+        return window.localStorage;
+      } catch (_) {
+        return null;
+      }
+    })();
     const unreadConversationState = () => {
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
@@ -6811,7 +6850,7 @@ ${text}`)) {
     };
     let last = null;
     let filteredUnreadBaseline = null;
-    let knownMutedUnreadIds = /* @__PURE__ */ new Set();
+    const knownMutedUnreads = new MutedUnreadStore(unreadStorage);
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
       if (n === last && !force) return;
@@ -6828,16 +6867,17 @@ ${text}`)) {
       const ignoreMuted = ignoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
-        knownMutedUnreadIds.clear();
+        knownMutedUnreads.clear();
       }
       ignoreMutedPolicy = ignoreMuted;
+      if (!ignoreMuted) knownMutedUnreads.clear();
       if (s.unread_badge === false) {
         setBadge(0, force);
         return;
       }
       const conversations = unreadConversationState();
       const titleCount = unreadCountFromTitle(document.title || "");
-      knownMutedUnreadIds = ignoreMuted ? reconcileMutedUnreadIds(knownMutedUnreadIds, conversations.muteObservations) : /* @__PURE__ */ new Set();
+      if (ignoreMuted) knownMutedUnreads.reconcile(conversations.muteObservations);
       if (ignoreMuted && conversations.trustworthy) {
         filteredUnreadBaseline = conversations.count;
       }
@@ -6851,7 +6891,7 @@ ${text}`)) {
         titleCount,
         conversations.count,
         conversations.trustworthy,
-        knownMutedUnreadIds.size > 0,
+        knownMutedUnreads.size > 0,
         filteredUnreadBaseline
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;

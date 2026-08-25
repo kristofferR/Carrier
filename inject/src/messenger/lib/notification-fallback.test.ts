@@ -17,7 +17,6 @@ import {
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
-  uniqueThreadIdForTitle,
   waitForPageNotificationMatch,
 } from "./notification-fallback";
 
@@ -51,22 +50,6 @@ describe("notificationDedupeKey", () => {
     expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:2000")).not.toBe(
       notificationDeliveryDedupeKey(fingerprint, "thread-1:1000"),
     );
-  });
-});
-
-describe("uniqueThreadIdForTitle", () => {
-  test("resolves one exact cached row title across harmless text variation", () => {
-    expect(uniqueThreadIdForTitle("  Jane   Doe ", [["1", "Jane Doe"]])).toBe("1");
-  });
-
-  test("fails closed for blank, unknown, and duplicate conversation titles", () => {
-    const titles: [string, string][] = [
-      ["1", "Jane"],
-      ["2", "Jane"],
-    ];
-    expect(uniqueThreadIdForTitle("", titles)).toBe("");
-    expect(uniqueThreadIdForTitle("John", titles)).toBe("");
-    expect(uniqueThreadIdForTitle("Jane", titles)).toBe("");
   });
 });
 

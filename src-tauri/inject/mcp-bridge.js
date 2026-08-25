@@ -2390,7 +2390,11 @@
     function muteLabelKind(value) {
       var s = notifyNorm(value);
       if (!s || s.length > 60) return "";
-      if (/^un(?:-)?mute\b|^turn on notifications\b|^stummschaltung aufheben\b/i.test(s)) {
+      if (
+        /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i.test(
+          s,
+        )
+      ) {
         return "unmute-action";
       }
       if (
@@ -2400,7 +2404,10 @@
       ) {
         return "muted-status";
       }
-      if (/^(?:mute(?:\s|$)|turn off notifications\b)/i.test(s) && !/\bmuted\b/i.test(s)) {
+      if (
+        /^(?:mute(?: notifications?)?|turn off notifications)$/i.test(s) &&
+        !/\bmuted\b/i.test(s)
+      ) {
         return "mute-action";
       }
       return "";
