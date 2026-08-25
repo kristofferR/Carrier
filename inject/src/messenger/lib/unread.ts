@@ -55,3 +55,13 @@ export function reconcileUnreadMessageCount(
   if (unreadConversations === 0) return 0;
   return Math.max(titleCount, unreadConversations);
 }
+
+/** Preserve the last full filtered count while Messenger virtualizes rows. */
+export function reconcileUnreadConversationCount(
+  unreadConversations: number,
+  conversationListTrustworthy: boolean,
+  ignoresMuted: boolean,
+  previousFilteredCount: number | null,
+): number | null {
+  return ignoresMuted && !conversationListTrustworthy ? previousFilteredCount : unreadConversations;
+}

@@ -133,6 +133,22 @@ export interface PageNotificationSignal extends NotificationText {
 const normalizeNotificationText = (value: string) =>
   value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 
+/** Resolve an exact page title only when one cached thread owns it. */
+export function uniqueThreadIdForTitle(
+  title: string,
+  threadTitles: Iterable<readonly [string, string]>,
+): string {
+  const normalized = normalizeNotificationText(title);
+  if (!normalized) return "";
+  let match = "";
+  for (const [id, candidate] of threadTitles) {
+    if (normalizeNotificationText(candidate) !== normalized) continue;
+    if (match && match !== id) return "";
+    match = id;
+  }
+  return match;
+}
+
 const hashText = (value: string): string => {
   let hash = 0xcbf29ce484222325n;
   const prime = 0x100000001b3n;
@@ -666,6 +682,143 @@ const validOpaqueNotificationIdentity = (value: unknown): value is OpaqueNotific
       (typeof identity.sender === "string" && HASH_RE.test(identity.sender)))
   );
 };
+
+interface PendingPageNotificationReceipt {
+  at: number;
+  id: number;
+  identity: OpaqueNotificationIdentity;
+}
+
+/**
+ * Content-opaque page signals that have not reached native delivery yet. They
+ * survive Carrier's stale-view reload so the hydrated row can recover the
+ * arrival, route it, and still apply its live mute state.
+ */
+export class PendingPageNotificationStore {
+  private readonly receipts: PendingPageNotificationReceipt[] = [];
+
+  constructor(
+    private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
+    private readonly storageKey = "__carrier_pending_page_notifications__",
+    private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
+    now = Date.now(),
+  ) {
+    try {
+      const parsed: unknown = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
+      if (Array.isArray(parsed)) {
+        for (const receipt of parsed) {
+          if (!receipt || typeof receipt !== "object") continue;
+          const candidate = receipt as Partial<PendingPageNotificationReceipt>;
+          if (
+            typeof candidate.at === "number" &&
+            Number.isFinite(candidate.at) &&
+            typeof candidate.id === "number" &&
+            Number.isSafeInteger(candidate.id) &&
+            candidate.id > 0 &&
+            validOpaqueNotificationIdentity(candidate.identity) &&
+            now - candidate.at >= 0 &&
+            now - candidate.at <= this.ttlMs
+          ) {
+            this.receipts.push(candidate as PendingPageNotificationReceipt);
+          }
+        }
+      }
+    } catch (_) {}
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
+      this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
+    }
+    this.persist();
+  }
+
+  private persist(): void {
+    try {
+      this.storage?.setItem(this.storageKey, JSON.stringify(this.receipts));
+    } catch (_) {}
+  }
+
+  private prune(now: number): void {
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const age = now - this.receipts[index]!.at;
+      if (age < 0 || age > this.ttlMs) {
+        this.receipts.splice(index, 1);
+        changed = true;
+      }
+    }
+    if (changed) this.persist();
+  }
+
+  add(title: string, body: string, id: number, at = Date.now()): void {
+    this.prune(at);
+    this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+    if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+    this.persist();
+  }
+
+  remove(id: number): void {
+    const index = this.receipts.findIndex((receipt) => receipt.id === id);
+    if (index === -1) return;
+    this.receipts.splice(index, 1);
+    this.persist();
+  }
+
+  consumeUniquelyMatching(
+    rows: Iterable<NotificationText & { key: string }>,
+    now = Date.now(),
+  ): Set<string> {
+    this.prune(now);
+    const recovered = new Set<string>();
+    if (!this.receipts.length) return recovered;
+    const identities = new Map<string, OpaqueNotificationIdentity>();
+    for (const row of rows) {
+      if (!identities.has(row.key)) {
+        identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
+      }
+    }
+    const remove: number[] = [];
+    for (let index = 0; index < this.receipts.length; index++) {
+      const receipt = this.receipts[index]!;
+      let match: string | null = null;
+      let ambiguous = false;
+      for (const [key, identity] of identities) {
+        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (match !== null && match !== key) {
+          ambiguous = true;
+          break;
+        }
+        match = key;
+      }
+      if (match === null) continue;
+      remove.push(index);
+      if (!ambiguous) recovered.add(match);
+    }
+    for (let index = remove.length - 1; index >= 0; index--) {
+      this.receipts.splice(remove[index]!, 1);
+    }
+    if (remove.length) this.persist();
+    return recovered;
+  }
+
+  discardReadMatches(readRows: Iterable<NotificationText>, now = Date.now()): void {
+    this.prune(now);
+    if (!this.receipts.length) return;
+    const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    if (!read.length) return;
+    let changed = false;
+    for (let index = this.receipts.length - 1; index >= 0; index--) {
+      if (
+        !read.some((identity) =>
+          opaqueNotificationMatches(this.receipts[index]!.identity, identity),
+        )
+      ) {
+        continue;
+      }
+      this.receipts.splice(index, 1);
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+}
 
 /**
  * Short-lived, content-opaque receipts for page notifications. They survive a

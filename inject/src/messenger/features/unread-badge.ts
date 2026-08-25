@@ -15,6 +15,7 @@ import {
   didMutedFilterPolicyChange,
   type MutedUnreadObservation,
   reconcileMutedUnreadIds,
+  reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "../lib/unread";
@@ -120,7 +121,12 @@ export function initUnreadBadge() {
     }
     const conv = s.badge_mode === "conversations";
     const n = conv
-      ? conversations.count
+      ? reconcileUnreadConversationCount(
+          conversations.count,
+          conversations.trustworthy,
+          ignoreMuted,
+          filteredUnreadBaseline,
+        )
       : reconcileUnreadMessageCount(
           titleCount,
           conversations.count,

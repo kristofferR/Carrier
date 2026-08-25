@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   didMutedFilterPolicyChange,
   reconcileMutedUnreadIds,
+  reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
   unreadCountFromTitle,
 } from "./unread";
@@ -63,6 +64,18 @@ describe("reconcileUnreadMessageCount", () => {
   test("keeps the title path when no muted unread is known", () => {
     expect(reconcileUnreadMessageCount(5, 1, true, false)).toBe(5);
     expect(reconcileUnreadMessageCount(5, 0, false, false)).toBe(5);
+  });
+});
+
+describe("reconcileUnreadConversationCount", () => {
+  test("retains the filtered baseline while muted rows are virtualized", () => {
+    expect(reconcileUnreadConversationCount(1, false, true, 3)).toBe(3);
+    expect(reconcileUnreadConversationCount(1, false, true, null)).toBeNull();
+  });
+
+  test("uses the live count when the list is trustworthy or filtering is off", () => {
+    expect(reconcileUnreadConversationCount(2, true, true, 3)).toBe(2);
+    expect(reconcileUnreadConversationCount(2, false, false, 3)).toBe(2);
   });
 });
 

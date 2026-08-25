@@ -28,10 +28,12 @@ import {
   notificationDeliveryDedupeKey,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
+  PendingPageNotificationStore,
   READ_TRANSITION_CONFIRM_MS,
   READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  uniqueThreadIdForTitle,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
@@ -49,8 +51,8 @@ const FALLBACK_DELAY_MS = 2500;
 const PAGE_NOTIFICATION_MATCH_MS = 3000;
 const FALLBACK_POLL_VISIBLE_MS = 10_000;
 const FALLBACK_POLL_HIDDEN_MS = 60_000;
-// After the eager delivery wait, retain a page signal through one hidden-window
-// poll so a virtualized or delayed row can still attach its route and mute state.
+// Keep an unresolved page signal through one hidden-window poll so a
+// virtualized or delayed row can still supply its route and mute state.
 const PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
 const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
@@ -170,6 +172,7 @@ export function initNotificationBridge() {
     }
   })();
   const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+  const pendingPageNotifications = new PendingPageNotificationStore(notificationStorage);
 
   // Clicking a native notification routes back here by id: bring the
   // conversation up by invoking the original `onclick` Facebook assigned to its
@@ -243,6 +246,17 @@ export function initNotificationBridge() {
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   const senderAvatars = new SenderAvatarStore(notificationStorage);
+  // Validated thread ids and their latest exact row titles. A known-muted
+  // cached match can suppress a page Notification even after virtualization;
+  // duplicate titles remain unresolved and continue through row correlation.
+  const rowTitles = new Map<string, string>();
+  const ROW_TITLE_LIMIT = 300;
+  const rememberRowTitle = (key: string, title: string) => {
+    if (!key || !title) return;
+    rowTitles.delete(key);
+    rowTitles.set(key, title);
+    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
+  };
   // For the dev-only MCP probe: cache sizes, or the verdict for a sender the
   // probe already read from the DOM. Nothing but counts and classifications
   // crosses this boundary — no names, no URLs.
@@ -309,6 +323,15 @@ export function initNotificationBridge() {
         dedupeKey: match.dedupeKey,
       };
     }
+    // A muted row can be virtualized before Facebook constructs its page
+    // Notification. An exact title match is used only to suppress a thread
+    // already known muted; it never authorizes an unresolved native emit.
+    const rememberedMutedId = uniqueThreadIdForTitle(title, rowTitles);
+    if (rememberedMutedId && mutedThreads.isMuted(rememberedMutedId)) {
+      // Title identity is sufficient to fail closed, but not to write a
+      // per-thread fingerprint: an unseen namesake could still exist.
+      return { threadMuted: true };
+    }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
     return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
@@ -346,28 +369,29 @@ export function initNotificationBridge() {
       // fast row match could consume the signal before it learned its id and the
       // reload-safe route would never be attached.
       const id = ++notifySeq;
-      if (pageMatch.signal) pageMatch.signal.nativeId = id;
+      if (pageMatch.signal) {
+        pageMatch.signal.nativeId = id;
+        pendingPageNotifications.add(originalTitle, originalBody, id);
+      }
       const matchWait =
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
-          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS)
+          ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS)
           : Promise.resolve();
       Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-        ([icon, matchResult]) => {
+        ([icon]) => {
           const signal = pageMatch.signal;
-          const recoveringIdentity =
-            signal !== undefined && matchResult === "timeout" && !signal.matched;
-          if (signal && !recoveringIdentity) {
-            notificationCorrelations.discardPage(signal);
-          } else if (signal) {
-            // The banner must not wait past the native dedupe window. Keep only
-            // its content match in memory so a later row can still attach the
-            // route and refresh mute state after the bounded eager wait.
-            setTimeout(
-              () => notificationCorrelations.discardPage(signal),
-              PAGE_NOTIFICATION_RECOVERY_MS - PAGE_NOTIFICATION_MATCH_MS,
-            );
-          }
+          const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
+          if (signal) notificationCorrelations.discardPage(signal);
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+            // The page gives Carrier content but no trustworthy thread id. An
+            // unresolved banner cannot be retracted if a later row proves it
+            // muted, so fail closed while muted filtering is enabled. A later
+            // row mutation still takes the ordinary routed fallback path.
+            diag("notify.unresolved", "page notification had no correlated thread identity");
+            return;
+          }
+          pendingPageNotifications.remove(id);
           const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId
@@ -392,7 +416,6 @@ export function initNotificationBridge() {
               );
             }
             if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
-            if (recoveringIdentity && signal) notificationCorrelations.discardPage(signal);
             return;
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
@@ -545,17 +568,6 @@ export function initNotificationBridge() {
     owner: string;
     photo: string;
   }
-
-  // What each thread's row calls itself, so a harvest can check that the pane
-  // in front of it is the conversation the address bar names. In memory only.
-  const rowTitles = new Map<string, string>();
-  const ROW_TITLE_LIMIT = 300;
-  const rememberRowTitle = (key: string, title: string) => {
-    if (!key || !title) return;
-    rowTitles.delete(key);
-    rowTitles.set(key, title);
-    if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value!);
-  };
 
   /**
    * Whether the thread pane is showing the conversation `title` names. The
@@ -796,6 +808,7 @@ export function initNotificationBridge() {
       routeCandidates,
     );
     if (!pageSignal) return false;
+    if (pageSignal.nativeId !== undefined) pendingPageNotifications.remove(pageSignal.nativeId);
 
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -1187,7 +1200,16 @@ export function initNotificationBridge() {
         observed.filter(({ unread, body }) => !unread && body.length > 0),
         detectedAt,
       );
+      pendingPageNotifications.discardReadMatches(
+        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        detectedAt,
+      );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
+      const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
+        hydrated,
+        detectedAt,
+      );
+      for (const key of pendingPageArrivals) changed.add(key);
       const mismatches: [string, string][] = [];
       const stale = new Set<string>();
       const unhydrated = new Set<string>();

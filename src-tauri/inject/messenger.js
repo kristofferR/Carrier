@@ -3328,6 +3328,17 @@
     }
   };
   var normalizeNotificationText = (value) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  function uniqueThreadIdForTitle(title, threadTitles) {
+    const normalized = normalizeNotificationText(title);
+    if (!normalized) return "";
+    let match = "";
+    for (const [id, candidate] of threadTitles) {
+      if (normalizeNotificationText(candidate) !== normalized) continue;
+      if (match && match !== id) return "";
+      match = id;
+    }
+    return match;
+  }
   var hashText = (value) => {
     let hash = 0xcbf29ce484222325n;
     const prime = 0x100000001b3n;
@@ -3627,6 +3638,110 @@
     if (!value || typeof value !== "object") return false;
     const identity = value;
     return validOpaqueTextIdentity(identity.title, TITLE_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.body, BODY_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.message, BODY_PREFIX_LIMIT) && (identity.sender === null || typeof identity.sender === "string" && HASH_RE.test(identity.sender));
+  };
+  var PendingPageNotificationStore = class {
+    constructor(storage = null, storageKey = "__carrier_pending_page_notifications__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+      __publicField(this, "storage", storage);
+      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "ttlMs", ttlMs);
+      __publicField(this, "receipts", []);
+      try {
+        const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
+        if (Array.isArray(parsed)) {
+          for (const receipt of parsed) {
+            if (!receipt || typeof receipt !== "object") continue;
+            const candidate = receipt;
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.id === "number" && Number.isSafeInteger(candidate.id) && candidate.id > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+              this.receipts.push(candidate);
+            }
+          }
+        }
+      } catch (_) {
+      }
+      if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
+        this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
+      }
+      this.persist();
+    }
+    persist() {
+      try {
+        this.storage?.setItem(this.storageKey, JSON.stringify(this.receipts));
+      } catch (_) {
+      }
+    }
+    prune(now) {
+      let changed = false;
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const age = now - this.receipts[index].at;
+        if (age < 0 || age > this.ttlMs) {
+          this.receipts.splice(index, 1);
+          changed = true;
+        }
+      }
+      if (changed) this.persist();
+    }
+    add(title, body, id, at = Date.now()) {
+      this.prune(at);
+      this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+      if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+      this.persist();
+    }
+    remove(id) {
+      const index = this.receipts.findIndex((receipt) => receipt.id === id);
+      if (index === -1) return;
+      this.receipts.splice(index, 1);
+      this.persist();
+    }
+    consumeUniquelyMatching(rows, now = Date.now()) {
+      this.prune(now);
+      const recovered = /* @__PURE__ */ new Set();
+      if (!this.receipts.length) return recovered;
+      const identities = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!identities.has(row.key)) {
+          identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
+        }
+      }
+      const remove = [];
+      for (let index = 0; index < this.receipts.length; index++) {
+        const receipt = this.receipts[index];
+        let match = null;
+        let ambiguous = false;
+        for (const [key, identity] of identities) {
+          if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+          if (match !== null && match !== key) {
+            ambiguous = true;
+            break;
+          }
+          match = key;
+        }
+        if (match === null) continue;
+        remove.push(index);
+        if (!ambiguous) recovered.add(match);
+      }
+      for (let index = remove.length - 1; index >= 0; index--) {
+        this.receipts.splice(remove[index], 1);
+      }
+      if (remove.length) this.persist();
+      return recovered;
+    }
+    discardReadMatches(readRows, now = Date.now()) {
+      this.prune(now);
+      if (!this.receipts.length) return;
+      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      if (!read.length) return;
+      let changed = false;
+      for (let index = this.receipts.length - 1; index >= 0; index--) {
+        if (!read.some(
+          (identity) => opaqueNotificationMatches(this.receipts[index].identity, identity)
+        )) {
+          continue;
+        }
+        this.receipts.splice(index, 1);
+        changed = true;
+      }
+      if (changed) this.persist();
+    }
   };
   var PageNotificationReceiptStore = class {
     constructor(storage = null, storageKey = "__carrier_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
@@ -4254,6 +4369,9 @@
     if (unreadConversations === 0) return 0;
     return Math.max(titleCount, unreadConversations);
   }
+  function reconcileUnreadConversationCount(unreadConversations, conversationListTrustworthy, ignoresMuted, previousFilteredCount) {
+    return ignoresMuted && !conversationListTrustworthy ? previousFilteredCount : unreadConversations;
+  }
 
   // inject/src/messenger/features/conversation-actions.ts
   function isShown(el) {
@@ -4455,6 +4573,7 @@
       }
     })();
     const pageNotificationReceipts = new PageNotificationReceiptStore(notificationStorage);
+    const pendingPageNotifications = new PendingPageNotificationStore(notificationStorage);
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
@@ -4503,6 +4622,14 @@
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
+    const rowTitles = /* @__PURE__ */ new Map();
+    const ROW_TITLE_LIMIT = 300;
+    const rememberRowTitle = (key, title) => {
+      if (!key || !title) return;
+      rowTitles.delete(key);
+      rowTitles.set(key, title);
+      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
+    };
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
     const markPageNotification = (title, body) => {
@@ -4526,6 +4653,10 @@
           dedupeKey: match.dedupeKey
         };
       }
+      const rememberedMutedId = uniqueThreadIdForTitle(title, rowTitles);
+      if (rememberedMutedId && mutedThreads.isMuted(rememberedMutedId)) {
+        return { threadMuted: true };
+      }
       return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
@@ -4541,21 +4672,22 @@
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
         const id = ++notifySeq;
-        if (pageMatch.signal) pageMatch.signal.nativeId = id;
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_MATCH_MS) : Promise.resolve();
+        if (pageMatch.signal) {
+          pageMatch.signal.nativeId = id;
+          pendingPageNotifications.add(originalTitle, originalBody, id);
+        }
+        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageNotificationMatch(pageMatch.signal, PAGE_NOTIFICATION_RECOVERY_MS) : Promise.resolve();
         Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-          ([icon, matchResult]) => {
+          ([icon]) => {
             const signal = pageMatch.signal;
-            const recoveringIdentity = signal !== void 0 && matchResult === "timeout" && !signal.matched;
-            if (signal && !recoveringIdentity) {
-              notificationCorrelations.discardPage(signal);
-            } else if (signal) {
-              setTimeout(
-                () => notificationCorrelations.discardPage(signal),
-                PAGE_NOTIFICATION_RECOVERY_MS - PAGE_NOTIFICATION_MATCH_MS
-              );
-            }
+            const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
+            if (signal) notificationCorrelations.discardPage(signal);
             const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+            if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+              diag("notify.unresolved", "page notification had no correlated thread identity");
+              return;
+            }
+            pendingPageNotifications.remove(id);
             const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
             const threadId = threadPathId(threadPath || "");
             const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
@@ -4575,7 +4707,6 @@
                 );
               }
               if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
-              if (recoveringIdentity && signal) notificationCorrelations.discardPage(signal);
               return;
             }
             const hidePreview = deliverySettings.hide_notification_preview === true;
@@ -4658,14 +4789,6 @@
     let settleAttempts = 0;
     const normalizedText = (value) => (value || "").replace(/\s+/g, " ").trim();
     const isPersonName = (value) => value.length > 0 && value.length <= 60 && value.split(" ").length <= 5 && /\p{Letter}/u.test(value) && !/profile|picture|photo|image|avatar|bilde/i.test(value);
-    const rowTitles = /* @__PURE__ */ new Map();
-    const ROW_TITLE_LIMIT = 300;
-    const rememberRowTitle = (key, title) => {
-      if (!key || !title) return;
-      rowTitles.delete(key);
-      rowTitles.set(key, title);
-      if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
-    };
     const paneShowsThread = (title, leaving = []) => {
       const needle = title.replace(/[…\s]+$/, "").toLowerCase();
       if (needle.length < 3) return "unknown";
@@ -4827,6 +4950,7 @@
         routeCandidates
       );
       if (!pageSignal) return false;
+      if (pageSignal.nativeId !== void 0) pendingPageNotifications.remove(pageSignal.nativeId);
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -5088,7 +5212,16 @@
           observed.filter(({ unread, body }) => !unread && body.length > 0),
           detectedAt
         );
+        pendingPageNotifications.discardReadMatches(
+          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          detectedAt
+        );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
+        const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
+          hydrated,
+          detectedAt
+        );
+        for (const key of pendingPageArrivals) changed.add(key);
         const mismatches = [];
         const stale = /* @__PURE__ */ new Set();
         const unhydrated = /* @__PURE__ */ new Set();
@@ -6706,7 +6839,12 @@ ${text}`)) {
         filteredUnreadBaseline = conversations.count;
       }
       const conv = s.badge_mode === "conversations";
-      const n = conv ? conversations.count : reconcileUnreadMessageCount(
+      const n = conv ? reconcileUnreadConversationCount(
+        conversations.count,
+        conversations.trustworthy,
+        ignoreMuted,
+        filteredUnreadBaseline
+      ) : reconcileUnreadMessageCount(
         titleCount,
         conversations.count,
         conversations.trustworthy,

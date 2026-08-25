@@ -11,11 +11,13 @@ import {
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
   PageNotificationReceiptStore,
+  PendingPageNotificationStore,
   READ_DROP_CONFIRM_MS,
   RETIRED_FINGERPRINT_TTL_MS,
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  uniqueThreadIdForTitle,
   waitForPageNotificationMatch,
 } from "./notification-fallback";
 
@@ -49,6 +51,22 @@ describe("notificationDedupeKey", () => {
     expect(notificationDeliveryDedupeKey(fingerprint, "thread-1:2000")).not.toBe(
       notificationDeliveryDedupeKey(fingerprint, "thread-1:1000"),
     );
+  });
+});
+
+describe("uniqueThreadIdForTitle", () => {
+  test("resolves one exact cached row title across harmless text variation", () => {
+    expect(uniqueThreadIdForTitle("  Jane   Doe ", [["1", "Jane Doe"]])).toBe("1");
+  });
+
+  test("fails closed for blank, unknown, and duplicate conversation titles", () => {
+    const titles: [string, string][] = [
+      ["1", "Jane"],
+      ["2", "Jane"],
+    ];
+    expect(uniqueThreadIdForTitle("", titles)).toBe("");
+    expect(uniqueThreadIdForTitle("John", titles)).toBe("");
+    expect(uniqueThreadIdForTitle("Jane", titles)).toBe("");
   });
 });
 
@@ -621,6 +639,77 @@ describe("PageNotificationReceiptStore", () => {
         1_100,
       ),
     ).toBeNull();
+  });
+});
+
+describe("PendingPageNotificationStore", () => {
+  test("recovers an unresolved page signal after reload without persisting content", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Project group", "Jane: Deployment finished", 42, 1_000);
+    const persisted = storage.getItem("__carrier_pending_page_notifications__")!;
+    expect(persisted).not.toContain("Project group");
+    expect(persisted).not.toContain("Deployment finished");
+
+    const reloaded = new PendingPageNotificationStore(storage, undefined, undefined, 1_100);
+    expect(
+      reloaded.consumeUniquelyMatching(
+        [{ key: "1", title: "Project group", body: "Jane: Deployment finished" }],
+        1_100,
+      ),
+    ).toEqual(new Set(["1"]));
+  });
+
+  test("removes a signal once its in-memory delivery path settles", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Jane", "OK", 42, 1_000);
+    pending.remove(42);
+    expect(
+      new PendingPageNotificationStore(
+        storage,
+        undefined,
+        undefined,
+        1_100,
+      ).consumeUniquelyMatching([{ key: "1", title: "Jane", body: "OK" }], 1_100).size,
+    ).toBe(0);
+  });
+
+  test("fails closed for ambiguous rows and drops read matches", () => {
+    const pending = new PendingPageNotificationStore();
+    pending.add("Jane", "Same", 42, 1_000);
+    expect(
+      pending.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Same" },
+          { key: "2", title: "Jane", body: "Same" },
+        ],
+        1_100,
+      ).size,
+    ).toBe(0);
+
+    pending.add("Jane", "Read", 43, 1_200);
+    pending.discardReadMatches([{ title: "Jane", body: "Read" }], 1_300);
+    expect(
+      pending.consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Read" }], 1_400).size,
+    ).toBe(0);
+  });
+
+  test("expires stale and future-dated signals", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, 100, 1_000);
+    pending.add("Jane", "Old", 41, 1_000);
+    pending.add("Jane", "Future", 42, 1_201);
+    const reloaded = new PendingPageNotificationStore(storage, undefined, 100, 1_101);
+    expect(
+      reloaded.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Old" },
+          { key: "2", title: "Jane", body: "Future" },
+        ],
+        1_101,
+      ).size,
+    ).toBe(0);
   });
 });
 
