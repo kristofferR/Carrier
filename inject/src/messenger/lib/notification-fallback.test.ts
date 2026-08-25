@@ -955,7 +955,7 @@ describe("UnreadArrivalTracker", () => {
     ).toEqual([]);
   });
 
-  test("attributes only title-delta slots not accounted for by muted rows", () => {
+  test("does not split a multi-message title delta while a muted row could own it", () => {
     const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(4, 1_000, 2_000);
     tracker.markRowsChanged(["muted"], 1_100);
@@ -970,7 +970,7 @@ describe("UnreadArrivalTracker", () => {
         new Set(["unmuted"]),
         new Set(["muted"]),
       ),
-    ).toEqual(["unmuted"]);
+    ).toEqual([]);
   });
 
   test("does not let a muted mutation already scanned without a delta consume a fresh arrival", () => {

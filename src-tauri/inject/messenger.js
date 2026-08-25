@@ -4067,11 +4067,14 @@
           if (candidate.deferred) this.changedAt.delete(key);
         }
       }
-      const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+      const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key));
+      if (blocked.length > 0) {
+        for (const [key] of attributionPool) this.changedAt.delete(key);
+        return [];
+      }
       const candidates = attributionPool.filter(
         ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
-      ).slice(0, Math.max(0, delta - blocked.length)).map(([key]) => key);
-      for (const [key] of blocked) this.changedAt.delete(key);
+      ).slice(0, delta).map(([key]) => key);
       for (const key of candidates) this.changedAt.delete(key);
       for (const [, candidate] of attributionPool) candidate.deferred = true;
       return candidates;

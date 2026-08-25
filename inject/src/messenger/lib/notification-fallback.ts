@@ -1272,10 +1272,16 @@ export class UnreadArrivalTracker {
         if (candidate.deferred) this.changedAt.delete(key);
       }
     }
-    // A muted row still contributes to Facebook's aggregate title count. Let
-    // its mutation consume a delta slot before considering unmuted rows, or a
-    // harmless hydration mutation on another row can inherit the muted alert.
-    const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, delta);
+    // A muted row still contributes to Facebook's aggregate title count, and
+    // one row mutation can represent several messages. If this causal group
+    // contains a muted candidate, the aggregate delta cannot be split safely;
+    // strong page/preview/read-transition evidence still reports unmuted rows
+    // through the sibling trackers.
+    const blocked = attributionPool.filter(([key]) => blockedUnreadKeys?.has(key));
+    if (blocked.length > 0) {
+      for (const [key] of attributionPool) this.changedAt.delete(key);
+      return [];
+    }
     const candidates = attributionPool
       .filter(
         ([key]) =>
@@ -1284,9 +1290,8 @@ export class UnreadArrivalTracker {
       )
       // Current unread styling narrows attribution, but an aggregate increase
       // is still required: scrolling can mutate a pre-existing unread row.
-      .slice(0, Math.max(0, delta - blocked.length))
+      .slice(0, delta)
       .map(([key]) => key);
-    for (const [key] of blocked) this.changedAt.delete(key);
     for (const key of candidates) this.changedAt.delete(key);
     for (const [, candidate] of attributionPool) candidate.deferred = true;
     return candidates;
