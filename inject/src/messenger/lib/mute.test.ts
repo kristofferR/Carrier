@@ -32,11 +32,8 @@ describe("suppressNotificationDelivery", () => {
     expect(suppressNotificationDelivery(false, settings)).toBe(true);
   });
 
-  test("defers an uncorrelated page notification while muted chats are filtered", () => {
-    expect(suppressNotificationDelivery(false, {}, false)).toBe(true);
-    expect(suppressNotificationDelivery(false, { ignore_muted_conversations: false }, false)).toBe(
-      false,
-    );
+  test("does not treat an unresolved thread as muted", () => {
+    expect(suppressNotificationDelivery(false, {})).toBe(false);
   });
 });
 

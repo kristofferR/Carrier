@@ -361,7 +361,7 @@ export function initNotificationBridge() {
           const threadMuted = threadId
             ? mutedThreads.isMuted(threadId)
             : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
-          if (suppressNotificationDelivery(threadMuted, deliverySettings, !!threadId)) {
+          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (
               suppressed &&

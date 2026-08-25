@@ -47,13 +47,8 @@ export function suppressNotificationDelivery(
     | { mute_notifications?: boolean; ignore_muted_conversations?: boolean }
     | null
     | undefined,
-  muteStateKnown = true,
 ): boolean {
-  return (
-    settings?.mute_notifications === true ||
-    (!muteStateKnown && ignoresMutedConversations(settings)) ||
-    suppressMutedDelivery(muted, settings)
-  );
+  return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
 }
 
 /**

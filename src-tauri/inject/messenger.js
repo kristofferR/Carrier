@@ -3037,8 +3037,8 @@
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
   }
-  function suppressNotificationDelivery(muted, settings, muteStateKnown = true) {
-    return settings?.mute_notifications === true || !muteStateKnown && ignoresMutedConversations(settings) || suppressMutedDelivery(muted, settings);
+  function suppressNotificationDelivery(muted, settings) {
+    return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
   }
   function conversationMuteFromLabel(value) {
     const text = (value || "").replace(/\s+/g, " ").trim();
@@ -4516,7 +4516,7 @@
             const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
             const threadId = threadPathId(threadPath || "");
             const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-            if (suppressNotificationDelivery(threadMuted, deliverySettings, !!threadId)) {
+            if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
               const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
               if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
                 notifiedStore.markSuppressed(
