@@ -148,6 +148,12 @@ pub(crate) fn parse_activation_args(args: &str) -> Option<ToastActivation> {
     }
 }
 
+/// Preserve a known legacy opt-out, but do not suppress a fresh/portable
+/// install whose original AUMID has no readable notification setting.
+fn should_preserve_legacy_opt_out(legacy_enabled: Option<bool>) -> bool {
+    legacy_enabled == Some(false)
+}
+
 /// Everything [`deliver_notification_windows`] needs. Owned so the WinRT handlers
 /// (which outlive the call) can capture what they need.
 #[cfg(target_os = "windows")]
@@ -269,6 +275,14 @@ pub(crate) fn deliver_notification_windows(app: &tauri::AppHandle, opts: Windows
 
 #[cfg(target_os = "windows")]
 fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<()> {
+    // Carrier used the main app AUMID before the dedicated notification
+    // identity existed. Keep honoring an application-specific or system-wide
+    // opt-out recorded against that original identity; otherwise an upgrade
+    // could expose message previews the user had already disabled in Windows.
+    if legacy_notifications_disabled(app) {
+        return Ok(());
+    }
+
     let hex = hex_id(opts.native_id);
     let group = opts.thread_path.as_deref().and_then(thread_digits);
     let spec = ToastSpec {
@@ -333,6 +347,36 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     notifier.Show(&toast)?;
     remember_keep_alive(hex, group, toast);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn legacy_notifications_disabled(app: &tauri::AppHandle) -> bool {
+    let legacy_app_id = app.config().identifier.clone();
+    let Ok(notifier) =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(legacy_app_id))
+    else {
+        // A fresh portable install has no legacy identity to preserve.
+        return false;
+    };
+    let Ok(setting) = notifier.Setting() else {
+        return false;
+    };
+    let disabled = should_preserve_legacy_opt_out(Some(setting == NotificationSetting::Enabled));
+    if disabled {
+        log_legacy_notifications_disabled_once(setting);
+    }
+    disabled
+}
+
+#[cfg(target_os = "windows")]
+fn log_legacy_notifications_disabled_once(setting: NotificationSetting) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if !LOGGED.swap(true, Ordering::Relaxed) {
+        log::warn!(
+            "Windows notifications remain disabled for Carrier's original identity (setting {setting:?})"
+        );
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -615,5 +659,12 @@ mod tests {
         );
         assert_eq!(parse_activation_args("action=frob&id=abc"), None);
         assert_eq!(parse_activation_args("id=abc"), None);
+    }
+
+    #[test]
+    fn legacy_notification_gate_preserves_only_a_known_opt_out() {
+        assert!(!should_preserve_legacy_opt_out(Some(true)));
+        assert!(should_preserve_legacy_opt_out(Some(false)));
+        assert!(!should_preserve_legacy_opt_out(None));
     }
 }
