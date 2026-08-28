@@ -524,7 +524,7 @@ pub(crate) fn build_tray_with_menu(
     // Windows (the only other non-Linux target): full-colour icon or the
     // taskbar-tinted symbolic mark, per the Tray icon style setting.
     #[cfg(not(target_os = "macos"))]
-    let icon = windows_tray_image(app, icon_style, tray_icon_size());
+    let icon = windows_tray_image(app, icon_style, tray_icon_size(), taskbar_prefers_dark());
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(icon)
@@ -727,6 +727,63 @@ fn tray_icon_size() -> usize {
     px.max(16) as usize
 }
 
+#[cfg(any(target_os = "windows", test))]
+type WindowsTrayIconKey = (String, bool, usize);
+
+/// Tracks the requested and visibly applied Windows tray icon independently.
+/// A generation lets a stale render notice that it may have overwritten a
+/// newer one and schedule the newest key again without holding this state
+/// across Tauri's blocking tray setter.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Default)]
+struct WindowsTrayIconCache {
+    desired: Option<WindowsTrayIconKey>,
+    applied: Option<WindowsTrayIconKey>,
+    generation: u64,
+}
+
+#[cfg(any(target_os = "windows", test))]
+impl WindowsTrayIconCache {
+    fn request(&mut self, key: WindowsTrayIconKey) -> Option<(WindowsTrayIconKey, u64)> {
+        if self.desired.as_ref() != Some(&key) {
+            self.desired = Some(key);
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.pending()
+    }
+
+    fn complete(
+        &mut self,
+        key: WindowsTrayIconKey,
+        generation: u64,
+        succeeded: bool,
+    ) -> Option<(WindowsTrayIconKey, u64)> {
+        if self.generation != generation {
+            if succeeded {
+                // This stale render may have landed after the newer one.
+                self.applied = None;
+                return self.pending();
+            }
+            return None;
+        }
+        if succeeded {
+            self.applied = Some(key);
+        } else if self.applied.as_ref() != Some(&key) {
+            self.applied = None;
+        }
+        None
+    }
+
+    fn pending(&self) -> Option<(WindowsTrayIconKey, u64)> {
+        (self.applied != self.desired).then(|| {
+            (
+                self.desired.clone().expect("desired icon key"),
+                self.generation,
+            )
+        })
+    }
+}
+
 /// The base tray image for the current style on Windows: the full-colour app
 /// icon, or the symbolic mark rendered at the tray's native size and tinted
 /// for the taskbar theme. A decode failure falls back to the colour icon so
@@ -736,6 +793,7 @@ fn windows_tray_image(
     app: &tauri::AppHandle,
     icon_style: &str,
     icon_size: usize,
+    dark_taskbar: bool,
 ) -> tauri::image::Image<'static> {
     if icon_style == "symbolic" {
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
@@ -748,7 +806,7 @@ fn windows_tray_image(
                         bbox,
                         icon_size,
                     );
-                    let rgba = colour_glyph(&alpha, taskbar_prefers_dark());
+                    let rgba = colour_glyph(&alpha, dark_taskbar);
                     return tauri::image::Image::new_owned(
                         rgba,
                         icon_size as u32,
@@ -778,27 +836,24 @@ pub(crate) fn set_windows_tray_icon_style(
     tray: &PlatformTrayIcon,
     icon_style: &str,
 ) {
-    static LAST: std::sync::Mutex<Option<(String, bool, usize)>> = std::sync::Mutex::new(None);
+    static CACHE: std::sync::Mutex<WindowsTrayIconCache> =
+        std::sync::Mutex::new(WindowsTrayIconCache {
+            desired: None,
+            applied: None,
+            generation: 0,
+        });
     let icon_size = tray_icon_size();
     let key = (icon_style.to_string(), taskbar_prefers_dark(), icon_size);
-    // Publish the key before calling into the tray and never hold the cache
-    // lock across `set_icon`: tray setters are blocking dispatches to the main
-    // thread, and the main-thread unread listener takes this same cache — a
-    // caller holding it while waiting deadlocks the app (reproduced on
-    // Windows 11 by racing theme flips against unread emits). Two racing
-    // callers with different keys can transiently paint the older icon; the
-    // next theme or settings event self-heals.
-    {
-        let mut last = LAST.lock().unwrap();
-        if last.as_ref() == Some(&key) {
-            return;
+    let mut pending = CACHE.lock().unwrap().request(key);
+    while let Some((key, generation)) = pending {
+        let result = tray.set_icon(Some(windows_tray_image(app, &key.0, key.2, key.1)));
+        if let Err(error) = &result {
+            log::warn!("failed to update the Windows tray icon: {error}");
         }
-        *last = Some(key);
-    }
-    if let Err(error) = tray.set_icon(Some(windows_tray_image(app, icon_style, icon_size))) {
-        log::warn!("failed to update the Windows tray icon: {error}");
-        // Don't leave a key cached for an icon that was never applied.
-        *LAST.lock().unwrap() = None;
+        pending = CACHE
+            .lock()
+            .unwrap()
+            .complete(key, generation, result.is_ok());
     }
 }
 
@@ -946,6 +1001,47 @@ mod tests {
         assert!(dark_taskbar_from_reg(Some(0)), "0 => dark");
         assert!(!dark_taskbar_from_reg(Some(1)), "1 => light");
         assert!(dark_taskbar_from_reg(Some(2)), "unexpected value => dark");
+    }
+
+    #[test]
+    fn stale_tray_icon_completion_reapplies_latest_key() {
+        let mut cache = WindowsTrayIconCache::default();
+        let old_key = ("symbolic".to_string(), true, 16);
+        let new_key = ("symbolic".to_string(), false, 16);
+
+        let old_update = cache.request(old_key.clone()).unwrap();
+        let new_update = cache.request(new_key.clone()).unwrap();
+        assert_eq!(cache.complete(new_update.0, new_update.1, true), None);
+        assert_eq!(cache.applied, Some(new_key.clone()));
+
+        let retry = cache.complete(old_update.0, old_update.1, true).unwrap();
+        assert_eq!(retry.0, new_key);
+        assert_eq!(cache.applied, None);
+        assert_eq!(cache.complete(retry.0.clone(), retry.1, true), None);
+        assert_eq!(cache.applied, Some(retry.0));
+    }
+
+    #[test]
+    fn failed_stale_tray_icon_update_preserves_newer_success() {
+        let mut cache = WindowsTrayIconCache::default();
+        let old_key = ("symbolic".to_string(), true, 16);
+        let new_key = ("symbolic".to_string(), false, 16);
+
+        let old_update = cache.request(old_key).unwrap();
+        let new_update = cache.request(new_key.clone()).unwrap();
+        assert_eq!(cache.complete(new_update.0, new_update.1, true), None);
+        assert_eq!(cache.complete(old_update.0, old_update.1, false), None);
+        assert_eq!(cache.applied, Some(new_key));
+    }
+
+    #[test]
+    fn tray_icon_cache_treats_size_as_part_of_key() {
+        let mut cache = WindowsTrayIconCache::default();
+        let initial = cache.request(("symbolic".to_string(), false, 16)).unwrap();
+        assert_eq!(cache.complete(initial.0, initial.1, true), None);
+
+        let resized = cache.request(("symbolic".to_string(), false, 20)).unwrap();
+        assert_eq!(resized.1, initial.1 + 1);
     }
 
     #[test]
