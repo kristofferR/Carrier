@@ -590,22 +590,82 @@ pub(crate) fn set_macos_tray_icon_style(
     tray.set_icon_with_as_template(Some(icon), symbolic)
 }
 
-/// Recolour the symbolic tray mark for a Windows taskbar. The asset is a white
-/// glyph carried in its alpha channel: keep it white on a dark taskbar, recolour
-/// the RGB to a dark grey (~#404040) on a light one. Alpha is always preserved
-/// so the antialiased edges and interior holes survive. Pure for unit tests.
+/// The tight bounding box `(x0, y0, x1, y1)` (exclusive ends) of the non-zero
+/// alpha in an RGBA image, or `None` for a fully transparent one. Pure for
+/// unit tests.
 #[cfg(any(target_os = "windows", test))]
-fn tint_symbolic(rgba: &[u8], dark_taskbar: bool) -> Vec<u8> {
+fn alpha_bbox(rgba: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
+    let mut bbox: Option<(usize, usize, usize, usize)> = None;
+    for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let (x, y) = (index % width, index / width);
+        let (x0, y0, x1, y1) = bbox.unwrap_or((x, y, x + 1, y + 1));
+        bbox = Some((x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1)));
+    }
+    bbox
+}
+
+/// Area-average the glyph alpha inside `bbox` onto a `size`×`size` canvas,
+/// scaled so the glyph's larger dimension fills the canvas edge-to-edge and
+/// centred in the other. The shell renders whatever it is handed with
+/// nearest-neighbour-quality scaling, so the downscale (and the antialiasing
+/// it produces) has to happen here. Pure for unit tests.
+#[cfg(any(target_os = "windows", test))]
+fn resample_glyph_alpha(
+    rgba: &[u8],
+    width: usize,
+    bbox: (usize, usize, usize, usize),
+    size: usize,
+) -> Vec<u8> {
+    let (bx0, by0, bx1, by1) = bbox;
+    let (bw, bh) = (bx1 - bx0, by1 - by0);
+    let scale = size as f32 / bw.max(bh) as f32;
+    let glyph_w = ((bw as f32 * scale).round() as usize).clamp(1, size);
+    let glyph_h = ((bh as f32 * scale).round() as usize).clamp(1, size);
+    let (off_x, off_y) = ((size - glyph_w) / 2, (size - glyph_h) / 2);
+    let alpha_at = |x: usize, y: usize| rgba[(y * width + x) * 4 + 3] as f32;
+    let mut out = vec![0u8; size * size];
+    for dy in 0..glyph_h {
+        let sy0 = by0 as f32 + dy as f32 * bh as f32 / glyph_h as f32;
+        let sy1 = by0 as f32 + (dy + 1) as f32 * bh as f32 / glyph_h as f32;
+        for dx in 0..glyph_w {
+            let sx0 = bx0 as f32 + dx as f32 * bw as f32 / glyph_w as f32;
+            let sx1 = bx0 as f32 + (dx + 1) as f32 * bw as f32 / glyph_w as f32;
+            let (mut acc, mut area) = (0f32, 0f32);
+            let mut y = sy0.floor() as usize;
+            while (y as f32) < sy1 {
+                let wy = (sy1.min((y + 1) as f32) - sy0.max(y as f32)).max(0.0);
+                let mut x = sx0.floor() as usize;
+                while (x as f32) < sx1 {
+                    let wx = (sx1.min((x + 1) as f32) - sx0.max(x as f32)).max(0.0);
+                    acc += alpha_at(x.min(bx1 - 1), y.min(by1 - 1)) * wx * wy;
+                    area += wx * wy;
+                    x += 1;
+                }
+                y += 1;
+            }
+            out[(off_y + dy) * size + (off_x + dx)] = (acc / area.max(f32::EPSILON)).round() as u8;
+        }
+    }
+    out
+}
+
+/// Colour a resampled alpha glyph for the taskbar theme: white on a dark
+/// taskbar, dark grey (~#404040) on a light one. Pure for unit tests.
+#[cfg(any(target_os = "windows", test))]
+fn colour_glyph(alpha: &[u8], dark_taskbar: bool) -> Vec<u8> {
     let rgb = if dark_taskbar {
         [0xFF, 0xFF, 0xFF]
     } else {
         [0x40, 0x40, 0x40]
     };
-    let mut pixels = rgba.to_vec();
-    for pixel in pixels.as_chunks_mut::<4>().0 {
-        pixel[..3].copy_from_slice(&rgb);
+    let mut rgba = Vec::with_capacity(alpha.len() * 4);
+    for &a in alpha {
+        rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], a]);
     }
-    pixels
+    rgba
 }
 
 /// Interpret `HKCU\...\Themes\Personalize\SystemUsesLightTheme` for the tray:
@@ -655,17 +715,40 @@ fn taskbar_prefers_dark() -> bool {
     dark_taskbar_from_reg(read_system_uses_light_theme())
 }
 
+/// The pixel size Windows actually renders notification-area icons at (the
+/// system small-icon metric, which tracks display scaling). Rendering the
+/// glyph at exactly this size keeps it crisp — handing the shell a large
+/// image gets it badly downscaled.
+#[cfg(target_os = "windows")]
+fn tray_icon_size() -> usize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
+    // SAFETY: a plain system-metric query with no pointers involved.
+    let px = unsafe { GetSystemMetrics(SM_CXSMICON) };
+    px.max(16) as usize
+}
+
 /// The base tray image for the current style on Windows: the full-colour app
-/// icon, or the symbolic mark tinted for the taskbar theme. A decode failure
-/// falls back to the colour icon so the tray is never invisible.
+/// icon, or the symbolic mark rendered at the tray's native size and tinted
+/// for the taskbar theme. A decode failure falls back to the colour icon so
+/// the tray is never invisible.
 #[cfg(target_os = "windows")]
 fn windows_tray_image(app: &tauri::AppHandle, icon_style: &str) -> tauri::image::Image<'static> {
     if icon_style == "symbolic" {
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
         {
             Ok(symbolic) => {
-                let tinted = tint_symbolic(symbolic.rgba(), taskbar_prefers_dark());
-                return tauri::image::Image::new_owned(tinted, symbolic.width(), symbolic.height());
+                if let Some(bbox) = alpha_bbox(symbolic.rgba(), symbolic.width() as usize) {
+                    let size = tray_icon_size();
+                    let alpha = resample_glyph_alpha(
+                        symbolic.rgba(),
+                        symbolic.width() as usize,
+                        bbox,
+                        size,
+                    );
+                    let rgba = colour_glyph(&alpha, taskbar_prefers_dark());
+                    return tauri::image::Image::new_owned(rgba, size as u32, size as u32);
+                }
+                log::warn!("symbolic tray asset is fully transparent; using colour");
             }
             Err(error) => {
                 log::warn!("failed to decode the symbolic tray asset ({error}); using colour");
@@ -787,16 +870,56 @@ mod tests {
     }
 
     #[test]
-    fn windows_symbolic_tint_is_white_on_dark_and_grey_on_light() {
-        let source = vec![10, 20, 30, 0, 10, 20, 30, 200];
+    fn windows_glyph_colour_is_white_on_dark_and_grey_on_light() {
         assert_eq!(
-            tint_symbolic(&source, true),
+            colour_glyph(&[0, 200], true),
             vec![255, 255, 255, 0, 255, 255, 255, 200]
         );
         assert_eq!(
-            tint_symbolic(&source, false),
+            colour_glyph(&[0, 200], false),
             vec![0x40, 0x40, 0x40, 0, 0x40, 0x40, 0x40, 200]
         );
+    }
+
+    #[test]
+    fn alpha_bbox_is_tight_and_none_when_transparent() {
+        // 4×4 transparent image with opaque pixels at (1,1) and (2,3).
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        rgba[(1 * 4 + 1) * 4 + 3] = 255;
+        rgba[(3 * 4 + 2) * 4 + 3] = 128;
+        assert_eq!(alpha_bbox(&rgba, 4), Some((1, 1, 3, 4)));
+        assert_eq!(alpha_bbox(&[0u8; 64], 4), None);
+    }
+
+    #[test]
+    fn resampled_glyph_fills_the_canvas_and_antialiases() {
+        let symbolic =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
+                .unwrap();
+        let width = symbolic.width() as usize;
+        let bbox = alpha_bbox(symbolic.rgba(), width).unwrap();
+        let size = 16;
+        let alpha = resample_glyph_alpha(symbolic.rgba(), width, bbox, size);
+        assert_eq!(alpha.len(), size * size);
+        // The glyph's larger dimension spans the canvas edge-to-edge: both
+        // extreme columns (or rows) carry ink.
+        let column_has_ink = |x: usize| (0..size).any(|y| alpha[y * size + x] > 0);
+        let row_has_ink = |y: usize| (0..size).any(|x| alpha[y * size + x] > 0);
+        assert!(
+            (column_has_ink(0) && column_has_ink(size - 1))
+                || (row_has_ink(0) && row_has_ink(size - 1))
+        );
+        // Area averaging produced soft edges, not a hard 0/255 mask.
+        assert!(alpha.iter().any(|&a| a > 0 && a < 255));
+    }
+
+    #[test]
+    fn resampling_a_uniform_glyph_keeps_it_uniform() {
+        // An 8×8 image whose 8×8 bbox is fully opaque downscales to a fully
+        // opaque 4×4 canvas — area averaging must not invent translucency.
+        let rgba = vec![255u8; 8 * 8 * 4];
+        let alpha = resample_glyph_alpha(&rgba, 8, (0, 0, 8, 8), 4);
+        assert!(alpha.iter().all(|&a| a == 255));
     }
 
     #[test]

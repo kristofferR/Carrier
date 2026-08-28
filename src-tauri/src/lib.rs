@@ -157,6 +157,68 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
     }
 }
 
+/// Watch `HKCU\...\Themes\Personalize` and retint the symbolic tray icon when
+/// the taskbar theme flips. `set_windows_tray_icon_style` caches the last
+/// (style, theme) pair, so the burst of registry writes a theme switch
+/// produces collapses to a single icon update.
+#[cfg(target_os = "windows")]
+fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
+        REG_NOTIFY_CHANGE_LAST_SET,
+    };
+    let spawned = std::thread::Builder::new()
+        .name("taskbar-theme-watch".into())
+        .spawn(move || {
+            let subkey: Vec<u16> =
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+            let mut key: HKEY = std::ptr::null_mut();
+            // SAFETY: opens a well-known HKCU subkey for notification only;
+            // the handle is closed on every exit path below.
+            let status = unsafe {
+                RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_NOTIFY, &mut key)
+            };
+            if status != 0 {
+                log::warn!("taskbar theme watcher could not open the Personalize key ({status})");
+                return;
+            }
+            loop {
+                // SAFETY: a synchronous (no event handle) blocking wait on the
+                // key opened above.
+                let status = unsafe {
+                    RegNotifyChangeKeyValue(
+                        key,
+                        0,
+                        REG_NOTIFY_CHANGE_LAST_SET,
+                        std::ptr::null_mut(),
+                        0,
+                    )
+                };
+                if status != 0 {
+                    log::warn!("taskbar theme watcher stopped ({status})");
+                    break;
+                }
+                let app = app.clone();
+                let _ = app.clone().run_on_main_thread(move || {
+                    let state = app.state::<AppState>();
+                    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+                    let tray = state.tray.lock().unwrap();
+                    if let Some(tray) = tray.as_ref() {
+                        tray::set_windows_tray_icon_style(&app, tray, &style);
+                    }
+                });
+            }
+            // SAFETY: closes the key opened above; the loop has exited.
+            unsafe { RegCloseKey(key) };
+        });
+    if let Err(error) = spawned {
+        log::warn!("failed to spawn the taskbar theme watcher: {error}");
+    }
+}
+
 #[derive(Deserialize)]
 struct SignedAction {
     message: String,
@@ -1050,6 +1112,10 @@ pub fn run() {
                 // Give the AUMID a display name so portable-zip toasts (which have
                 // no installer-stamped shortcut) still show "Carrier".
                 crate::windows::toast::init(app.handle());
+                // Retint the symbolic tray icon the moment the taskbar theme
+                // flips (the unread-poll fallback only fires while the page
+                // emits, which a logged-out webview never does).
+                spawn_taskbar_theme_watcher(app.handle().clone());
             }
 
             #[cfg(target_os = "linux")]

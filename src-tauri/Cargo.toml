@@ -125,7 +125,7 @@ muda = "0.19"
 # Win32_System_Registry: read the taskbar's light/dark preference for the
 # monochrome tray tint (SystemUsesLightTheme, which the dark-light crate does
 # NOT read — it reads AppsUseLightTheme, and the two diverge under Win11 Custom).
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Registry"] }
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 # Register the carrier:// URL scheme in HKCU (per-user, no admin) so protocol
 # launches reach Carrier as argv and are parsed in one audited place by
 # actions::action_from_argv. Registration only — the plugin's JS API capability
