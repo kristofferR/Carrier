@@ -154,6 +154,14 @@ fn should_preserve_legacy_opt_out(legacy_enabled: Option<bool>) -> bool {
     legacy_enabled == Some(false)
 }
 
+fn dedicated_toast_app_id(identifier: &str) -> String {
+    format!("{identifier}.notifications")
+}
+
+fn toast_history_app_ids(identifier: &str) -> [String; 2] {
+    [dedicated_toast_app_id(identifier), identifier.to_string()]
+}
+
 /// Everything [`deliver_notification_windows`] needs. Owned so the WinRT handlers
 /// (which outlive the call) can capture what they need.
 #[cfg(target_os = "windows")]
@@ -450,15 +458,16 @@ fn log_notifications_disabled_once(notifier: &ToastNotifier) {
 
 /// Clear every toast in a conversation's Action Center group. Called on
 /// clear-on-read and after a successful inline reply. The removal is OS-side, so
-/// it also clears toasts left from a previous run.
+/// it also clears toasts left from a previous run or the legacy toast identity.
 #[cfg(target_os = "windows")]
 pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     match ToastNotificationManager::History() {
         Ok(history) => {
-            if let Err(error) = history
-                .RemoveGroupWithId(&HSTRING::from(thread_id), &HSTRING::from(toast_app_id(app)))
-            {
-                log::warn!("failed to clear a toast group: {error}");
+            let group = HSTRING::from(thread_id);
+            for app_id in toast_history_app_ids(&app.config().identifier) {
+                if let Err(error) = history.RemoveGroupWithId(&group, &HSTRING::from(&app_id)) {
+                    log::warn!("failed to clear a toast group for {app_id}: {error}");
+                }
             }
         }
         Err(error) => log::warn!("failed to reach toast history: {error}"),
@@ -491,7 +500,7 @@ fn toast_app_id(app: &tauri::AppHandle) -> String {
     // identity remains stuck with the generic glyph even after registration.
     // A dedicated, stable toast identity starts with the correct assets while
     // leaving the shortcut/taskbar identity unchanged.
-    format!("{}.notifications", app.config().identifier)
+    dedicated_toast_app_id(&app.config().identifier)
 }
 
 #[cfg(target_os = "windows")]
@@ -666,5 +675,16 @@ mod tests {
         assert!(!should_preserve_legacy_opt_out(Some(true)));
         assert!(should_preserve_legacy_opt_out(Some(false)));
         assert!(!should_preserve_legacy_opt_out(None));
+    }
+
+    #[test]
+    fn toast_history_includes_dedicated_and_legacy_identities() {
+        assert_eq!(
+            toast_history_app_ids("io.github.kristofferr.carrier"),
+            [
+                "io.github.kristofferr.carrier.notifications".to_string(),
+                "io.github.kristofferr.carrier".to_string(),
+            ]
+        );
     }
 }
