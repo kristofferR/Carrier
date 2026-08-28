@@ -524,7 +524,7 @@ pub(crate) fn build_tray_with_menu(
     // Windows (the only other non-Linux target): full-colour icon or the
     // taskbar-tinted symbolic mark, per the Tray icon style setting.
     #[cfg(not(target_os = "macos"))]
-    let icon = windows_tray_image(app, icon_style);
+    let icon = windows_tray_image(app, icon_style, tray_icon_size());
     let builder = TrayIconBuilder::with_id("carrier-tray")
         .tooltip(APP_TITLE)
         .icon(icon)
@@ -732,21 +732,28 @@ fn tray_icon_size() -> usize {
 /// for the taskbar theme. A decode failure falls back to the colour icon so
 /// the tray is never invisible.
 #[cfg(target_os = "windows")]
-fn windows_tray_image(app: &tauri::AppHandle, icon_style: &str) -> tauri::image::Image<'static> {
+fn windows_tray_image(
+    app: &tauri::AppHandle,
+    icon_style: &str,
+    icon_size: usize,
+) -> tauri::image::Image<'static> {
     if icon_style == "symbolic" {
         match tauri::image::Image::from_bytes(include_bytes!("../icons/tray/carrier-symbolic.png"))
         {
             Ok(symbolic) => {
                 if let Some(bbox) = alpha_bbox(symbolic.rgba(), symbolic.width() as usize) {
-                    let size = tray_icon_size();
                     let alpha = resample_glyph_alpha(
                         symbolic.rgba(),
                         symbolic.width() as usize,
                         bbox,
-                        size,
+                        icon_size,
                     );
                     let rgba = colour_glyph(&alpha, taskbar_prefers_dark());
-                    return tauri::image::Image::new_owned(rgba, size as u32, size as u32);
+                    return tauri::image::Image::new_owned(
+                        rgba,
+                        icon_size as u32,
+                        icon_size as u32,
+                    );
                 }
                 log::warn!("symbolic tray asset is fully transparent; using colour");
             }
@@ -762,26 +769,37 @@ fn windows_tray_image(app: &tauri::AppHandle, icon_style: &str) -> tauri::image:
 }
 
 /// Apply the Windows tray icon style, re-setting the icon only when the
-/// (style, taskbar-theme) pair changes. This keeps the live-toggle path from
-/// `apply_settings` and the ~minutely re-check on the unread poll from
-/// flickering the tray on every call.
+/// (style, taskbar-theme, icon-size) tuple changes. This keeps the live-toggle
+/// path from `apply_settings` and the ~minutely re-check on the unread poll from
+/// flickering the tray on every call while still repairing a DPI/scale change.
 #[cfg(target_os = "windows")]
 pub(crate) fn set_windows_tray_icon_style(
     app: &tauri::AppHandle,
     tray: &PlatformTrayIcon,
     icon_style: &str,
 ) {
-    static LAST: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
-    let key = (icon_style.to_string(), taskbar_prefers_dark());
-    let mut last = LAST.lock().unwrap();
-    if last.as_ref() == Some(&key) {
-        return;
+    static LAST: std::sync::Mutex<Option<(String, bool, usize)>> = std::sync::Mutex::new(None);
+    let icon_size = tray_icon_size();
+    let key = (icon_style.to_string(), taskbar_prefers_dark(), icon_size);
+    // Publish the key before calling into the tray and never hold the cache
+    // lock across `set_icon`: tray setters are blocking dispatches to the main
+    // thread, and the main-thread unread listener takes this same cache — a
+    // caller holding it while waiting deadlocks the app (reproduced on
+    // Windows 11 by racing theme flips against unread emits). Two racing
+    // callers with different keys can transiently paint the older icon; the
+    // next theme or settings event self-heals.
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.as_ref() == Some(&key) {
+            return;
+        }
+        *last = Some(key);
     }
-    if let Err(error) = tray.set_icon(Some(windows_tray_image(app, icon_style))) {
+    if let Err(error) = tray.set_icon(Some(windows_tray_image(app, icon_style, icon_size))) {
         log::warn!("failed to update the Windows tray icon: {error}");
-        return;
+        // Don't leave a key cached for an icon that was never applied.
+        *LAST.lock().unwrap() = None;
     }
-    *last = Some(key);
 }
 
 #[cfg(target_os = "linux")]

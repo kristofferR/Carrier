@@ -94,25 +94,38 @@ pub(crate) fn refresh_unread_indicators(
         0
     };
     let state = app.state::<AppState>();
-    let tray = state.tray.lock().unwrap();
-    if let Some(tray) = tray.as_ref() {
-        let tooltip = if unread > 0 {
-            format!("{APP_TITLE} — {unread} unread")
-        } else {
-            APP_TITLE.to_string()
-        };
-        let _ = tray.set_tooltip(Some(&tooltip));
-        #[cfg(target_os = "linux")]
-        let _ = tray.set_unread(unread);
-        #[cfg(target_os = "macos")]
-        let _ = tray.set_title(tray_unread_title(settings, unread));
-        // Cheap re-check of the taskbar theme (the page re-emits the unread count
-        // at least ~minutely), so a Dark↔Light taskbar flip retints the symbolic
-        // tray within a minute without a registry watcher.
-        #[cfg(target_os = "windows")]
-        crate::tray::set_windows_tray_icon_style(app, tray, &settings.tray_icon_style);
+    let tooltip = if unread > 0 {
+        format!("{APP_TITLE} — {unread} unread")
+    } else {
+        APP_TITLE.to_string()
+    };
+    // Linux: the KSNI handle never touches the tao main thread (and owns the
+    // service, so it must not be cloned); working under the guard is safe.
+    #[cfg(target_os = "linux")]
+    {
+        let tray = state.tray.lock().unwrap();
+        if let Some(tray) = tray.as_ref() {
+            let _ = tray.set_tooltip(Some(&tooltip));
+            let _ = tray.set_unread(unread);
+        }
     }
-    drop(tray);
+    // macOS/Windows: tray setters are blocking dispatches to the main thread.
+    // Clone the reference-counted handle out and drop the guard before calling
+    // them — holding the mutex across the dispatch deadlocks against
+    // main-thread listeners that take the same mutex (rebuild_recent_menus).
+    #[cfg(not(target_os = "linux"))]
+    {
+        let tray = state.tray.lock().unwrap().clone();
+        if let Some(tray) = tray {
+            let _ = tray.set_tooltip(Some(&tooltip));
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_title(tray_unread_title(settings, unread));
+            // Cheap re-check of the taskbar theme alongside the registry
+            // watcher, so a flip retints even if the watcher ever stops.
+            #[cfg(target_os = "windows")]
+            crate::tray::set_windows_tray_icon_style(app, &tray, &settings.tray_icon_style);
+        }
+    }
 
     // LauncherEntry works independently of the tray and is honored by KDE's
     // task manager plus Ubuntu Dock/Dash-to-Dock.
@@ -201,16 +214,22 @@ fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
                     log::warn!("taskbar theme watcher stopped ({status})");
                     break;
                 }
-                // Apply from this thread, with no lock held across the call:
-                // set_icon is a blocking dispatch to the main thread, so
-                // wrapping this in run_on_main_thread (or holding a mutex the
-                // main thread may want) deadlocks the app — reproduced on
-                // Windows 11 with rapid theme flips.
-                let state = app.state::<AppState>();
-                let style = state.settings.lock().unwrap().tray_icon_style.clone();
-                let tray = state.tray.lock().unwrap().clone();
-                if let Some(tray) = tray {
-                    tray::set_windows_tray_icon_style(&app, &tray, &style);
+                // Queue the update and immediately re-arm the one-shot registry
+                // notification. Reading the effective theme in the queued task
+                // also collapses a burst of Personalize writes to its final
+                // value. Clone the tray handle out of the mutex before calling
+                // its setter so an off-main unread refresh cannot invert this
+                // lock against Tauri's main-thread dispatch.
+                let update_app = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    let state = update_app.state::<AppState>();
+                    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+                    let tray = state.tray.lock().unwrap().clone();
+                    if let Some(tray) = tray {
+                        tray::set_windows_tray_icon_style(&update_app, &tray, &style);
+                    }
+                }) {
+                    log::warn!("failed to queue taskbar theme update: {error}");
                 }
             }
             // SAFETY: closes the key opened above; the loop has exited.
