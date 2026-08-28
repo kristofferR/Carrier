@@ -184,6 +184,37 @@ fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
     }
 }
 
+/// Watch the notification area's own DPI independently of Carrier windows.
+/// Windows does not send a window scale event when only another monitor's
+/// scaling changes, including the monitor that owns the taskbar.
+#[cfg(target_os = "windows")]
+fn spawn_taskbar_dpi_watcher(app: tauri::AppHandle) {
+    const POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+    let spawned = std::thread::Builder::new()
+        .name("taskbar-dpi-watch".into())
+        .spawn(move || {
+            let mut last_size = tray::tray_icon_size();
+            loop {
+                std::thread::sleep(POLL_INTERVAL);
+                let size = tray::tray_icon_size();
+                if size == last_size {
+                    continue;
+                }
+                last_size = size;
+                let update_app = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    refresh_windows_tray_icon(&update_app);
+                }) {
+                    log::warn!("failed to queue taskbar DPI update: {error}");
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("failed to spawn the taskbar DPI watcher: {error}");
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
     use windows_sys::Win32::System::Registry::{
@@ -1142,6 +1173,7 @@ pub fn run() {
                 // flips (the unread-poll fallback only fires while the page
                 // emits, which a logged-out webview never does).
                 spawn_taskbar_theme_watcher(app.handle().clone());
+                spawn_taskbar_dpi_watcher(app.handle().clone());
             }
 
             #[cfg(target_os = "linux")]

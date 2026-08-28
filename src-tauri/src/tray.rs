@@ -715,15 +715,30 @@ fn taskbar_prefers_dark() -> bool {
     dark_taskbar_from_reg(read_system_uses_light_theme())
 }
 
-/// The pixel size Windows actually renders notification-area icons at (the
-/// system small-icon metric, which tracks display scaling). Rendering the
-/// glyph at exactly this size keeps it crisp — handing the shell a large
-/// image gets it badly downscaled.
+/// The pixel size Windows actually renders notification-area icons at. Query
+/// the shell taskbar's DPI rather than the calling window's, since they can be
+/// on different monitors. Rendering the glyph at exactly this size keeps it
+/// crisp — handing the shell a large image gets it badly downscaled.
 #[cfg(target_os = "windows")]
-fn tray_icon_size() -> usize {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
-    // SAFETY: a plain system-metric query with no pointers involved.
-    let px = unsafe { GetSystemMetrics(SM_CXSMICON) };
+pub(crate) fn tray_icon_size() -> usize {
+    use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, GetSystemMetrics, SM_CXSMICON};
+
+    // SAFETY: reads the shell taskbar HWND and its DPI without retaining either.
+    let taskbar = unsafe { FindWindowW(windows_sys::w!("Shell_TrayWnd"), std::ptr::null()) };
+    let dpi = if taskbar.is_null() {
+        0
+    } else {
+        // SAFETY: `taskbar` was returned by FindWindowW and is used immediately.
+        unsafe { GetDpiForWindow(taskbar) }
+    };
+    let px = if dpi == 0 {
+        // SAFETY: a plain system-metric query with no pointers involved.
+        unsafe { GetSystemMetrics(SM_CXSMICON) }
+    } else {
+        // SAFETY: a plain system-metric query for the taskbar's reported DPI.
+        unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) }
+    };
     px.max(16) as usize
 }
 
