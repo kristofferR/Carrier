@@ -201,15 +201,17 @@ fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
                     log::warn!("taskbar theme watcher stopped ({status})");
                     break;
                 }
-                let app = app.clone();
-                let _ = app.clone().run_on_main_thread(move || {
-                    let state = app.state::<AppState>();
-                    let style = state.settings.lock().unwrap().tray_icon_style.clone();
-                    let tray = state.tray.lock().unwrap();
-                    if let Some(tray) = tray.as_ref() {
-                        tray::set_windows_tray_icon_style(&app, tray, &style);
-                    }
-                });
+                // Apply from this thread, with no lock held across the call:
+                // set_icon is a blocking dispatch to the main thread, so
+                // wrapping this in run_on_main_thread (or holding a mutex the
+                // main thread may want) deadlocks the app — reproduced on
+                // Windows 11 with rapid theme flips.
+                let state = app.state::<AppState>();
+                let style = state.settings.lock().unwrap().tray_icon_style.clone();
+                let tray = state.tray.lock().unwrap().clone();
+                if let Some(tray) = tray {
+                    tray::set_windows_tray_icon_style(&app, &tray, &style);
+                }
             }
             // SAFETY: closes the key opened above; the loop has exited.
             unsafe { RegCloseKey(key) };
