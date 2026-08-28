@@ -175,6 +175,16 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
 /// (style, theme) pair, so the burst of registry writes a theme switch
 /// produces collapses to a single icon update.
 #[cfg(target_os = "windows")]
+fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+    let tray = state.tray.lock().unwrap().clone();
+    if let Some(tray) = tray {
+        tray::set_windows_tray_icon_style(app, &tray, &style);
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
@@ -222,12 +232,7 @@ fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
                 // lock against Tauri's main-thread dispatch.
                 let update_app = app.clone();
                 if let Err(error) = app.run_on_main_thread(move || {
-                    let state = update_app.state::<AppState>();
-                    let style = state.settings.lock().unwrap().tray_icon_style.clone();
-                    let tray = state.tray.lock().unwrap().clone();
-                    if let Some(tray) = tray {
-                        tray::set_windows_tray_icon_style(&update_app, &tray, &style);
-                    }
+                    refresh_windows_tray_icon(&update_app);
                 }) {
                     log::warn!("failed to queue taskbar theme update: {error}");
                 }
@@ -1880,6 +1885,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Carrier")
         .run(|app, event| {
+            // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
+            // Re-render on the native scale event even when Messenger is idle
+            // and therefore not emitting the unread fallback refresh.
+            #[cfg(target_os = "windows")]
+            if matches!(
+                &event,
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::ScaleFactorChanged { .. },
+                    ..
+                }
+            ) {
+                refresh_windows_tray_icon(app);
+            }
+
             if let tauri::RunEvent::Ready = event {
                 commands::spawn_automatic_update_checks(app.clone());
                 // macOS needs notification authorization (for banners + the
