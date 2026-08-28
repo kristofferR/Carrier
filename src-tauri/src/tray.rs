@@ -596,7 +596,7 @@ pub(crate) fn set_macos_tray_icon_style(
 #[cfg(any(target_os = "windows", test))]
 fn alpha_bbox(rgba: &[u8], width: usize) -> Option<(usize, usize, usize, usize)> {
     let mut bbox: Option<(usize, usize, usize, usize)> = None;
-    for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+    for (index, pixel) in rgba.as_chunks::<4>().0.iter().enumerate() {
         if pixel[3] == 0 {
             continue;
         }
@@ -885,7 +885,7 @@ mod tests {
     fn alpha_bbox_is_tight_and_none_when_transparent() {
         // 4×4 transparent image with opaque pixels at (1,1) and (2,3).
         let mut rgba = vec![0u8; 4 * 4 * 4];
-        rgba[(1 * 4 + 1) * 4 + 3] = 255;
+        rgba[(4 + 1) * 4 + 3] = 255; // (x, y) = (1, 1)
         rgba[(3 * 4 + 2) * 4 + 3] = 128;
         assert_eq!(alpha_bbox(&rgba, 4), Some((1, 1, 3, 4)));
         assert_eq!(alpha_bbox(&[0u8; 64], 4), None);
