@@ -26,6 +26,19 @@ use crate::tray::show_main;
 use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
 use crate::APP_TITLE;
 
+fn about_metadata(version: &str) -> AboutMetadata<'static> {
+    AboutMetadata {
+        name: Some("Carrier".into()),
+        version: Some(version.into()),
+        authors: Some(vec!["kristofferR".into()]),
+        comments: Some("A tiny, distraction-free desktop client for Facebook Messenger.".into()),
+        license: Some("MIT".into()),
+        website: Some("https://github.com/kristofferR/Carrier".into()),
+        website_label: Some("GitHub".into()),
+        ..Default::default()
+    }
+}
+
 pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let mi = |id: &str, label: &str, accel: Option<&str>| -> tauri::Result<MenuItem<tauri::Wry>> {
         let mut b = MenuItemBuilder::new(label).id(id);
@@ -36,8 +49,9 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     };
 
     let prefs = mi("preferences", "Settings…", Some("CmdOrCtrl+,"))?;
+    let about = about_metadata(&app.package_info().version.to_string());
     let app_menu = SubmenuBuilder::new(app, APP_TITLE)
-        .about(Some(AboutMetadata::default()))
+        .about(Some(about))
         .separator()
         .item(&prefs)
         .separator()
@@ -715,6 +729,25 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn about_dialog_has_visible_product_metadata() {
+        let metadata = about_metadata("1.12.0");
+
+        assert_eq!(metadata.name.as_deref(), Some("Carrier"));
+        assert_eq!(metadata.version.as_deref(), Some("1.12.0"));
+        assert_eq!(metadata.authors, Some(vec!["kristofferR".into()]));
+        assert_eq!(metadata.license.as_deref(), Some("MIT"));
+        assert_eq!(
+            metadata.comments.as_deref(),
+            Some("A tiny, distraction-free desktop client for Facebook Messenger.")
+        );
+        assert_eq!(
+            metadata.website.as_deref(),
+            Some("https://github.com/kristofferR/Carrier")
+        );
+        assert_eq!(metadata.website_label.as_deref(), Some("GitHub"));
+    }
 
     fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
         let source = include_str!("../../inject/src/messenger/features/context-menu.ts");
