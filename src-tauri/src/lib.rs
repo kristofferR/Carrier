@@ -1166,8 +1166,8 @@ pub fn run() {
                 if let Err(error) = app.deep_link().register("carrier") {
                     log::warn!("failed to register the carrier:// protocol handler: {error}");
                 }
-                // Give the AUMID a display name so portable-zip toasts (which have
-                // no installer-stamped shortcut) still show "Carrier".
+                // Register the toast display assets for installed and portable
+                // builds; the latter has no installer-stamped shortcut.
                 crate::windows::toast::init(app.handle());
                 // Retint the symbolic tray icon the moment the taskbar theme
                 // flips (the unread-poll fallback only fires while the page
@@ -1861,10 +1861,7 @@ pub fn run() {
                     // RemoveGroupWithId clears the whole conversation group in one
                     // OS-side call, so no per-id correlation is needed on Windows.
                     #[cfg(target_os = "windows")]
-                    crate::windows::toast::clear_thread_group(
-                        &thread_viewed_handle.config().identifier,
-                        &thread_id,
-                    );
+                    crate::windows::toast::clear_thread_group(&thread_viewed_handle, &thread_id);
                 });
             }
 

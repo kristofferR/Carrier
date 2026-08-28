@@ -20,6 +20,8 @@
 #[cfg(target_os = "windows")]
 use std::collections::VecDeque;
 #[cfg(target_os = "windows")]
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "windows")]
 use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
@@ -33,6 +35,8 @@ use ::windows::UI::Notifications::{
     NotificationSetting, ToastActivatedEventArgs, ToastDismissedEventArgs, ToastFailedEventArgs,
     ToastNotification, ToastNotificationManager, ToastNotifier,
 };
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 
 /// The page-controlled parts of a toast, already reduced to what the XML needs.
 /// `hex_id` is the 16-hex-char toast tag (also embedded in the launch args), so
@@ -148,7 +152,6 @@ pub(crate) fn parse_activation_args(args: &str) -> Option<ToastActivation> {
 /// (which outlive the call) can capture what they need.
 #[cfg(target_os = "windows")]
 pub(crate) struct WindowsToastOptions {
-    pub app_id: String,
     pub title: String,
     pub body: String,
     pub avatar: Option<String>,
@@ -325,7 +328,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     ))?;
 
     let notifier =
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(&opts.app_id))?;
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast_app_id(app)))?;
     log_notifications_disabled_once(&notifier);
     notifier.Show(&toast)?;
     remember_keep_alive(hex, group, toast);
@@ -405,11 +408,11 @@ fn log_notifications_disabled_once(notifier: &ToastNotifier) {
 /// clear-on-read and after a successful inline reply. The removal is OS-side, so
 /// it also clears toasts left from a previous run.
 #[cfg(target_os = "windows")]
-pub(crate) fn clear_thread_group(app_id: &str, thread_id: &str) {
+pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     match ToastNotificationManager::History() {
         Ok(history) => {
-            if let Err(error) =
-                history.RemoveGroupWithId(&HSTRING::from(thread_id), &HSTRING::from(app_id))
+            if let Err(error) = history
+                .RemoveGroupWithId(&HSTRING::from(thread_id), &HSTRING::from(toast_app_id(app)))
             {
                 log::warn!("failed to clear a toast group: {error}");
             }
@@ -419,23 +422,57 @@ pub(crate) fn clear_thread_group(app_id: &str, thread_id: &str) {
     forget_keep_alive_group(thread_id);
 }
 
-/// Register the AppUserModelID in `HKCU\Software\Classes\AppUserModelId\<aumid>`
-/// with a display name. NSIS installs already stamp the AUMID onto their
-/// shortcut, but the portable zip has no shortcut — without this its toasts show
-/// no app name. Idempotent, per-user, no admin.
+/// Register Carrier's dedicated toast AppUserModelID in
+/// `HKCU\Software\Classes\AppUserModelId\<aumid>` with its display assets.
+/// This works independently of the installed shortcut, so installed and
+/// portable builds follow the same path. Idempotent, per-user, no admin.
 #[cfg(target_os = "windows")]
 pub(crate) fn init(app: &tauri::AppHandle) {
-    let app_id = app.config().identifier.clone();
-    if let Err(error) = register_aumid(&app_id, "Carrier") {
+    let icon_path = match ensure_notification_icon(app) {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("failed to prepare the toast app icon: {error}");
+            return;
+        }
+    };
+    if let Err(error) = register_aumid(&toast_app_id(app), "Carrier", &icon_path) {
         log::warn!("failed to register the toast AppUserModelID: {error}");
     }
 }
 
 #[cfg(target_os = "windows")]
-fn register_aumid(aumid: &str, display_name: &str) -> Result<(), String> {
+fn toast_app_id(app: &tauri::AppHandle) -> String {
+    // Windows caches a notification identity's display assets after its first
+    // toast. Carrier previously used the main AUMID without an IconUri, so that
+    // identity remains stuck with the generic glyph even after registration.
+    // A dedicated, stable toast identity starts with the correct assets while
+    // leaving the shortcut/taskbar identity unchanged.
+    format!("{}.notifications", app.config().identifier)
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_notification_icon(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // The ICO carries exact 16/24/32/48px frames, avoiding a blurry downscale
+    // from the large app icon in Windows' compact toast header.
+    const ICON: &[u8] = include_bytes!("../../icons/icon.ico");
+    let directory = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join("notification-icon.ico");
+    if !matches!(std::fs::read(&path), Ok(existing) if existing == ICON) {
+        std::fs::write(&path, ICON).map_err(|error| error.to_string())?;
+    }
+    Ok(path)
+}
+
+#[cfg(target_os = "windows")]
+fn register_aumid(aumid: &str, display_name: &str, icon_path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
-        REG_OPTION_NON_VOLATILE, REG_SZ,
+        REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE,
     };
     let subkey: Vec<u16> = format!("Software\\Classes\\AppUserModelId\\{aumid}")
         .encode_utf16()
@@ -460,31 +497,43 @@ fn register_aumid(aumid: &str, display_name: &str) -> Result<(), String> {
     if status != 0 {
         return Err(format!("RegCreateKeyExW failed ({status})"));
     }
-    let name: Vec<u16> = "DisplayName"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    let data: Vec<u16> = display_name
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
-    // SAFETY: `data` is a NUL-terminated UTF-16 buffer; the byte length includes
-    // the terminator, as REG_SZ expects.
-    let set = unsafe {
-        RegSetValueExW(
-            key,
-            name.as_ptr(),
-            0,
-            REG_SZ,
-            data.as_ptr().cast(),
-            (data.len() * 2) as u32,
-        )
+    let set_string = |name: &str, data: Vec<u16>| {
+        let name_utf16: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `data` is a NUL-terminated UTF-16 buffer; the byte length
+        // includes the terminator, as REG_EXPAND_SZ expects.
+        let status = unsafe {
+            RegSetValueExW(
+                key,
+                name_utf16.as_ptr(),
+                0,
+                REG_EXPAND_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
+        (status == 0)
+            .then_some(())
+            .ok_or_else(|| format!("RegSetValueExW({name}) failed ({status})"))
     };
+    let result = set_string(
+        "DisplayName",
+        display_name
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect(),
+    )
+    .and_then(|()| {
+        set_string(
+            "IconUri",
+            icon_path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect(),
+        )
+    });
     unsafe { RegCloseKey(key) };
-    if set != 0 {
-        return Err(format!("RegSetValueExW failed ({set})"));
-    }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
