@@ -1474,7 +1474,6 @@ fn show_reply_failure_notification(app: &tauri::AppHandle) {
     crate::windows::toast::deliver_notification_windows(
         app,
         crate::windows::toast::WindowsToastOptions {
-            app_id: app.config().identifier.clone(),
             title: "Carrier".into(),
             body: "Reply not sent — opening the conversation".into(),
             avatar: None,
@@ -1598,7 +1597,7 @@ fn deliver_quick_reply(
                 .strip_prefix("/t/")
                 .and_then(|path| path.strip_suffix('/'))
             {
-                crate::windows::toast::clear_thread_group(&app.config().identifier, thread_id);
+                crate::windows::toast::clear_thread_group(&app, thread_id);
             }
         }
     } else {
@@ -1880,7 +1879,6 @@ pub(crate) fn show_message_notification(
         crate::windows::toast::deliver_notification_windows(
             &app,
             crate::windows::toast::WindowsToastOptions {
-                app_id: app.config().identifier.clone(),
                 title,
                 body,
                 avatar: image
@@ -2048,7 +2046,6 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         crate::windows::toast::deliver_notification_windows(
             &app,
             crate::windows::toast::WindowsToastOptions {
-                app_id: app.config().identifier.clone(),
                 title: title.to_string(),
                 body,
                 avatar: None,

@@ -94,25 +94,38 @@ pub(crate) fn refresh_unread_indicators(
         0
     };
     let state = app.state::<AppState>();
-    let tray = state.tray.lock().unwrap();
-    if let Some(tray) = tray.as_ref() {
-        let tooltip = if unread > 0 {
-            format!("{APP_TITLE} — {unread} unread")
-        } else {
-            APP_TITLE.to_string()
-        };
-        let _ = tray.set_tooltip(Some(&tooltip));
-        #[cfg(target_os = "linux")]
-        let _ = tray.set_unread(unread);
-        #[cfg(target_os = "macos")]
-        let _ = tray.set_title(tray_unread_title(settings, unread));
-        // Cheap re-check of the taskbar theme (the page re-emits the unread count
-        // at least ~minutely), so a Dark↔Light taskbar flip retints the symbolic
-        // tray within a minute without a registry watcher.
-        #[cfg(target_os = "windows")]
-        crate::tray::set_windows_tray_icon_style(app, tray, &settings.tray_icon_style);
+    let tooltip = if unread > 0 {
+        format!("{APP_TITLE} — {unread} unread")
+    } else {
+        APP_TITLE.to_string()
+    };
+    // Linux: the KSNI handle never touches the tao main thread (and owns the
+    // service, so it must not be cloned); working under the guard is safe.
+    #[cfg(target_os = "linux")]
+    {
+        let tray = state.tray.lock().unwrap();
+        if let Some(tray) = tray.as_ref() {
+            let _ = tray.set_tooltip(Some(&tooltip));
+            let _ = tray.set_unread(unread);
+        }
     }
-    drop(tray);
+    // macOS/Windows: tray setters are blocking dispatches to the main thread.
+    // Clone the reference-counted handle out and drop the guard before calling
+    // them — holding the mutex across the dispatch deadlocks against
+    // main-thread listeners that take the same mutex (rebuild_recent_menus).
+    #[cfg(not(target_os = "linux"))]
+    {
+        let tray = state.tray.lock().unwrap().clone();
+        if let Some(tray) = tray {
+            let _ = tray.set_tooltip(Some(&tooltip));
+            #[cfg(target_os = "macos")]
+            let _ = tray.set_title(tray_unread_title(settings, unread));
+            // Cheap re-check of the taskbar theme alongside the registry
+            // watcher, so a flip retints even if the watcher ever stops.
+            #[cfg(target_os = "windows")]
+            crate::tray::set_windows_tray_icon_style(app, &tray, &settings.tray_icon_style);
+        }
+    }
 
     // LauncherEntry works independently of the tray and is honored by KDE's
     // task manager plus Ubuntu Dock/Dash-to-Dock.
@@ -154,6 +167,112 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
             .as_deref()
             .map(|bytes| Image::new(bytes, OVERLAY_BADGE_SIZE, OVERLAY_BADGE_SIZE));
         let _ = window.set_overlay_icon(overlay);
+    }
+}
+
+/// Watch `HKCU\...\Themes\Personalize` and retint the symbolic tray icon when
+/// the taskbar theme flips. `set_windows_tray_icon_style` caches the last
+/// (style, theme) pair, so the burst of registry writes a theme switch
+/// produces collapses to a single icon update.
+#[cfg(target_os = "windows")]
+fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let style = state.settings.lock().unwrap().tray_icon_style.clone();
+    let tray = state.tray.lock().unwrap().clone();
+    if let Some(tray) = tray {
+        tray::set_windows_tray_icon_style(app, &tray, &style);
+    }
+}
+
+/// Watch the notification area's own DPI independently of Carrier windows.
+/// Windows does not send a window scale event when only another monitor's
+/// scaling changes, including the monitor that owns the taskbar.
+#[cfg(target_os = "windows")]
+fn spawn_taskbar_dpi_watcher(app: tauri::AppHandle) {
+    const POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+    let spawned = std::thread::Builder::new()
+        .name("taskbar-dpi-watch".into())
+        .spawn(move || {
+            let mut last_size = tray::tray_icon_size();
+            loop {
+                std::thread::sleep(POLL_INTERVAL);
+                let size = tray::tray_icon_size();
+                if size == last_size {
+                    continue;
+                }
+                last_size = size;
+                let update_app = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    refresh_windows_tray_icon(&update_app);
+                }) {
+                    log::warn!("failed to queue taskbar DPI update: {error}");
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("failed to spawn the taskbar DPI watcher: {error}");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
+        REG_NOTIFY_CHANGE_LAST_SET,
+    };
+    let spawned = std::thread::Builder::new()
+        .name("taskbar-theme-watch".into())
+        .spawn(move || {
+            let subkey: Vec<u16> =
+                "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
+            let mut key: HKEY = std::ptr::null_mut();
+            // SAFETY: opens a well-known HKCU subkey for notification only;
+            // the handle is closed on every exit path below.
+            let status = unsafe {
+                RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_NOTIFY, &mut key)
+            };
+            if status != 0 {
+                log::warn!("taskbar theme watcher could not open the Personalize key ({status})");
+                return;
+            }
+            loop {
+                // SAFETY: a synchronous (no event handle) blocking wait on the
+                // key opened above.
+                let status = unsafe {
+                    RegNotifyChangeKeyValue(
+                        key,
+                        0,
+                        REG_NOTIFY_CHANGE_LAST_SET,
+                        std::ptr::null_mut(),
+                        0,
+                    )
+                };
+                if status != 0 {
+                    log::warn!("taskbar theme watcher stopped ({status})");
+                    break;
+                }
+                // Queue the update and immediately re-arm the one-shot registry
+                // notification. Reading the effective theme in the queued task
+                // also collapses a burst of Personalize writes to its final
+                // value. Clone the tray handle out of the mutex before calling
+                // its setter so an off-main unread refresh cannot invert this
+                // lock against Tauri's main-thread dispatch.
+                let update_app = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    refresh_windows_tray_icon(&update_app);
+                }) {
+                    log::warn!("failed to queue taskbar theme update: {error}");
+                }
+            }
+            // SAFETY: closes the key opened above; the loop has exited.
+            unsafe { RegCloseKey(key) };
+        });
+    if let Err(error) = spawned {
+        log::warn!("failed to spawn the taskbar theme watcher: {error}");
     }
 }
 
@@ -1047,9 +1166,14 @@ pub fn run() {
                 if let Err(error) = app.deep_link().register("carrier") {
                     log::warn!("failed to register the carrier:// protocol handler: {error}");
                 }
-                // Give the AUMID a display name so portable-zip toasts (which have
-                // no installer-stamped shortcut) still show "Carrier".
+                // Register the toast display assets for installed and portable
+                // builds; the latter has no installer-stamped shortcut.
                 crate::windows::toast::init(app.handle());
+                // Retint the symbolic tray icon the moment the taskbar theme
+                // flips (the unread-poll fallback only fires while the page
+                // emits, which a logged-out webview never does).
+                spawn_taskbar_theme_watcher(app.handle().clone());
+                spawn_taskbar_dpi_watcher(app.handle().clone());
             }
 
             #[cfg(target_os = "linux")]
@@ -1737,10 +1861,7 @@ pub fn run() {
                     // RemoveGroupWithId clears the whole conversation group in one
                     // OS-side call, so no per-id correlation is needed on Windows.
                     #[cfg(target_os = "windows")]
-                    crate::windows::toast::clear_thread_group(
-                        &thread_viewed_handle.config().identifier,
-                        &thread_id,
-                    );
+                    crate::windows::toast::clear_thread_group(&thread_viewed_handle, &thread_id);
                 });
             }
 
@@ -1793,6 +1914,20 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Carrier")
         .run(|app, event| {
+            // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
+            // Re-render on the native scale event even when Messenger is idle
+            // and therefore not emitting the unread fallback refresh.
+            #[cfg(target_os = "windows")]
+            if matches!(
+                &event,
+                tauri::RunEvent::WindowEvent {
+                    event: tauri::WindowEvent::ScaleFactorChanged { .. },
+                    ..
+                }
+            ) {
+                refresh_windows_tray_icon(app);
+            }
+
             if let tauri::RunEvent::Ready = event {
                 commands::spawn_automatic_update_checks(app.clone());
                 // macOS needs notification authorization (for banners + the

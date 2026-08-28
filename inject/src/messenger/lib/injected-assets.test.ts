@@ -73,7 +73,7 @@ describe("hand-maintained injected assets", () => {
 
     expect(settings).toContain("const IS_LINUX = !IS_MAC && !IS_WINDOWS");
     expect(settings).toContain('...(IS_MAC || IS_LINUX || IS_WINDOWS ? ["tray_icon_style"] : [])');
-    expect(settings).toContain('[["color", "Color"], ["symbolic", "Symbolic"]]');
+    expect(settings).toContain('[["color", "Color"], ["symbolic", "Monochrome"]]');
   });
 
   test("notification polish is configurable, with a taskbar flash on Windows", async () => {

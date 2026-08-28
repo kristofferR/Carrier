@@ -659,55 +659,71 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // reach a Dock-less app), so force it on then.
     let want_tray = wants_tray(s);
     let state = app.state::<AppState>();
-    let needs_tray = {
-        let tray = state.tray.lock().unwrap();
-        want_tray && tray.is_none()
-    };
-    let new_tray_menu = if needs_tray {
-        build_tray_menu(app).ok()
+    let has_tray = state.tray.lock().unwrap().is_some();
+    if !want_tray && has_tray {
+        // Removing the only way back, so make sure the main window is
+        // visible before dropping the tray icon.
+        show_main(app);
+    }
+    // Build the replacement tray entirely outside the mutex: tray creation is
+    // a blocking dispatch to the main thread, and a main-thread listener
+    // (menu::rebuild_recent_menus) takes this same mutex — holding it across
+    // the dispatch deadlocks the app. apply_settings runs serialized behind
+    // the settings worker, so nothing else reconciles the tray concurrently.
+    let built_tray = if want_tray && !has_tray {
+        build_tray_menu(app)
+            .ok()
+            .and_then(|menu| build_tray_with_menu(app, menu, &s.tray_icon_style).ok())
     } else {
         None
     };
-    let mut tray = state.tray.lock().unwrap();
-    match (want_tray, tray.is_some()) {
-        (true, false) => {
-            if let Some(menu) = new_tray_menu {
-                if let Ok(t) = build_tray_with_menu(app, menu, &s.tray_icon_style) {
-                    *tray = Some(t);
+    let removed_tray = {
+        let mut tray = state.tray.lock().unwrap();
+        match (want_tray, tray.is_some()) {
+            (true, false) => {
+                if built_tray.is_some() {
+                    *tray = built_tray;
                 }
+                None
             }
+            (false, true) => tray.take(),
+            _ => None,
         }
-        (false, true) => {
-            // Removing the only way back, so make sure the main window is
-            // visible before dropping the tray icon.
-            show_main(app);
-            #[cfg(not(target_os = "linux"))]
-            {
-                // `build()` also registers a clone in Tauri's resource table,
-                // so dropping our handle alone leaves the icon visible.
-                let _ = app.remove_tray_by_id("carrier-tray");
-            }
-            // The Linux KSNI service is owned exclusively by this handle and
-            // shuts down here; Tauri's handle was removed from its table above.
-            *tray = None;
+    };
+    if removed_tray.is_some() {
+        #[cfg(not(target_os = "linux"))]
+        {
+            // `build()` also registers a clone in Tauri's resource table,
+            // so dropping our handle alone leaves the icon visible.
+            let _ = app.remove_tray_by_id("carrier-tray");
         }
-        _ => {}
+        // The Linux KSNI service is owned exclusively by this handle and shuts
+        // down when it drops here — outside the lock, like every other call
+        // that can block on another thread.
+        drop(removed_tray);
     }
     #[cfg(target_os = "linux")]
-    if let Some(tray) = tray.as_ref() {
-        let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
-        let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+    {
+        let tray = state.tray.lock().unwrap();
+        if let Some(tray) = tray.as_ref() {
+            let dark_panel = state.linux_panel_dark.load(Ordering::Acquire);
+            let _ = tray.set_icon_style(&s.tray_icon_style, dark_panel);
+        }
     }
     #[cfg(target_os = "macos")]
-    if let Some(tray) = tray.as_ref() {
-        let _ = set_macos_tray_icon_style(app, tray, &s.tray_icon_style);
+    {
+        // Clone-out for the same reason as above: the style setter dispatches
+        // to the main thread.
+        let tray = state.tray.lock().unwrap().clone();
+        if let Some(tray) = tray {
+            let _ = set_macos_tray_icon_style(app, &tray, &s.tray_icon_style);
+        }
     }
     // Whether a tray icon is actually present after the reconcile above (e.g.
     // build_tray may have failed). macOS uses this to avoid hiding the Dock with
     // no tray to fall back on.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    let tray_available = tray.is_some();
-    drop(tray);
+    let tray_available = state.tray.lock().unwrap().is_some();
 
     crate::refresh_unread_indicators(
         app,
