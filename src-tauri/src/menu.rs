@@ -5,11 +5,14 @@ use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use serde::Deserialize;
+#[cfg(not(target_os = "macos"))]
+use tauri::menu::{CheckMenuItem, MenuItemKind, Submenu};
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::actions::{run_app_action, validated_thread_path, AppAction, NEW_CONVERSATION_JS};
@@ -24,6 +27,7 @@ use crate::settings::{
 use crate::tray::build_tray_menu;
 use crate::tray::show_main;
 use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
+#[cfg(target_os = "macos")]
 use crate::APP_TITLE;
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
@@ -39,16 +43,22 @@ fn about_metadata(version: &str) -> AboutMetadata<'static> {
     }
 }
 
-pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let mi = |id: &str, label: &str, accel: Option<&str>| -> tauri::Result<MenuItem<tauri::Wry>> {
-        let mut b = MenuItemBuilder::new(label).id(id);
-        if let Some(a) = accel {
-            b = b.accelerator(a);
-        }
-        b.build(app)
-    };
+fn menu_item(
+    app: &tauri::AppHandle,
+    id: &str,
+    label: &str,
+    accelerator: Option<&str>,
+) -> tauri::Result<MenuItem<tauri::Wry>> {
+    let mut builder = MenuItemBuilder::new(label).id(id);
+    if let Some(accelerator) = accelerator {
+        builder = builder.accelerator(accelerator);
+    }
+    builder.build(app)
+}
 
-    let prefs = mi("preferences", "Settings…", Some("CmdOrCtrl+,"))?;
+#[cfg(target_os = "macos")]
+pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let prefs = menu_item(app, "preferences", "Settings…", Some("CmdOrCtrl+,"))?;
     let about = about_metadata(&app.package_info().version.to_string());
     let app_menu = SubmenuBuilder::new(app, APP_TITLE)
         .about(Some(about))
@@ -60,12 +70,13 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .quit()
         .build()?;
 
-    let new_conversation = mi(
+    let new_conversation = menu_item(
+        app,
         "new_conversation",
         "New Conversation",
         Some("CmdOrCtrl+Shift+N"),
     )?;
-    let new_window = mi("new_window", "New Window", Some("CmdOrCtrl+N"))?;
+    let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
     let file = SubmenuBuilder::new(app, "File")
         .item(&new_conversation)
         .item(&new_window)
@@ -73,7 +84,8 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .close_window()
         .build()?;
 
-    let paste_match = mi(
+    let paste_match = menu_item(
+        app,
         "paste_match_style",
         "Paste and Match Style",
         Some("CmdOrCtrl+Shift+Alt+V"),
@@ -89,36 +101,40 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .select_all()
         .build()?;
 
-    let reload = mi("reload", "Reload", Some("CmdOrCtrl+R"))?;
-    let clear_cache = mi(
+    let reload = menu_item(app, "reload", "Reload", Some("CmdOrCtrl+R"))?;
+    let clear_cache = menu_item(
+        app,
         "clear_cache",
         "Clear Cache && Restart",
         Some("CmdOrCtrl+Shift+Backspace"),
     )?;
-    let zreset = mi("zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
-    let zin = mi("zoom_in", "Zoom In", Some("CmdOrCtrl+="))?;
-    let zout = mi("zoom_out", "Zoom Out", Some("CmdOrCtrl+-"))?;
-    let theme_sys = mi("theme_system", "System", None)?;
-    let theme_light = mi("theme_light", "Light", None)?;
-    let theme_dark = mi("theme_dark", "Dark", None)?;
+    let zreset = menu_item(app, "zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
+    let zin = menu_item(app, "zoom_in", "Zoom In", Some("CmdOrCtrl+="))?;
+    let zout = menu_item(app, "zoom_out", "Zoom Out", Some("CmdOrCtrl+-"))?;
+    let theme_sys = menu_item(app, "theme_system", "System", None)?;
+    let theme_light = menu_item(app, "theme_light", "Light", None)?;
+    let theme_dark = menu_item(app, "theme_dark", "Dark", None)?;
     let theme_menu = SubmenuBuilder::new(app, "Theme")
         .item(&theme_sys)
         .item(&theme_light)
         .item(&theme_dark)
         .build()?;
-    let toggle_info = mi(
+    let toggle_info = menu_item(
+        app,
         "toggle_info",
         "Toggle Conversation Information",
         Some("CmdOrCtrl+Shift+I"),
     )?;
     // Shift+N belongs to New Conversation, so "hide" gets Shift+H.
-    let hide_names = mi(
+    let hide_names = menu_item(
+        app,
         "hide_names",
         "Hide Names && Avatars",
         Some("CmdOrCtrl+Shift+H"),
     )?;
-    let aot = mi("always_on_top", "Toggle Always on Top", None)?;
-    let devtools = mi(
+    let aot = menu_item(app, "always_on_top", "Toggle Always on Top", None)?;
+    let devtools = menu_item(
+        app,
         "devtools",
         "Toggle Developer Tools",
         Some("CmdOrCtrl+Alt+I"),
@@ -142,7 +158,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         b.build()?
     };
 
-    let maximize = mi("maximize", "Zoom", None)?;
+    let maximize = menu_item(app, "maximize", "Zoom", None)?;
     let window = SubmenuBuilder::new(app, "Window")
         .minimize()
         .item(&maximize)
@@ -150,12 +166,13 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .close_window()
         .build()?;
 
-    let shortcuts = mi(
+    let shortcuts = menu_item(
+        app,
         "keyboard_shortcuts",
         "Keyboard Shortcuts",
         Some("CmdOrCtrl+/"),
     )?;
-    let report_issue = mi("report_issue", "Report an Issue…", None)?;
+    let report_issue = menu_item(app, "report_issue", "Report an Issue…", None)?;
     let help = SubmenuBuilder::new(app, "Help")
         .item(&shortcuts)
         .separator()
@@ -165,6 +182,215 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window, &help])
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let check_item = |id: &str,
+                      label: &str,
+                      checked: bool,
+                      accelerator: Option<&str>|
+     -> tauri::Result<CheckMenuItem<tauri::Wry>> {
+        CheckMenuItem::with_id(app, id, label, true, checked, accelerator)
+    };
+
+    let new_conversation = menu_item(
+        app,
+        "new_conversation",
+        "New Conversation",
+        Some("CmdOrCtrl+Shift+N"),
+    )?;
+    let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
+    let close_window = menu_item(app, "close_window", "Close Window", Some("CmdOrCtrl+W"))?;
+    let preferences_label = if cfg!(target_os = "windows") {
+        "Settings…"
+    } else {
+        "Preferences…"
+    };
+    let preferences = menu_item(app, "preferences", preferences_label, Some("CmdOrCtrl+,"))?;
+    let quit_label = if cfg!(target_os = "windows") {
+        "Exit"
+    } else {
+        "Quit"
+    };
+    let quit_accelerator = if cfg!(target_os = "linux") {
+        Some("Ctrl+Q")
+    } else {
+        None
+    };
+    let quit = menu_item(app, "quit", quit_label, quit_accelerator)?;
+    let file_builder = SubmenuBuilder::new(app, "File")
+        .id("file")
+        .item(&new_conversation)
+        .item(&new_window)
+        .separator()
+        .item(&close_window);
+    #[cfg(target_os = "windows")]
+    let file_builder = file_builder
+        .separator()
+        .item(&preferences)
+        .separator()
+        .item(&quit);
+    #[cfg(target_os = "linux")]
+    let file_builder = file_builder.separator().item(&quit);
+    let file = file_builder.build()?;
+
+    let paste_match = menu_item(
+        app,
+        "paste_match_style",
+        "Paste and Match Style",
+        Some("CmdOrCtrl+Shift+Alt+V"),
+    )?;
+    #[cfg(target_os = "windows")]
+    let edit = SubmenuBuilder::new(app, "Edit")
+        .id("edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .item(&paste_match)
+        .separator()
+        .select_all()
+        .build()?;
+    #[cfg(target_os = "linux")]
+    let edit = {
+        let undo = menu_item(app, "edit_undo", "Undo", Some("Ctrl+Z"))?;
+        let redo = menu_item(app, "edit_redo", "Redo", Some("Ctrl+Shift+Z"))?;
+        let cut = menu_item(app, "edit_cut", "Cut", Some("Ctrl+X"))?;
+        let copy = menu_item(app, "edit_copy", "Copy", Some("Ctrl+C"))?;
+        let paste = menu_item(app, "edit_paste", "Paste", Some("Ctrl+V"))?;
+        let select_all = menu_item(app, "edit_select_all", "Select All", Some("Ctrl+A"))?;
+        SubmenuBuilder::new(app, "Edit")
+            .id("edit")
+            .item(&undo)
+            .item(&redo)
+            .separator()
+            .item(&cut)
+            .item(&copy)
+            .item(&paste)
+            .item(&paste_match)
+            .separator()
+            .item(&select_all)
+            .separator()
+            .item(&preferences)
+            .build()?
+    };
+
+    let reload = menu_item(app, "reload", "Reload", Some("CmdOrCtrl+R"))?;
+    let conversation_info = menu_item(
+        app,
+        "toggle_info",
+        "Conversation Information",
+        Some("CmdOrCtrl+Shift+I"),
+    )?;
+    let hide_names = check_item(
+        "hide_names",
+        "Hide Names and Avatars",
+        settings.hide_names_avatars,
+        Some("CmdOrCtrl+Shift+H"),
+    )?;
+    let always_on_top = check_item(
+        "always_on_top",
+        "Always on Top",
+        settings.always_on_top,
+        None,
+    )?;
+    let zoom_in = menu_item(app, "zoom_in", "Zoom In", Some("CmdOrCtrl+="))?;
+    let zoom_out = menu_item(app, "zoom_out", "Zoom Out", Some("CmdOrCtrl+-"))?;
+    let actual_size = menu_item(app, "zoom_reset", "Actual Size", Some("CmdOrCtrl+0"))?;
+    let theme_system = check_item("theme_system", "System", settings.theme == "system", None)?;
+    let theme_light = check_item("theme_light", "Light", settings.theme == "light", None)?;
+    let theme_dark = check_item("theme_dark", "Dark", settings.theme == "dark", None)?;
+    let theme = SubmenuBuilder::new(app, "Theme")
+        .id("theme")
+        .item(&theme_system)
+        .item(&theme_light)
+        .item(&theme_dark)
+        .build()?;
+    let devtools = menu_item(
+        app,
+        "devtools",
+        "Toggle Developer Tools",
+        Some("CmdOrCtrl+Alt+I"),
+    )?;
+    let view_builder = SubmenuBuilder::new(app, "View")
+        .id("view")
+        .item(&reload)
+        .separator()
+        .item(&conversation_info)
+        .item(&hide_names)
+        .item(&always_on_top)
+        .separator()
+        .item(&zoom_in)
+        .item(&zoom_out)
+        .item(&actual_size)
+        .separator()
+        .item(&theme);
+    #[cfg(debug_assertions)]
+    let view_builder = view_builder.separator().item(&devtools);
+    let _ = &devtools;
+    let view = view_builder.build()?;
+
+    let shortcuts = menu_item(
+        app,
+        "keyboard_shortcuts",
+        "Keyboard Shortcuts",
+        Some("CmdOrCtrl+/"),
+    )?;
+    let report_issue = menu_item(app, "report_issue", "Report an Issue…", None)?;
+    let clear_cache = menu_item(
+        app,
+        "clear_cache",
+        "Clear Cache and Restart…",
+        Some("CmdOrCtrl+Shift+Backspace"),
+    )?;
+    let about = about_metadata(&app.package_info().version.to_string());
+    let help = SubmenuBuilder::new(app, "Help")
+        .id("help")
+        .item(&shortcuts)
+        .item(&report_issue)
+        .separator()
+        .item(&clear_cache)
+        .separator()
+        .about_with_text("About Carrier", Some(about))
+        .build()?;
+
+    Menu::with_items(app, &[&file, &edit, &view, &help])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_check_item(submenu: &Submenu<tauri::Wry>, id: &str, checked: bool) {
+    if let Some(MenuItemKind::Check(item)) = submenu.get(id) {
+        if let Err(error) = item.set_checked(checked) {
+            log::warn!("failed to update native menu item {id}: {error}");
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sync_setting_checks(app: &tauri::AppHandle, settings: &Settings) {
+    let Some(menu) = app.menu() else {
+        return;
+    };
+    let Some(MenuItemKind::Submenu(view)) = menu.get("view") else {
+        return;
+    };
+
+    set_check_item(&view, "hide_names", settings.hide_names_avatars);
+    set_check_item(&view, "always_on_top", settings.always_on_top);
+
+    let Some(MenuItemKind::Submenu(theme)) = view.get("theme") else {
+        return;
+    };
+    set_check_item(&theme, "theme_system", settings.theme == "system");
+    set_check_item(&theme, "theme_light", settings.theme == "light");
+    set_check_item(&theme, "theme_dark", settings.theme == "dark");
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn sync_setting_checks(_app: &tauri::AppHandle, _settings: &Settings) {}
+
 /// The focused Messenger window (a `main`/`win-*` window), falling back to
 /// `main`. Used so menu actions affect the window the user is actually looking
 /// at rather than always `main`. The local settings window is excluded.
@@ -173,6 +399,16 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
         .into_iter()
         .find(|(label, w)| label.as_str() != "settings" && w.is_focused().unwrap_or(false))
         .map(|(_, w)| w)
+        .or_else(|| app.get_webview_window("main"))
+}
+
+/// The window that owns keyboard focus, including Settings. Editing commands
+/// and Close Window must follow focus; fall back to the main Messenger window
+/// when the platform does not report one.
+fn focused_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
+    app.webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false))
         .or_else(|| app.get_webview_window("main"))
 }
 
@@ -192,12 +428,12 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
             // Build the next snapshot without publishing it in memory. A failed
             // or superseded disk write must not leave runtime state ahead of
             // persistence.
-            let (prev_theme, s) = {
+            let (previous, s) = {
                 let settings = state.settings.lock().unwrap();
-                let prev_theme = settings.theme.clone();
+                let previous = settings.clone();
                 let mut next = settings.clone();
                 f(&mut next);
-                (prev_theme, next)
+                (previous, next)
             };
             match save_settings(&worker_app, &s) {
                 Ok(SaveOutcome::Written) => {
@@ -205,12 +441,15 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
                     apply_settings(&worker_app, &s);
                     // macOS needs a window rebuild to re-theme the title bar;
                     // other platforms already re-themed the chrome live.
-                    recreate_on_theme_change(&worker_app, &prev_theme, &s.theme);
+                    recreate_on_theme_change(&worker_app, &previous.theme, &s.theme);
                 }
                 Ok(SaveOutcome::Superseded) => {
+                    let current = state.settings.lock().unwrap().clone();
+                    sync_setting_checks(&worker_app, &current);
                     log::warn!("native menu settings update was superseded");
                 }
                 Err(e) => {
+                    sync_setting_checks(&worker_app, &previous);
                     log::error!("failed to save settings: {e}");
                 }
             }
@@ -218,6 +457,78 @@ fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send 
         .await
         {
             log::error!("native menu settings worker failed: {e}");
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn linux_editing_command(id: &str) -> Option<&'static str> {
+    match id {
+        "edit_undo" => Some("Undo"),
+        "edit_redo" => Some("Redo"),
+        "edit_cut" => Some("Cut"),
+        "edit_copy" => Some("Copy"),
+        "edit_paste" => Some("Paste"),
+        "paste_match_style" => Some("PasteAsPlainText"),
+        "edit_select_all" => Some("SelectAll"),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn execute_linux_editing_command(app: &tauri::AppHandle, command: &'static str) {
+    let Some(window) = focused_window(app) else {
+        return;
+    };
+    if let Err(error) = window.with_webview(move |platform_webview| {
+        use webkit2gtk::WebViewExt;
+        platform_webview.inner().execute_editing_command(command);
+    }) {
+        log::warn!("failed to execute native editing command {command}: {error}");
+    }
+}
+
+#[cfg(any(not(target_os = "linux"), test))]
+fn paste_plain_text_script(text: &str) -> String {
+    let text = serde_json::to_string(text).expect("serializing a string cannot fail");
+    format!("document.execCommand('insertText', false, {text});")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn paste_plain_text(app: &tauri::AppHandle) {
+    let text = match app.clipboard().read_text() {
+        Ok(text) => text,
+        Err(error) => {
+            log::warn!("failed to read clipboard text: {error}");
+            return;
+        }
+    };
+    if let Some(window) = target_window(app) {
+        let _ = window.eval(paste_plain_text_script(&text));
+    }
+}
+
+fn confirm_clear_cache(app: &tauri::AppHandle) {
+    let app_handle = app.clone();
+    let mut dialog = app
+        .dialog()
+        .message("This clears Carrier's Messenger browsing data, signs you out, and restarts the app. Continue?")
+        .title("Clear Cache and Restart")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Clear and Restart".into(),
+            "Cancel".into(),
+        ));
+    if let Some(window) = target_window(app) {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |confirmed| {
+        if !confirmed {
+            return;
+        }
+        match schedule_webview_data_clear(&app_handle) {
+            Ok(()) => app_handle.restart(),
+            Err(error) => log::warn!("failed to schedule cache clear: {error}"),
         }
     });
 }
@@ -265,6 +576,12 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         return;
     }
 
+    #[cfg(target_os = "linux")]
+    if let Some(command) = linux_editing_command(event.id().as_ref()) {
+        execute_linux_editing_command(app, command);
+        return;
+    }
+
     let eval = |js: &str| {
         if let Some(w) = target_window(app) {
             let _ = w.eval(js);
@@ -279,10 +596,8 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "zoom_in" => eval("window.__carrierZoomIn && window.__carrierZoomIn()"),
         "zoom_out" => eval("window.__carrierZoomOut && window.__carrierZoomOut()"),
         "zoom_reset" => eval("window.__carrierZoomReset && window.__carrierZoomReset()"),
-        "paste_match_style" => eval(
-            "navigator.clipboard && navigator.clipboard.readText().then(function (t) { \
-             document.execCommand('insertText', false, t); })",
-        ),
+        #[cfg(not(target_os = "linux"))]
+        "paste_match_style" => paste_plain_text(app),
         "theme_system" => mutate_settings(app, |s| s.theme = "system".into()),
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
@@ -333,10 +648,13 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 let _ = build_app_window(&app, &format!("win-{n}"), &s);
             });
         }
-        "clear_cache" => match schedule_webview_data_clear(app) {
-            Ok(()) => app.restart(),
-            Err(e) => log::warn!("failed to schedule cache clear: {e}"),
-        },
+        "close_window" => {
+            if let Some(window) = focused_window(app) {
+                let _ = window.close();
+            }
+        }
+        "quit" => app.exit(0),
+        "clear_cache" => confirm_clear_cache(app),
         "always_on_top" => mutate_settings(app, |s| s.always_on_top = !s.always_on_top),
         "devtools" =>
         {
@@ -747,6 +1065,32 @@ mod tests {
             Some("https://github.com/kristofferR/Carrier")
         );
         assert_eq!(metadata.website_label.as_deref(), Some("GitHub"));
+    }
+
+    #[test]
+    fn plain_text_paste_escapes_clipboard_content_for_javascript() {
+        let script = paste_plain_text_script("'); window.pwned = true; //\nnext");
+
+        assert_eq!(
+            script,
+            "document.execCommand('insertText', false, \"'); window.pwned = true; //\\nnext\");"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_edit_menu_uses_webkit_editing_commands() {
+        assert_eq!(linux_editing_command("edit_undo"), Some("Undo"));
+        assert_eq!(linux_editing_command("edit_redo"), Some("Redo"));
+        assert_eq!(linux_editing_command("edit_cut"), Some("Cut"));
+        assert_eq!(linux_editing_command("edit_copy"), Some("Copy"));
+        assert_eq!(linux_editing_command("edit_paste"), Some("Paste"));
+        assert_eq!(
+            linux_editing_command("paste_match_style"),
+            Some("PasteAsPlainText")
+        );
+        assert_eq!(linux_editing_command("edit_select_all"), Some("SelectAll"));
+        assert_eq!(linux_editing_command("unknown"), None);
     }
 
     fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {

@@ -605,6 +605,7 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// the hotkey helper coalesces already-matched or startup-pending state before
 /// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
+    crate::menu::sync_setting_checks(app, s);
     apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
