@@ -19,6 +19,7 @@ const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const PING_RESPONSE_GRACE: Duration = Duration::from_millis(250);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
+const RESUME_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 const PROTECTED_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MISSING_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -96,6 +97,7 @@ enum WatchdogAction {
 #[derive(Debug, Default)]
 struct WatchdogState {
     last_heartbeat_at: Option<Duration>,
+    system_resumed_at: Option<Duration>,
     navigation_started_at: Option<Duration>,
     missing_content_since: Option<Duration>,
     blank_reload_attempted: bool,
@@ -123,6 +125,7 @@ impl WatchdogState {
             self.realtime_bad_since = None;
         }
         self.last_heartbeat_at = Some(now);
+        self.system_resumed_at = None;
         self.navigation_started_at = None;
         self.protected = protected;
         match content_present {
@@ -156,6 +159,16 @@ impl WatchdogState {
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
+        if let Some(system_resumed_at) = self.system_resumed_at {
+            let stalled_for = now.saturating_sub(system_resumed_at);
+            return if stalled_for < RESUME_HEARTBEAT_TIMEOUT {
+                WatchdogAction::None
+            } else if self.protected && stalled_for < PROTECTED_HEARTBEAT_TIMEOUT {
+                WatchdogAction::Protected
+            } else {
+                WatchdogAction::Reload
+            };
+        }
         if let Some(navigation_started_at) = self.navigation_started_at {
             return if now.saturating_sub(navigation_started_at) < NAVIGATION_TIMEOUT {
                 WatchdogAction::None
@@ -219,6 +232,18 @@ impl WatchdogState {
         self.navigation_started_at = None;
     }
 
+    fn system_resumed(&mut self, now: Duration) {
+        // Pre-sleep ages say nothing about the newly woken renderer. Give it a
+        // fresh heartbeat window, then fall back to a reload if it cannot
+        // answer. Recovery attempt budgets remain intact across sleep.
+        self.last_heartbeat_at = None;
+        self.system_resumed_at = Some(now);
+        self.navigation_started_at = None;
+        self.missing_content_since = None;
+        self.realtime_bad_since = None;
+        self.realtime_error_page = false;
+    }
+
     fn blank_reload_started(&mut self, now: Duration) {
         self.blank_reload_attempted = true;
         self.missing_content_since = None;
@@ -238,6 +263,7 @@ impl WatchdogState {
 
     fn disarm(&mut self) {
         self.last_heartbeat_at = None;
+        self.system_resumed_at = None;
         self.navigation_started_at = None;
         self.missing_content_since = None;
         self.blank_reload_attempted = false;
@@ -333,10 +359,29 @@ impl WebviewWatchdog {
         let label = window.label().to_string();
         tauri::async_runtime::spawn(async move {
             let mut next_recovery_attempt = Duration::ZERO;
+            #[cfg(target_os = "macos")]
+            let mut resume_generation = crate::macos::power::resume_generation();
             loop {
                 tokio::time::sleep(PING_INTERVAL).await;
                 if !alive.load(Ordering::Acquire) {
                     break;
+                }
+
+                // A macOS maintenance dark-wake briefly runs app processes
+                // without waking the display or restoring useful connectivity.
+                // AppKit owns the real sleep boundary; do not wake or recover
+                // the renderer until the user's display comes back.
+                #[cfg(target_os = "macos")]
+                if crate::macos::power::is_system_sleeping() {
+                    continue;
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let current_generation = crate::macos::power::resume_generation();
+                    if current_generation != resume_generation {
+                        resume_generation = current_generation;
+                        state.lock().unwrap().system_resumed(started_at.elapsed());
+                    }
                 }
 
                 // Native eval wakes a throttled renderer. The event response proves
@@ -541,6 +586,40 @@ mod tests {
             WatchdogAction::None
         );
         assert_eq!(state.action(HEARTBEAT_TIMEOUT), WatchdogAction::Reload);
+    }
+
+    #[test]
+    fn system_resume_discards_pre_sleep_ages_and_waits_for_a_fresh_heartbeat() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(
+            Duration::ZERO,
+            false,
+            Some(false),
+            Some(RealtimeSignal::Stale),
+        );
+        let resumed_at = MISSING_CONTENT_TIMEOUT + REALTIME_BAD_TIMEOUT;
+        state.system_resumed(resumed_at);
+
+        assert_eq!(state.action(resumed_at), WatchdogAction::None);
+        assert_eq!(
+            state.action(resumed_at + RESUME_HEARTBEAT_TIMEOUT - Duration::from_millis(1)),
+            WatchdogAction::None
+        );
+        assert_eq!(
+            state.action(resumed_at + RESUME_HEARTBEAT_TIMEOUT),
+            WatchdogAction::Reload
+        );
+
+        state.heartbeat(
+            resumed_at + Duration::from_secs(1),
+            false,
+            Some(true),
+            Some(RealtimeSignal::Ok),
+        );
+        assert_eq!(
+            state.action(resumed_at + RESUME_HEARTBEAT_TIMEOUT),
+            WatchdogAction::None
+        );
     }
 
     #[test]

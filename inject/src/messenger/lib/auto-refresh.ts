@@ -16,7 +16,11 @@ export class AutoRefreshWatchdog {
   private lastHeartbeatAt: number;
   private lastFreshAt: number;
 
-  constructor(now: number, active: boolean) {
+  constructor(
+    now: number,
+    active: boolean,
+    private readonly detectResumeFromClockGap = true,
+  ) {
     this.lastFreshAt = now;
     this.lastHeartbeatAt = now;
     this.inactiveSince = active ? null : now;
@@ -39,7 +43,7 @@ export class AutoRefreshWatchdog {
     this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
 
     const transition = this.setActive(active, now);
-    if (heartbeatGap >= RESUME_GAP_MS) return "resume";
+    if (this.detectResumeFromClockGap && heartbeatGap >= RESUME_GAP_MS) return "resume";
     if (transition) return transition;
 
     if (

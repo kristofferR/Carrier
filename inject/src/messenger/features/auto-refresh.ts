@@ -18,7 +18,12 @@ export function initAutoRefresh() {
   // lifecycle signal that makes its live connection suspect. Drafts and calls
   // are always protected, even for a forced catch-up after sleep or refocus.
   const pageIsActive = () => !document.hidden && document.hasFocus();
-  const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive());
+  const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  // macOS has an exact AppKit sleep/display-wake signal. Its maintenance
+  // dark-wakes create the same wall-clock gap as a real resume, so never infer
+  // one from page timers there.
+  const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac);
+  let systemSleeping = false;
   let pending = false;
   let reloadWhileActive = false;
   let pendingReason: RefreshReason | "online" = "background";
@@ -63,6 +68,7 @@ export function initAutoRefresh() {
     }
   };
   const realtimeStatus = () => {
+    if (systemSleeping) return "pending";
     if (!isMessengerContentPath(location.pathname)) return "pending";
     if (onFacebookErrorPage()) return "error";
     return realtimeRecovery.status(Date.now());
@@ -135,6 +141,10 @@ export function initAutoRefresh() {
   const maybeReload = () => {
     timer = undefined;
     if (!pending) return;
+    if (systemSleeping) {
+      clearPending();
+      return;
+    }
     if (pageIsActive() && !reloadWhileActive) {
       clearPending();
       return;
@@ -167,6 +177,7 @@ export function initAutoRefresh() {
     location.reload();
   };
   const schedule = (delay: number, reason: RefreshReason | "online", allowWhileActive = false) => {
+    if (systemSleeping) return;
     if (pageIsActive() && !allowWhileActive) {
       return;
     }
@@ -219,6 +230,14 @@ export function initAutoRefresh() {
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
   window.addEventListener("online", () => schedule(1000, "online", true));
+  window.addEventListener("carrier:system-sleep", () => {
+    systemSleeping = true;
+    clearPending();
+  });
+  window.addEventListener("carrier:system-resume", () => {
+    systemSleeping = false;
+    if (isMessengerContentPath(location.pathname)) schedule(1000, "resume", true);
+  });
 
   // Reload shortly after a new-message notification, but only while the window
   // is unfocused — that's when Facebook's live sync throttles and the view
@@ -236,6 +255,10 @@ export function initAutoRefresh() {
   // transport for disconnects, stuck reconnects, and half-open silence — before
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
+    if (systemSleeping) {
+      emitHeartbeat();
+      return;
+    }
     realtime.check();
     // No source reports stale when none can observe the transport at all (the
     // worker bridge is gone and the page socket was never replaced), so that

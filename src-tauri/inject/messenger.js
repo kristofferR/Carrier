@@ -181,7 +181,8 @@
   var RESUME_GAP_MS = 2e4;
   var elapsed = (now, since) => Math.max(0, now - since);
   var AutoRefreshWatchdog = class {
-    constructor(now, active) {
+    constructor(now, active, detectResumeFromClockGap = true) {
+      __publicField(this, "detectResumeFromClockGap", detectResumeFromClockGap);
       __publicField(this, "inactiveSince");
       __publicField(this, "lastHeartbeatAt");
       __publicField(this, "lastFreshAt");
@@ -203,7 +204,7 @@
       const heartbeatGap = elapsed(now, this.lastHeartbeatAt);
       this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
       const transition = this.setActive(active, now);
-      if (heartbeatGap >= RESUME_GAP_MS) return "resume";
+      if (this.detectResumeFromClockGap && heartbeatGap >= RESUME_GAP_MS) return "resume";
       if (transition) return transition;
       if (!active && this.inactiveSince !== null && elapsed(now, this.inactiveSince) >= PERIODIC_REFRESH_MS) {
         return "background";
@@ -480,7 +481,9 @@
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
     const pageIsActive = () => !document.hidden && document.hasFocus();
-    const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive());
+    const isMac4 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+    const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac4);
+    let systemSleeping = false;
     let pending = false;
     let reloadWhileActive = false;
     let pendingReason = "background";
@@ -523,6 +526,7 @@
       }
     };
     const realtimeStatus = () => {
+      if (systemSleeping) return "pending";
       if (!isMessengerContentPath(location.pathname)) return "pending";
       if (onFacebookErrorPage()) return "error";
       return realtimeRecovery.status(Date.now());
@@ -578,6 +582,10 @@
     const maybeReload = () => {
       timer = void 0;
       if (!pending) return;
+      if (systemSleeping) {
+        clearPending();
+        return;
+      }
       if (pageIsActive() && !reloadWhileActive) {
         clearPending();
         return;
@@ -607,6 +615,7 @@
       location.reload();
     };
     const schedule = (delay, reason, allowWhileActive = false) => {
+      if (systemSleeping) return;
       if (pageIsActive() && !allowWhileActive) {
         return;
       }
@@ -656,12 +665,24 @@
     window.addEventListener("blur", noteLifecycle);
     document.addEventListener("visibilitychange", noteLifecycle);
     window.addEventListener("online", () => schedule(1e3, "online", true));
+    window.addEventListener("carrier:system-sleep", () => {
+      systemSleeping = true;
+      clearPending();
+    });
+    window.addEventListener("carrier:system-resume", () => {
+      systemSleeping = false;
+      if (isMessengerContentPath(location.pathname)) schedule(1e3, "resume", true);
+    });
     window.__carrierOnNotification = () => {
       if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
         schedule(4e3, "background");
       }
     };
     setInterval(() => {
+      if (systemSleeping) {
+        emitHeartbeat();
+        return;
+      }
       realtime.check();
       if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
         schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);

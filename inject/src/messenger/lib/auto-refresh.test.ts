@@ -38,6 +38,12 @@ describe("AutoRefreshWatchdog", () => {
     expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBe("resume");
   });
 
+  test("can defer resume detection to a platform-native wake signal", () => {
+    const watchdog = new AutoRefreshWatchdog(0, true, false);
+
+    expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBeNull();
+  });
+
   test("does not mistake ordinary heartbeats or a backwards clock for resume", () => {
     const watchdog = new AutoRefreshWatchdog(10_000, true);
 
