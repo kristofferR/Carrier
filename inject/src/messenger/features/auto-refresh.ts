@@ -4,7 +4,11 @@
 // catch stale connections. Every recovery defers around drafts and calls.
 
 import { diag, invoke } from "../bridge";
-import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
+import {
+  AutoRefreshWatchdog,
+  canReplacePendingRefresh,
+  type ScheduledRefreshReason,
+} from "../lib/auto-refresh";
 import {
   looksLikeFacebookErrorPage,
   REALTIME_UNOBSERVED_SETTLE_MS,
@@ -26,7 +30,7 @@ export function initAutoRefresh() {
   let systemSleeping = false;
   let pending = false;
   let reloadWhileActive = false;
-  let pendingReason: RefreshReason | "online" = "background";
+  let pendingReason: ScheduledRefreshReason = "background";
   let timer: number | undefined;
   const RECOVERY_MIN_GAP_MS = 60_000;
   const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
@@ -176,8 +180,9 @@ export function initAutoRefresh() {
     pending = false;
     location.reload();
   };
-  const schedule = (delay: number, reason: RefreshReason | "online", allowWhileActive = false) => {
+  const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
     if (systemSleeping) return;
+    if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
     if (pageIsActive() && !allowWhileActive) {
       return;
     }

@@ -179,6 +179,7 @@
   var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
   var NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1e3;
   var RESUME_GAP_MS = 2e4;
+  var canReplacePendingRefresh = (pending, next) => pending !== "resume" || next === "resume";
   var elapsed = (now, since) => Math.max(0, now - since);
   var AutoRefreshWatchdog = class {
     constructor(now, active, detectResumeFromClockGap = true) {
@@ -616,6 +617,7 @@
     };
     const schedule = (delay, reason, allowWhileActive = false) => {
       if (systemSleeping) return;
+      if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
       if (pageIsActive() && !allowWhileActive) {
         return;
       }

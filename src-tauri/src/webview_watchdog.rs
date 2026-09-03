@@ -390,6 +390,10 @@ impl WebviewWatchdog {
                 let _ =
                     watchdog_window.eval(format!("window.__carrierHeartbeat?.({watchdog_id});"));
                 tokio::time::sleep(PING_RESPONSE_GRACE).await;
+                #[cfg(target_os = "macos")]
+                if crate::macos::power::is_system_sleeping() {
+                    continue;
+                }
 
                 let action = state.lock().unwrap().action(started_at.elapsed());
                 match action {
@@ -427,6 +431,10 @@ impl WebviewWatchdog {
                             .await,
                             Ok(Ok(Ok(())))
                         );
+                        #[cfg(target_os = "macos")]
+                        if crate::macos::power::is_system_sleeping() {
+                            continue;
+                        }
                         if !reachable {
                             next_recovery_attempt = now + REACHABILITY_RETRY;
                             continue;
