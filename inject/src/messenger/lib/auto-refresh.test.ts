@@ -1,10 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import {
   AutoRefreshWatchdog,
+  canReplacePendingRefresh,
   NOTIFICATION_REFRESH_GAP_MS,
   PERIODIC_REFRESH_MS,
   RESUME_GAP_MS,
 } from "./auto-refresh";
+
+describe("canReplacePendingRefresh", () => {
+  test("keeps a system-resume recovery ahead of lower-priority requests", () => {
+    expect(canReplacePendingRefresh("resume", "realtime")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "online")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "background")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "foreground")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "resume")).toBe(true);
+  });
+
+  test("lets ordinary pending requests be replaced", () => {
+    expect(canReplacePendingRefresh(null, "resume")).toBe(true);
+    expect(canReplacePendingRefresh("realtime", "resume")).toBe(true);
+    expect(canReplacePendingRefresh("background", "realtime")).toBe(true);
+  });
+});
 
 describe("AutoRefreshWatchdog", () => {
   test("refreshes a visible but unfocused window after the background limit", () => {
@@ -36,6 +53,12 @@ describe("AutoRefreshWatchdog", () => {
 
     expect(watchdog.heartbeat(true, RESUME_GAP_MS - 1)).toBeNull();
     expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBe("resume");
+  });
+
+  test("can defer resume detection to a platform-native wake signal", () => {
+    const watchdog = new AutoRefreshWatchdog(0, true, false);
+
+    expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBeNull();
   });
 
   test("does not mistake ordinary heartbeats or a backwards clock for resume", () => {

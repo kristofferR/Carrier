@@ -3,6 +3,12 @@ export const NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1000;
 export const RESUME_GAP_MS = 20_000;
 
 export type RefreshReason = "background" | "foreground" | "realtime" | "resume";
+export type ScheduledRefreshReason = RefreshReason | "online";
+
+export const canReplacePendingRefresh = (
+  pending: ScheduledRefreshReason | null,
+  next: ScheduledRefreshReason,
+) => pending !== "resume" || next === "resume";
 
 const elapsed = (now: number, since: number) => Math.max(0, now - since);
 
@@ -16,7 +22,11 @@ export class AutoRefreshWatchdog {
   private lastHeartbeatAt: number;
   private lastFreshAt: number;
 
-  constructor(now: number, active: boolean) {
+  constructor(
+    now: number,
+    active: boolean,
+    private readonly detectResumeFromClockGap = true,
+  ) {
     this.lastFreshAt = now;
     this.lastHeartbeatAt = now;
     this.inactiveSince = active ? null : now;
@@ -39,7 +49,7 @@ export class AutoRefreshWatchdog {
     this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
 
     const transition = this.setActive(active, now);
-    if (heartbeatGap >= RESUME_GAP_MS) return "resume";
+    if (this.detectResumeFromClockGap && heartbeatGap >= RESUME_GAP_MS) return "resume";
     if (transition) return transition;
 
     if (
