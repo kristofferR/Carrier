@@ -4,12 +4,12 @@ use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
 use gtk::prelude::GtkWindowExt;
 use tauri::Manager;
-use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
+use webkit6::{prelude::WebViewExt, CacheModel};
 
 use crate::settings::AppState;
 
 /// Transfer the compositor-granted GlobalShortcuts activation to GTK before
-/// showing the window. GTK 3.24 forwards a real startup ID to
+/// showing the window. GTK 4 forwards a real startup ID to
 /// xdg-activation-v1 on Wayland and preserves its established X11 behavior.
 pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str) {
     if token.is_empty() {

@@ -481,7 +481,7 @@ fn execute_linux_editing_command(app: &tauri::AppHandle, command: &'static str) 
         return;
     };
     if let Err(error) = window.with_webview(move |platform_webview| {
-        use webkit2gtk::WebViewExt;
+        use webkit6::prelude::WebViewExt;
         platform_webview.inner().execute_editing_command(command);
     }) {
         log::warn!("failed to execute native editing command {command}: {error}");
