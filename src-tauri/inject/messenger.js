@@ -7188,6 +7188,68 @@ ${text}`)) {
     setTimeout(() => apply(true), 4e3);
   }
 
+  // inject/src/messenger/lib/media-viewer.ts
+  var MEDIA_VIEWER_ATTR = "data-carrier-media-viewer";
+  var DIALOG = '[role="dialog"]';
+  var HIDDEN = '[hidden], [aria-hidden="true"], [inert]';
+  function isMediaViewerShape(shape) {
+    if (shape.excluded || !shape.overlay || !shape.hasMedia) return false;
+    if (!shape.hasDownload && !shape.hasVideoControls) return false;
+    return coversViewport(shape.rect, shape.viewport);
+  }
+  function coversViewport(rect, viewport) {
+    const visible = intersectImageClips(rect, viewport);
+    const width = viewport.right - viewport.left;
+    const height = viewport.bottom - viewport.top;
+    return width > 0 && height > 0 && visible.right - visible.left >= width * 0.75 && visible.bottom - visible.top >= height * 0.7;
+  }
+  function isVisible(element) {
+    if (element.closest(HIDDEN)) return false;
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.visibility === "visible" && rect.width > 0 && rect.height > 0;
+  }
+  function isMediaViewerDialog(dialog) {
+    if (!isVisible(dialog)) return false;
+    const viewport = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
+    const rect = dialog.getBoundingClientRect();
+    if (!coversViewport(rect, viewport)) return false;
+    let overlay = dialog.getAttribute("aria-modal") === "true";
+    let excluded = !!dialog.closest("[data-carrier-shortcuts-overlay]");
+    for (let ancestor = dialog; ancestor; ancestor = ancestor.parentElement) {
+      const position = getComputedStyle(ancestor).position;
+      if (position === "fixed" || position === "absolute") overlay = true;
+    }
+    const owns = (element) => element.closest(DIALOG) === dialog;
+    excluded || (excluded = [...dialog.querySelectorAll('[role="navigation"], [contenteditable="true"]')].some(
+      owns
+    ));
+    if (excluded || !overlay) return false;
+    const media = [
+      ...dialog.querySelectorAll("img, video")
+    ].filter((element) => {
+      if (!owns(element) || !isVisible(element)) return false;
+      const bounds = element.getBoundingClientRect();
+      const visible = intersectImageClips(intersectImageClips(bounds, rect), viewport);
+      const width = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
+      const height = (visible.bottom - visible.top) / Math.min(rect.height, viewport.bottom);
+      return width > 0 && height > 0 && (width >= 0.15 && height >= 0.15 || width >= 0.5 || height >= 0.5);
+    });
+    return isMediaViewerShape({
+      rect,
+      viewport,
+      overlay,
+      excluded,
+      hasMedia: media.length > 0,
+      hasDownload: [...dialog.querySelectorAll("a[download]")].some(
+        (element) => owns(element) && isVisible(element)
+      ),
+      hasVideoControls: media.some(
+        (element) => element instanceof HTMLVideoElement && element.controls
+      )
+    });
+  }
+
   // inject/src/messenger/lib/viewer-controls.ts
   var SAFE_TOP = 8;
   var MAX_OFFSET = 64;
@@ -7198,7 +7260,7 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/viewer-controls.ts
-  var DIALOG = 'div[role="dialog"][aria-label]:not([hidden] *)';
+  var DIALOG2 = '[role="dialog"]';
   var BANNER = 'div[role="banner"]';
   var CONTROL = 'a[href], button, [role="button"]';
   var BANNER_ATTR = "data-carrier-media-controls";
@@ -7230,34 +7292,55 @@ ${text}`)) {
   };
   function initViewerControls() {
     let frame = 0;
+    let viewers = /* @__PURE__ */ new Set();
+    let markedControls = /* @__PURE__ */ new Set();
+    let observedDialogs = /* @__PURE__ */ new Set();
     const refresh = () => {
       frame = 0;
-      const previouslyMarked = new Set(
-        document.querySelectorAll(`[${BANNER_ATTR}], [${ACTIONS_ATTR}]`)
-      );
-      const dialog = document.querySelector(DIALOG);
-      if (dialog) {
+      const dialogs = new Set(document.querySelectorAll(DIALOG2));
+      for (const dialog of observedDialogs) {
+        if (!dialogs.has(dialog)) resizeObserver.unobserve(dialog);
+      }
+      for (const dialog of dialogs) {
+        if (!observedDialogs.has(dialog)) resizeObserver.observe(dialog);
+      }
+      observedDialogs = dialogs;
+      const nextViewers = new Set([...dialogs].filter(isMediaViewerDialog));
+      for (const dialog of viewers) {
+        if (!nextViewers.has(dialog)) dialog.removeAttribute(MEDIA_VIEWER_ATTR);
+      }
+      for (const dialog of nextViewers) {
+        if (!dialog.hasAttribute(MEDIA_VIEWER_ATTR)) dialog.setAttribute(MEDIA_VIEWER_ATTR, "");
+      }
+      viewers = nextViewers;
+      const previouslyMarked = markedControls;
+      markedControls = /* @__PURE__ */ new Set();
+      if (viewers.size) {
         for (const banner of document.querySelectorAll(BANNER)) {
           if (applyOffset(
             banner,
             visibleControls(banner).map((rect) => rect.top),
             BANNER_ATTR
           )) {
-            previouslyMarked.delete(banner);
+            markedControls.add(banner);
           }
         }
-        for (const download of dialog.querySelectorAll("a[download]")) {
-          const group = actionGroupFor(download, dialog);
-          if (applyOffset(
-            group,
-            visibleControls(group).map((rect) => rect.top),
-            ACTIONS_ATTR
-          )) {
-            previouslyMarked.delete(group);
+        for (const dialog of viewers) {
+          for (const download of dialog.querySelectorAll("a[download]")) {
+            if (download.closest(DIALOG2) !== dialog) continue;
+            const group = actionGroupFor(download, dialog);
+            if (applyOffset(
+              group,
+              visibleControls(group).map((rect) => rect.top),
+              ACTIONS_ATTR
+            )) {
+              markedControls.add(group);
+            }
           }
         }
       }
       for (const element of previouslyMarked) {
+        if (markedControls.has(element)) continue;
         element.removeAttribute(BANNER_ATTR);
         element.removeAttribute(ACTIONS_ATTR);
         element.style.removeProperty(OFFSET);
@@ -7266,10 +7349,30 @@ ${text}`)) {
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(refresh);
     };
-    new MutationObserver(schedule).observe(document.documentElement, {
+    const resizeObserver = new ResizeObserver(schedule);
+    new MutationObserver((records) => {
+      if (records.some(
+        (record) => record.type === "childList" || record.target instanceof Element && (record.target.matches(DIALOG2) || record.target instanceof HTMLElement && observedDialogs.has(record.target) || record.target.closest(DIALOG2) || record.target.querySelector(DIALOG2))
+      ))
+        schedule();
+    }).observe(document.documentElement, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true,
+      attributeFilter: [
+        "hidden",
+        "aria-hidden",
+        "inert",
+        "role",
+        "aria-modal",
+        "class",
+        "style",
+        "download",
+        "controls"
+      ]
     });
+    document.addEventListener("load", schedule, true);
+    document.addEventListener("loadedmetadata", schedule, true);
     window.addEventListener("resize", schedule, { passive: true });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) schedule();
