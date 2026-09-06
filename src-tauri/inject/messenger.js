@@ -1525,6 +1525,17 @@
     schedule();
   }
 
+  // inject/src/messenger/lib/dom-roots.ts
+  function connectedRoots(roots) {
+    return [...roots].filter((root) => {
+      if (!root.isConnected) return false;
+      for (let parent = root.parentElement; parent; parent = parent.parentElement) {
+        if (roots.has(parent)) return false;
+      }
+      return true;
+    });
+  }
+
   // inject/src/messenger/features/download-anchors.ts
   var stripDlTarget = (a) => {
     const el = a;
@@ -1542,7 +1553,7 @@
   var sweepTimer = 0;
   var runSweeps = () => {
     sweepTimer = 0;
-    const roots = [...queuedSweepRoots];
+    const roots = connectedRoots(queuedSweepRoots);
     queuedSweepRoots.clear();
     for (const root of roots) {
       if (!root.isConnected) continue;
@@ -6235,14 +6246,16 @@ ${text}`)) {
   // inject/src/messenger/features/settings-button.ts
   var SLOT_ATTR = "data-carrier-settings-slot";
   var BUTTON_ATTR = "data-carrier-settings-button";
+  function isOverflowButton(button) {
+    return button.matches('button, [role="button"]') && isMessengerHeaderOverflowControl(button.querySelector("svg path")?.getAttribute("d") || "");
+  }
   function findOverflowButton() {
     const buttons = document.querySelectorAll(
       `[role="button"]:not([${BUTTON_ATTR}]), button:not([${BUTTON_ATTR}])`
     );
     let iconFallback = null;
     for (const button of buttons) {
-      const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
-      if (!isMessengerHeaderOverflowControl(iconPath)) continue;
+      if (!isOverflowButton(button)) continue;
       const rect = button.getBoundingClientRect();
       if (rect.width < 28 || rect.height < 28) continue;
       if (!iconFallback || rect.top < iconFallback.getBoundingClientRect().top) {
@@ -6303,9 +6316,17 @@ ${text}`)) {
   }
   function initSettingsButton() {
     let scheduled = false;
+    let mounted;
     const ensureButton = () => {
       scheduled = false;
       if (!location.pathname.startsWith("/messages")) return;
+      if (mounted?.slot.isConnected && mounted.overflow.isConnected && isOverflowButton(mounted.overflow)) {
+        const placement2 = placementFor(mounted.overflow);
+        const rect = mounted.overflow.getBoundingClientRect();
+        if (placement2 && rect.width >= 28 && rect.height >= 28 && mounted.slot.parentElement === placement2.row && mounted.slot.nextElementSibling === placement2.before)
+          return;
+      }
+      mounted = void 0;
       const overflow = findOverflowButton();
       if (!overflow) return;
       const placement = placementFor(overflow);
@@ -6316,6 +6337,7 @@ ${text}`)) {
       if (slot.parentElement !== placement.row || slot.nextElementSibling !== placement.before) {
         placement.row.insertBefore(slot, placement.before);
       }
+      mounted = { slot, overflow };
     };
     const schedule = () => {
       if (scheduled) return;
@@ -6326,7 +6348,9 @@ ${text}`)) {
       schedule();
       new MutationObserver(schedule).observe(document.documentElement, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["role", "d"]
       });
     };
     if (document.readyState === "loading") {
@@ -7621,9 +7645,12 @@ ${text}`)) {
       if (!frame) frame = requestAnimationFrame(refresh);
     };
     const resizeObserver = new ResizeObserver(schedule);
+    const affectsControls = (element) => !!element.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element.contains(control));
     new MutationObserver((records) => {
       if (records.some(
-        (record) => record.type === "childList" || record.target instanceof Element && (record.target.matches(DIALOG2) || record.target instanceof HTMLElement && observedDialogs.has(record.target) || record.target.closest(DIALOG2) || record.target.querySelector(DIALOG2))
+        (record) => record.target instanceof Element && affectsControls(record.target) || record.type === "childList" && [...record.addedNodes, ...record.removedNodes].some(
+          (node) => node instanceof Element && (affectsControls(node) || node.querySelector(`${DIALOG2}, ${BANNER}`))
+        )
       ))
         schedule();
     }).observe(document.documentElement, {
@@ -7642,8 +7669,11 @@ ${text}`)) {
         "controls"
       ]
     });
-    document.addEventListener("load", schedule, true);
-    document.addEventListener("loadedmetadata", schedule, true);
+    const mediaLoaded = (event) => {
+      if (event.target instanceof Element && event.target.closest(DIALOG2)) schedule();
+    };
+    document.addEventListener("load", mediaLoaded, true);
+    document.addEventListener("loadedmetadata", mediaLoaded, true);
     window.addEventListener("resize", schedule, { passive: true });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) schedule();
