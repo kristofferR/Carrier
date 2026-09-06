@@ -27,14 +27,14 @@ html:has(body [role="navigation"] [role="grid"]) {
   --header-height: 0px !important;
 }
 
-body:not(:has(div[role="dialog"][aria-label]:not([hidden] *))) div[role="banner"] {
+body:not(:has([data-carrier-media-viewer])) div[role="banner"] {
   display: none !important;
 }
 
 /* Media viewer open: bring back a slim header so its controls are reachable. */
-:root:has(body div[role="dialog"][aria-label]:not([hidden] *)),
-:root.__fb-light-mode:has(body div[role="dialog"][aria-label]:not([hidden] *)),
-:root.__fb-dark-mode:has(body div[role="dialog"][aria-label]:not([hidden] *)) {
+:root:has(body [data-carrier-media-viewer]),
+:root.__fb-light-mode:has(body [data-carrier-media-viewer]),
+:root.__fb-dark-mode:has(body [data-carrier-media-viewer]) {
   --header-height: 56px !important;
 }
 
@@ -43,7 +43,7 @@ body:not(:has(div[role="dialog"][aria-label]:not([hidden] *))) div[role="banner"
    platforms/window sizes. messenger.js measures the visible controls and
    supplies only the downward offset needed to retain an 8px safe inset. Use
    the individual translate property so Facebook's own transforms survive. */
-body:has(div[role="dialog"][aria-label]:not([hidden] *))
+body:has([data-carrier-media-viewer])
   :is(
     div[role="banner"][data-carrier-media-controls],
     [data-carrier-media-actions]
@@ -105,7 +105,7 @@ div[role="banner"] div[role="navigation"] {
 }
 
 /* Remove the bright focus ring inside the media viewer. */
-div[role="dialog"][aria-label] {
+[data-carrier-media-viewer] {
   --focus-ring-shadow-default: none !important;
 }
 

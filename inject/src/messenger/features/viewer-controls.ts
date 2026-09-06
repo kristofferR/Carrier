@@ -1,6 +1,7 @@
+import { isMediaViewerDialog, MEDIA_VIEWER_ATTR } from "../lib/media-viewer";
 import { viewerControlOffset } from "../lib/viewer-controls";
 
-const DIALOG = 'div[role="dialog"][aria-label]:not([hidden] *)';
+const DIALOG = '[role="dialog"]';
 const BANNER = 'div[role="banner"]';
 const CONTROL = 'a[href], button, [role="button"]';
 const BANNER_ATTR = "data-carrier-media-controls";
@@ -49,15 +50,32 @@ const actionGroupFor = (download: HTMLElement, dialog: HTMLElement) => {
 
 export function initViewerControls() {
   let frame = 0;
+  let viewers = new Set<HTMLElement>();
+  let markedControls = new Set<HTMLElement>();
+  let observedDialogs = new Set<HTMLElement>();
 
   const refresh = () => {
     frame = 0;
-    const previouslyMarked = new Set(
-      document.querySelectorAll<HTMLElement>(`[${BANNER_ATTR}], [${ACTIONS_ATTR}]`),
-    );
+    const dialogs = new Set(document.querySelectorAll<HTMLElement>(DIALOG));
+    for (const dialog of observedDialogs) {
+      if (!dialogs.has(dialog)) resizeObserver.unobserve(dialog);
+    }
+    for (const dialog of dialogs) {
+      if (!observedDialogs.has(dialog)) resizeObserver.observe(dialog);
+    }
+    observedDialogs = dialogs;
+    const nextViewers = new Set([...dialogs].filter(isMediaViewerDialog));
+    for (const dialog of viewers) {
+      if (!nextViewers.has(dialog)) dialog.removeAttribute(MEDIA_VIEWER_ATTR);
+    }
+    for (const dialog of nextViewers) {
+      if (!dialog.hasAttribute(MEDIA_VIEWER_ATTR)) dialog.setAttribute(MEDIA_VIEWER_ATTR, "");
+    }
+    viewers = nextViewers;
+    const previouslyMarked = markedControls;
+    markedControls = new Set();
 
-    const dialog = document.querySelector<HTMLElement>(DIALOG);
-    if (dialog) {
+    if (viewers.size) {
       for (const banner of document.querySelectorAll<HTMLElement>(BANNER)) {
         if (
           applyOffset(
@@ -66,7 +84,7 @@ export function initViewerControls() {
             BANNER_ATTR,
           )
         ) {
-          previouslyMarked.delete(banner);
+          markedControls.add(banner);
         }
       }
 
@@ -74,21 +92,25 @@ export function initViewerControls() {
       // the dialog rather than in the banner. Find that group structurally
       // from the locale-independent `download` attribute and move it as one
       // unit, preserving spacing and hover transforms on both controls.
-      for (const download of dialog.querySelectorAll<HTMLElement>("a[download]")) {
-        const group = actionGroupFor(download, dialog);
-        if (
-          applyOffset(
-            group,
-            visibleControls(group).map((rect) => rect.top),
-            ACTIONS_ATTR,
-          )
-        ) {
-          previouslyMarked.delete(group);
+      for (const dialog of viewers) {
+        for (const download of dialog.querySelectorAll<HTMLElement>("a[download]")) {
+          if (download.closest(DIALOG) !== dialog) continue;
+          const group = actionGroupFor(download, dialog);
+          if (
+            applyOffset(
+              group,
+              visibleControls(group).map((rect) => rect.top),
+              ACTIONS_ATTR,
+            )
+          ) {
+            markedControls.add(group);
+          }
         }
       }
     }
 
     for (const element of previouslyMarked) {
+      if (markedControls.has(element)) continue;
       element.removeAttribute(BANNER_ATTR);
       element.removeAttribute(ACTIONS_ATTR);
       element.style.removeProperty(OFFSET);
@@ -99,10 +121,38 @@ export function initViewerControls() {
     if (!frame) frame = requestAnimationFrame(refresh);
   };
 
-  new MutationObserver(schedule).observe(document.documentElement, {
+  const resizeObserver = new ResizeObserver(schedule);
+  new MutationObserver((records) => {
+    if (
+      records.some(
+        (record) =>
+          record.type === "childList" ||
+          (record.target instanceof Element &&
+            (record.target.matches(DIALOG) ||
+              (record.target instanceof HTMLElement && observedDialogs.has(record.target)) ||
+              record.target.closest(DIALOG) ||
+              record.target.querySelector(DIALOG))),
+      )
+    )
+      schedule();
+  }).observe(document.documentElement, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: [
+      "hidden",
+      "aria-hidden",
+      "inert",
+      "role",
+      "aria-modal",
+      "class",
+      "style",
+      "download",
+      "controls",
+    ],
   });
+  document.addEventListener("load", schedule, true);
+  document.addEventListener("loadedmetadata", schedule, true);
   window.addEventListener("resize", schedule, { passive: true });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) schedule();
