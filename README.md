@@ -218,6 +218,32 @@ the `.deb`, so it uses the system WebKitGTK instead of bundling it:
 yay -S carrier
 ```
 
+### Linux startup and rendering
+
+On a pure Wayland session, Carrier selects GTK's Wayland backend when
+`DISPLAY` and `GDK_BACKEND` are unset or empty. An explicit `GDK_BACKEND` is
+always preserved.
+
+Carrier disables WebKit's DMABUF renderer on Wayland. On Niri Wayland sessions,
+it also disables compositing to work around blank or unstable rendering.
+Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
+`XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, or `DESKTOP_SESSION`.
+
+If the window is blank or rendering is unstable, try launching with:
+
+```bash
+CARRIER_LINUX_WEBKIT_SAFE_MODE=1 carrier
+```
+
+`1` requests both rendering fallbacks on any Linux desktop. `0` disables the
+automatic Niri compositing fallback while keeping the existing Wayland DMABUF
+workaround. Unset, empty, `auto`, and unrecognized values use desktop detection.
+Explicit `WEBKIT_DISABLE_DMABUF_RENDERER` and
+`WEBKIT_DISABLE_COMPOSITING_MODE` values always take precedence, including when
+safe mode is forced on. Restart Carrier for changes to take effect. Disabling
+compositing may reduce rendering performance; other desktops keep their normal
+compositing unless safe mode is requested.
+
 ## Non-goals
 
 Carrier stays deliberately narrow. It does not add its own do-not-disturb

@@ -30,6 +30,8 @@ mod hotkey_portal;
 mod install_environment;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(any(target_os = "linux", test))]
+mod linux_startup;
 #[cfg(target_os = "macos")]
 mod macos;
 mod menu;
@@ -944,24 +946,6 @@ const fn user_agent() -> &'static str {
     }
 }
 
-#[cfg(any(test, target_os = "linux"))]
-fn should_disable_webkit_dmabuf_renderer(
-    has_wayland_display: bool,
-    has_dmabuf_override: bool,
-) -> bool {
-    has_wayland_display && !has_dmabuf_override
-}
-
-#[cfg(target_os = "linux")]
-fn configure_linux_webkit_renderer() {
-    if should_disable_webkit_dmabuf_renderer(
-        std::env::var_os("WAYLAND_DISPLAY").is_some(),
-        std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
-    ) {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
-}
-
 fn should_enforce_single_instance(
     multi_instance: bool,
     mcp_debug_build: bool,
@@ -991,7 +975,7 @@ fn is_isolated_mcp_socket(path: Option<&std::path::Path>) -> bool {
 
 pub fn run() {
     #[cfg(target_os = "linux")]
-    configure_linux_webkit_renderer();
+    linux_startup::configure();
 
     let initial = load_settings_early();
     let cold_cli_action = cli::parse_launch_action(std::env::args_os());
@@ -2072,14 +2056,6 @@ mod tests {
             timestamp,
             signature: hex::encode(mac.finalize().into_bytes()),
         }
-    }
-
-    #[test]
-    fn webkit_dmabuf_renderer_is_disabled_only_for_wayland_without_override() {
-        assert!(should_disable_webkit_dmabuf_renderer(true, false));
-        assert!(!should_disable_webkit_dmabuf_renderer(false, false));
-        assert!(!should_disable_webkit_dmabuf_renderer(true, true));
-        assert!(!should_disable_webkit_dmabuf_renderer(false, true));
     }
 
     #[test]
