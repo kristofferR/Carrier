@@ -26,8 +26,7 @@
         { "url": "http://*" },
         { "url": "https://*" },
         { "url": "mailto:*" },
-        { "url": "tel:*" },
-        { "url": "x-apple.systempreferences:com.apple.preference.security*" }
+        { "url": "tel:*" }
       ]
     }
   ]

@@ -831,6 +831,12 @@ fn audio_init_script() -> &'static str {
 }
 
 fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &str) -> String {
+    let platform = match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    };
+    let platform_literal = serde_json::to_string(platform).expect("platform serialises");
     let css_literal = serde_json::to_string(INJECT_CSS).expect("CSS serialises");
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     let reveal_token_literal =
@@ -1051,6 +1057,14 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
       return NativePromise.reject(new Error('native bridge unavailable'));
     }}
     return carrierAuthorizedEmit('carrier:claim-context-action', {{ action: action }});
+  }};
+  var carrierMediaPlatform = {platform_literal};
+  var carrierOpenMediaPrivacy = function (device) {{
+    return carrierNativeCall(
+      'carrier:open-media-privacy', 'opened',
+      'privacy settings could not open', 'privacy settings timed out',
+      {{ device: device }}
+    );
   }};
   var carrierPrepareDownload = function (action, url) {{
     if (!carrierAuthorizedEmit) {{

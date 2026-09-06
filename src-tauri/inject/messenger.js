@@ -2765,6 +2765,60 @@
     window.addEventListener("carrier:settings", apply);
   }
 
+  // inject/src/messenger/lib/media-permissions.ts
+  function requestedMediaDevices(constraints) {
+    const devices = [];
+    if (constraints?.video) devices.push("camera");
+    if (constraints?.audio) devices.push("microphone");
+    return devices;
+  }
+  function mediaDeviceLabel(devices) {
+    return devices.join(" and ") || "media device";
+  }
+  function captureFailure(error) {
+    const name = error && typeof error === "object" && "name" in error ? error.name : void 0;
+    switch (name) {
+      case "NotAllowedError":
+      case "PermissionDeniedError":
+        return "denied";
+      case "NotFoundError":
+      case "DevicesNotFoundError":
+        return "missing";
+      case "NotReadableError":
+      case "TrackStartError":
+        return "unavailable";
+      case "OverconstrainedError":
+        return "constraints";
+      default:
+        return "other";
+    }
+  }
+  function mediaPrivacyGuidance(platform) {
+    switch (platform) {
+      case "macos":
+        return "Check System Settings → Privacy & Security and allow Carrier access. Then try the call again.";
+      case "windows":
+        return "Check Settings → Privacy & security and allow desktop apps access. Then try the call again.";
+      case "linux":
+        return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Carrier. Then try the call again.";
+    }
+  }
+  function captureFailureMessage(failure, devices) {
+    const label = mediaDeviceLabel(devices);
+    switch (failure) {
+      case "denied":
+        return `Access was denied for the requested ${label}.`;
+      case "missing":
+        return `No matching device was found for the requested ${label}. Check that the devices are connected and enabled, then try again.`;
+      case "unavailable":
+        return `The requested ${label} could not start. Close other apps using these devices, check the connection, and try again.`;
+      case "constraints":
+        return `The requested ${label} settings are not supported. Choose another device or call setting in Messenger and try again.`;
+      case "other":
+        return `Capture failed for the requested ${label}. Check Messenger’s call settings and try again.`;
+    }
+  }
+
   // inject/src/messenger/lib/media-tracks.ts
   var LiveMediaTrackCounter = class {
     constructor(onChange) {
@@ -2804,25 +2858,101 @@
     const md = navigator.mediaDevices;
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
+    let banner;
+    let requestSerial = 0;
+    let clearedThrough = 0;
+    const hide = () => {
+      banner?.remove();
+      banner = void 0;
+    };
+    const dismissWarning = () => {
+      clearedThrough = requestSerial;
+      hide();
+    };
     const liveTracks = new LiveMediaTrackCounter((inCall) => {
       window.__carrierInCall = inCall;
       window.dispatchEvent(new Event("carrier:protection-change"));
     });
     md.getUserMedia = async (constraints) => {
+      const serial = ++requestSerial;
+      const devices = requestedMediaDevices(constraints);
+      let stream;
       try {
-        const stream = await original(constraints);
-        stream.getTracks().forEach((track) => liveTracks.add(track));
-        return stream;
-      } catch (err) {
-        const name = err?.name;
-        if (err && (name === "NotAllowedError" || name === "NotFoundError")) {
-          const kind = constraints?.video ? "camera" : "microphone";
-          toast(`Carrier needs ${kind} access — check System Settings → Privacy & Security`);
-          const pane = kind === "camera" ? "Privacy_Camera" : "Privacy_Microphone";
-          openUrl(`x-apple.systempreferences:com.apple.preference.security?${pane}`);
+        stream = await original(constraints);
+      } catch (error) {
+        if (devices.length && serial > clearedThrough) {
+          try {
+            banner?.remove();
+            banner = document.createElement("div");
+            banner.id = "carrier-media-permission-banner";
+            const root = banner.attachShadow({ mode: "closed" });
+            const style = document.createElement("style");
+            style.textContent = `
+            :host { all: initial; position: fixed; bottom: 24px; left: 50%;
+              transform: translateX(-50%); z-index: 2147483646;
+              width: max-content; max-width: calc(100vw - 32px); }
+            section { box-sizing: border-box; max-width: 560px; padding: 14px 16px;
+              border-radius: 12px; background: #ffba00; color: #1c1e21;
+              box-shadow: 0 4px 16px #0005; font: 13px/1.5 system-ui, sans-serif; }
+            p { margin: 0 0 10px; } strong { font-weight: 650; }
+            nav { display: flex; flex-wrap: wrap; gap: 8px; }
+            button { font: 600 12px/1.5 system-ui, sans-serif; cursor: pointer;
+              color: #1c1e21; background: #fff9; border: 1px solid #1c1e2160;
+              border-radius: 6px; padding: 6px 10px; }
+            button:focus-visible { outline: 2px solid #1c1e21; outline-offset: 2px; }
+            button:disabled { cursor: wait; opacity: .65; }
+          `;
+            const section = document.createElement("section");
+            section.setAttribute("aria-label", "Call device recovery");
+            const message = document.createElement("p");
+            message.setAttribute("role", "alert");
+            const failure = captureFailure(error);
+            message.textContent = captureFailureMessage(failure, devices);
+            const guidance = document.createElement("p");
+            if (failure === "denied")
+              guidance.textContent = mediaPrivacyGuidance(carrierMediaPlatform);
+            const actions = document.createElement("nav");
+            actions.setAttribute("aria-label", "Call recovery actions");
+            if (failure === "denied" && carrierMediaPlatform !== "linux") {
+              for (const device of devices) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.textContent = `${device === "camera" ? "Camera" : "Microphone"} settings`;
+                button.addEventListener("click", async (event) => {
+                  if (!event.isTrusted || navigator.userActivation?.isActive !== true || button.disabled)
+                    return;
+                  button.disabled = true;
+                  try {
+                    await carrierOpenMediaPrivacy(device);
+                  } catch {
+                    guidance.textContent = `Settings could not open. ${mediaPrivacyGuidance(carrierMediaPlatform)}`;
+                    guidance.setAttribute("role", "alert");
+                  } finally {
+                    button.disabled = false;
+                  }
+                });
+                actions.append(button);
+              }
+            }
+            const dismiss = document.createElement("button");
+            dismiss.type = "button";
+            dismiss.textContent = "Dismiss";
+            dismiss.addEventListener("click", dismissWarning);
+            actions.append(dismiss);
+            section.append(message);
+            if (guidance.textContent) section.append(guidance);
+            section.append(actions);
+            root.append(style, section);
+            (document.body ?? document.documentElement).append(banner);
+          } catch {
+            diag("media-recovery", "could not display call recovery guidance");
+          }
         }
-        throw err;
+        throw error;
       }
+      stream.getTracks().forEach((track) => liveTracks.add(track));
+      hide();
+      return stream;
     };
   }
 

@@ -71,6 +71,9 @@ interface CarrierToastAction {
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
+declare const carrierMediaPlatform: "macos" | "windows" | "linux";
+declare const carrierOpenMediaPrivacy: (device: "camera" | "microphone") => Promise<void>;
+
 /** Claim a selected native context action before starting its asynchronous work. */
 declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
 
