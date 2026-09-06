@@ -72,6 +72,16 @@ interface CarrierToastAction {
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
 
 declare const carrierMediaPlatform: "macos" | "windows" | "linux";
+type CarrierMediaPermissionState =
+  | "unknown"
+  | "not-determined"
+  | "restricted"
+  | "denied"
+  | "allowed";
+type CarrierMediaPermissionSnapshot = Record<"camera" | "microphone", CarrierMediaPermissionState>;
+declare const carrierMediaPermissionStatus: (
+  device?: "camera" | "microphone",
+) => Promise<CarrierMediaPermissionSnapshot>;
 declare const carrierOpenMediaPrivacy: (device: "camera" | "microphone") => Promise<void>;
 
 /** Claim a selected native context action before starting its asynchronous work. */

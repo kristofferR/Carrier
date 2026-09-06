@@ -117,7 +117,7 @@ async function runFixtures(init: () => void) {
         const text = root().textContent!;
         assert("microphone label", !constraints.audio || text.includes("microphone"));
         assert("camera label", !constraints.video || text.includes("camera"));
-        const buttons = [...root().querySelectorAll("button")];
+        const buttons = [...root().querySelectorAll<HTMLButtonElement>("button:not([hidden])")];
         assert(
           "platform actions",
           buttons.length ===
@@ -142,7 +142,7 @@ async function runFixtures(init: () => void) {
         await capture({ audio: true, video: true });
         assert(
           "non-denial has no privacy shortcut",
-          root().querySelectorAll("button").length === 1,
+          root().querySelectorAll<HTMLButtonElement>("button:not([hidden])").length === 1,
         );
         assert("not mislabelled as denied", !root().textContent!.includes("Access was denied"));
       }
@@ -168,16 +168,112 @@ async function runFixtures(init: () => void) {
       assert("camera success clears camera denial", !banner());
       error = new DOMException("fixture", "NotAllowedError");
       await capture({ video: true });
+      error = new DOMException("fixture", "NotFoundError");
+      await capture({ audio: true });
+      assert(
+        "independent failures keep their own guidance",
+        root().textContent!.includes("Access was denied") &&
+          root().textContent!.includes("No matching device"),
+      );
+      error = undefined;
+      await capture({ audio: true });
+      assert("later microphone recovery retains earlier camera failure", !!banner());
+      await capture({ video: true });
+      assert("independent device failures clear after both recover", !banner());
+      error = new DOMException("fixture", "NotAllowedError");
+      await capture({ video: true });
       pending = true;
       const lateFailure = capture({ video: true });
       root()
-        .querySelectorAll("button")
+        .querySelectorAll<HTMLButtonElement>("button:not([hidden])")
         .item(platform === "linux" ? 0 : 1)
         .click();
       pendingReject!(error);
       await lateFailure;
       assert("dismissed pending failure stays dismissed", !banner());
     }
+    let states = { camera: "denied", microphone: "allowed" };
+    let reads = 0;
+    Object.assign(window, {
+      carrierMediaPlatform: "macos",
+      carrierMediaPermissionStatus: async () => {
+        reads++;
+        return states;
+      },
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          throw new DOMException("fixture", "NotAllowedError");
+        },
+      },
+    });
+    init();
+    const denied = () =>
+      navigator.mediaDevices.getUserMedia({ video: true, audio: true }).catch(() => {});
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    await denied();
+    await settle();
+    assert(
+      "confirmed camera denial",
+      root().querySelector("h2")!.textContent === "Camera access is blocked",
+    );
+    assert("separate microphone grant", root().textContent!.includes("Allowed by macOS"));
+    assert(
+      "only blocked device has action",
+      root().querySelectorAll<HTMLButtonElement>("button:not([hidden])").length === 2,
+    );
+    states = { camera: "allowed", microphone: "allowed" };
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    assert(
+      "return from Settings refreshes status",
+      root().querySelector("h2")!.textContent === "Access updated",
+    );
+    assert(
+      "permission grant does not promise a working call",
+      root().textContent!.includes("Try your call again in Messenger"),
+    );
+    states = { camera: "restricted", microphone: "allowed" };
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    assert(
+      "revoked permission cancels confirmation",
+      root().querySelector("h2")!.textContent !== "Access updated",
+    );
+    assert(
+      "restricted permission has no misleading grant button",
+      root().querySelectorAll<HTMLButtonElement>("button:not([hidden])").length === 1,
+    );
+    states = { camera: "not-determined", microphone: "allowed" };
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    assert(
+      "unrequested permission offers explicit Allow",
+      root().querySelector('button[aria-label="Allow access to camera"]')?.textContent ===
+        "Allow access",
+    );
+    root()
+      .querySelector('button[aria-label="Allow access to camera"]')!
+      .dispatchEvent(new MouseEvent("click"));
+    assert("synthetic allow cannot request OS access", reads === 4);
+    root().querySelector("footer button")!.dispatchEvent(new MouseEvent("click"));
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    assert("dismiss releases focus listener", reads === 4 && !banner());
+    let resolveStatus: ((value: typeof states) => void) | undefined;
+    Object.assign(window, {
+      carrierMediaPermissionStatus: () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+    });
+    await denied();
+    root().querySelector("footer button")!.dispatchEvent(new MouseEvent("click"));
+    resolveStatus!({ camera: "allowed", microphone: "allowed" });
+    await settle();
+    assert("late native result cannot resurrect dismissed card", !banner());
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = String(error);

@@ -565,6 +565,37 @@ fn choose_download_result_signature(
     )
 }
 
+fn send_media_permission_status(app: &tauri::AppHandle, label: &str, request: &str) {
+    #[derive(serde::Serialize)]
+    struct Result<'a> {
+        request: &'a str,
+        #[serde(flatten)]
+        permissions: media_permissions::PermissionSnapshot,
+    }
+    let result = Result {
+        request,
+        permissions: media_permissions::snapshot(),
+    };
+    let event = "carrier:media-permission-status-result";
+    let signature = {
+        let state = app.state::<AppState>();
+        let tokens = state.download_reveal_tokens.lock().unwrap();
+        tokens
+            .get(label)
+            .and_then(|secret| result_signature(secret, event, &result))
+    };
+    let Some(signature) = signature else {
+        return;
+    };
+    let mut detail = serde_json::to_value(result).expect("permission status serializes");
+    detail["signature"] = signature.into();
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.eval(format!(
+            "window.dispatchEvent(new CustomEvent('{event}', {{ detail: {detail} }}));"
+        ));
+    }
+}
+
 fn send_native_result(
     app: &tauri::AppHandle,
     label: &str,
@@ -1208,6 +1239,28 @@ pub fn run() {
             app.listen_any("carrier:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
+            });
+
+            let permission_handle = app.handle().clone();
+            app.listen_any("carrier:media-permission-status", move |event| {
+                #[derive(serde::Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct StatusRequest {
+                    request: String,
+                    device: Option<media_permissions::MediaDevice>,
+                }
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else { return; };
+                let Some(label) = signed_action_window(&permission_handle, "carrier:media-permission-status", &signed) else { return; };
+                let Ok(message) = serde_json::from_str::<StatusRequest>(&signed.message) else { return; };
+                if message.request.len() != 32 || !message.request.bytes().all(|byte| byte.is_ascii_hexdigit()) { return; }
+                let h = permission_handle.clone();
+                let complete = move || send_media_permission_status(&h, &label, &message.request);
+                if let Some(device) = message.device {
+                    // Only the card's trusted Allow access action supplies a device.
+                    let _ = permission_handle.run_on_main_thread(move || media_permissions::request_access(device, complete));
+                } else {
+                    complete();
+                }
             });
 
             let privacy_handle = app.handle().clone();
