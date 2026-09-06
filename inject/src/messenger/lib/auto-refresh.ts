@@ -3,6 +3,39 @@ export const NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1000;
 export const RESUME_GAP_MS = 20_000;
 
 export type RefreshReason = "background" | "foreground" | "realtime" | "resume";
+export type ScheduledRefreshReason = RefreshReason | "online";
+
+export interface PowerSnapshot {
+  sleeping: boolean;
+  resume_generation: number;
+  last_resume_at_ms?: number | null;
+}
+
+/** Repeated native snapshots repair missed events without rearming a reload. */
+export class PowerStateTracker {
+  private previous: PowerSnapshot | undefined;
+
+  constructor(private readonly documentCreatedAt: number) {}
+
+  update(snapshot: PowerSnapshot): boolean {
+    const previous = this.previous;
+    this.previous = snapshot;
+    // A document can predate the wake even if every earlier snapshot was
+    // dropped. Compare native wall time with the document's time origin to
+    // distinguish it from a fresh post-wake document on the first delivery.
+    return (
+      !snapshot.sleeping &&
+      (previous
+        ? previous.sleeping || previous.resume_generation !== snapshot.resume_generation
+        : (snapshot.last_resume_at_ms ?? 0) > this.documentCreatedAt)
+    );
+  }
+}
+
+export const canReplacePendingRefresh = (
+  pending: ScheduledRefreshReason | null,
+  next: ScheduledRefreshReason,
+) => pending !== "resume" || next === "resume";
 
 const elapsed = (now: number, since: number) => Math.max(0, now - since);
 
@@ -16,7 +49,11 @@ export class AutoRefreshWatchdog {
   private lastHeartbeatAt: number;
   private lastFreshAt: number;
 
-  constructor(now: number, active: boolean) {
+  constructor(
+    now: number,
+    active: boolean,
+    private readonly detectResumeFromClockGap = true,
+  ) {
     this.lastFreshAt = now;
     this.lastHeartbeatAt = now;
     this.inactiveSince = active ? null : now;
@@ -39,7 +76,7 @@ export class AutoRefreshWatchdog {
     this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
 
     const transition = this.setActive(active, now);
-    if (heartbeatGap >= RESUME_GAP_MS) return "resume";
+    if (this.detectResumeFromClockGap && heartbeatGap >= RESUME_GAP_MS) return "resume";
     if (transition) return transition;
 
     if (

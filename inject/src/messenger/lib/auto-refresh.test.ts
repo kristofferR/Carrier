@@ -1,10 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import {
   AutoRefreshWatchdog,
+  canReplacePendingRefresh,
   NOTIFICATION_REFRESH_GAP_MS,
   PERIODIC_REFRESH_MS,
+  PowerStateTracker,
   RESUME_GAP_MS,
 } from "./auto-refresh";
+
+describe("PowerStateTracker", () => {
+  test("repairs a missed resume once, without postponing a protected reload", () => {
+    const tracker = new PowerStateTracker(100);
+    expect(tracker.update({ sleeping: true, resume_generation: 0 })).toBe(false);
+    expect(tracker.update({ sleeping: false, resume_generation: 1 })).toBe(true);
+    expect(tracker.update({ sleeping: false, resume_generation: 1 })).toBe(false);
+  });
+
+  test("detects sleep and wake missed between native pings", () => {
+    const tracker = new PowerStateTracker(100);
+    expect(tracker.update({ sleeping: false, resume_generation: 3 })).toBe(false);
+    expect(tracker.update({ sleeping: false, resume_generation: 4 })).toBe(true);
+  });
+
+  test("fresh documents adopt the current generation without a reload loop", () => {
+    const tracker = new PowerStateTracker(100);
+    const snapshot = { sleeping: false, resume_generation: 7, last_resume_at_ms: 99 };
+    expect(tracker.update(snapshot)).toBe(false);
+    expect(tracker.update(snapshot)).toBe(false);
+  });
+
+  test("recovers a document that missed every snapshot before wake", () => {
+    const tracker = new PowerStateTracker(100);
+    const snapshot = { sleeping: false, resume_generation: 7, last_resume_at_ms: 101 };
+    expect(tracker.update(snapshot)).toBe(true);
+    expect(tracker.update(snapshot)).toBe(false);
+  });
+});
+
+describe("canReplacePendingRefresh", () => {
+  test("keeps a system-resume recovery ahead of lower-priority requests", () => {
+    expect(canReplacePendingRefresh("resume", "realtime")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "online")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "background")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "foreground")).toBe(false);
+    expect(canReplacePendingRefresh("resume", "resume")).toBe(true);
+  });
+
+  test("lets ordinary pending requests be replaced", () => {
+    expect(canReplacePendingRefresh(null, "resume")).toBe(true);
+    expect(canReplacePendingRefresh("realtime", "resume")).toBe(true);
+    expect(canReplacePendingRefresh("background", "realtime")).toBe(true);
+  });
+});
 
 describe("AutoRefreshWatchdog", () => {
   test("refreshes a visible but unfocused window after the background limit", () => {
@@ -36,6 +83,12 @@ describe("AutoRefreshWatchdog", () => {
 
     expect(watchdog.heartbeat(true, RESUME_GAP_MS - 1)).toBeNull();
     expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBe("resume");
+  });
+
+  test("can defer resume detection to a platform-native wake signal", () => {
+    const watchdog = new AutoRefreshWatchdog(0, true, false);
+
+    expect(watchdog.heartbeat(true, 2 * RESUME_GAP_MS)).toBeNull();
   });
 
   test("does not mistake ordinary heartbeats or a backwards clock for resume", () => {

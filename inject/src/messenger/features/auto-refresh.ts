@@ -4,7 +4,13 @@
 // catch stale connections. Every recovery defers around drafts and calls.
 
 import { diag, invoke } from "../bridge";
-import { AutoRefreshWatchdog, type RefreshReason } from "../lib/auto-refresh";
+import {
+  AutoRefreshWatchdog,
+  canReplacePendingRefresh,
+  type PowerSnapshot,
+  PowerStateTracker,
+  type ScheduledRefreshReason,
+} from "../lib/auto-refresh";
 import {
   looksLikeFacebookErrorPage,
   REALTIME_UNOBSERVED_SETTLE_MS,
@@ -18,10 +24,17 @@ export function initAutoRefresh() {
   // lifecycle signal that makes its live connection suspect. Drafts and calls
   // are always protected, even for a forced catch-up after sleep or refocus.
   const pageIsActive = () => !document.hidden && document.hasFocus();
-  const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive());
+  const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  // macOS has an exact AppKit sleep/display-wake signal. Its maintenance
+  // dark-wakes create the same wall-clock gap as a real resume, so never infer
+  // one from page timers there.
+  const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac);
+  // A document can start during a dark wake, after the sleep event was sent.
+  // Wait for the native snapshot before allowing recovery on macOS.
+  let systemSleeping = isMac;
   let pending = false;
   let reloadWhileActive = false;
-  let pendingReason: RefreshReason | "online" = "background";
+  let pendingReason: ScheduledRefreshReason = "background";
   let timer: number | undefined;
   const RECOVERY_MIN_GAP_MS = 60_000;
   const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
@@ -63,6 +76,7 @@ export function initAutoRefresh() {
     }
   };
   const realtimeStatus = () => {
+    if (systemSleeping) return "pending";
     if (!isMessengerContentPath(location.pathname)) return "pending";
     if (onFacebookErrorPage()) return "error";
     return realtimeRecovery.status(Date.now());
@@ -135,6 +149,10 @@ export function initAutoRefresh() {
   const maybeReload = () => {
     timer = undefined;
     if (!pending) return;
+    if (systemSleeping) {
+      clearPending();
+      return;
+    }
     if (pageIsActive() && !reloadWhileActive) {
       clearPending();
       return;
@@ -166,7 +184,9 @@ export function initAutoRefresh() {
     pending = false;
     location.reload();
   };
-  const schedule = (delay: number, reason: RefreshReason | "online", allowWhileActive = false) => {
+  const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
+    if (systemSleeping) return;
+    if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
     if (pageIsActive() && !allowWhileActive) {
       return;
     }
@@ -219,6 +239,21 @@ export function initAutoRefresh() {
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
   window.addEventListener("online", () => schedule(1000, "online", true));
+  const powerState = new PowerStateTracker(performance.timeOrigin);
+  window.addEventListener("carrier:power-state", (event) => {
+    const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
+    if (
+      !snapshot ||
+      typeof snapshot.sleeping !== "boolean" ||
+      !Number.isSafeInteger(snapshot.resume_generation)
+    ) {
+      return;
+    }
+    const resumed = powerState.update(snapshot);
+    systemSleeping = snapshot.sleeping;
+    if (systemSleeping) clearPending();
+    else if (resumed && isMessengerContentPath(location.pathname)) schedule(1000, "resume", true);
+  });
 
   // Reload shortly after a new-message notification, but only while the window
   // is unfocused — that's when Facebook's live sync throttles and the view
@@ -236,6 +271,10 @@ export function initAutoRefresh() {
   // transport for disconnects, stuck reconnects, and half-open silence — before
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
+    if (systemSleeping) {
+      emitHeartbeat();
+      return;
+    }
     realtime.check();
     // No source reports stale when none can observe the transport at all (the
     // worker bridge is gone and the page socket was never replaced), so that

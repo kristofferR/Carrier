@@ -1941,6 +1941,7 @@ pub fn run() {
                     // The Dock-menu delegate hook also needs the app fully
                     // launched (tao installs its NSApplication delegate by now).
                     install_dock_menu_provider();
+                    macos::power::observe_system_sleep(app);
                 }
             }
 
