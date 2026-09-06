@@ -65,7 +65,11 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .separator()
         .item(&prefs)
         .separator()
+        .services()
+        .separator()
         .hide()
+        .hide_others()
+        .show_all()
         .separator()
         .quit()
         .build()?;
@@ -159,7 +163,9 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     };
 
     let maximize = menu_item(app, "maximize", "Zoom", None)?;
-    let window = SubmenuBuilder::new(app, "Window")
+    // Tauri registers this ID with AppKit after installing the application menu,
+    // letting macOS add its supported window controls and live window list.
+    let window = SubmenuBuilder::with_id(app, tauri::menu::WINDOW_SUBMENU_ID, "Window")
         .minimize()
         .item(&maximize)
         .separator()
