@@ -9,6 +9,7 @@
 //   2. Intercept that click and run downloadSrc() — the same fetch -> untargeted
 //      anchor -> Rust `on_download` path the working right-click "Download" uses.
 import { toastDownloadFailure, toastDownloadSaved } from "../bridge";
+import { connectedRoots } from "../lib/dom-roots";
 import { downloadSrc } from "./context-menu";
 
 const stripDlTarget = (a: Node | null) => {
@@ -36,7 +37,7 @@ const queuedSweepRoots = new Set<Element>();
 let sweepTimer = 0;
 const runSweeps = () => {
   sweepTimer = 0;
-  const roots = [...queuedSweepRoots];
+  const roots = connectedRoots(queuedSweepRoots);
   queuedSweepRoots.clear();
   for (const root of roots) {
     if (!root.isConnected) continue;

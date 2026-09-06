@@ -122,16 +122,23 @@ export function initViewerControls() {
   };
 
   const resizeObserver = new ResizeObserver(schedule);
+  const affectsControls = (element: Element) =>
+    !!element.closest(`${DIALOG}, ${BANNER}`) ||
+    [...observedDialogs, ...markedControls].some((control) => element.contains(control));
+
+  // Chat updates outside a dialog cannot change its controls. Inspect changed
+  // subtrees for new dialogs, and retain tracked nodes to catch removal or role loss.
   new MutationObserver((records) => {
     if (
       records.some(
         (record) =>
-          record.type === "childList" ||
-          (record.target instanceof Element &&
-            (record.target.matches(DIALOG) ||
-              (record.target instanceof HTMLElement && observedDialogs.has(record.target)) ||
-              record.target.closest(DIALOG) ||
-              record.target.querySelector(DIALOG))),
+          (record.target instanceof Element && affectsControls(record.target)) ||
+          (record.type === "childList" &&
+            [...record.addedNodes, ...record.removedNodes].some(
+              (node) =>
+                node instanceof Element &&
+                (affectsControls(node) || node.querySelector(`${DIALOG}, ${BANNER}`)),
+            )),
       )
     )
       schedule();
@@ -151,8 +158,11 @@ export function initViewerControls() {
       "controls",
     ],
   });
-  document.addEventListener("load", schedule, true);
-  document.addEventListener("loadedmetadata", schedule, true);
+  const mediaLoaded = (event: Event) => {
+    if (event.target instanceof Element && event.target.closest(DIALOG)) schedule();
+  };
+  document.addEventListener("load", mediaLoaded, true);
+  document.addEventListener("loadedmetadata", mediaLoaded, true);
   window.addEventListener("resize", schedule, { passive: true });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) schedule();

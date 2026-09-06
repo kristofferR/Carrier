@@ -7,14 +7,20 @@ import { isMessengerHeaderOverflowControl } from "../lib/settings-button";
 const SLOT_ATTR = "data-carrier-settings-slot";
 const BUTTON_ATTR = "data-carrier-settings-button";
 
+function isOverflowButton(button: Element): boolean {
+  return (
+    button.matches('button, [role="button"]') &&
+    isMessengerHeaderOverflowControl(button.querySelector("svg path")?.getAttribute("d") || "")
+  );
+}
+
 function findOverflowButton(): HTMLElement | null {
   const buttons = document.querySelectorAll<HTMLElement>(
     `[role="button"]:not([${BUTTON_ATTR}]), button:not([${BUTTON_ATTR}])`,
   );
   let iconFallback: HTMLElement | null = null;
   for (const button of buttons) {
-    const iconPath = button.querySelector("svg path")?.getAttribute("d") || "";
-    if (!isMessengerHeaderOverflowControl(iconPath)) continue;
+    if (!isOverflowButton(button)) continue;
     const rect = button.getBoundingClientRect();
     if (rect.width < 28 || rect.height < 28) continue;
     if (!iconFallback || rect.top < iconFallback.getBoundingClientRect().top) {
@@ -82,10 +88,30 @@ function createSettingsSlot(): HTMLDivElement {
 
 export function initSettingsButton() {
   let scheduled = false;
+  let mounted: { slot: HTMLDivElement; overflow: HTMLElement } | undefined;
 
   const ensureButton = () => {
     scheduled = false;
     if (!location.pathname.startsWith("/messages")) return;
+    // Message updates do not move the header. Reuse its controls until React
+    // replaces them or changes their placement instead of searching every button.
+    if (
+      mounted?.slot.isConnected &&
+      mounted.overflow.isConnected &&
+      isOverflowButton(mounted.overflow)
+    ) {
+      const placement = placementFor(mounted.overflow);
+      const rect = mounted.overflow.getBoundingClientRect();
+      if (
+        placement &&
+        rect.width >= 28 &&
+        rect.height >= 28 &&
+        mounted.slot.parentElement === placement.row &&
+        mounted.slot.nextElementSibling === placement.before
+      )
+        return;
+    }
+    mounted = undefined;
     const overflow = findOverflowButton();
     if (!overflow) return;
     const placement = placementFor(overflow);
@@ -97,6 +123,7 @@ export function initSettingsButton() {
     if (slot.parentElement !== placement.row || slot.nextElementSibling !== placement.before) {
       placement.row.insertBefore(slot, placement.before);
     }
+    mounted = { slot, overflow };
   };
 
   const schedule = () => {
@@ -110,6 +137,8 @@ export function initSettingsButton() {
     new MutationObserver(schedule).observe(document.documentElement, {
       childList: true,
       subtree: true,
+      attributes: true,
+      attributeFilter: ["role", "d"],
     });
   };
 
