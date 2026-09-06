@@ -370,15 +370,17 @@ impl WebviewWatchdog {
 
                 // A macOS maintenance dark-wake briefly runs app processes
                 // without waking the display or restoring useful connectivity.
-                // AppKit owns the real sleep boundary; do not wake or recover
-                // the renderer until the user's display comes back.
+                // AppKit owns the real sleep boundary. Repeat its snapshot
+                // even while asleep so a missed notification cannot leave
+                // page-side recovery running during a maintenance dark-wake.
+                #[cfg(target_os = "macos")]
+                crate::macos::power::sync_power_state(&watchdog_window);
                 #[cfg(target_os = "macos")]
                 if crate::macos::power::is_system_sleeping() {
                     continue;
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    crate::macos::power::sync_power_state(&watchdog_window);
                     let current_generation = crate::macos::power::resume_generation();
                     if current_generation != resume_generation {
                         resume_generation = current_generation;
