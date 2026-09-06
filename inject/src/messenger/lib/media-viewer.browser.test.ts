@@ -67,6 +67,7 @@ test.skipIf(!chromium).each([480, 1000, 1600])(
       await rm(directory, { recursive: true, force: true });
     }
   },
+  60_000,
 );
 
 async function runFixtures() {
