@@ -179,6 +179,16 @@
   var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
   var NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1e3;
   var RESUME_GAP_MS = 2e4;
+  var PowerStateTracker = class {
+    constructor() {
+      __publicField(this, "previous");
+    }
+    update(snapshot) {
+      const previous = this.previous;
+      this.previous = snapshot;
+      return previous !== void 0 && !snapshot.sleeping && (previous.sleeping || previous.resume_generation !== snapshot.resume_generation);
+    }
+  };
   var canReplacePendingRefresh = (pending, next) => pending !== "resume" || next === "resume";
   var elapsed = (now, since) => Math.max(0, now - since);
   var AutoRefreshWatchdog = class {
@@ -484,7 +494,7 @@
     const pageIsActive = () => !document.hidden && document.hasFocus();
     const isMac4 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
     const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac4);
-    let systemSleeping = false;
+    let systemSleeping = isMac4;
     let pending = false;
     let reloadWhileActive = false;
     let pendingReason = "background";
@@ -667,13 +677,16 @@
     window.addEventListener("blur", noteLifecycle);
     document.addEventListener("visibilitychange", noteLifecycle);
     window.addEventListener("online", () => schedule(1e3, "online", true));
-    window.addEventListener("carrier:system-sleep", () => {
-      systemSleeping = true;
-      clearPending();
-    });
-    window.addEventListener("carrier:system-resume", () => {
-      systemSleeping = false;
-      if (isMessengerContentPath(location.pathname)) schedule(1e3, "resume", true);
+    const powerState = new PowerStateTracker();
+    window.addEventListener("carrier:power-state", (event) => {
+      const snapshot = event.detail;
+      if (!snapshot || typeof snapshot.sleeping !== "boolean" || !Number.isSafeInteger(snapshot.resume_generation)) {
+        return;
+      }
+      const resumed = powerState.update(snapshot);
+      systemSleeping = snapshot.sleeping;
+      if (systemSleeping) clearPending();
+      else if (resumed && isMessengerContentPath(location.pathname)) schedule(1e3, "resume", true);
     });
     window.__carrierOnNotification = () => {
       if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {

@@ -5,6 +5,28 @@ export const RESUME_GAP_MS = 20_000;
 export type RefreshReason = "background" | "foreground" | "realtime" | "resume";
 export type ScheduledRefreshReason = RefreshReason | "online";
 
+export interface PowerSnapshot {
+  sleeping: boolean;
+  resume_generation: number;
+}
+
+/** Repeated native snapshots repair missed events without rearming a reload. */
+export class PowerStateTracker {
+  private previous: PowerSnapshot | undefined;
+
+  update(snapshot: PowerSnapshot): boolean {
+    const previous = this.previous;
+    this.previous = snapshot;
+    // A fresh document has no pre-sleep connection to recover. Its first
+    // snapshot establishes the baseline, including when it starts asleep.
+    return (
+      previous !== undefined &&
+      !snapshot.sleeping &&
+      (previous.sleeping || previous.resume_generation !== snapshot.resume_generation)
+    );
+  }
+}
+
 export const canReplacePendingRefresh = (
   pending: ScheduledRefreshReason | null,
   next: ScheduledRefreshReason,

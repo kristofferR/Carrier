@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use objc2::runtime::NSObjectProtocol;
 use tauri::Manager;
 
+#[derive(Clone, Copy, serde::Serialize)]
 struct PowerState {
     sleeping: bool,
     resume_generation: u64,
@@ -35,7 +36,7 @@ objc2::define_class!(
 
             POWER_STATE.lock().unwrap().sleeping = true;
             log::info!("system is sleeping; pausing Messenger recovery");
-            dispatch_power_event(&self.ivars().app, "carrier:system-sleep");
+            dispatch_power_state(&self.ivars().app);
         }
 
         #[unsafe(method(carrierWorkspaceScreensDidWake:))]
@@ -53,23 +54,30 @@ objc2::define_class!(
                 state.sleeping = false;
             }
             log::info!("display woke after system sleep; refreshing Messenger");
-            dispatch_power_event(&self.ivars().app, "carrier:system-resume");
+            dispatch_power_state(&self.ivars().app);
         }
     }
 
     unsafe impl NSObjectProtocol for PowerObserver {}
 );
 
-fn dispatch_power_event(app: &tauri::AppHandle, event: &str) {
+fn dispatch_power_state(app: &tauri::AppHandle) {
     for (label, window) in app.webview_windows() {
         if label == "settings" {
             continue;
         }
-        let _ = window.eval(format!(
-            "window.dispatchEvent(new Event({}));",
-            serde_json::to_string(event).expect("static event name serialises")
-        ));
+        sync_power_state(&window);
     }
+}
+
+/// Repeat the snapshot on every native ping: accepting eval does not prove
+/// the page received it, and documents can start between power notifications.
+pub(crate) fn sync_power_state(window: &tauri::WebviewWindow) {
+    let state = *POWER_STATE.lock().unwrap();
+    let _ = window.eval(format!(
+        "window.dispatchEvent(new CustomEvent('carrier:power-state', {{detail: {}}}));",
+        serde_json::to_string(&state).expect("power state serialises")
+    ));
 }
 
 pub(crate) fn is_system_sleeping() -> bool {

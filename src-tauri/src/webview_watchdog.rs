@@ -225,6 +225,7 @@ impl WatchdogState {
     }
 
     fn navigation_started(&mut self, now: Duration) {
+        self.system_resumed_at = None;
         self.navigation_started_at = Some(now);
     }
 
@@ -232,12 +233,12 @@ impl WatchdogState {
         self.navigation_started_at = None;
     }
 
+    #[cfg(any(target_os = "macos", test))]
     fn system_resumed(&mut self, now: Duration) {
         // Pre-sleep ages say nothing about the newly woken renderer. Give it a
         // fresh heartbeat window, then fall back to a reload if it cannot
         // answer. Recovery attempt budgets remain intact across sleep.
-        self.last_heartbeat_at = None;
-        self.system_resumed_at = Some(now);
+        self.system_resumed_at = self.last_heartbeat_at.take().map(|_| now);
         self.navigation_started_at = None;
         self.missing_content_since = None;
         self.realtime_bad_since = None;
@@ -377,6 +378,7 @@ impl WebviewWatchdog {
                 }
                 #[cfg(target_os = "macos")]
                 {
+                    crate::macos::power::sync_power_state(&watchdog_window);
                     let current_generation = crate::macos::power::resume_generation();
                     if current_generation != resume_generation {
                         resume_generation = current_generation;
@@ -440,6 +442,13 @@ impl WebviewWatchdog {
                             continue;
                         }
 
+                        let now = started_at.elapsed();
+                        // Heartbeats and navigation can change the decision
+                        // while DNS is pending, for reloads as well as rebuilds.
+                        if state.lock().unwrap().action(now) != action {
+                            next_recovery_attempt = Duration::ZERO;
+                            continue;
+                        }
                         match action {
                             WatchdogAction::Reload => {
                                 log::warn!(
@@ -496,14 +505,6 @@ impl WebviewWatchdog {
                                 }
                             }
                             WatchdogAction::RecreateBlank | WatchdogAction::RecreateRealtime => {
-                                // DNS resolution ran off-thread. Messenger may
-                                // have recovered while it was in flight, so do
-                                // not destroy a webview whose state has since
-                                // improved.
-                                if state.lock().unwrap().action(started_at.elapsed()) != action {
-                                    next_recovery_attempt = Duration::ZERO;
-                                    continue;
-                                }
                                 if action == WatchdogAction::RecreateRealtime {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
@@ -594,6 +595,35 @@ mod tests {
             WatchdogAction::None
         );
         assert_eq!(state.action(HEARTBEAT_TIMEOUT), WatchdogAction::Reload);
+    }
+
+    #[test]
+    fn resume_reload_gives_the_replacement_document_time_to_load() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, None, None);
+        state.system_resumed(Duration::from_secs(1));
+        let reload_at = Duration::from_secs(1) + RESUME_HEARTBEAT_TIMEOUT;
+        assert_eq!(state.action(reload_at), WatchdogAction::Reload);
+        state.navigation_started(reload_at);
+        assert_eq!(
+            state.action(reload_at + PING_INTERVAL),
+            WatchdogAction::None
+        );
+        assert_eq!(
+            state.action(reload_at + NAVIGATION_TIMEOUT),
+            WatchdogAction::Reload
+        );
+    }
+
+    #[test]
+    fn system_resume_without_a_heartbeat_clears_recovery_markers() {
+        let mut state = WatchdogState::default();
+        state.navigation_started(Duration::ZERO);
+        state.system_resumed(NAVIGATION_TIMEOUT);
+        state.system_resumed(NAVIGATION_TIMEOUT * 2);
+        assert_eq!(state.system_resumed_at, None);
+        assert_eq!(state.navigation_started_at, None);
+        assert_eq!(state.action(NAVIGATION_TIMEOUT * 3), WatchdogAction::None);
     }
 
     #[test]

@@ -4,8 +4,30 @@ import {
   canReplacePendingRefresh,
   NOTIFICATION_REFRESH_GAP_MS,
   PERIODIC_REFRESH_MS,
+  PowerStateTracker,
   RESUME_GAP_MS,
 } from "./auto-refresh";
+
+describe("PowerStateTracker", () => {
+  test("repairs a missed resume once, without postponing a protected reload", () => {
+    const tracker = new PowerStateTracker();
+    expect(tracker.update({ sleeping: true, resume_generation: 0 })).toBe(false);
+    expect(tracker.update({ sleeping: false, resume_generation: 1 })).toBe(true);
+    expect(tracker.update({ sleeping: false, resume_generation: 1 })).toBe(false);
+  });
+
+  test("detects sleep and wake missed between native pings", () => {
+    const tracker = new PowerStateTracker();
+    expect(tracker.update({ sleeping: false, resume_generation: 3 })).toBe(false);
+    expect(tracker.update({ sleeping: false, resume_generation: 4 })).toBe(true);
+  });
+
+  test("fresh documents adopt the current generation without a reload loop", () => {
+    const tracker = new PowerStateTracker();
+    expect(tracker.update({ sleeping: false, resume_generation: 7 })).toBe(false);
+    expect(tracker.update({ sleeping: false, resume_generation: 7 })).toBe(false);
+  });
+});
 
 describe("canReplacePendingRefresh", () => {
   test("keeps a system-resume recovery ahead of lower-priority requests", () => {

@@ -7,6 +7,8 @@ import { diag, invoke } from "../bridge";
 import {
   AutoRefreshWatchdog,
   canReplacePendingRefresh,
+  type PowerSnapshot,
+  PowerStateTracker,
   type ScheduledRefreshReason,
 } from "../lib/auto-refresh";
 import {
@@ -27,7 +29,9 @@ export function initAutoRefresh() {
   // dark-wakes create the same wall-clock gap as a real resume, so never infer
   // one from page timers there.
   const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac);
-  let systemSleeping = false;
+  // A document can start during a dark wake, after the sleep event was sent.
+  // Wait for the native snapshot before allowing recovery on macOS.
+  let systemSleeping = isMac;
   let pending = false;
   let reloadWhileActive = false;
   let pendingReason: ScheduledRefreshReason = "background";
@@ -235,13 +239,20 @@ export function initAutoRefresh() {
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
   window.addEventListener("online", () => schedule(1000, "online", true));
-  window.addEventListener("carrier:system-sleep", () => {
-    systemSleeping = true;
-    clearPending();
-  });
-  window.addEventListener("carrier:system-resume", () => {
-    systemSleeping = false;
-    if (isMessengerContentPath(location.pathname)) schedule(1000, "resume", true);
+  const powerState = new PowerStateTracker();
+  window.addEventListener("carrier:power-state", (event) => {
+    const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
+    if (
+      !snapshot ||
+      typeof snapshot.sleeping !== "boolean" ||
+      !Number.isSafeInteger(snapshot.resume_generation)
+    ) {
+      return;
+    }
+    const resumed = powerState.update(snapshot);
+    systemSleeping = snapshot.sleeping;
+    if (systemSleeping) clearPending();
+    else if (resumed && isMessengerContentPath(location.pathname)) schedule(1000, "resume", true);
   });
 
   // Reload shortly after a new-message notification, but only while the window
