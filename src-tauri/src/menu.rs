@@ -170,6 +170,8 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .item(&maximize)
         .separator()
         .close_window()
+        .separator()
+        .bring_all_to_front()
         .build()?;
 
     let shortcuts = menu_item(
