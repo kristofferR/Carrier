@@ -111,6 +111,19 @@ async function runFixtures() {
     await settle();
     assert("viewer inside main Messenger dialog", marked(nested) && !marked(main));
     main.remove();
+    for (const [name, width, height, accepted] of [
+      ["tall screenshot", 0.02, 0.6, true],
+      ["wide panorama", 0.6, 0.02, true],
+      ["thumbnail", 0.1, 0.1, false],
+    ] as const) {
+      const viewer = make();
+      const media = viewer.querySelector<HTMLElement>(".media")!;
+      media.style.width = `${width * 100}%`;
+      media.style.height = `${height * 100}%`;
+      await settle();
+      assert(name, marked(viewer) === accepted && header() === (accepted ? "56px" : "0px"));
+      viewer.remove();
+    }
     let dialog = make();
     await settle();
     assert("image viewer", marked(dialog) && header() === "56px");

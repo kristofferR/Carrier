@@ -64,11 +64,14 @@ export function isMediaViewerDialog(dialog: HTMLElement): boolean {
     if (!owns(element) || !isVisible(element)) return false;
     const bounds = element.getBoundingClientRect();
     const visible = intersectImageClips(intersectImageClips(bounds, rect), viewport);
-    // Ignore avatars, emoji, and gallery thumbnails. Use relative dimensions
-    // so narrow windows and Carrier's zoom do not change the classification.
+    const width = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
+    const height = (visible.bottom - visible.top) / Math.min(rect.height, viewport.bottom);
+    // Ignore avatars, emoji, and gallery thumbnails, but accept panoramas and
+    // tall screenshots that span the viewer on only one axis. Ratios account for zoom.
     return (
-      visible.right - visible.left >= Math.min(rect.width, viewport.right) * 0.15 &&
-      visible.bottom - visible.top >= Math.min(rect.height, viewport.bottom) * 0.15
+      width > 0 &&
+      height > 0 &&
+      ((width >= 0.15 && height >= 0.15) || width >= 0.5 || height >= 0.5)
     );
   });
   return isMediaViewerShape({
