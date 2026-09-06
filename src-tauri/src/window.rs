@@ -24,8 +24,7 @@ use crate::settings::{
 use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
 use crate::{
-    user_agent, APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL,
-    INJECT_WEB_AUDIO_IDLE,
+    APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL, INJECT_WEB_AUDIO_IDLE,
 };
 
 fn notify_download_finished(
@@ -133,7 +132,6 @@ pub(crate) fn build_app_window(
         .min_inner_size(420.0, 520.0)
         .theme(theme_for(settings))
         .background_color(splash_background(settings))
-        .user_agent(user_agent())
         // Messenger keeps a running AudioContext, so WebKit treats the page as
         // holding an audio session. With the default `.suspend` scheduling
         // policy (macOS 14+), WebKit deactivates that session whenever the
@@ -310,6 +308,10 @@ pub(crate) fn build_app_window(
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
     let builder = builder.decorations(show_title_bar(settings));
+    let builder = match crate::user_agent::override_for(std::env::consts::OS) {
+        Some(user_agent) => builder.user_agent(user_agent),
+        None => builder,
+    };
     let window = builder.build().inspect(|window| {
         #[cfg(target_os = "linux")]
         crate::linux::configure_messenger_webview_memory(window);

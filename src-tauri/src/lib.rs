@@ -43,6 +43,7 @@ mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
 mod tray_badge;
 mod url_rules;
+mod user_agent;
 mod webview_watchdog;
 // Pure toast helpers (XML building, activation-arg parsing) unit-test on any OS;
 // the WinRT delivery path inside is gated to Windows.
@@ -956,25 +957,6 @@ compile_error!("the `mcp` feature is dev-only and must not be enabled in release
 const INJECT_MCP_BRIDGE: &str = include_str!("../inject/mcp-bridge.js");
 #[cfg(not(all(feature = "mcp", debug_assertions)))]
 const INJECT_MCP_BRIDGE: &str = "";
-
-/// A modern browser UA so Facebook serves the full Messenger web app.
-const fn user_agent() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
-         (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
-    }
-    #[cfg(target_os = "windows")]
-    {
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-         (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-    #[cfg(target_os = "linux")]
-    {
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-         (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-}
 
 fn should_enforce_single_instance(
     multi_instance: bool,
