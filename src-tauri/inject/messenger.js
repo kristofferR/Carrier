@@ -180,13 +180,14 @@
   var NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1e3;
   var RESUME_GAP_MS = 2e4;
   var PowerStateTracker = class {
-    constructor() {
+    constructor(documentCreatedAt) {
+      __publicField(this, "documentCreatedAt", documentCreatedAt);
       __publicField(this, "previous");
     }
     update(snapshot) {
       const previous = this.previous;
       this.previous = snapshot;
-      return previous !== void 0 && !snapshot.sleeping && (previous.sleeping || previous.resume_generation !== snapshot.resume_generation);
+      return !snapshot.sleeping && (previous ? previous.sleeping || previous.resume_generation !== snapshot.resume_generation : (snapshot.last_resume_at_ms ?? 0) > this.documentCreatedAt);
     }
   };
   var canReplacePendingRefresh = (pending, next) => pending !== "resume" || next === "resume";
@@ -677,7 +678,7 @@
     window.addEventListener("blur", noteLifecycle);
     document.addEventListener("visibilitychange", noteLifecycle);
     window.addEventListener("online", () => schedule(1e3, "online", true));
-    const powerState = new PowerStateTracker();
+    const powerState = new PowerStateTracker(performance.timeOrigin);
     window.addEventListener("carrier:power-state", (event) => {
       const snapshot = event.detail;
       if (!snapshot || typeof snapshot.sleeping !== "boolean" || !Number.isSafeInteger(snapshot.resume_generation)) {

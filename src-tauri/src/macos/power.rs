@@ -5,6 +5,7 @@
 //! after the displays wake again.
 
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use objc2::runtime::NSObjectProtocol;
 use tauri::Manager;
@@ -13,11 +14,13 @@ use tauri::Manager;
 struct PowerState {
     sleeping: bool,
     resume_generation: u64,
+    last_resume_at_ms: Option<u64>,
 }
 
 static POWER_STATE: Mutex<PowerState> = Mutex::new(PowerState {
     sleeping: false,
     resume_generation: 0,
+    last_resume_at_ms: None,
 });
 
 struct PowerObserverIvars {
@@ -51,6 +54,10 @@ objc2::define_class!(
                     return;
                 }
                 state.resume_generation = state.resume_generation.wrapping_add(1);
+                state.last_resume_at_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()
+                    .map(|elapsed| elapsed.as_millis() as u64);
                 state.sleeping = false;
             }
             log::info!("display woke after system sleep; refreshing Messenger");

@@ -8,21 +8,26 @@ export type ScheduledRefreshReason = RefreshReason | "online";
 export interface PowerSnapshot {
   sleeping: boolean;
   resume_generation: number;
+  last_resume_at_ms?: number | null;
 }
 
 /** Repeated native snapshots repair missed events without rearming a reload. */
 export class PowerStateTracker {
   private previous: PowerSnapshot | undefined;
 
+  constructor(private readonly documentCreatedAt: number) {}
+
   update(snapshot: PowerSnapshot): boolean {
     const previous = this.previous;
     this.previous = snapshot;
-    // A fresh document has no pre-sleep connection to recover. Its first
-    // snapshot establishes the baseline, including when it starts asleep.
+    // A document can predate the wake even if every earlier snapshot was
+    // dropped. Compare native wall time with the document's time origin to
+    // distinguish it from a fresh post-wake document on the first delivery.
     return (
-      previous !== undefined &&
       !snapshot.sleeping &&
-      (previous.sleeping || previous.resume_generation !== snapshot.resume_generation)
+      (previous
+        ? previous.sleeping || previous.resume_generation !== snapshot.resume_generation
+        : (snapshot.last_resume_at_ms ?? 0) > this.documentCreatedAt)
     );
   }
 }

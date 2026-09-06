@@ -238,8 +238,12 @@ impl WatchdogState {
         // Pre-sleep ages say nothing about the newly woken renderer. Give it a
         // fresh heartbeat window, then fall back to a reload if it cannot
         // answer. Recovery attempt budgets remain intact across sleep.
-        self.system_resumed_at = self.last_heartbeat_at.take().map(|_| now);
-        self.navigation_started_at = None;
+        let was_responding = self.last_heartbeat_at.take().is_some();
+        self.system_resumed_at =
+            (was_responding || self.system_resumed_at.is_some()).then_some(now);
+        // A document that has not answered yet can still have an in-flight
+        // navigation. Restart that deadline rather than dropping supervision.
+        self.navigation_started_at = self.navigation_started_at.map(|_| now);
         self.missing_content_since = None;
         self.realtime_bad_since = None;
         self.realtime_error_page = false;
@@ -618,14 +622,38 @@ mod tests {
     }
 
     #[test]
-    fn system_resume_without_a_heartbeat_clears_recovery_markers() {
+    fn system_resume_does_not_arm_a_never_loaded_window() {
         let mut state = WatchdogState::default();
-        state.navigation_started(Duration::ZERO);
         state.system_resumed(NAVIGATION_TIMEOUT);
         state.system_resumed(NAVIGATION_TIMEOUT * 2);
         assert_eq!(state.system_resumed_at, None);
         assert_eq!(state.navigation_started_at, None);
         assert_eq!(state.action(NAVIGATION_TIMEOUT * 3), WatchdogAction::None);
+    }
+
+    #[test]
+    fn system_resume_restarts_an_unanswered_navigation_deadline() {
+        let mut state = WatchdogState::default();
+        state.navigation_started(Duration::ZERO);
+        let resumed_at = NAVIGATION_TIMEOUT * 2;
+        state.system_resumed(resumed_at);
+        assert_eq!(state.action(resumed_at), WatchdogAction::None);
+        assert_eq!(
+            state.action(resumed_at + NAVIGATION_TIMEOUT),
+            WatchdogAction::Reload
+        );
+    }
+
+    #[test]
+    fn repeated_sleep_preserves_an_unanswered_resume() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, None, None);
+        state.system_resumed(Duration::from_secs(1));
+        state.system_resumed(Duration::from_secs(2));
+        assert_eq!(
+            state.action(Duration::from_secs(2) + RESUME_HEARTBEAT_TIMEOUT),
+            WatchdogAction::Reload
+        );
     }
 
     #[test]

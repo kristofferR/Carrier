@@ -239,7 +239,7 @@ export function initAutoRefresh() {
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
   window.addEventListener("online", () => schedule(1000, "online", true));
-  const powerState = new PowerStateTracker();
+  const powerState = new PowerStateTracker(performance.timeOrigin);
   window.addEventListener("carrier:power-state", (event) => {
     const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
     if (
