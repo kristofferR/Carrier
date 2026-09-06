@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
-const chromium = Bun.which("chromium") || Bun.which("google-chrome");
+// GitHub runners provide stable Chrome via CHROME_BIN alongside a Chromium
+// snapshot. Prefer the configured browser over that development snapshot.
+const chromium =
+  (Bun.env.CHROME_BIN && Bun.which(Bun.env.CHROME_BIN)) ||
+  Bun.which("google-chrome") ||
+  Bun.which("chromium");
 
 // Real DOM/CSS fixtures when Chromium is installed. Pure classification tests
 // still run on hosts without a browser. No Messenger session or network needed.
@@ -54,7 +59,7 @@ test.skipIf(!chromium).each([480, 1000, 1600])(
           "--dump-dom",
           pathToFileURL(file).href,
         ],
-        { stdout: "pipe", stderr: "pipe" },
+        { stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" },
       );
       const [output, errors, exit] = await Promise.all([
         new Response(process.stdout).text(),
