@@ -2818,6 +2818,9 @@
         return `Capture failed for the requested ${label}. Check Messenger’s call settings and try again.`;
     }
   }
+  function canActivateMediaPrivacy(isTrusted, isActive) {
+    return isTrusted && (isActive ?? true);
+  }
 
   // inject/src/messenger/lib/media-tracks.ts
   var LiveMediaTrackCounter = class {
@@ -2859,11 +2862,13 @@
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
     let banner;
+    let failedDevices = [];
     let requestSerial = 0;
     let clearedThrough = 0;
     const hide = () => {
       banner?.remove();
       banner = void 0;
+      failedDevices = [];
     };
     const dismissWarning = () => {
       clearedThrough = requestSerial;
@@ -2883,6 +2888,7 @@
         if (devices.length && serial > clearedThrough) {
           try {
             banner?.remove();
+            failedDevices = [...devices];
             banner = document.createElement("div");
             banner.id = "carrier-media-permission-banner";
             const root = banner.attachShadow({ mode: "closed" });
@@ -2919,7 +2925,7 @@
                 button.type = "button";
                 button.textContent = `${device === "camera" ? "Camera" : "Microphone"} settings`;
                 button.addEventListener("click", async (event) => {
-                  if (!event.isTrusted || navigator.userActivation?.isActive !== true || button.disabled)
+                  if (!canActivateMediaPrivacy(event.isTrusted, navigator.userActivation?.isActive) || button.disabled)
                     return;
                   button.disabled = true;
                   try {
@@ -2951,7 +2957,8 @@
         throw error;
       }
       stream.getTracks().forEach((track) => liveTracks.add(track));
-      hide();
+      failedDevices = failedDevices.filter((device) => !devices.includes(device));
+      if (!failedDevices.length) hide();
       return stream;
     };
   }

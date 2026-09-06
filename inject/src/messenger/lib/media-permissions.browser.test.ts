@@ -148,7 +148,9 @@ async function runFixtures(init: () => void) {
       }
       error = undefined;
       await capture({ audio: true });
-      assert("success clears and protects call", !banner() && window.__carrierInCall === true);
+      assert("partial success preserves recovery", !!banner() && window.__carrierInCall === true);
+      await capture({ video: true });
+      assert("all requested devices recovered", !banner());
       track.dispatchEvent(new Event("ended"));
       assert("track ending restores refresh", window.__carrierInCall === false);
       pending = true;
@@ -159,6 +161,11 @@ async function runFixtures(init: () => void) {
       pendingReject!(error);
       await concurrentFailure;
       assert("audio success does not suppress pending camera denial", !!banner());
+      error = undefined;
+      await capture({ audio: true });
+      assert("audio success after camera denial preserves recovery", !!banner());
+      await capture({ video: true });
+      assert("camera success clears camera denial", !banner());
       error = new DOMException("fixture", "NotAllowedError");
       await capture({ video: true });
       pending = true;

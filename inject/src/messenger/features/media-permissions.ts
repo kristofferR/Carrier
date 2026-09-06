@@ -1,8 +1,10 @@
 /* ------------------ Camera/mic permission recovery -------------------- */
 import { diag } from "../bridge";
 import {
+  canActivateMediaPrivacy,
   captureFailure,
   captureFailureMessage,
+  type MediaDevice,
   mediaPrivacyGuidance,
   requestedMediaDevices,
 } from "../lib/media-permissions";
@@ -13,11 +15,13 @@ export function initMediaPermissionWarning() {
   if (!md?.getUserMedia) return;
   const original = md.getUserMedia.bind(md);
   let banner: HTMLElement | undefined;
+  let failedDevices: MediaDevice[] = [];
   let requestSerial = 0;
   let clearedThrough = 0;
   const hide = () => {
     banner?.remove();
     banner = undefined;
+    failedDevices = [];
   };
   const dismissWarning = () => {
     // A dismissed warning must not return when an already pending request fails.
@@ -38,6 +42,7 @@ export function initMediaPermissionWarning() {
       if (devices.length && serial > clearedThrough) {
         try {
           banner?.remove();
+          failedDevices = [...devices];
           banner = document.createElement("div");
           banner.id = "carrier-media-permission-banner";
           // Shadow styles keep Messenger's button/reset rules out of recovery UI.
@@ -76,8 +81,7 @@ export function initMediaPermissionWarning() {
               button.textContent = `${device === "camera" ? "Camera" : "Microphone"} settings`;
               button.addEventListener("click", async (event) => {
                 if (
-                  !event.isTrusted ||
-                  navigator.userActivation?.isActive !== true ||
+                  !canActivateMediaPrivacy(event.isTrusted, navigator.userActivation?.isActive) ||
                   button.disabled
                 )
                   return;
@@ -112,7 +116,8 @@ export function initMediaPermissionWarning() {
     }
     // Track the call so the auto-refresh doesn't reload mid-call.
     stream.getTracks().forEach((track) => liveTracks.add(track));
-    hide();
+    failedDevices = failedDevices.filter((device) => !devices.includes(device));
+    if (!failedDevices.length) hide();
     return stream;
   };
 }

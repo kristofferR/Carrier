@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  canActivateMediaPrivacy,
   captureFailure,
   captureFailureMessage,
   mediaDeviceLabel,
@@ -36,4 +37,13 @@ test("unknown errors stay generic and never expose raw error details", () => {
     expect(captureFailure(error)).toBe("other");
     expect(captureFailureMessage(captureFailure(error), ["camera"])).not.toContain("private");
   }
+});
+
+test("privacy actions require trusted input and activation where available", () => {
+  for (const activation of [true, false, undefined]) {
+    expect(canActivateMediaPrivacy(false, activation)).toBe(false);
+  }
+  expect(canActivateMediaPrivacy(true, false)).toBe(false);
+  expect(canActivateMediaPrivacy(true, true)).toBe(true);
+  expect(canActivateMediaPrivacy(true, undefined)).toBe(true);
 });

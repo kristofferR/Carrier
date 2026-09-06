@@ -60,3 +60,8 @@ export function captureFailureMessage(
       return `Capture failed for the requested ${label}. Check Messenger’s call settings and try again.`;
   }
 }
+
+// A trusted button click is the synchronous input fallback on older WebKit.
+export function canActivateMediaPrivacy(isTrusted: boolean, isActive: boolean | undefined) {
+  return isTrusted && (isActive ?? true);
+}
