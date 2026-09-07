@@ -2,8 +2,8 @@ export const PERIODIC_REFRESH_MS = 15 * 60 * 1000;
 export const NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1000;
 export const RESUME_GAP_MS = 20_000;
 
-export type RefreshReason = "background" | "foreground" | "realtime" | "resume";
-export type ScheduledRefreshReason = RefreshReason | "online";
+export type RefreshReason = "background" | "foreground" | "realtime" | "resume" | "rate-limit";
+export type ScheduledRefreshReason = RefreshReason | "online" | "rate-limit-manual";
 
 export interface PowerSnapshot {
   sleeping: boolean;
@@ -35,7 +35,13 @@ export class PowerStateTracker {
 export const canReplacePendingRefresh = (
   pending: ScheduledRefreshReason | null,
   next: ScheduledRefreshReason,
-) => pending !== "resume" || next === "resume";
+) => {
+  if (next === "rate-limit-manual") return pending !== "rate-limit-manual";
+  if (pending === "rate-limit-manual") return false;
+  if (pending === "rate-limit") return next === "rate-limit";
+  if (next === "rate-limit") return true;
+  return pending !== "resume" || next === "resume";
+};
 
 const elapsed = (now: number, since: number) => Math.max(0, now - since);
 

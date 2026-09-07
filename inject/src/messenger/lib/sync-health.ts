@@ -86,6 +86,16 @@ export class SyncHealthTracker {
     if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
   }
 
+  /** Generic GraphQL includes search and other unrelated operations. Only
+   * promote HTTP 429 to session-wide backoff once failures corroborate it. */
+  response(id: number, status: number, now: number, online: boolean): boolean {
+    if (!this.outstanding.has(id)) return false;
+    if (syncResponseSucceeded(status)) this.succeeded(id, now);
+    else if (online) this.failed(id, now);
+    else this.abandoned(id);
+    return online && status === 429 && this.degraded(now);
+  }
+
   /** Forget a request without recording an outcome (e.g. it was aborted
    * locally or failed while offline — that says nothing about Facebook). */
   abandoned(id: number): void {
@@ -130,4 +140,21 @@ export class SyncHealthTracker {
     const { ok, bad } = this.counts(now);
     return `${bad} failed / ${ok} ok in window`;
   }
+}
+
+/** Operation name observed in Messenger's Lightspeed GraphQL client. Read
+ * metadata only; never consume a Request body or clone response payloads. */
+export function isMessengerSyncOperation(body: unknown, friendlyName?: string | null): boolean {
+  const expected = "LSPlatformGraphQLLightspeedRequestQuery";
+  if (friendlyName === expected) return true;
+  try {
+    if (body instanceof URLSearchParams || body instanceof FormData) {
+      return body.get("fb_api_req_friendly_name") === expected;
+    }
+    if (typeof body === "string") {
+      const name = body.match(/(?:^|&)fb_api_req_friendly_name=([^&]*)/)?.[1];
+      return name !== undefined && decodeURIComponent(name.replace(/\+/g, " ")) === expected;
+    }
+  } catch (_) {}
+  return false;
 }

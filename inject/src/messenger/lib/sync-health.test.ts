@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isMessengerSyncOperation,
   isMessengerSyncRequest,
   SampledPersistence,
   SYNC_FAILURE_FLOOR,
@@ -143,4 +144,36 @@ describe("SyncHealthTracker", () => {
     tracker.sweep(SYNC_REQUEST_TIMEOUT_MS);
     expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("0 failed / 0 ok in window");
   });
+});
+
+test("isolated GraphQL throttles do not imply session-wide rate limiting", () => {
+  const tracker = new SyncHealthTracker();
+  const response = (status: number) => tracker.response(tracker.started(1000), status, 1001, true);
+  expect(response(429)).toBe(false);
+  for (let i = 0; i < 10; i++) expect(response(200)).toBe(false);
+  for (let i = 0; i < 5; i++) expect(response(429)).toBe(false);
+});
+
+test("corroborated HTTP throttles trigger backoff but offline and abandoned requests do not", () => {
+  const tracker = new SyncHealthTracker();
+  for (let i = 0; i < 4; i++)
+    expect(tracker.response(tracker.started(1000), 429, 1001, true)).toBe(false);
+  expect(tracker.response(tracker.started(1000), 429, 1001, true)).toBe(true);
+  expect(tracker.response(tracker.started(1000), 429, 1001, false)).toBe(false);
+  const abandoned = tracker.started(1000);
+  tracker.abandoned(abandoned);
+  expect(tracker.response(abandoned, 429, 1001, true)).toBe(false);
+  expect(tracker.response(tracker.started(1_000_000), 429, 1_000_001, true)).toBe(false);
+});
+
+test("recovery recognizes sync metadata without consuming opaque bodies", () => {
+  const name = "LSPlatformGraphQLLightspeedRequestQuery";
+  expect(isMessengerSyncOperation(null, name)).toBe(true);
+  expect(isMessengerSyncOperation(new URLSearchParams({ fb_api_req_friendly_name: name }))).toBe(
+    true,
+  );
+  expect(isMessengerSyncOperation(`x=1&fb_api_req_friendly_name=${name}`)).toBe(true);
+  expect(isMessengerSyncOperation("fb_api_req_friendly_name=SearchQuery")).toBe(false);
+  expect(isMessengerSyncOperation("fb_api_req_friendly_name=%not-encoded")).toBe(false);
+  expect(isMessengerSyncOperation(new ReadableStream())).toBe(false);
 });

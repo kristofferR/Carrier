@@ -18,6 +18,7 @@
   "permissions": [
     "core:event:allow-emit",
     "core:window:allow-set-badge-count",
+    "core:window:allow-set-badge-label",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     {
