@@ -5,6 +5,7 @@ import {
   nextRateLimit,
   RATE_LIMIT_BASE_MS,
   RATE_LIMIT_MAX_MS,
+  RetryAfterWindow,
   readRateLimitState,
   retryAfterMs,
 } from "./rate-limit";
@@ -70,4 +71,15 @@ describe("rate-limit recovery", () => {
     expect(canReplacePendingRefresh("rate-limit-manual", "rate-limit-manual")).toBe(false);
     expect(canReplacePendingRefresh("rate-limit-manual", "rate-limit")).toBe(false);
   });
+});
+
+test("corroboration retains the longest server deadline and expires old evidence", () => {
+  const delays = new RetryAfterWindow();
+  expect(delays.observe("10800", 1000)).toBe(10_800_000);
+  expect(delays.observe("120", 2000)).toBe(10_799_000);
+  expect(delays.observe(null, 10_000)).toBe(10_791_000);
+  expect(delays.observe(null, 200_000)).toBeUndefined();
+  delays.observe("3600", 200_000);
+  delays.clear();
+  expect(delays.observe(null, 200_001)).toBeUndefined();
 });

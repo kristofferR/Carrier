@@ -14,6 +14,7 @@ function restore() {
       Date.now(),
     );
     if (stored && (!state || stored.until > state.until)) state = stored;
+    else if (!stored && rateLimitRemainingMs() <= 0) state = undefined;
   } catch (_) {}
 }
 
@@ -34,6 +35,22 @@ export function reportRateLimit(source: "graphql-1675004" | "http-429", retryMs?
     `${source}: automatic recovery backing off until ${new Date(state.until).toISOString()} (attempt ${state.attempts})`,
   );
   window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+}
+
+export function hasRateLimitEpisode() {
+  return state !== undefined;
+}
+
+export function clearRateLimitOnRecovery(): boolean {
+  restore();
+  if (!state || rateLimitRemainingMs() > 0) return false;
+  state = undefined;
+  try {
+    localStorage.removeItem(RATE_LIMIT_STORAGE_KEY);
+  } catch (_) {}
+  diag("sync.rate-limit-recovered", "requests recovered after cooldown; reset backoff episode");
+  window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+  return true;
 }
 
 /** A manual attempt is additional; it never changes the automatic deadline. */

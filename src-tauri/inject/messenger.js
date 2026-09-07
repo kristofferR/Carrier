@@ -402,6 +402,108 @@
   }
   var SEPARATOR_RE = /^[·•.,\s]+$/;
 
+  // inject/src/messenger/lib/sync-health.ts
+  var SYNC_REQUEST_TIMEOUT_MS = 3e4;
+  var SYNC_WINDOW_MS = 18e4;
+  var SYNC_FAILURE_FLOOR = 5;
+  var STUCK_LOADING_SAMPLES = 3;
+  var SampledPersistence = class {
+    constructor(limit) {
+      __publicField(this, "limit", limit);
+      __publicField(this, "count", 0);
+    }
+    observe(present) {
+      this.count = present ? this.count + 1 : 0;
+    }
+    persistent() {
+      return this.count >= this.limit;
+    }
+  };
+  function isMessengerSyncRequest(raw, base) {
+    let url;
+    try {
+      url = new URL(raw, base);
+    } catch (_) {
+      return false;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+    const host = url.hostname.toLowerCase();
+    const facebookHost = host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
+    return facebookHost && url.pathname.startsWith("/api/graphql");
+  }
+  function syncResponseSucceeded(status) {
+    return status >= 200 && status < 400;
+  }
+  var SyncHealthTracker = class {
+    constructor() {
+      __publicField(this, "outstanding", /* @__PURE__ */ new Map());
+      __publicField(this, "outcomes", []);
+      __publicField(this, "nextId", 1);
+    }
+    started(now) {
+      const id = this.nextId++;
+      this.outstanding.set(id, now);
+      return id;
+    }
+    // Outcomes only count while the request is still outstanding: a request
+    // already swept as hung must not add a second outcome when it eventually
+    // completes, however it completes.
+    succeeded(id, now) {
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: true });
+    }
+    failed(id, now) {
+      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
+    }
+    /** Generic GraphQL includes search and other unrelated operations. Only
+     * promote HTTP 429 to session-wide backoff once failures corroborate it. */
+    response(id, status, now, online) {
+      if (!this.outstanding.has(id)) return false;
+      if (syncResponseSucceeded(status)) this.succeeded(id, now);
+      else if (online) this.failed(id, now);
+      else this.abandoned(id);
+      return online && status === 429 && this.degraded(now);
+    }
+    /** Forget a request without recording an outcome (e.g. it was aborted
+     * locally or failed while offline — that says nothing about Facebook). */
+    abandoned(id) {
+      this.outstanding.delete(id);
+    }
+    /** Forget everything in flight (the machine went offline: whatever those
+     * requests do next is about the local network, not Facebook). */
+    abandonOutstanding() {
+      this.outstanding.clear();
+    }
+    /** Count requests hung past the deadline as failures, each once. */
+    sweep(now) {
+      for (const [id, startedAt] of this.outstanding) {
+        if (now - startedAt >= SYNC_REQUEST_TIMEOUT_MS) {
+          this.outstanding.delete(id);
+          this.outcomes.push({ at: now, ok: false });
+        }
+      }
+      this.outcomes = this.outcomes.filter((outcome) => now - outcome.at < SYNC_WINDOW_MS);
+    }
+    counts(now) {
+      let ok = 0;
+      let bad = 0;
+      for (const outcome of this.outcomes) {
+        if (now - outcome.at >= SYNC_WINDOW_MS) continue;
+        if (outcome.ok) ok += 1;
+        else bad += 1;
+      }
+      return { ok, bad };
+    }
+    degraded(now) {
+      const { ok, bad } = this.counts(now);
+      return bad >= SYNC_FAILURE_FLOOR && bad > ok;
+    }
+    /** Content-free description of the current window for diagnostics. */
+    summary(now) {
+      const { ok, bad } = this.counts(now);
+      return `${bad} failed / ${ok} ok in window`;
+    }
+  };
+
   // inject/src/messenger/lib/rate-limit.ts
   var RATE_LIMIT_CODE = 1675004;
   var RATE_LIMIT_BASE_MS = 15 * 6e4;
@@ -442,6 +544,23 @@
       attempts
     };
   }
+  var RetryAfterWindow = class {
+    constructor() {
+      __publicField(this, "samples", []);
+    }
+    observe(header, now) {
+      this.samples = this.samples.filter(
+        (sample) => now - sample.at < SYNC_WINDOW_MS && sample.until > now
+      );
+      const delay = retryAfterMs(header, now);
+      if (delay !== void 0) this.samples.push({ at: now, until: now + delay });
+      const until = this.samples.reduce((latest, sample) => Math.max(latest, sample.until), now);
+      return until > now ? until - now : void 0;
+    }
+    clear() {
+      this.samples = [];
+    }
+  };
 
   // inject/src/messenger/features/rate-limit.ts
   var RATE_LIMIT_RETRY_STATE_EVENT = "carrier:rate-limit-retry-state";
@@ -456,6 +575,7 @@
         Date.now()
       );
       if (stored && (!state || stored.until > state.until)) state = stored;
+      else if (!stored && rateLimitRemainingMs() <= 0) state = void 0;
     } catch (_) {
     }
   }
@@ -476,6 +596,21 @@
       `${source}: automatic recovery backing off until ${new Date(state.until).toISOString()} (attempt ${state.attempts})`
     );
     window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+  }
+  function hasRateLimitEpisode() {
+    return state !== void 0;
+  }
+  function clearRateLimitOnRecovery() {
+    restore();
+    if (!state || rateLimitRemainingMs() > 0) return false;
+    state = void 0;
+    try {
+      localStorage.removeItem(RATE_LIMIT_STORAGE_KEY);
+    } catch (_) {
+    }
+    diag("sync.rate-limit-recovered", "requests recovered after cooldown; reset backoff episode");
+    window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+    return true;
   }
   function retryRateLimitNow() {
     diag(
@@ -670,7 +805,8 @@
       }
       return false;
     };
-    const emitHeartbeat = () => {
+    let rateLimitRetryGrantUntil = 0;
+    const emitHeartbeat = (requestRateLimitRetry = false) => {
       if (typeof heartbeatId !== "number") return;
       const protectedNow = heartbeatProtection();
       lastHeartbeatProtection = protectedNow;
@@ -681,7 +817,8 @@
           protected: protectedNow,
           content_present: messengerContentPresent(),
           realtime: realtimeStatus(),
-          rate_limit_ms: rateLimitRemainingMs()
+          rate_limit_ms: rateLimitRemainingMs(),
+          rate_limit_retry: requestRateLimitRetry
         }
       })?.catch?.(() => {
       });
@@ -718,6 +855,11 @@
         clearPending();
         return;
       }
+      if (pendingReason === "rate-limit" && Date.now() >= rateLimitRetryGrantUntil) {
+        timer = setTimeout(maybeReload, 8e3);
+        emitHeartbeat(true);
+        return;
+      }
       if (pendingReason !== "background") {
         diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
       }
@@ -729,6 +871,13 @@
       }
       pending = false;
       location.reload();
+    };
+    window.__carrierRateLimitRetry = (expectedId, expires) => {
+      if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
+      if (!pending || pendingReason !== "rate-limit") return;
+      rateLimitRetryGrantUntil = expires;
+      clearTimeout(timer);
+      maybeReload();
     };
     const schedule = (delay, reason, allowWhileActive = false) => {
       if (systemSleeping || rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual") return;
@@ -804,6 +953,12 @@
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual", true));
     let waitingForRateLimit = rateLimitRemainingMs() > 0;
     window.addEventListener(RATE_LIMIT_EVENT, () => {
+      if (!hasRateLimitEpisode()) {
+        waitingForRateLimit = false;
+        if (pending && pendingReason === "rate-limit") clearPending();
+        emitHeartbeat();
+        return;
+      }
       if (rateLimitRemainingMs() <= 0) return;
       waitingForRateLimit = true;
       clearPending();
@@ -6877,119 +7032,26 @@ ${text}`)) {
     else applySpellcheck();
   }
 
-  // inject/src/messenger/lib/sync-health.ts
-  var SYNC_REQUEST_TIMEOUT_MS = 3e4;
-  var SYNC_WINDOW_MS = 18e4;
-  var SYNC_FAILURE_FLOOR = 5;
-  var STUCK_LOADING_SAMPLES = 3;
-  var SampledPersistence = class {
-    constructor(limit) {
-      __publicField(this, "limit", limit);
-      __publicField(this, "count", 0);
-    }
-    observe(present) {
-      this.count = present ? this.count + 1 : 0;
-    }
-    persistent() {
-      return this.count >= this.limit;
-    }
-  };
-  function isMessengerSyncRequest(raw, base) {
-    let url;
-    try {
-      url = new URL(raw, base);
-    } catch (_) {
-      return false;
-    }
-    if (url.protocol !== "https:" && url.protocol !== "http:") return false;
-    const host = url.hostname.toLowerCase();
-    const facebookHost = host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
-    return facebookHost && url.pathname.startsWith("/api/graphql");
-  }
-  function syncResponseSucceeded(status) {
-    return status >= 200 && status < 400;
-  }
-  var SyncHealthTracker = class {
-    constructor() {
-      __publicField(this, "outstanding", /* @__PURE__ */ new Map());
-      __publicField(this, "outcomes", []);
-      __publicField(this, "nextId", 1);
-    }
-    started(now) {
-      const id = this.nextId++;
-      this.outstanding.set(id, now);
-      return id;
-    }
-    // Outcomes only count while the request is still outstanding: a request
-    // already swept as hung must not add a second outcome when it eventually
-    // completes, however it completes.
-    succeeded(id, now) {
-      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: true });
-    }
-    failed(id, now) {
-      if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
-    }
-    /** Generic GraphQL includes search and other unrelated operations. Only
-     * promote HTTP 429 to session-wide backoff once failures corroborate it. */
-    response(id, status, now, online) {
-      if (!this.outstanding.has(id)) return false;
-      if (syncResponseSucceeded(status)) this.succeeded(id, now);
-      else if (online) this.failed(id, now);
-      else this.abandoned(id);
-      return online && status === 429 && this.degraded(now);
-    }
-    /** Forget a request without recording an outcome (e.g. it was aborted
-     * locally or failed while offline — that says nothing about Facebook). */
-    abandoned(id) {
-      this.outstanding.delete(id);
-    }
-    /** Forget everything in flight (the machine went offline: whatever those
-     * requests do next is about the local network, not Facebook). */
-    abandonOutstanding() {
-      this.outstanding.clear();
-    }
-    /** Count requests hung past the deadline as failures, each once. */
-    sweep(now) {
-      for (const [id, startedAt] of this.outstanding) {
-        if (now - startedAt >= SYNC_REQUEST_TIMEOUT_MS) {
-          this.outstanding.delete(id);
-          this.outcomes.push({ at: now, ok: false });
-        }
-      }
-      this.outcomes = this.outcomes.filter((outcome) => now - outcome.at < SYNC_WINDOW_MS);
-    }
-    counts(now) {
-      let ok = 0;
-      let bad = 0;
-      for (const outcome of this.outcomes) {
-        if (now - outcome.at >= SYNC_WINDOW_MS) continue;
-        if (outcome.ok) ok += 1;
-        else bad += 1;
-      }
-      return { ok, bad };
-    }
-    degraded(now) {
-      const { ok, bad } = this.counts(now);
-      return bad >= SYNC_FAILURE_FLOOR && bad > ok;
-    }
-    /** Content-free description of the current window for diagnostics. */
-    summary(now) {
-      const { ok, bad } = this.counts(now);
-      return `${bad} failed / ${ok} ok in window`;
-    }
-  };
-
   // inject/src/messenger/features/sync-health.ts
   var SYNC_CHECK_INTERVAL_MS = 1e4;
   function initSyncHealth() {
     const tracker = new SyncHealthTracker();
+    const serverDelays = new RetryAfterWindow();
+    const emitSyncAlert = (kind) => invoke("plugin:event|emit", { event: "carrier:sync-alert", payload: { kind } })?.catch?.(
+      () => {
+      }
+    );
     let sawRateLimit = false;
+    let recoveryObservedAt = null;
     const observeResponse = (id, status, retryHeader) => {
       const now = Date.now();
+      const delay = status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : void 0;
       if (tracker.response(id, status, now, navigator.onLine)) {
-        reportRateLimit("http-429", retryAfterMs(retryHeader, now));
+        reportRateLimit("http-429", delay);
       } else if (syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
-        sawRateLimit = false;
+        recoveryObservedAt ?? (recoveryObservedAt = now);
+      } else if (!syncResponseSucceeded(status)) {
+        recoveryObservedAt = null;
       }
     };
     try {
@@ -7182,15 +7244,12 @@ ${text}`)) {
       } catch (_) {
       }
     };
-    const emitSyncAlert = (kind) => invoke("plugin:event|emit", {
-      event: "carrier:sync-alert",
-      payload: { kind }
-    })?.catch?.(() => {
-    });
     window.addEventListener("offline", () => tracker.abandonOutstanding());
     let degraded = false;
     const showRateLimit = () => {
       if (rateLimitRemainingMs() > 0) {
+        recoveryObservedAt = null;
+        if (!sawRateLimit) emitSyncAlert("rate-limited");
         sawRateLimit = true;
         tracker.abandonOutstanding();
         stuckLoading.observe(false);
@@ -7210,6 +7269,14 @@ ${text}`)) {
       }
       const now = Date.now();
       tracker.sweep(now);
+      if (recoveryObservedAt !== null && now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS && !tracker.degraded(now)) {
+        sawRateLimit = false;
+        recoveryObservedAt = null;
+        if (clearRateLimitOnRecovery()) {
+          serverDelays.clear();
+          emitSyncAlert("recovered");
+        }
+      }
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
         stuckLoading.observe(loadingSpinnerVisible());
       }

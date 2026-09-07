@@ -1,3 +1,5 @@
+import { SYNC_WINDOW_MS } from "./sync-health";
+
 export const RATE_LIMIT_CODE = 1675004;
 export const RATE_LIMIT_BASE_MS = 15 * 60_000;
 export const RATE_LIMIT_MAX_MS = 24 * 60 * 60_000;
@@ -71,4 +73,23 @@ export function nextRateLimit(
     until: now + Math.min(RATE_LIMIT_MAX_MS, Math.max(1000, delay)),
     attempts,
   };
+}
+
+/** Preserve server deadlines while generic HTTP failures are corroborated. */
+export class RetryAfterWindow {
+  private samples: Array<{ at: number; until: number }> = [];
+
+  observe(header: string | null, now: number): number | undefined {
+    this.samples = this.samples.filter(
+      (sample) => now - sample.at < SYNC_WINDOW_MS && sample.until > now,
+    );
+    const delay = retryAfterMs(header, now);
+    if (delay !== undefined) this.samples.push({ at: now, until: now + delay });
+    const until = this.samples.reduce((latest, sample) => Math.max(latest, sample.until), now);
+    return until > now ? until - now : undefined;
+  }
+
+  clear() {
+    this.samples = [];
+  }
 }

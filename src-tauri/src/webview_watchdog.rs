@@ -43,6 +43,19 @@ const REALTIME_ERROR_TIMEOUT: Duration = Duration::from_secs(15);
 /// error page, rebuilding the webview is the next useful step.
 const REALTIME_ERROR_RELOAD_LIMIT: u32 = 1;
 
+// Both page retries and native fallbacks share one process-wide probe slot.
+// The finite lease survives a reload and expires even if its window disappears.
+static RECOVERY_LEASE: Mutex<Option<Instant>> = Mutex::new(None);
+const RECOVERY_PROBE_GAP: Duration = Duration::from_secs(60);
+
+fn claim_recovery(lease: &mut Option<Instant>, now: Instant) -> bool {
+    if lease.is_some_and(|until| now < until) {
+        return false;
+    }
+    *lease = Some(now + RECOVERY_PROBE_GAP);
+    true
+}
+
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
 // Survives window recreation (which builds a fresh watchdog); reset to zero
 // whenever any heartbeat proves the realtime transport healthy.
@@ -72,6 +85,7 @@ struct HeartbeatPayload {
     /// Content-free remaining server/backoff delay. Kept natively even when
     /// the renderer stops answering; navigation must not erase a cooldown.
     rate_limit_ms: Option<u64>,
+    rate_limit_retry: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -372,6 +386,21 @@ impl WebviewWatchdog {
                 payload.content_present,
                 payload.realtime,
             );
+            drop(state);
+            if payload.rate_limit_retry == Some(true)
+                && payload.rate_limit_ms == Some(0)
+                && !payload.protected
+                && claim_recovery(&mut RECOVERY_LEASE.lock().unwrap(), Instant::now())
+            {
+                let expires = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    + 5000;
+                let _ = listener_window.eval(format!(
+                    "window.__carrierRateLimitRetry?.({watchdog_id}, {expires});"
+                ));
+            }
         });
 
         let alive = Arc::new(AtomicBool::new(true));
@@ -480,6 +509,9 @@ impl WebviewWatchdog {
                         // while DNS is pending, for reloads as well as rebuilds.
                         if state.lock().unwrap().action(now) != action {
                             next_recovery_attempt = Duration::ZERO;
+                            continue;
+                        }
+                        if !claim_recovery(&mut RECOVERY_LEASE.lock().unwrap(), Instant::now()) {
                             continue;
                         }
                         match action {
@@ -610,6 +642,17 @@ impl WebviewWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_probe_is_shared_and_expires_when_the_owner_disappears() {
+        let now = Instant::now();
+        let mut lease = None;
+        assert!(claim_recovery(&mut lease, now));
+        // A second page or native fallback cannot join the first probe.
+        assert!(!claim_recovery(&mut lease, now));
+        assert!(!claim_recovery(&mut lease, now + Duration::from_secs(59)));
+        assert!(claim_recovery(&mut lease, now + Duration::from_secs(60)));
+    }
 
     #[test]
     fn rate_limit_defers_native_recovery_but_expires_without_another_heartbeat() {

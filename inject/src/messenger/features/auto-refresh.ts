@@ -18,6 +18,7 @@ import {
 } from "../lib/realtime-health";
 import { isMessengerContentPath } from "../lib/threads";
 import {
+  hasRateLimitEpisode,
   RATE_LIMIT_EVENT,
   RATE_LIMIT_RETRY_EVENT,
   RATE_LIMIT_RETRY_STATE_EVENT,
@@ -132,7 +133,8 @@ export function initAutoRefresh() {
     }
     return false;
   };
-  const emitHeartbeat = () => {
+  let rateLimitRetryGrantUntil = 0;
+  const emitHeartbeat = (requestRateLimitRetry = false) => {
     if (typeof heartbeatId !== "number") return;
     const protectedNow = heartbeatProtection();
     lastHeartbeatProtection = protectedNow;
@@ -144,6 +146,7 @@ export function initAutoRefresh() {
         content_present: messengerContentPresent(),
         realtime: realtimeStatus(),
         rate_limit_ms: rateLimitRemainingMs(),
+        rate_limit_retry: requestRateLimitRetry,
       },
     })?.catch?.(() => {});
   };
@@ -183,6 +186,12 @@ export function initAutoRefresh() {
       clearPending();
       return;
     }
+    if (pendingReason === "rate-limit" && Date.now() >= rateLimitRetryGrantUntil) {
+      // Native arbitration also covers fallback reloads in other windows.
+      timer = setTimeout(maybeReload, 8000);
+      emitHeartbeat(true);
+      return;
+    }
     if (pendingReason !== "background") {
       diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
     }
@@ -193,6 +202,13 @@ export function initAutoRefresh() {
     }
     pending = false;
     location.reload();
+  };
+  window.__carrierRateLimitRetry = (expectedId, expires) => {
+    if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
+    if (!pending || pendingReason !== "rate-limit") return;
+    rateLimitRetryGrantUntil = expires;
+    clearTimeout(timer);
+    maybeReload();
   };
   const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
     if (systemSleeping || (rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual")) return;
@@ -283,6 +299,12 @@ export function initAutoRefresh() {
 
   let waitingForRateLimit = rateLimitRemainingMs() > 0;
   window.addEventListener(RATE_LIMIT_EVENT, () => {
+    if (!hasRateLimitEpisode()) {
+      waitingForRateLimit = false;
+      if (pending && pendingReason === "rate-limit") clearPending();
+      emitHeartbeat();
+      return;
+    }
     if (rateLimitRemainingMs() <= 0) return;
     waitingForRateLimit = true;
     clearPending();

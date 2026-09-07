@@ -12,7 +12,7 @@
 // notification (via carrier:sync-alert); both clear on recovery.
 
 import { diag, invoke } from "../bridge";
-import { retryAfterMs } from "../lib/rate-limit";
+import { RetryAfterWindow } from "../lib/rate-limit";
 import {
   isMessengerSyncRequest,
   SampledPersistence,
@@ -22,6 +22,7 @@ import {
 } from "../lib/sync-health";
 import { isMessengerContentPath } from "../lib/threads";
 import {
+  clearRateLimitOnRecovery,
   RATE_LIMIT_EVENT,
   RATE_LIMIT_RETRY_STATE_EVENT,
   rateLimitRemainingMs,
@@ -39,19 +40,29 @@ const SYNC_CHECK_INTERVAL_MS = 10_000;
 
 export function initSyncHealth() {
   const tracker = new SyncHealthTracker();
+  const serverDelays = new RetryAfterWindow();
+  const emitSyncAlert = (kind: "degraded" | "recovered" | "rate-limited") =>
+    invoke("plugin:event|emit", { event: "carrier:sync-alert", payload: { kind } })?.catch?.(
+      () => {},
+    );
   let sawRateLimit = false;
+  let recoveryObservedAt: number | null = null;
   const observeResponse = (id: number, status: number, retryHeader: string | null) => {
     const now = Date.now();
+    const delay =
+      status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : undefined;
     if (tracker.response(id, status, now, navigator.onLine)) {
-      reportRateLimit("http-429", retryAfterMs(retryHeader, now));
+      reportRateLimit("http-429", delay);
     } else if (
       syncResponseSucceeded(status) &&
       rateLimitRemainingMs() <= 0 &&
       !tracker.degraded(now)
     ) {
-      // A draft may defer the recovery reload even after requests resume.
-      // Keep the warning through the cooldown, then let real traffic clear it.
-      sawRateLimit = false;
+      // Let Facebook normalize HTTP-200 GraphQL errors before accepting
+      // transport success as recovery. The existing health tick settles it.
+      recoveryObservedAt ??= now;
+    } else if (!syncResponseSucceeded(status)) {
+      recoveryObservedAt = null;
     }
   };
 
@@ -296,15 +307,6 @@ export function initSyncHealth() {
     } catch (_) {}
   };
 
-  // The banner is the in-window signal; the native notification reaches a
-  // buried window. The Rust side applies mute and an episode gate to the
-  // alerts, and renders its own fixed strings.
-  const emitSyncAlert = (kind: "degraded" | "recovered") =>
-    invoke("plugin:event|emit", {
-      event: "carrier:sync-alert",
-      payload: { kind },
-    })?.catch?.(() => {});
-
   // Requests caught in flight by an offline transition must not be swept as
   // hung "failures" on the first tick after connectivity returns.
   window.addEventListener("offline", () => tracker.abandonOutstanding());
@@ -312,6 +314,8 @@ export function initSyncHealth() {
   let degraded = false;
   const showRateLimit = () => {
     if (rateLimitRemainingMs() > 0) {
+      recoveryObservedAt = null;
+      if (!sawRateLimit) emitSyncAlert("rate-limited");
       sawRateLimit = true;
       tracker.abandonOutstanding();
       stuckLoading.observe(false);
@@ -334,6 +338,18 @@ export function initSyncHealth() {
     }
     const now = Date.now();
     tracker.sweep(now);
+    if (
+      recoveryObservedAt !== null &&
+      now - recoveryObservedAt >= SYNC_CHECK_INTERVAL_MS &&
+      !tracker.degraded(now)
+    ) {
+      sawRateLimit = false;
+      recoveryObservedAt = null;
+      if (clearRateLimitOnRecovery()) {
+        serverDelays.clear();
+        emitSyncAlert("recovered");
+      }
+    }
     // Only sample the spinner while the page is visible Messenger content — a
     // hidden window may legitimately pause loading work mid-spinner.
     if (!document.hidden && isMessengerContentPath(location.pathname)) {

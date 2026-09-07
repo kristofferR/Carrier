@@ -167,6 +167,7 @@ interface Window {
   __carrierInCall?: boolean;
   /** Respond to the native renderer watchdog without exposing page content. */
   __carrierHeartbeat?: (expectedId: number) => void;
+  __carrierRateLimitRetry?: (expectedId: number, expires: number) => void;
 }
 
 interface XMLHttpRequest {

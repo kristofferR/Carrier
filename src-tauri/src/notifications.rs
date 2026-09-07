@@ -1934,6 +1934,8 @@ pub(crate) fn show_message_notification(
 #[serde(rename_all = "lowercase")]
 pub(crate) enum SyncAlertKind {
     Degraded,
+    #[serde(rename = "rate-limited")]
+    RateLimited,
     Recovered,
 }
 
@@ -2005,6 +2007,11 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
             gate.lock().unwrap().on_degraded(source, Instant::now()),
             "Messenger is struggling to sync — chats may be out of date. \
              This is usually a Facebook-side problem that recovers on its own.",
+        ),
+        SyncAlertKind::RateLimited => (
+            gate.lock().unwrap().on_degraded(source, Instant::now()),
+            "Messenger is rate limiting this session. Chats may be out of date. \
+             Carrier will retry automatically after the cooldown.",
         ),
         SyncAlertKind::Recovered => (
             gate.lock().unwrap().on_recovered(source),

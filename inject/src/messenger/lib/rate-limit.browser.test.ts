@@ -108,6 +108,16 @@ async function runFixtures(
     localStorage.removeItem("carrier-rate-limit");
     init();
     report("graphql-1675004", 120_000);
+    const syncAlerts: string[] = [];
+    Object.assign(window, {
+      __CARRIER_HEARTBEAT_ID__: 42,
+      __TAURI_INTERNALS__: {
+        invoke: async (_command: string, args: { event?: string; payload?: { kind?: string } }) => {
+          if (args?.event === "carrier:sync-alert" && args.payload?.kind)
+            syncAlerts.push(args.payload.kind);
+        },
+      },
+    });
     initRecovery();
     // Only fixture responses: never contact Facebook or exercise a live limit.
     Object.defineProperty(window, "fetch", {
@@ -121,6 +131,10 @@ async function runFixtures(
       this.dispatchEvent(new Event("loadend"));
     };
     initHealth();
+    assert(
+      "rate limiting raises a native alert for buried windows",
+      syncAlerts.includes("rate-limited"),
+    );
     const banner = () => document.getElementById("carrier-sync-banner");
     assert("visible countdown", banner()?.textContent?.includes("2 min") === true);
     const rect = banner()!.getBoundingClientRect();
@@ -207,9 +221,15 @@ async function runFixtures(
       !badgeCalls.some((call) => call.command === "plugin:window|set_badge_count"),
     );
     await fetch("https://www.facebook.com/api/graphql");
+    now += 10_000;
     tick();
     assert("successful fetch clears expired rate-limit warning", !banner());
+    assert(
+      "recovery removes the persisted episode",
+      localStorage.getItem("carrier-rate-limit") === null,
+    );
     report("graphql-1675004");
+    assert("a distinct episode starts at the base backoff", remaining() === 15 * 60_000);
     await fetch("https://www.facebook.com/api/graphql");
     tick();
     assert("successful traffic does not hide an active cooldown", !!banner());
@@ -217,8 +237,47 @@ async function runFixtures(
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "https://www.facebook.com/api/graphql");
     xhr.send();
+    now += 10_000;
     tick();
     assert("successful XHR clears expired rate-limit warning", !banner());
+    const probeRequests: boolean[] = [];
+    Object.assign(window, {
+      __TAURI_INTERNALS__: {
+        invoke: async (
+          _command: string,
+          args: { event?: string; payload?: { rate_limit_retry?: boolean } },
+        ) => {
+          if (args?.event === "carrier:webview-heartbeat" && args.payload?.rate_limit_retry)
+            probeRequests.push(true);
+        },
+      },
+    });
+    report("graphql-1675004");
+    now += remaining() + 1;
+    await fetch("https://www.facebook.com/api/graphql");
+    report("graphql-1675004"); // Facebook normalizes an HTTP-200 GraphQL error.
+    now += 10_000;
+    tick();
+    assert(
+      "HTTP-200 rate errors retain escalating backoff",
+      JSON.parse(localStorage.getItem("carrier-rate-limit")!).attempts === 2,
+    );
+    now += remaining() + 1;
+    draft.textContent = "";
+    tick();
+    runTimer(1000);
+    assert("automatic retry requests native coordination", probeRequests.length === 1);
+    window.__carrierRateLimitRetry?.(42, Date.now() - 1);
+    assert(
+      "stale grants leave the request queued",
+      [...timers.values()].some((t) => t.delay === 8000),
+    );
+    draft.textContent = "new draft";
+    window.__carrierRateLimitRetry?.(42, Date.now() + 5000);
+    assert(
+      "grant rechecks draft protection",
+      [...timers.values()].some((t) => t.delay === 8000),
+    );
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;
