@@ -4,6 +4,8 @@ import {
   type FacebookModuleDefine,
   isConversationSearchInput,
 } from "../lib/facebook-modules";
+import { isFacebookRateLimitError } from "../lib/rate-limit";
+import { reportRateLimit } from "./rate-limit";
 
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
 
@@ -57,6 +59,9 @@ export function initFacebookModuleInterception() {
       value as FacebookModuleDefine,
       shouldBlockTelemetry,
       (restore) => searchIndex.register(restore),
+      (error) => {
+        if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+      },
     );
     wrappedDefines.add(wrapped);
     return wrapped;

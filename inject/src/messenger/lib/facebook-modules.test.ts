@@ -320,3 +320,34 @@ describe("Facebook module interception", () => {
     expect(keepRunning).toHaveBeenLastCalledWith(false);
   });
 });
+
+test("observes ErrorPubSub once, preserves exports, and isolates listener failures", () => {
+  const { define, definitions } = definitionHarness();
+  let observed = 0;
+  let subscriptions = 0;
+  let emit: ((error: unknown) => void) | undefined;
+  const stream = {
+    addListener(listener: (error: unknown) => void) {
+      subscriptions++;
+      emit = listener;
+      listener({ messageParams: [1675004] });
+    },
+  };
+  const intercepted = createFacebookModuleDefineInterceptor(
+    define,
+    () => false,
+    undefined,
+    () => {
+      observed++;
+      throw new Error("observer failure");
+    },
+  );
+  defineDefaultExport(intercepted, "ErrorPubSub", stream);
+  const factory = definitions.get("ErrorPubSub")!.factory;
+  expect(execute(factory).exports.default).toBe(stream);
+  execute(factory);
+  expect(subscriptions).toBe(1);
+  expect(observed).toBe(1);
+  expect(() => emit?.({})).not.toThrow();
+  expect(observed).toBe(2);
+});

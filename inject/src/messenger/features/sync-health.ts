@@ -12,6 +12,7 @@
 // notification (via carrier:sync-alert); both clear on recovery.
 
 import { diag, invoke } from "../bridge";
+import { retryAfterMs } from "../lib/rate-limit";
 import {
   isMessengerSyncRequest,
   SampledPersistence,
@@ -20,6 +21,13 @@ import {
   syncResponseSucceeded,
 } from "../lib/sync-health";
 import { isMessengerContentPath } from "../lib/threads";
+import {
+  RATE_LIMIT_EVENT,
+  RATE_LIMIT_RETRY_STATE_EVENT,
+  rateLimitRemainingMs,
+  reportRateLimit,
+  retryRateLimitNow,
+} from "./rate-limit";
 
 // Hidden/minimized webviews throttle or suspend page timers on every
 // platform, so this interval alone would lag in the background. The native
@@ -63,6 +71,11 @@ export function initSyncHealth() {
           // in-flight queries) say nothing about Facebook — drop them.
           result.then(
             (response) => {
+              if (response.status === 429)
+                reportRateLimit(
+                  "http-429",
+                  retryAfterMs(response.headers.get("Retry-After"), Date.now()),
+                );
               if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
               else if (navigator.onLine) tracker.failed(id, Date.now());
               else tracker.abandoned(id);
@@ -118,6 +131,11 @@ export function initSyncHealth() {
           this.addEventListener(
             "loadend",
             () => {
+              if (this.status === 429)
+                reportRateLimit(
+                  "http-429",
+                  retryAfterMs(this.getResponseHeader("Retry-After"), Date.now()),
+                );
               if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
               else if (navigator.onLine) tracker.failed(id, Date.now());
               else tracker.abandoned(id);
@@ -188,14 +206,57 @@ export function initSyncHealth() {
   // re-render that drops it just brings it back. No CSS animation and no
   // status role, so it can never trip the spinner detector above.
   const SYNC_BANNER_ID = "carrier-sync-banner";
-  const showSyncBanner = () => {
+  let manualRetryPending = false;
+  const showSyncBanner = (limited = false) => {
     try {
-      if (document.getElementById(SYNC_BANNER_ID)) return;
-      const banner = document.createElement("div");
+      const existing = document.getElementById(SYNC_BANNER_ID);
+      const banner = existing || document.createElement("div");
       banner.id = SYNC_BANNER_ID;
-      banner.setAttribute("role", "alert");
-      banner.textContent = "⚠ Messenger sync is broken — chats may be out of date";
+      let label = banner.querySelector("span");
+      if (!label) {
+        label = document.createElement("span");
+        label.setAttribute("role", "alert");
+        banner.appendChild(label);
+      }
+      const message = limited
+        ? rateLimitRemainingMs() > 0
+          ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 60_000))} min. Chats may be out of date.`
+          : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish."
+        : "⚠ Messenger sync is broken — chats may be out of date";
+      if (label.textContent !== message) label.textContent = message;
+      let retry = banner.querySelector("button");
+      if (limited && !retry) {
+        retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "Try again";
+        Object.assign(retry.style, {
+          background: "#1c1e21",
+          color: "#fff",
+          border: "none",
+          borderRadius: "6px",
+          padding: "6px 10px",
+          font: "inherit",
+          flexShrink: "0",
+          cursor: "pointer",
+          pointerEvents: "auto",
+        });
+        retry.addEventListener("click", (event) => {
+          if (!event.isTrusted || manualRetryPending) return;
+          retryRateLimitNow();
+        });
+        banner.appendChild(retry);
+      }
+      if (retry) {
+        retry.hidden = !limited;
+        retry.disabled = manualRetryPending || rateLimitRemainingMs() <= 0;
+        retry.textContent = retry.disabled ? "Retry pending…" : "Try again";
+      }
+      if (existing) return;
       Object.assign(banner.style, {
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        boxSizing: "border-box",
         position: "fixed",
         top: "10px",
         left: "50%",
@@ -204,18 +265,22 @@ export function initSyncHealth() {
         background: "#ffba00",
         color: "#1c1e21",
         padding: "6px 14px",
-        borderRadius: "999px",
+        borderRadius: "12px",
         boxShadow: "0 4px 16px rgba(0,0,0,.35)",
         font: "600 12px -apple-system, system-ui, sans-serif",
         pointerEvents: "none",
         maxWidth: "90vw",
-        whiteSpace: "nowrap",
+        whiteSpace: "normal",
         overflow: "hidden",
         textOverflow: "ellipsis",
       });
       (document.body || document.documentElement).appendChild(banner);
     } catch (_) {}
   };
+  window.addEventListener(RATE_LIMIT_RETRY_STATE_EVENT, (event) => {
+    manualRetryPending = (event as CustomEvent<unknown>).detail === true;
+    showSyncBanner(true);
+  });
   const hideSyncBanner = () => {
     try {
       document.getElementById(SYNC_BANNER_ID)?.remove();
@@ -236,7 +301,22 @@ export function initSyncHealth() {
   window.addEventListener("offline", () => tracker.abandonOutstanding());
 
   let degraded = false;
+  let sawRateLimit = false;
+  const showRateLimit = () => {
+    if (rateLimitRemainingMs() > 0) {
+      sawRateLimit = true;
+      tracker.abandonOutstanding();
+      stuckLoading.observe(false);
+    }
+    if (sawRateLimit) showSyncBanner(true);
+  };
+  window.addEventListener(RATE_LIMIT_EVENT, showRateLimit);
+  showRateLimit();
   setInterval(() => {
+    if (rateLimitRemainingMs() > 0) {
+      showRateLimit();
+      return;
+    }
     // While offline everything fails and spinners hang for local reasons; the
     // realtime recovery machinery owns that state. Freeze the detector (and
     // whatever the banner currently shows) until connectivity returns.
@@ -264,7 +344,8 @@ export function initSyncHealth() {
       diag("sync.stalled", "messenger sync recovered");
       emitSyncAlert("recovered");
     }
-    if (degraded) showSyncBanner();
+    if (sawRateLimit) showSyncBanner(true);
+    else if (degraded) showSyncBanner();
     else hideSyncBanner();
   }, SYNC_CHECK_INTERVAL_MS);
 }

@@ -29,6 +29,7 @@ import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
 import { initQuickReply } from "./features/quick-reply";
+import { initRateLimit } from "./features/rate-limit";
 import { initRecentThreads } from "./features/recent-threads";
 import { initSelectorHealth } from "./features/selector-health";
 import { initSettingsButton } from "./features/settings-button";
@@ -54,6 +55,7 @@ function initFeature(name: string, init: () => void) {
 }
 
 function main() {
+  initFeature("rate-limit", initRateLimit);
   // Must wrap Worker before Facebook starts its background profiler.
   initFeature("facebook-workers", initFacebookWorkerOptimization);
   // Must run before any Facebook module definitions execute.

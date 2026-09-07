@@ -26,6 +26,7 @@ import {
   unreadCountFromTitle,
 } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
+import { RATE_LIMIT_EVENT, rateLimitRemainingMs } from "./rate-limit";
 
 export function initUnreadBadge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -122,6 +123,8 @@ export function initUnreadBadge() {
   };
 
   let last: number | null = null;
+  let lastDockError = false;
+  const isMac = /mac/i.test(navigator.platform);
   let filteredUnreadBaseline: number | null = null;
   const knownMutedUnreads = new MutedUnreadStore(
     accountStorageKey ? unreadStorage : null,
@@ -129,13 +132,16 @@ export function initUnreadBadge() {
   );
   let ignoreMutedPolicy: boolean | null = null;
   const setBadge = (n: number, force: boolean) => {
-    if (n === last && !force) return;
+    const dockError = isMac && rateLimitRemainingMs() > 0;
+    if (n === last && dockError === lastDockError && !force) return;
     last = n;
+    lastDockError = dockError;
     // NB: the command's argument is `value` (the Tauri `setter!` macro names
     // it that), not `count` — passing `count` silently clears the badge.
-    invoke("plugin:window|set_badge_count", { value: n > 0 ? n : null })?.catch?.(() =>
-      diag("badge.set", "set_badge_count invoke failed"),
-    );
+    // Use a single setter on macOS so an unread update cannot race ERR away.
+    const command = isMac ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
+    const value = isMac ? (dockError ? "ERR" : n > 0 ? String(n) : null) : n > 0 ? n : null;
+    invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
     invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(() =>
       diag("badge.emit", "carrier:unread emit failed"),
     );
@@ -187,7 +193,11 @@ export function initUnreadBadge() {
     const ready = conv
       ? conversations.ready
       : document.readyState === "complete" && (document.title || "").trim().length > 0;
-    if (n === null || (n === 0 && !ready)) return;
+    if (n === null || (n === 0 && !ready)) {
+      // Errors must be visible even before Messenger manages to render chats.
+      if (isMac && rateLimitRemainingMs() > 0) setBadge(last ?? 0, force);
+      return;
+    }
     setBadge(n, force);
   };
 
@@ -233,6 +243,7 @@ export function initUnreadBadge() {
     });
     waitForHead.observe(document.documentElement, { childList: true, subtree: true });
   }
+  window.addEventListener(RATE_LIMIT_EVENT, () => apply(true));
   window.addEventListener("carrier:settings", () => apply(true));
   // Fallback poll behind the title observer above (which stays armed while
   // hidden — badge freshness in the background is the feature). Poll slowly

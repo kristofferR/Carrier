@@ -190,7 +190,13 @@
       return !snapshot.sleeping && (previous ? previous.sleeping || previous.resume_generation !== snapshot.resume_generation : (snapshot.last_resume_at_ms ?? 0) > this.documentCreatedAt);
     }
   };
-  var canReplacePendingRefresh = (pending, next) => pending !== "resume" || next === "resume";
+  var canReplacePendingRefresh = (pending, next) => {
+    if (next === "rate-limit-manual") return pending !== "rate-limit-manual";
+    if (pending === "rate-limit-manual") return false;
+    if (pending === "rate-limit") return next === "rate-limit";
+    if (next === "rate-limit") return true;
+    return pending !== "resume" || next === "resume";
+  };
   var elapsed = (now, since) => Math.max(0, now - since);
   var AutoRefreshWatchdog = class {
     constructor(now, active, detectResumeFromClockGap = true) {
@@ -348,25 +354,25 @@
       this.sockets.set(socket, { state: "open", since: now, lastInboundAt: now });
     }
     received(socket, now) {
-      const state = this.sockets.get(socket);
-      if (state?.state !== "open") return;
-      state.lastInboundAt = now;
+      const state2 = this.sockets.get(socket);
+      if (state2?.state !== "open") return;
+      state2.lastInboundAt = now;
     }
     closed(socket, now) {
       this.sockets.delete(socket);
       if (this.everOpened && !this.hasOpenSocket()) this.recoveryStartedAt ?? (this.recoveryStartedAt = now);
     }
     hasOpenSocket() {
-      return [...this.sockets.values()].some((state) => state.state === "open");
+      return [...this.sockets.values()].some((state2) => state2.state === "open");
     }
     health(now) {
       const states = [...this.sockets.values()];
-      const open = states.filter((state) => state.state === "open");
+      const open = states.filter((state2) => state2.state === "open");
       if (open.length) {
-        const freshestInbound = Math.max(...open.map((state) => state.lastInboundAt));
+        const freshestInbound = Math.max(...open.map((state2) => state2.lastInboundAt));
         return elapsed2(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
       }
-      const connecting = states.filter((state) => state.state === "connecting");
+      const connecting = states.filter((state2) => state2.state === "connecting");
       if (!this.everOpened) return "starting";
       if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
         return "recovering";
@@ -395,6 +401,100 @@
     return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
   }
   var SEPARATOR_RE = /^[·•.,\s]+$/;
+
+  // inject/src/messenger/lib/rate-limit.ts
+  var RATE_LIMIT_CODE = 1675004;
+  var RATE_LIMIT_BASE_MS = 15 * 6e4;
+  var RATE_LIMIT_MAX_MS = 24 * 60 * 6e4;
+  var EPISODE_RESET_MS = 24 * 60 * 6e4;
+  function readRateLimitState(value, now) {
+    if (!value || typeof value !== "object") return;
+    const { until, detectedAt, attempts } = value;
+    if (typeof until !== "number" || !Number.isFinite(until) || typeof detectedAt !== "number" || !Number.isFinite(detectedAt) || typeof attempts !== "number" || !Number.isInteger(attempts) || attempts < 1 || attempts > 3 || detectedAt > now || now - detectedAt > EPISODE_RESET_MS || until < detectedAt || until - detectedAt > RATE_LIMIT_MAX_MS)
+      return;
+    return { until, detectedAt, attempts };
+  }
+  function isFacebookRateLimitError(value) {
+    if (!value || typeof value !== "object") return false;
+    const error = value;
+    return typeof error.messageFormat === "string" && error.messageFormat.startsWith("GraphQL operation responded with error %s:") && Array.isArray(error.messageParams) && (error.messageParams[0] === RATE_LIMIT_CODE || error.messageParams[0] === String(RATE_LIMIT_CODE));
+  }
+  function retryAfterMs(header, now) {
+    if (!header?.trim()) return;
+    const value = header.trim();
+    const ms = /^\d+$/.test(value) ? Number(value) * 1e3 : Date.parse(value) - now;
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    return Math.min(ms, RATE_LIMIT_MAX_MS);
+  }
+  function nextRateLimit(previous, now, retryMs) {
+    const current = readRateLimitState(previous, now);
+    if (current && current.until > now) {
+      if (retryMs && now + retryMs > current.until) {
+        return { ...current, detectedAt: now, until: now + Math.min(retryMs, RATE_LIMIT_MAX_MS) };
+      }
+      return current;
+    }
+    const attempts = Math.min(3, (current?.attempts ?? 0) + 1);
+    const delay = retryMs ?? RATE_LIMIT_BASE_MS * 2 ** (attempts - 1);
+    return {
+      detectedAt: now,
+      until: now + Math.min(RATE_LIMIT_MAX_MS, Math.max(1e3, delay)),
+      attempts
+    };
+  }
+
+  // inject/src/messenger/features/rate-limit.ts
+  var RATE_LIMIT_RETRY_STATE_EVENT = "carrier:rate-limit-retry-state";
+  var RATE_LIMIT_RETRY_EVENT = "carrier:rate-limit-retry";
+  var RATE_LIMIT_EVENT = "carrier:rate-limit-change";
+  var RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
+  var state;
+  function restore() {
+    try {
+      const stored = readRateLimitState(
+        JSON.parse(localStorage.getItem(RATE_LIMIT_STORAGE_KEY) || "null"),
+        Date.now()
+      );
+      if (stored && (!state || stored.until > state.until)) state = stored;
+    } catch (_) {
+    }
+  }
+  function rateLimitRemainingMs(now = Date.now()) {
+    return Math.max(0, (state?.until ?? 0) - now);
+  }
+  function reportRateLimit(source, retryMs) {
+    restore();
+    const next = nextRateLimit(state, Date.now(), retryMs);
+    if (next.until === state?.until) return;
+    state = next;
+    try {
+      localStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(state));
+    } catch (_) {
+    }
+    diag(
+      "sync.rate-limit",
+      `${source}: automatic recovery backing off until ${new Date(state.until).toISOString()} (attempt ${state.attempts})`
+    );
+    window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+  }
+  function retryRateLimitNow() {
+    diag(
+      "sync.rate-limit-manual",
+      "user requested an extra recovery attempt; automatic cooldown unchanged"
+    );
+    window.dispatchEvent(new Event(RATE_LIMIT_RETRY_EVENT));
+  }
+  function initRateLimit() {
+    restore();
+    window.addEventListener("storage", (event) => {
+      if (event.key !== RATE_LIMIT_STORAGE_KEY) return;
+      restore();
+      window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+    });
+    if (rateLimitRemainingMs() > 0) {
+      diag("sync.rate-limit", `restored cooldown until ${new Date(state.until).toISOString()}`);
+    }
+  }
 
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
@@ -503,6 +603,9 @@
     const RECOVERY_MIN_GAP_MS = 6e4;
     const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
     const clearPending = () => {
+      if (pending && pendingReason === "rate-limit-manual") {
+        window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: false }));
+      }
       pending = false;
       reloadWhileActive = false;
       clearTimeout(timer);
@@ -538,7 +641,7 @@
       }
     };
     const realtimeStatus = () => {
-      if (systemSleeping) return "pending";
+      if (systemSleeping || rateLimitRemainingMs() > 0) return "pending";
       if (!isMessengerContentPath(location.pathname)) return "pending";
       if (onFacebookErrorPage()) return "error";
       return realtimeRecovery.status(Date.now());
@@ -577,7 +680,8 @@
           id: heartbeatId,
           protected: protectedNow,
           content_present: messengerContentPresent(),
-          realtime: realtimeStatus()
+          realtime: realtimeStatus(),
+          rate_limit_ms: rateLimitRemainingMs()
         }
       })?.catch?.(() => {
       });
@@ -594,7 +698,7 @@
     const maybeReload = () => {
       timer = void 0;
       if (!pending) return;
-      if (systemSleeping) {
+      if (systemSleeping || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
         clearPending();
         return;
       }
@@ -627,7 +731,7 @@
       location.reload();
     };
     const schedule = (delay, reason, allowWhileActive = false) => {
-      if (systemSleeping) return;
+      if (systemSleeping || rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual") return;
       if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
       if (pageIsActive() && !allowWhileActive) {
         return;
@@ -637,6 +741,9 @@
       pendingReason = reason;
       clearTimeout(timer);
       timer = setTimeout(maybeReload, delay);
+      if (reason === "rate-limit-manual") {
+        window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: true }));
+      }
     };
     const realtimeRecoveryDelay = () => {
       try {
@@ -694,10 +801,27 @@
         schedule(4e3, "background");
       }
     };
+    window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual", true));
+    let waitingForRateLimit = rateLimitRemainingMs() > 0;
+    window.addEventListener(RATE_LIMIT_EVENT, () => {
+      if (rateLimitRemainingMs() <= 0) return;
+      waitingForRateLimit = true;
+      clearPending();
+      emitHeartbeat();
+    });
     setInterval(() => {
-      if (systemSleeping) {
+      if (systemSleeping || rateLimitRemainingMs() > 0) {
         emitHeartbeat();
         return;
+      }
+      if (waitingForRateLimit) {
+        waitingForRateLimit = false;
+        window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+        diag(
+          "sync.rate-limit",
+          "cooldown ended; scheduling one recovery attempt (access not yet confirmed)"
+        );
+        schedule(1e3, "rate-limit", true);
       }
       realtime.check();
       if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
@@ -712,10 +836,10 @@
   }
 
   // inject/src/messenger/lib/composer-keys.ts
-  function shouldKeepEnterInComposer(state) {
-    if (state.key !== "Enter") return false;
-    if (state.isComposing || state.compositionActive || state.keyCode === 229) return true;
-    return state.requireAccelerator && !state.acceleratorPressed && !state.shiftKey;
+  function shouldKeepEnterInComposer(state2) {
+    if (state2.key !== "Enter") return false;
+    if (state2.isComposing || state2.compositionActive || state2.keyCode === 229) return true;
+    return state2.requireAccelerator && !state2.acceleratorPressed && !state2.shiftKey;
   }
 
   // inject/src/messenger/features/composer-keys.ts
@@ -1815,9 +1939,9 @@
     const getter = record.getFTSRestoreSync;
     if (typeof getter === "function") {
       try {
-        const restore = Reflect.apply(getter, value, []);
-        if (restore && typeof restore.setKeepWhileLoop_FOR_TESTING_ONLY === "function" && typeof restore.setIsStarted === "function" && typeof restore.startSyncingLoop === "function") {
-          return restore;
+        const restore2 = Reflect.apply(getter, value, []);
+        if (restore2 && typeof restore2.setKeepWhileLoop_FOR_TESTING_ONLY === "function" && typeof restore2.setIsStarted === "function" && typeof restore2.startSyncingLoop === "function") {
+          return restore2;
         }
       } catch (_) {
       }
@@ -1827,8 +1951,8 @@
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
     const inspect = (value) => {
-      const restore = findFTSRestoreSync(value, seen);
-      if (restore) onFTSRestoreSync(restore);
+      const restore2 = findFTSRestoreSync(value, seen);
+      if (restore2) onFTSRestoreSync(restore2);
     };
     inspect(result);
     for (let index = 4; index < factoryArgs.length; index++) {
@@ -1844,26 +1968,26 @@
       __publicField(this, "active", false);
       __publicField(this, "restores", /* @__PURE__ */ new Set());
     }
-    register(restore) {
-      if (this.restores.has(restore)) return;
-      this.restores.add(restore);
-      if (this.active) this.start(restore);
-      else this.stop(restore);
+    register(restore2) {
+      if (this.restores.has(restore2)) return;
+      this.restores.add(restore2);
+      if (this.active) this.start(restore2);
+      else this.stop(restore2);
     }
     wake() {
       if (this.active) return;
       this.active = true;
-      for (const restore of this.restores) this.start(restore);
+      for (const restore2 of this.restores) this.start(restore2);
     }
     pause() {
       this.active = false;
-      for (const restore of this.restores) this.stop(restore);
+      for (const restore2 of this.restores) this.stop(restore2);
     }
-    start(restore) {
+    start(restore2) {
       try {
-        restore.setKeepWhileLoop_FOR_TESTING_ONLY(true);
-        restore.setIsStarted(false);
-        const result = restore.startSyncingLoop();
+        restore2.setKeepWhileLoop_FOR_TESTING_ONLY(true);
+        restore2.setIsStarted(false);
+        const result = restore2.startSyncingLoop();
         if (result && typeof result.then === "function") {
           Promise.resolve(result).catch(() => {
           });
@@ -1871,9 +1995,9 @@
       } catch (_) {
       }
     }
-    stop(restore) {
+    stop(restore2) {
       try {
-        restore.setKeepWhileLoop_FOR_TESTING_ONLY(false);
+        restore2.setKeepWhileLoop_FOR_TESTING_ONLY(false);
       } catch (_) {
       }
     }
@@ -1939,9 +2063,13 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
+      if (moduleName === "ErrorPubSub") {
+        observeFacebookErrors(result, factoryArgs, onFacebookError);
+        return result;
+      }
       if (NULL_COMPONENT_MODULES.has(moduleName)) {
         return replaceComponentExports(result, factoryArgs, nullComponent);
       }
@@ -1958,22 +2086,58 @@
     return wrapped;
   }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
+  }, onFacebookError = () => {
   }) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
             shouldBlockTelemetry,
-            onFTSRestoreSync
+            onFTSRestoreSync,
+            onFacebookError
           );
         }
         return Reflect.apply(target, thisArg, args);
       }
     });
+  }
+  var observedErrorStreams = /* @__PURE__ */ new WeakSet();
+  function observeFacebookErrors(result, args, listener) {
+    const inspect = (value) => {
+      if (!value || typeof value !== "object" || observedErrorStreams.has(value)) return;
+      try {
+        const stream = value;
+        if (typeof stream.addListener !== "function") return;
+        observedErrorStreams.add(value);
+        Reflect.apply(stream.addListener, value, [
+          (error) => {
+            try {
+              listener(error);
+            } catch (_) {
+            }
+          }
+        ]);
+      } catch (_) {
+      }
+    };
+    for (const value of [result, ...args.slice(-2)]) {
+      try {
+        inspect(value);
+        if (value && typeof value === "object") {
+          const record = value;
+          inspect(record.default);
+          inspect(record.exports);
+          if (record.exports && typeof record.exports === "object") {
+            inspect(record.exports.default);
+          }
+        }
+      } catch (_) {
+      }
+    }
   }
 
   // inject/src/messenger/features/facebook-modules.ts
@@ -2014,7 +2178,10 @@
       const wrapped = createFacebookModuleDefineInterceptor(
         value,
         shouldBlockTelemetry,
-        (restore) => searchIndex.register(restore)
+        (restore2) => searchIndex.register(restore2),
+        (error) => {
+          if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
+        }
       );
       wrappedDefines.add(wrapped);
       return wrapped;
@@ -2078,8 +2245,8 @@
   // inject/src/messenger/features/facebook-workers.ts
   function initFacebookWorkerOptimization() {
     if (typeof window.Worker !== "function" || typeof Proxy !== "function") return;
-    const state = { responsivenessWorkersStopped: 0 };
-    window.__CARRIER_WORKER_OPTIMIZATION__ = state;
+    const state2 = { responsivenessWorkersStopped: 0 };
+    window.__CARRIER_WORKER_OPTIMIZATION__ = state2;
     const NativeWorker = window.Worker;
     window.Worker = new Proxy(NativeWorker, {
       construct(Target, args, NewTarget) {
@@ -2088,7 +2255,7 @@
           worker,
           () => window.__CARRIER_SETTINGS__?.block_telemetry === true,
           () => {
-            state.responsivenessWorkersStopped++;
+            state2.responsivenessWorkersStopped++;
           }
         );
       }
@@ -2946,12 +3113,12 @@
       button.addEventListener("click", async (event) => {
         if (!canActivateMediaPrivacy(event.isTrusted, navigator.userActivation?.isActive) || pending)
           return;
-        const state = snapshot[device];
+        const state2 = snapshot[device];
         pending = true;
         actionError = "";
         render();
         try {
-          if (state === "not-determined" && platform === "macos") {
+          if (state2 === "not-determined" && platform === "macos") {
             accept(await carrierMediaPermissionStatus(device));
           } else {
             await carrierOpenMediaPrivacy(device);
@@ -2981,12 +3148,12 @@
       guidance.textContent = actionError || (failure === "denied" && !confirmation ? restricted ? "Access is restricted by system policy. Check with the person who manages this Mac." : devices.every((device) => snapshot[device] === "allowed") ? "macOS allows access. Check Messenger’s call settings and try again." : mediaPrivacyGuidance(platform) : "");
       guidance.hidden = !guidance.textContent;
       for (const { device, button, status, check } of rows) {
-        const state = snapshot[device];
-        status.textContent = state === "allowed" ? "Allowed by macOS" : state === "denied" ? "Blocked in macOS Settings" : state === "restricted" ? "Restricted by system policy" : state === "not-determined" ? "Not requested yet" : "Status unavailable";
-        status.dataset.tone = state === "allowed" ? "good" : state === "denied" || state === "restricted" ? "warning" : "neutral";
-        check.hidden = state !== "allowed";
-        const allow = state === "not-determined" && platform === "macos" && failures.get(device) === "denied" && devices.includes(device);
-        const settings = state === "denied" && failures.get(device) === "denied" || state === "unknown" && failures.get(device) === "denied" && devices.includes(device) && platform !== "linux";
+        const state2 = snapshot[device];
+        status.textContent = state2 === "allowed" ? "Allowed by macOS" : state2 === "denied" ? "Blocked in macOS Settings" : state2 === "restricted" ? "Restricted by system policy" : state2 === "not-determined" ? "Not requested yet" : "Status unavailable";
+        status.dataset.tone = state2 === "allowed" ? "good" : state2 === "denied" || state2 === "restricted" ? "warning" : "neutral";
+        check.hidden = state2 !== "allowed";
+        const allow = state2 === "not-determined" && platform === "macos" && failures.get(device) === "denied" && devices.includes(device);
+        const settings = state2 === "denied" && failures.get(device) === "denied" || state2 === "unknown" && failures.get(device) === "denied" && devices.includes(device) && platform !== "linux";
         button.hidden = !allow && !settings;
         button.textContent = allow ? "Allow access" : "Open Settings";
         button.setAttribute(
@@ -6825,6 +6992,11 @@ ${text}`)) {
             const id = tracked;
             result.then(
               (response) => {
+                if (response.status === 429)
+                  reportRateLimit(
+                    "http-429",
+                    retryAfterMs(response.headers.get("Retry-After"), Date.now())
+                  );
                 if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
                 else if (navigator.onLine) tracker.failed(id, Date.now());
                 else tracker.abandoned(id);
@@ -6867,6 +7039,11 @@ ${text}`)) {
             this.addEventListener(
               "loadend",
               () => {
+                if (this.status === 429)
+                  reportRateLimit(
+                    "http-429",
+                    retryAfterMs(this.getResponseHeader("Retry-After"), Date.now())
+                  );
                 if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
                 else if (navigator.onLine) tracker.failed(id, Date.now());
                 else tracker.abandoned(id);
@@ -6915,14 +7092,53 @@ ${text}`)) {
       return false;
     };
     const SYNC_BANNER_ID = "carrier-sync-banner";
-    const showSyncBanner = () => {
+    let manualRetryPending = false;
+    const showSyncBanner = (limited = false) => {
       try {
-        if (document.getElementById(SYNC_BANNER_ID)) return;
-        const banner = document.createElement("div");
+        const existing = document.getElementById(SYNC_BANNER_ID);
+        const banner = existing || document.createElement("div");
         banner.id = SYNC_BANNER_ID;
-        banner.setAttribute("role", "alert");
-        banner.textContent = "⚠ Messenger sync is broken — chats may be out of date";
+        let label = banner.querySelector("span");
+        if (!label) {
+          label = document.createElement("span");
+          label.setAttribute("role", "alert");
+          banner.appendChild(label);
+        }
+        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : "⚠ Messenger sync is broken — chats may be out of date";
+        if (label.textContent !== message) label.textContent = message;
+        let retry = banner.querySelector("button");
+        if (limited && !retry) {
+          retry = document.createElement("button");
+          retry.type = "button";
+          retry.textContent = "Try again";
+          Object.assign(retry.style, {
+            background: "#1c1e21",
+            color: "#fff",
+            border: "none",
+            borderRadius: "6px",
+            padding: "6px 10px",
+            font: "inherit",
+            flexShrink: "0",
+            cursor: "pointer",
+            pointerEvents: "auto"
+          });
+          retry.addEventListener("click", (event) => {
+            if (!event.isTrusted || manualRetryPending) return;
+            retryRateLimitNow();
+          });
+          banner.appendChild(retry);
+        }
+        if (retry) {
+          retry.hidden = !limited;
+          retry.disabled = manualRetryPending || rateLimitRemainingMs() <= 0;
+          retry.textContent = retry.disabled ? "Retry pending…" : "Try again";
+        }
+        if (existing) return;
         Object.assign(banner.style, {
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          boxSizing: "border-box",
           position: "fixed",
           top: "10px",
           left: "50%",
@@ -6931,12 +7147,12 @@ ${text}`)) {
           background: "#ffba00",
           color: "#1c1e21",
           padding: "6px 14px",
-          borderRadius: "999px",
+          borderRadius: "12px",
           boxShadow: "0 4px 16px rgba(0,0,0,.35)",
           font: "600 12px -apple-system, system-ui, sans-serif",
           pointerEvents: "none",
           maxWidth: "90vw",
-          whiteSpace: "nowrap",
+          whiteSpace: "normal",
           overflow: "hidden",
           textOverflow: "ellipsis"
         });
@@ -6944,6 +7160,10 @@ ${text}`)) {
       } catch (_) {
       }
     };
+    window.addEventListener(RATE_LIMIT_RETRY_STATE_EVENT, (event) => {
+      manualRetryPending = event.detail === true;
+      showSyncBanner(true);
+    });
     const hideSyncBanner = () => {
       try {
         document.getElementById(SYNC_BANNER_ID)?.remove();
@@ -6957,7 +7177,22 @@ ${text}`)) {
     });
     window.addEventListener("offline", () => tracker.abandonOutstanding());
     let degraded = false;
+    let sawRateLimit = false;
+    const showRateLimit = () => {
+      if (rateLimitRemainingMs() > 0) {
+        sawRateLimit = true;
+        tracker.abandonOutstanding();
+        stuckLoading.observe(false);
+      }
+      if (sawRateLimit) showSyncBanner(true);
+    };
+    window.addEventListener(RATE_LIMIT_EVENT, showRateLimit);
+    showRateLimit();
     setInterval(() => {
+      if (rateLimitRemainingMs() > 0) {
+        showRateLimit();
+        return;
+      }
       if (!navigator.onLine) {
         tracker.abandonOutstanding();
         return;
@@ -6978,7 +7213,8 @@ ${text}`)) {
         diag("sync.stalled", "messenger sync recovered");
         emitSyncAlert("recovered");
       }
-      if (degraded) showSyncBanner();
+      if (sawRateLimit) showSyncBanner(true);
+      else if (degraded) showSyncBanner();
       else hideSyncBanner();
     }, SYNC_CHECK_INTERVAL_MS);
   }
@@ -7389,6 +7625,8 @@ ${text}`)) {
       };
     };
     let last = null;
+    let lastDockError = false;
+    const isMac4 = /mac/i.test(navigator.platform);
     let filteredUnreadBaseline = null;
     const knownMutedUnreads = new MutedUnreadStore(
       accountStorageKey ? unreadStorage : null,
@@ -7396,11 +7634,13 @@ ${text}`)) {
     );
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
-      if (n === last && !force) return;
+      const dockError = isMac4 && rateLimitRemainingMs() > 0;
+      if (n === last && dockError === lastDockError && !force) return;
       last = n;
-      invoke("plugin:window|set_badge_count", { value: n > 0 ? n : null })?.catch?.(
-        () => diag("badge.set", "set_badge_count invoke failed")
-      );
+      lastDockError = dockError;
+      const command = isMac4 ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
+      const value = isMac4 ? dockError ? "ERR" : n > 0 ? String(n) : null : n > 0 ? n : null;
+      invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
       invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(
         () => diag("badge.emit", "carrier:unread emit failed")
       );
@@ -7436,7 +7676,10 @@ ${text}`)) {
         filteredUnreadBaseline
       );
       const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
-      if (n === null || n === 0 && !ready) return;
+      if (n === null || n === 0 && !ready) {
+        if (isMac4 && rateLimitRemainingMs() > 0) setBadge(last ?? 0, force);
+        return;
+      }
       setBadge(n, force);
     };
     window.addEventListener("carrier:thread-mute", (event) => {
@@ -7467,6 +7710,7 @@ ${text}`)) {
       });
       waitForHead.observe(document.documentElement, { childList: true, subtree: true });
     }
+    window.addEventListener(RATE_LIMIT_EVENT, () => apply(true));
     window.addEventListener("carrier:settings", () => apply(true));
     let pollTimer;
     const startPoll = () => {
@@ -7691,6 +7935,7 @@ ${text}`)) {
     }
   }
   function main() {
+    initFeature("rate-limit", initRateLimit);
     initFeature("facebook-workers", initFacebookWorkerOptimization);
     initFeature("facebook-modules", initFacebookModuleInterception);
     initFeature("emoji-images", initEmojiImageLoading);

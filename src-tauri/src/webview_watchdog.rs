@@ -69,6 +69,9 @@ struct HeartbeatPayload {
     /// it; unknown future strings deserialize as `Unknown` rather than
     /// invalidating the whole heartbeat.
     realtime: Option<RealtimeSignal>,
+    /// Content-free remaining server/backoff delay. Kept natively even when
+    /// the renderer stops answering; navigation must not erase a cooldown.
+    rate_limit_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -96,6 +99,7 @@ enum WatchdogAction {
 
 #[derive(Debug, Default)]
 struct WatchdogState {
+    rate_limit_until: Option<Duration>,
     last_heartbeat_at: Option<Duration>,
     system_resumed_at: Option<Duration>,
     navigation_started_at: Option<Duration>,
@@ -109,6 +113,16 @@ struct WatchdogState {
 }
 
 impl WatchdogState {
+    fn rate_limited(&mut self, now: Duration, remaining_ms: u64) {
+        if remaining_ms == 0 {
+            return;
+        }
+        // Let the page's one scheduled retry finish before native recovery
+        // intervenes. Clamp remote-origin input so it cannot defer forever.
+        let until =
+            now + Duration::from_millis(remaining_ms.min(86_400_000)) + Duration::from_secs(30);
+        self.rate_limit_until = Some(self.rate_limit_until.map_or(until, |old| old.max(until)));
+    }
     fn heartbeat(
         &mut self,
         now: Duration,
@@ -159,6 +173,9 @@ impl WatchdogState {
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
+        if self.rate_limit_until.is_some_and(|until| now < until) {
+            return WatchdogAction::None;
+        }
         // Navigation gets its full loading window, while retaining the
         // underlying resume deadline in case the reload request fails.
         if let Some(navigation_started_at) = self.navigation_started_at {
@@ -345,7 +362,11 @@ impl WebviewWatchdog {
                     crate::notifications::SyncAlertKind::Recovered,
                 );
             }
-            heartbeat_state.lock().unwrap().heartbeat(
+            let mut state = heartbeat_state.lock().unwrap();
+            if let Some(remaining_ms) = payload.rate_limit_ms {
+                state.rate_limited(started_at.elapsed(), remaining_ms);
+            }
+            state.heartbeat(
                 started_at.elapsed(),
                 payload.protected,
                 payload.content_present,
@@ -589,6 +610,38 @@ impl WebviewWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_limit_defers_native_recovery_but_expires_without_another_heartbeat() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(
+            Duration::ZERO,
+            false,
+            Some(true),
+            Some(RealtimeSignal::Error),
+        );
+        state.rate_limited(Duration::ZERO, 120_000);
+        assert_eq!(state.action(Duration::from_secs(120)), WatchdogAction::None);
+        assert_ne!(state.action(Duration::from_secs(151)), WatchdogAction::None);
+    }
+
+    #[test]
+    fn rate_limit_survives_navigation_and_cannot_be_shortened_by_a_healthy_heartbeat() {
+        let mut state = WatchdogState::default();
+        state.rate_limited(Duration::ZERO, 120_000);
+        state.disarm();
+        state.navigation_started(Duration::from_secs(1));
+        state.heartbeat(
+            Duration::from_secs(5),
+            false,
+            Some(true),
+            Some(RealtimeSignal::Ok),
+        );
+        assert_eq!(state.action(Duration::from_secs(100)), WatchdogAction::None);
+        assert_eq!(state.rate_limit_until, Some(Duration::from_secs(150)));
+        state.rate_limited(Duration::from_secs(10), u64::MAX);
+        assert_eq!(state.rate_limit_until, Some(Duration::from_secs(86_440)));
+    }
 
     #[test]
     fn stays_disarmed_until_the_page_responds() {

@@ -17,6 +17,12 @@ import {
   RealtimeRecoveryTracker,
 } from "../lib/realtime-health";
 import { isMessengerContentPath } from "../lib/threads";
+import {
+  RATE_LIMIT_EVENT,
+  RATE_LIMIT_RETRY_EVENT,
+  RATE_LIMIT_RETRY_STATE_EVENT,
+  rateLimitRemainingMs,
+} from "./rate-limit";
 import { monitorRealtimeHealth } from "./realtime-health";
 
 export function initAutoRefresh() {
@@ -39,6 +45,9 @@ export function initAutoRefresh() {
   const RECOVERY_MIN_GAP_MS = 60_000;
   const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
   const clearPending = () => {
+    if (pending && pendingReason === "rate-limit-manual") {
+      window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: false }));
+    }
     pending = false;
     reloadWhileActive = false;
     clearTimeout(timer);
@@ -76,7 +85,7 @@ export function initAutoRefresh() {
     }
   };
   const realtimeStatus = () => {
-    if (systemSleeping) return "pending";
+    if (systemSleeping || rateLimitRemainingMs() > 0) return "pending";
     if (!isMessengerContentPath(location.pathname)) return "pending";
     if (onFacebookErrorPage()) return "error";
     return realtimeRecovery.status(Date.now());
@@ -134,6 +143,7 @@ export function initAutoRefresh() {
         protected: protectedNow,
         content_present: messengerContentPresent(),
         realtime: realtimeStatus(),
+        rate_limit_ms: rateLimitRemainingMs(),
       },
     })?.catch?.(() => {});
   };
@@ -149,7 +159,7 @@ export function initAutoRefresh() {
   const maybeReload = () => {
     timer = undefined;
     if (!pending) return;
-    if (systemSleeping) {
+    if (systemSleeping || (rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual")) {
       clearPending();
       return;
     }
@@ -185,7 +195,7 @@ export function initAutoRefresh() {
     location.reload();
   };
   const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
-    if (systemSleeping) return;
+    if (systemSleeping || (rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual")) return;
     if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
     if (pageIsActive() && !allowWhileActive) {
       return;
@@ -195,6 +205,9 @@ export function initAutoRefresh() {
     pendingReason = reason;
     clearTimeout(timer);
     timer = setTimeout(maybeReload, delay);
+    if (reason === "rate-limit-manual") {
+      window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: true }));
+    }
   };
   const realtimeRecoveryDelay = () => {
     try {
@@ -266,14 +279,33 @@ export function initAutoRefresh() {
     }
   };
 
+  window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual", true));
+
+  let waitingForRateLimit = rateLimitRemainingMs() > 0;
+  window.addEventListener(RATE_LIMIT_EVENT, () => {
+    if (rateLimitRemainingMs() <= 0) return;
+    waitingForRateLimit = true;
+    clearPending();
+    emitHeartbeat();
+  });
+
   // Check often enough that an overdue callback recovers immediately when a
   // suspended WebView resumes. The same tick checks Messenger's realtime MQTT
   // transport for disconnects, stuck reconnects, and half-open silence — before
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
-    if (systemSleeping) {
+    if (systemSleeping || rateLimitRemainingMs() > 0) {
       emitHeartbeat();
       return;
+    }
+    if (waitingForRateLimit) {
+      waitingForRateLimit = false;
+      window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+      diag(
+        "sync.rate-limit",
+        "cooldown ended; scheduling one recovery attempt (access not yet confirmed)",
+      );
+      schedule(1000, "rate-limit", true);
     }
     realtime.check();
     // No source reports stale when none can observe the transport at all (the

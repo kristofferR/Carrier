@@ -289,9 +289,14 @@ function wrapFactory(
   factory: FacebookModuleFactory,
   shouldBlockTelemetry: () => boolean,
   onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void,
+  onFacebookError: (error: unknown) => void,
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
+    if (moduleName === "ErrorPubSub") {
+      observeFacebookErrors(result, factoryArgs, onFacebookError);
+      return result;
+    }
     if (NULL_COMPONENT_MODULES.has(moduleName)) {
       return replaceComponentExports(result, factoryArgs, nullComponent);
     }
@@ -318,6 +323,7 @@ export function createFacebookModuleDefineInterceptor(
   define: FacebookModuleDefine,
   shouldBlockTelemetry: () => boolean,
   onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void = () => {},
+  onFacebookError: (error: unknown) => void = () => {},
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -326,7 +332,8 @@ export function createFacebookModuleDefineInterceptor(
       if (
         typeof moduleName === "string" &&
         typeof factory === "function" &&
-        (NULL_COMPONENT_MODULES.has(moduleName) ||
+        (moduleName === "ErrorPubSub" ||
+          NULL_COMPONENT_MODULES.has(moduleName) ||
           TELEMETRY_MODULES.has(moduleName) ||
           BACKGROUND_SERVICE_MODULES.has(moduleName))
       ) {
@@ -335,9 +342,47 @@ export function createFacebookModuleDefineInterceptor(
           factory as FacebookModuleFactory,
           shouldBlockTelemetry,
           onFTSRestoreSync,
+          onFacebookError,
         );
       }
       return Reflect.apply(target, thisArg, args);
     },
   });
+}
+
+const observedErrorStreams = new WeakSet<object>();
+function observeFacebookErrors(
+  result: unknown,
+  args: unknown[],
+  listener: (error: unknown) => void,
+) {
+  const inspect = (value: unknown) => {
+    if (!value || typeof value !== "object" || observedErrorStreams.has(value)) return;
+    try {
+      const stream = value as Record<string, unknown>;
+      if (typeof stream.addListener !== "function") return;
+      observedErrorStreams.add(value);
+      Reflect.apply(stream.addListener, value, [
+        (error: unknown) => {
+          try {
+            listener(error);
+          } catch (_) {}
+        },
+      ]);
+    } catch (_) {}
+  };
+  // Only return/module/exports slots; never inspect arbitrary dependencies.
+  for (const value of [result, ...args.slice(-2)]) {
+    try {
+      inspect(value);
+      if (value && typeof value === "object") {
+        const record = value as Record<string, unknown>;
+        inspect(record.default);
+        inspect(record.exports);
+        if (record.exports && typeof record.exports === "object") {
+          inspect((record.exports as Record<string, unknown>).default);
+        }
+      }
+    } catch (_) {}
+  }
 }
