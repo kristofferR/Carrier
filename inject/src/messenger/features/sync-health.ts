@@ -14,6 +14,7 @@
 import { diag, invoke } from "../bridge";
 import { RetryAfterWindow } from "../lib/rate-limit";
 import {
+  isMessengerSyncOperation,
   isMessengerSyncRequest,
   SampledPersistence,
   STUCK_LOADING_SAMPLES,
@@ -47,13 +48,19 @@ export function initSyncHealth() {
     );
   let sawRateLimit = false;
   let recoveryObservedAt: number | null = null;
-  const observeResponse = (id: number, status: number, retryHeader: string | null) => {
+  const observeResponse = (
+    id: number,
+    status: number,
+    retryHeader: string | null,
+    syncOperation: boolean,
+  ) => {
     const now = Date.now();
     const delay =
       status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : undefined;
     if (tracker.response(id, status, now, navigator.onLine)) {
       reportRateLimit("http-429", delay);
     } else if (
+      syncOperation &&
       syncResponseSucceeded(status) &&
       rateLimitRemainingMs() <= 0 &&
       !tracker.degraded(now)
@@ -71,6 +78,7 @@ export function initSyncHealth() {
     const wrappedFetch = new Proxy(nativeFetch, {
       apply(target, thisArg, args: Parameters<typeof fetch>) {
         let tracked: number | undefined;
+        let syncOperation = false;
         try {
           const input = args[0];
           const url =
@@ -87,6 +95,13 @@ export function initSyncHealth() {
             isMessengerSyncRequest(url, location.href)
           ) {
             tracked = tracker.started(Date.now());
+            const headers = new Headers(
+              args[1]?.headers ?? (input instanceof Request ? input.headers : undefined),
+            );
+            syncOperation = isMessengerSyncOperation(
+              args[1]?.body,
+              headers.get("x-fb-friendly-name"),
+            );
           }
         } catch (_) {}
         const result = Reflect.apply(target, thisArg, args);
@@ -101,6 +116,7 @@ export function initSyncHealth() {
                 id,
                 response.status,
                 response.status === 429 ? response.headers.get("Retry-After") : null,
+                syncOperation,
               );
             },
             (error: unknown) => {
@@ -147,6 +163,7 @@ export function initSyncHealth() {
           isMessengerSyncRequest(url, location.href)
         ) {
           const id = tracker.started(Date.now());
+          const syncOperation = isMessengerSyncOperation(args[0]);
           // `once`: a reused XHR instance must not stack listeners across
           // sends. A local abort fires before loadend and abandons the sample,
           // so the loadend status-0 that follows records nothing.
@@ -158,6 +175,7 @@ export function initSyncHealth() {
                 id,
                 this.status,
                 this.status === 429 ? this.getResponseHeader("Retry-After") : null,
+                syncOperation,
               );
             },
             { once: true },

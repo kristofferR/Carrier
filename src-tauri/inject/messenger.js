@@ -503,6 +503,21 @@
       return `${bad} failed / ${ok} ok in window`;
     }
   };
+  function isMessengerSyncOperation(body, friendlyName) {
+    const expected = "LSPlatformGraphQLLightspeedRequestQuery";
+    if (friendlyName === expected) return true;
+    try {
+      if (body instanceof URLSearchParams || body instanceof FormData) {
+        return body.get("fb_api_req_friendly_name") === expected;
+      }
+      if (typeof body === "string") {
+        const name = body.match(/(?:^|&)fb_api_req_friendly_name=([^&]*)/)?.[1];
+        return name !== void 0 && decodeURIComponent(name.replace(/\+/g, " ")) === expected;
+      }
+    } catch (_) {
+    }
+    return false;
+  }
 
   // inject/src/messenger/lib/rate-limit.ts
   var RATE_LIMIT_CODE = 1675004;
@@ -568,10 +583,13 @@
   var RATE_LIMIT_EVENT = "carrier:rate-limit-change";
   var RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
   var state;
+  var storageKey = null;
+  var rateLimitAccountScope = () => storageKey ?? "";
   function restore() {
+    if (!storageKey) return;
     try {
       const stored = readRateLimitState(
-        JSON.parse(localStorage.getItem(RATE_LIMIT_STORAGE_KEY) || "null"),
+        JSON.parse(localStorage.getItem(storageKey) || "null"),
         Date.now()
       );
       if (stored && (!state || stored.until > state.until)) state = stored;
@@ -588,7 +606,7 @@
     if (next.until === state?.until) return;
     state = next;
     try {
-      localStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(state));
+      if (storageKey) localStorage.setItem(storageKey, JSON.stringify(state));
     } catch (_) {
     }
     diag(
@@ -605,11 +623,11 @@
     if (!state || rateLimitRemainingMs() > 0) return false;
     state = void 0;
     try {
-      localStorage.removeItem(RATE_LIMIT_STORAGE_KEY);
+      if (storageKey) localStorage.removeItem(storageKey);
     } catch (_) {
     }
     diag("sync.rate-limit-recovered", "requests recovered after cooldown; reset backoff episode");
-    window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+    window.dispatchEvent(new CustomEvent(RATE_LIMIT_EVENT, { detail: "recovered-here" }));
     return true;
   }
   function retryRateLimitNow() {
@@ -620,9 +638,12 @@
     window.dispatchEvent(new Event(RATE_LIMIT_RETRY_EVENT));
   }
   function initRateLimit() {
+    const key = accountScopedStorageKey(RATE_LIMIT_STORAGE_KEY, document.cookie);
+    if (key !== storageKey) state = void 0;
+    storageKey = key;
     restore();
     window.addEventListener("storage", (event) => {
-      if (event.key !== RATE_LIMIT_STORAGE_KEY) return;
+      if (!storageKey || event.key !== storageKey) return;
       restore();
       window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
     });
@@ -818,6 +839,7 @@
           content_present: messengerContentPresent(),
           realtime: realtimeStatus(),
           rate_limit_ms: rateLimitRemainingMs(),
+          rate_limit_account: rateLimitAccountScope(),
           rate_limit_retry: requestRateLimitRetry
         }
       })?.catch?.(() => {
@@ -952,10 +974,12 @@
     };
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual", true));
     let waitingForRateLimit = rateLimitRemainingMs() > 0;
-    window.addEventListener(RATE_LIMIT_EVENT, () => {
+    window.addEventListener(RATE_LIMIT_EVENT, (event) => {
       if (!hasRateLimitEpisode()) {
-        waitingForRateLimit = false;
-        if (pending && pendingReason === "rate-limit") clearPending();
+        if (event.detail === "recovered-here") {
+          waitingForRateLimit = false;
+          if (pending && pendingReason === "rate-limit") clearPending();
+        }
         emitHeartbeat();
         return;
       }
@@ -4039,9 +4063,9 @@
   var READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
   var RETIRED_FINGERPRINT_TTL_MS = 3e4;
   var NotifiedSignatureStore = class {
-    constructor(storage = null, storageKey = "__carrier_notified_previews__") {
+    constructor(storage = null, storageKey2 = "__carrier_notified_previews__") {
       __publicField(this, "storage", storage);
-      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "storageKey", storageKey2);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
       /**
        * Fingerprints retired by a confirmed read. These survive a prompt reload so
@@ -4312,9 +4336,9 @@
     return validOpaqueTextIdentity(identity.title, TITLE_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.body, BODY_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.message, BODY_PREFIX_LIMIT) && (identity.sender === null || typeof identity.sender === "string" && HASH_RE.test(identity.sender));
   };
   var PendingPageNotificationStore = class {
-    constructor(storage = null, storageKey = "__carrier_pending_page_notifications__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+    constructor(storage = null, storageKey2 = "__carrier_pending_page_notifications__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
       __publicField(this, "storage", storage);
-      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
       __publicField(this, "receipts", []);
       try {
@@ -4416,9 +4440,9 @@
     }
   };
   var PageNotificationReceiptStore = class {
-    constructor(storage = null, storageKey = "__carrier_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+    constructor(storage = null, storageKey2 = "__carrier_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
       __publicField(this, "storage", storage);
-      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
       __publicField(this, "receipts", []);
       try {
@@ -5058,9 +5082,9 @@
     return accountScopedStorageKey("__carrier_muted_unreads__", cookie);
   }
   var MutedUnreadStore = class {
-    constructor(storage = null, storageKey = "__carrier_muted_unreads__") {
+    constructor(storage = null, storageKey2 = "__carrier_muted_unreads__") {
       __publicField(this, "storage", storage);
-      __publicField(this, "storageKey", storageKey);
+      __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ids", /* @__PURE__ */ new Set());
       __publicField(this, "clearCandidates", /* @__PURE__ */ new Map());
       try {
@@ -7043,12 +7067,12 @@ ${text}`)) {
     );
     let sawRateLimit = false;
     let recoveryObservedAt = null;
-    const observeResponse = (id, status, retryHeader) => {
+    const observeResponse = (id, status, retryHeader, syncOperation) => {
       const now = Date.now();
       const delay = status === 429 && navigator.onLine ? serverDelays.observe(retryHeader, now) : void 0;
       if (tracker.response(id, status, now, navigator.onLine)) {
         reportRateLimit("http-429", delay);
-      } else if (syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
+      } else if (syncOperation && syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
         recoveryObservedAt ?? (recoveryObservedAt = now);
       } else if (!syncResponseSucceeded(status)) {
         recoveryObservedAt = null;
@@ -7059,11 +7083,19 @@ ${text}`)) {
       const wrappedFetch = new Proxy(nativeFetch, {
         apply(target, thisArg, args) {
           let tracked;
+          let syncOperation = false;
           try {
             const input = args[0];
             const url = typeof input === "string" || input instanceof URL ? String(input) : input instanceof Request ? input.url : "";
             if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
               tracked = tracker.started(Date.now());
+              const headers = new Headers(
+                args[1]?.headers ?? (input instanceof Request ? input.headers : void 0)
+              );
+              syncOperation = isMessengerSyncOperation(
+                args[1]?.body,
+                headers.get("x-fb-friendly-name")
+              );
             }
           } catch (_) {
           }
@@ -7075,7 +7107,8 @@ ${text}`)) {
                 observeResponse(
                   id,
                   response.status,
-                  response.status === 429 ? response.headers.get("Retry-After") : null
+                  response.status === 429 ? response.headers.get("Retry-After") : null,
+                  syncOperation
                 );
               },
               (error) => {
@@ -7112,6 +7145,7 @@ ${text}`)) {
           const url = xhrUrls.get(this);
           if (url && isMessengerContentPath(location.pathname) && isMessengerSyncRequest(url, location.href)) {
             const id = tracker.started(Date.now());
+            const syncOperation = isMessengerSyncOperation(args[0]);
             this.addEventListener("abort", () => tracker.abandoned(id), { once: true });
             this.addEventListener(
               "loadend",
@@ -7119,7 +7153,8 @@ ${text}`)) {
                 observeResponse(
                   id,
                   this.status,
-                  this.status === 429 ? this.getResponseHeader("Retry-After") : null
+                  this.status === 429 ? this.getResponseHeader("Retry-After") : null,
+                  syncOperation
                 );
               },
               { once: true }

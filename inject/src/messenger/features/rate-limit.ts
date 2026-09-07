@@ -1,16 +1,20 @@
 import { diag } from "../bridge";
 import { nextRateLimit, type RateLimitState, readRateLimitState } from "../lib/rate-limit";
+import { accountScopedStorageKey } from "../lib/threads";
 
 export const RATE_LIMIT_RETRY_STATE_EVENT = "carrier:rate-limit-retry-state";
 export const RATE_LIMIT_RETRY_EVENT = "carrier:rate-limit-retry";
 export const RATE_LIMIT_EVENT = "carrier:rate-limit-change";
 export const RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
 let state: RateLimitState | undefined;
+let storageKey: string | null = null;
+export const rateLimitAccountScope = () => storageKey ?? "";
 
 function restore() {
+  if (!storageKey) return;
   try {
     const stored = readRateLimitState(
-      JSON.parse(localStorage.getItem(RATE_LIMIT_STORAGE_KEY) || "null"),
+      JSON.parse(localStorage.getItem(storageKey) || "null"),
       Date.now(),
     );
     if (stored && (!state || stored.until > state.until)) state = stored;
@@ -28,7 +32,7 @@ export function reportRateLimit(source: "graphql-1675004" | "http-429", retryMs?
   if (next.until === state?.until) return;
   state = next;
   try {
-    localStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(state));
+    if (storageKey) localStorage.setItem(storageKey, JSON.stringify(state));
   } catch (_) {}
   diag(
     "sync.rate-limit",
@@ -46,10 +50,10 @@ export function clearRateLimitOnRecovery(): boolean {
   if (!state || rateLimitRemainingMs() > 0) return false;
   state = undefined;
   try {
-    localStorage.removeItem(RATE_LIMIT_STORAGE_KEY);
+    if (storageKey) localStorage.removeItem(storageKey);
   } catch (_) {}
   diag("sync.rate-limit-recovered", "requests recovered after cooldown; reset backoff episode");
-  window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
+  window.dispatchEvent(new CustomEvent(RATE_LIMIT_EVENT, { detail: "recovered-here" }));
   return true;
 }
 
@@ -63,9 +67,12 @@ export function retryRateLimitNow() {
 }
 
 export function initRateLimit() {
+  const key = accountScopedStorageKey(RATE_LIMIT_STORAGE_KEY, document.cookie);
+  if (key !== storageKey) state = undefined;
+  storageKey = key;
   restore();
   window.addEventListener("storage", (event) => {
-    if (event.key !== RATE_LIMIT_STORAGE_KEY) return;
+    if (!storageKey || event.key !== storageKey) return;
     restore();
     window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
   });

@@ -141,3 +141,20 @@ export class SyncHealthTracker {
     return `${bad} failed / ${ok} ok in window`;
   }
 }
+
+/** Operation name observed in Messenger's Lightspeed GraphQL client. Read
+ * metadata only; never consume a Request body or clone response payloads. */
+export function isMessengerSyncOperation(body: unknown, friendlyName?: string | null): boolean {
+  const expected = "LSPlatformGraphQLLightspeedRequestQuery";
+  if (friendlyName === expected) return true;
+  try {
+    if (body instanceof URLSearchParams || body instanceof FormData) {
+      return body.get("fb_api_req_friendly_name") === expected;
+    }
+    if (typeof body === "string") {
+      const name = body.match(/(?:^|&)fb_api_req_friendly_name=([^&]*)/)?.[1];
+      return name !== undefined && decodeURIComponent(name.replace(/\+/g, " ")) === expected;
+    }
+  } catch (_) {}
+  return false;
+}

@@ -22,6 +22,7 @@ import {
   RATE_LIMIT_EVENT,
   RATE_LIMIT_RETRY_EVENT,
   RATE_LIMIT_RETRY_STATE_EVENT,
+  rateLimitAccountScope,
   rateLimitRemainingMs,
 } from "./rate-limit";
 import { monitorRealtimeHealth } from "./realtime-health";
@@ -146,6 +147,7 @@ export function initAutoRefresh() {
         content_present: messengerContentPresent(),
         realtime: realtimeStatus(),
         rate_limit_ms: rateLimitRemainingMs(),
+        rate_limit_account: rateLimitAccountScope(),
         rate_limit_retry: requestRateLimitRetry,
       },
     })?.catch?.(() => {});
@@ -298,10 +300,14 @@ export function initAutoRefresh() {
   window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual", true));
 
   let waitingForRateLimit = rateLimitRemainingMs() > 0;
-  window.addEventListener(RATE_LIMIT_EVENT, () => {
+  window.addEventListener(RATE_LIMIT_EVENT, (event) => {
     if (!hasRateLimitEpisode()) {
-      waitingForRateLimit = false;
-      if (pending && pendingReason === "rate-limit") clearPending();
+      // Another window recovering does not refresh this document's data.
+      // Keep followers queued for their own serialized retry.
+      if ((event as CustomEvent<unknown>).detail === "recovered-here") {
+        waitingForRateLimit = false;
+        if (pending && pendingReason === "rate-limit") clearPending();
+      }
       emitHeartbeat();
       return;
     }

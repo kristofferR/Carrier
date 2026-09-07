@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isMessengerSyncOperation,
   isMessengerSyncRequest,
   SampledPersistence,
   SYNC_FAILURE_FLOOR,
@@ -163,4 +164,16 @@ test("corroborated HTTP throttles trigger backoff but offline and abandoned requ
   tracker.abandoned(abandoned);
   expect(tracker.response(abandoned, 429, 1001, true)).toBe(false);
   expect(tracker.response(tracker.started(1_000_000), 429, 1_000_001, true)).toBe(false);
+});
+
+test("recovery recognizes sync metadata without consuming opaque bodies", () => {
+  const name = "LSPlatformGraphQLLightspeedRequestQuery";
+  expect(isMessengerSyncOperation(null, name)).toBe(true);
+  expect(isMessengerSyncOperation(new URLSearchParams({ fb_api_req_friendly_name: name }))).toBe(
+    true,
+  );
+  expect(isMessengerSyncOperation(`x=1&fb_api_req_friendly_name=${name}`)).toBe(true);
+  expect(isMessengerSyncOperation("fb_api_req_friendly_name=SearchQuery")).toBe(false);
+  expect(isMessengerSyncOperation("fb_api_req_friendly_name=%not-encoded")).toBe(false);
+  expect(isMessengerSyncOperation(new ReadableStream())).toBe(false);
 });

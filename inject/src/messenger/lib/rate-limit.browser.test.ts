@@ -104,8 +104,13 @@ async function runFixtures(
     timers.delete(entry![0]);
     entry![1].run();
   };
+  const syncBody = "fb_api_req_friendly_name=LSPlatformGraphQLLightspeedRequestQuery";
+  const fetchSync = () =>
+    fetch("https://www.facebook.com/api/graphql", { method: "POST", body: syncBody });
   try {
-    localStorage.removeItem("carrier-rate-limit");
+    // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
+    document.cookie = "c_user=123; path=/";
+    localStorage.removeItem("carrier-rate-limit:123");
     init();
     report("graphql-1675004", 120_000);
     const syncAlerts: string[] = [];
@@ -166,7 +171,7 @@ async function runFixtures(
     assert("rejection cancels pending reload", ![...timers.values()].some((t) => t.delay === 8000));
     assert(
       "persisted backoff",
-      JSON.parse(localStorage.getItem("carrier-rate-limit")!).attempts === 2,
+      JSON.parse(localStorage.getItem("carrier-rate-limit:123")!).attempts === 2,
     );
     const button = banner()!.querySelector("button")!;
     assert(
@@ -175,7 +180,7 @@ async function runFixtures(
     );
     button.click();
     assert("synthetic clicks cannot bypass backoff", remaining() > 0);
-    const automaticDeadline = localStorage.getItem("carrier-rate-limit");
+    const automaticDeadline = localStorage.getItem("carrier-rate-limit:123");
     retryNow();
     assert("manual attempt leaves cooldown intact", remaining() === 30 * 60_000);
     runTimer(1000);
@@ -186,7 +191,7 @@ async function runFixtures(
     report("graphql-1675004");
     assert(
       "manual rejection does not change backoff",
-      localStorage.getItem("carrier-rate-limit") === automaticDeadline,
+      localStorage.getItem("carrier-rate-limit:123") === automaticDeadline,
     );
     assert("acknowledged manual retry disables button", button.disabled);
     window.dispatchEvent(
@@ -220,23 +225,33 @@ async function runFixtures(
       "macOS uses one badge setter to avoid count/error races",
       !badgeCalls.some((call) => call.command === "plugin:window|set_badge_count"),
     );
-    await fetch("https://www.facebook.com/api/graphql");
+    await fetch("https://www.facebook.com/api/graphql", {
+      method: "POST",
+      body: "fb_api_req_friendly_name=SearchQuery",
+    });
+    now += 10_000;
+    tick();
+    assert(
+      "unrelated GraphQL success cannot clear the episode",
+      localStorage.getItem("carrier-rate-limit:123") !== null,
+    );
+    await fetchSync();
     now += 10_000;
     tick();
     assert("successful fetch clears expired rate-limit warning", !banner());
     assert(
       "recovery removes the persisted episode",
-      localStorage.getItem("carrier-rate-limit") === null,
+      localStorage.getItem("carrier-rate-limit:123") === null,
     );
     report("graphql-1675004");
     assert("a distinct episode starts at the base backoff", remaining() === 15 * 60_000);
-    await fetch("https://www.facebook.com/api/graphql");
+    await fetchSync();
     tick();
     assert("successful traffic does not hide an active cooldown", !!banner());
     now += remaining() + 1;
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "https://www.facebook.com/api/graphql");
-    xhr.send();
+    xhr.send(syncBody);
     now += 10_000;
     tick();
     assert("successful XHR clears expired rate-limit warning", !banner());
@@ -254,13 +269,13 @@ async function runFixtures(
     });
     report("graphql-1675004");
     now += remaining() + 1;
-    await fetch("https://www.facebook.com/api/graphql");
+    await fetchSync();
     report("graphql-1675004"); // Facebook normalizes an HTTP-200 GraphQL error.
     now += 10_000;
     tick();
     assert(
       "HTTP-200 rate errors retain escalating backoff",
-      JSON.parse(localStorage.getItem("carrier-rate-limit")!).attempts === 2,
+      JSON.parse(localStorage.getItem("carrier-rate-limit:123")!).attempts === 2,
     );
     now += remaining() + 1;
     draft.textContent = "";
@@ -278,6 +293,30 @@ async function runFixtures(
       "grant rechecks draft protection",
       [...timers.values()].some((t) => t.delay === 8000),
     );
+    localStorage.removeItem("carrier-rate-limit:123");
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: "carrier-rate-limit:123", newValue: null }),
+    );
+    assert(
+      "another window recovering keeps this follower queued",
+      [...timers.values()].some((t) => t.delay === 8000),
+    );
+    report("graphql-1675004");
+    const firstAccount = localStorage.getItem("carrier-rate-limit:123");
+    // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
+    document.cookie = "c_user=456; path=/";
+    init();
+    assert("new account does not inherit cooldown", remaining() === 0);
+    report("graphql-1675004");
+    assert("new account begins at base backoff", remaining() === 15 * 60_000);
+    assert(
+      "other account's state remains isolated",
+      localStorage.getItem("carrier-rate-limit:123") === firstAccount,
+    );
+    // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
+    document.cookie = "c_user=123; path=/";
+    init();
+    assert("returning to an account restores its own cooldown", remaining() > 0);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

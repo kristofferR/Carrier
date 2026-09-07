@@ -4,8 +4,9 @@
 //! wakes up again. Carrier therefore pings the injected page from the native
 //! process and reloads a Messenger window when its content-free heartbeat stops.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -43,17 +44,76 @@ const REALTIME_ERROR_TIMEOUT: Duration = Duration::from_secs(15);
 /// error page, rebuilding the webview is the next useful step.
 const REALTIME_ERROR_RELOAD_LIMIT: u32 = 1;
 
-// Both page retries and native fallbacks share one process-wide probe slot.
-// The finite lease survives a reload and expires even if its window disappears.
-static RECOVERY_LEASE: Mutex<Option<Instant>> = Mutex::new(None);
+// Cooldowns and probe slots are shared even when another renderer is frozen.
+// Account keys stay local and are never logged.
+static RECOVERY_COORDINATOR: OnceLock<Mutex<RecoveryCoordinator>> = OnceLock::new();
 const RECOVERY_PROBE_GAP: Duration = Duration::from_secs(60);
 
-fn claim_recovery(lease: &mut Option<Instant>, now: Instant) -> bool {
-    if lease.is_some_and(|until| now < until) {
-        return false;
+#[derive(Default)]
+struct RecoveryBudget {
+    cooldown_until: Option<Instant>,
+    lease_until: Option<Instant>,
+}
+impl RecoveryBudget {
+    fn blocked(&self, now: Instant) -> bool {
+        self.cooldown_until.is_some_and(|until| now < until)
+            || self.lease_until.is_some_and(|until| now < until)
     }
-    *lease = Some(now + RECOVERY_PROBE_GAP);
-    true
+}
+#[derive(Default)]
+struct RecoveryCoordinator {
+    accounts: HashMap<String, RecoveryBudget>,
+}
+impl RecoveryCoordinator {
+    fn budget(&mut self, account: &str, now: Instant) -> Option<&mut RecoveryBudget> {
+        self.accounts.retain(|_, budget| budget.blocked(now));
+        if self.accounts.len() >= 64 && !self.accounts.contains_key(account) {
+            return None;
+        }
+        Some(self.accounts.entry(account.to_owned()).or_default())
+    }
+    fn observe(&mut self, account: &str, now: Instant, remaining_ms: u64) {
+        if remaining_ms == 0 {
+            return;
+        }
+        if let Some(budget) = self.budget(account, now) {
+            let until = now + Duration::from_millis(remaining_ms.min(86_400_000));
+            budget.cooldown_until = Some(budget.cooldown_until.map_or(until, |old| old.max(until)));
+        }
+    }
+    fn blocked(&self, account: &str, now: Instant) -> bool {
+        self.accounts
+            .get(account)
+            .is_some_and(|budget| budget.blocked(now))
+    }
+    fn claim(&mut self, account: &str, now: Instant) -> Option<Instant> {
+        let budget = self.budget(account, now)?;
+        if budget.blocked(now) {
+            return None;
+        }
+        let permit = now + RECOVERY_PROBE_GAP;
+        budget.lease_until = Some(permit);
+        Some(permit)
+    }
+    fn refund(&mut self, account: &str, permit: Instant) {
+        if let Some(budget) = self.accounts.get_mut(account) {
+            if budget.lease_until == Some(permit) {
+                budget.lease_until = None;
+            }
+        }
+    }
+}
+fn recovery_coordinator() -> &'static Mutex<RecoveryCoordinator> {
+    RECOVERY_COORDINATOR.get_or_init(|| Mutex::new(RecoveryCoordinator::default()))
+}
+fn rate_limit_account(value: Option<&str>) -> &str {
+    value
+        .filter(|value| {
+            value.strip_prefix("carrier-rate-limit:").is_some_and(|id| {
+                !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit())
+            })
+        })
+        .unwrap_or("")
 }
 
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
@@ -85,6 +145,7 @@ struct HeartbeatPayload {
     /// Content-free remaining server/backoff delay. Kept natively even when
     /// the renderer stops answering; navigation must not erase a cooldown.
     rate_limit_ms: Option<u64>,
+    rate_limit_account: Option<String>,
     rate_limit_retry: Option<bool>,
 }
 
@@ -113,6 +174,7 @@ enum WatchdogAction {
 
 #[derive(Debug, Default)]
 struct WatchdogState {
+    rate_limit_account: String,
     rate_limit_until: Option<Duration>,
     last_heartbeat_at: Option<Duration>,
     system_resumed_at: Option<Duration>,
@@ -377,8 +439,18 @@ impl WebviewWatchdog {
                 );
             }
             let mut state = heartbeat_state.lock().unwrap();
+            let account = rate_limit_account(payload.rate_limit_account.as_deref()).to_owned();
+            if state.rate_limit_account != account {
+                state.rate_limit_until = None;
+                state.rate_limit_account.clone_from(&account);
+            }
             if let Some(remaining_ms) = payload.rate_limit_ms {
                 state.rate_limited(started_at.elapsed(), remaining_ms);
+                recovery_coordinator().lock().unwrap().observe(
+                    &account,
+                    Instant::now(),
+                    remaining_ms,
+                );
             }
             state.heartbeat(
                 started_at.elapsed(),
@@ -390,16 +462,30 @@ impl WebviewWatchdog {
             if payload.rate_limit_retry == Some(true)
                 && payload.rate_limit_ms == Some(0)
                 && !payload.protected
-                && claim_recovery(&mut RECOVERY_LEASE.lock().unwrap(), Instant::now())
             {
+                let permit = recovery_coordinator()
+                    .lock()
+                    .unwrap()
+                    .claim(&account, Instant::now());
+                let Some(permit) = permit else {
+                    return;
+                };
                 let expires = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis()
                     + 5000;
-                let _ = listener_window.eval(format!(
-                    "window.__carrierRateLimitRetry?.({watchdog_id}, {expires});"
-                ));
+                if listener_window
+                    .eval(format!(
+                        "window.__carrierRateLimitRetry?.({watchdog_id}, {expires});"
+                    ))
+                    .is_err()
+                {
+                    recovery_coordinator()
+                        .lock()
+                        .unwrap()
+                        .refund(&account, permit);
+                }
             }
         });
 
@@ -469,6 +555,14 @@ impl WebviewWatchdog {
                         if now < next_recovery_attempt {
                             continue;
                         }
+                        let account = state.lock().unwrap().rate_limit_account.clone();
+                        if recovery_coordinator()
+                            .lock()
+                            .unwrap()
+                            .blocked(&account, Instant::now())
+                        {
+                            continue;
+                        }
                         let Ok(url) = watchdog_window.url() else {
                             next_recovery_attempt = now + REACHABILITY_RETRY;
                             continue;
@@ -511,9 +605,14 @@ impl WebviewWatchdog {
                             next_recovery_attempt = Duration::ZERO;
                             continue;
                         }
-                        if !claim_recovery(&mut RECOVERY_LEASE.lock().unwrap(), Instant::now()) {
+                        let account = state.lock().unwrap().rate_limit_account.clone();
+                        let permit = recovery_coordinator()
+                            .lock()
+                            .unwrap()
+                            .claim(&account, Instant::now());
+                        let Some(permit) = permit else {
                             continue;
-                        }
+                        };
                         match action {
                             WatchdogAction::Reload => {
                                 log::warn!(
@@ -525,6 +624,10 @@ impl WebviewWatchdog {
                                         next_recovery_attempt = Duration::ZERO;
                                     }
                                     Err(error) => {
+                                        recovery_coordinator()
+                                            .lock()
+                                            .unwrap()
+                                            .refund(&account, permit);
                                         state.lock().unwrap().navigation_failed();
                                         log::warn!(
                                             "failed to reload stale Messenger webview {label}: {error}"
@@ -543,6 +646,10 @@ impl WebviewWatchdog {
                                         next_recovery_attempt = Duration::ZERO;
                                     }
                                     Err(error) => {
+                                        recovery_coordinator()
+                                            .lock()
+                                            .unwrap()
+                                            .refund(&account, permit);
                                         state.lock().unwrap().navigation_failed();
                                         log::warn!(
                                             "failed to reload blank Messenger webview {label}: {error}"
@@ -561,6 +668,10 @@ impl WebviewWatchdog {
                                         next_recovery_attempt = Duration::ZERO;
                                     }
                                     Err(error) => {
+                                        recovery_coordinator()
+                                            .lock()
+                                            .unwrap()
+                                            .refund(&account, permit);
                                         state.lock().unwrap().navigation_failed();
                                         log::warn!(
                                             "failed to reload Messenger webview {label} with dead realtime transport: {error}"
@@ -580,6 +691,10 @@ impl WebviewWatchdog {
                                         })
                                         .is_ok();
                                     if !claimed {
+                                        recovery_coordinator()
+                                            .lock()
+                                            .unwrap()
+                                            .refund(&account, permit);
                                         state.lock().unwrap().realtime_recovery_exhausted();
                                         log::warn!(
                                             "Messenger webview {label} realtime transport still dead after rebuilding; giving up automated recovery until it reports healthy"
@@ -606,11 +721,18 @@ impl WebviewWatchdog {
                                 // A realtime rebuild that ends up not happening —
                                 // declined synchronously, or abandoned because the
                                 // destroy call failed — must refund its budget.
-                                let refund =
-                                    (action == WatchdogAction::RecreateRealtime).then(|| {
-                                        Box::new(refund_realtime_recreate)
-                                            as Box<dyn FnOnce() + Send>
-                                    });
+                                let refund_account = account.clone();
+                                let refund_realtime = action == WatchdogAction::RecreateRealtime;
+                                let refund = Some(Box::new(move || {
+                                    recovery_coordinator()
+                                        .lock()
+                                        .unwrap()
+                                        .refund(&refund_account, permit);
+                                    if refund_realtime {
+                                        refund_realtime_recreate();
+                                    }
+                                })
+                                    as Box<dyn FnOnce() + Send>);
                                 if crate::window::recreate_messenger_window(
                                     watchdog_window.app_handle(),
                                     &label,
@@ -624,6 +746,10 @@ impl WebviewWatchdog {
                                     next_recovery_attempt = now + REACHABILITY_RETRY;
                                     continue;
                                 }
+                                recovery_coordinator()
+                                    .lock()
+                                    .unwrap()
+                                    .refund(&account, permit);
                                 if action == WatchdogAction::RecreateRealtime {
                                     refund_realtime_recreate();
                                 }
@@ -644,14 +770,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cooldown_blocks_other_watchdogs_for_the_same_account() {
+        let now = Instant::now();
+        let mut coordinator = RecoveryCoordinator::default();
+        coordinator.observe("a", now, 900_000);
+        assert!(coordinator.blocked("a", now + Duration::from_secs(20)));
+        assert!(coordinator
+            .claim("a", now + Duration::from_secs(20))
+            .is_none());
+        assert!(coordinator
+            .claim("b", now + Duration::from_secs(20))
+            .is_some());
+        assert!(coordinator
+            .claim("a", now + Duration::from_secs(900))
+            .is_some());
+    }
+
+    #[test]
+    fn failed_recovery_refunds_only_its_own_lease() {
+        let now = Instant::now();
+        let mut coordinator = RecoveryCoordinator::default();
+        let first = coordinator.claim("a", now).unwrap();
+        coordinator.refund("a", first);
+        let second = coordinator.claim("a", now + REACHABILITY_RETRY).unwrap();
+        coordinator.refund("a", first);
+        assert!(coordinator.claim("a", now + REACHABILITY_RETRY).is_none());
+        coordinator.refund("a", second);
+        assert!(coordinator.claim("a", now + REACHABILITY_RETRY).is_some());
+    }
+
+    #[test]
     fn recovery_probe_is_shared_and_expires_when_the_owner_disappears() {
         let now = Instant::now();
-        let mut lease = None;
-        assert!(claim_recovery(&mut lease, now));
-        // A second page or native fallback cannot join the first probe.
-        assert!(!claim_recovery(&mut lease, now));
-        assert!(!claim_recovery(&mut lease, now + Duration::from_secs(59)));
-        assert!(claim_recovery(&mut lease, now + Duration::from_secs(60)));
+        let mut coordinator = RecoveryCoordinator::default();
+        assert!(coordinator.claim("account-a", now).is_some());
+        assert!(coordinator.claim("account-a", now).is_none());
+        assert!(coordinator
+            .claim("account-a", now + Duration::from_secs(59))
+            .is_none());
+        assert!(coordinator
+            .claim("account-a", now + Duration::from_secs(60))
+            .is_some());
     }
 
     #[test]
