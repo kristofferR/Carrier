@@ -187,6 +187,7 @@ enum WatchdogAction {
     None,
     Protected,
     Reload,
+    RecreateUnresponsive,
     ReloadBlank,
     RecreateBlank,
     ReloadRealtime,
@@ -199,6 +200,7 @@ struct WatchdogState {
     last_heartbeat_at: Option<Duration>,
     system_resumed_at: Option<Duration>,
     navigation_started_at: Option<Duration>,
+    unresponsive_reload_attempted: bool,
     missing_content_since: Option<Duration>,
     blank_reload_attempted: bool,
     protected: bool,
@@ -225,6 +227,7 @@ impl WatchdogState {
             self.realtime_bad_since = None;
         }
         self.last_heartbeat_at = Some(now);
+        self.unresponsive_reload_attempted = false;
         self.system_resumed_at = None;
         self.navigation_started_at = None;
         self.protected = protected;
@@ -265,7 +268,7 @@ impl WatchdogState {
             return if now.saturating_sub(navigation_started_at) < NAVIGATION_TIMEOUT {
                 WatchdogAction::None
             } else {
-                WatchdogAction::Reload
+                self.unresponsive_action()
             };
         }
         if let Some(system_resumed_at) = self.system_resumed_at {
@@ -275,7 +278,7 @@ impl WatchdogState {
             } else if self.protected && stalled_for < PROTECTED_HEARTBEAT_TIMEOUT {
                 WatchdogAction::Protected
             } else {
-                WatchdogAction::Reload
+                self.unresponsive_action()
             };
         }
         if self
@@ -299,7 +302,7 @@ impl WatchdogState {
             return if self.protected && stalled_for < PROTECTED_HEARTBEAT_TIMEOUT {
                 WatchdogAction::Protected
             } else {
-                WatchdogAction::Reload
+                self.unresponsive_action()
             };
         }
         // Facebook's static error page is a certainty, not a suspicion: confirm
@@ -328,6 +331,19 @@ impl WatchdogState {
 
     fn navigation_started(&mut self, now: Duration) {
         self.navigation_started_at = Some(now);
+    }
+
+    fn unresponsive_action(&self) -> WatchdogAction {
+        if self.unresponsive_reload_attempted {
+            WatchdogAction::RecreateUnresponsive
+        } else {
+            WatchdogAction::Reload
+        }
+    }
+
+    fn unresponsive_reload_started(&mut self, now: Duration) {
+        self.unresponsive_reload_attempted = true;
+        self.navigation_started(now);
     }
 
     fn navigation_failed(&mut self) {
@@ -551,6 +567,7 @@ impl WebviewWatchdog {
                 match action {
                     WatchdogAction::None | WatchdogAction::Protected => {}
                     WatchdogAction::Reload
+                    | WatchdogAction::RecreateUnresponsive
                     | WatchdogAction::ReloadBlank
                     | WatchdogAction::RecreateBlank
                     | WatchdogAction::ReloadRealtime
@@ -622,7 +639,7 @@ impl WebviewWatchdog {
                                 log::warn!(
                                     "Messenger webview {label} stopped responding; reloading to restore sync"
                                 );
-                                state.lock().unwrap().navigation_started(now);
+                                state.lock().unwrap().unresponsive_reload_started(now);
                                 match watchdog_window.reload() {
                                     Ok(()) => {
                                         next_recovery_attempt = Duration::ZERO;
@@ -632,7 +649,11 @@ impl WebviewWatchdog {
                                             .lock()
                                             .unwrap()
                                             .refund(&account, permit);
-                                        state.lock().unwrap().navigation_failed();
+                                        {
+                                            let mut state = state.lock().unwrap();
+                                            state.unresponsive_reload_attempted = false;
+                                            state.navigation_failed();
+                                        }
                                         log::warn!(
                                             "failed to reload stale Messenger webview {label}: {error}"
                                         );
@@ -684,7 +705,9 @@ impl WebviewWatchdog {
                                     }
                                 }
                             }
-                            WatchdogAction::RecreateBlank | WatchdogAction::RecreateRealtime => {
+                            WatchdogAction::RecreateBlank
+                            | WatchdogAction::RecreateUnresponsive
+                            | WatchdogAction::RecreateRealtime => {
                                 if action == WatchdogAction::RecreateRealtime {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
@@ -716,6 +739,10 @@ impl WebviewWatchdog {
                                     }
                                     log::warn!(
                                         "Messenger webview {label} realtime transport stayed dead across reloads; rebuilding the webview"
+                                    );
+                                } else if action == WatchdogAction::RecreateUnresponsive {
+                                    log::warn!(
+                                        "Messenger webview {label} stayed unresponsive after reload; rebuilding it"
                                     );
                                 } else {
                                     log::warn!(
@@ -813,6 +840,43 @@ mod tests {
             ..now
         };
         assert!(coordinator.claim("a", awake).is_some());
+    }
+
+    #[test]
+    fn unanswered_reload_rebuilds_the_webview_instead_of_reloading_forever() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, Some(true), Some(RealtimeSignal::Ok));
+        assert_eq!(state.action(HEARTBEAT_TIMEOUT), WatchdogAction::Reload);
+        state.unresponsive_reload_started(HEARTBEAT_TIMEOUT);
+        assert_eq!(
+            state.action(HEARTBEAT_TIMEOUT + NAVIGATION_TIMEOUT - Duration::from_secs(1)),
+            WatchdogAction::None
+        );
+        assert_eq!(
+            state.action(HEARTBEAT_TIMEOUT + NAVIGATION_TIMEOUT),
+            WatchdogAction::RecreateUnresponsive
+        );
+        let answered_at = HEARTBEAT_TIMEOUT + NAVIGATION_TIMEOUT;
+        state.heartbeat(answered_at, false, Some(true), Some(RealtimeSignal::Ok));
+        assert_eq!(state.action(answered_at), WatchdogAction::None);
+        assert_eq!(
+            state.action(answered_at + HEARTBEAT_TIMEOUT),
+            WatchdogAction::Reload
+        );
+    }
+
+    #[test]
+    fn sleep_preserves_escalation_after_an_unanswered_reload() {
+        let mut state = WatchdogState::default();
+        state.heartbeat(Duration::ZERO, false, Some(true), None);
+        state.unresponsive_reload_started(HEARTBEAT_TIMEOUT);
+        let resumed_at = HEARTBEAT_TIMEOUT + Duration::from_secs(5);
+        state.system_resumed(resumed_at);
+        assert_eq!(state.action(resumed_at), WatchdogAction::None);
+        assert_eq!(
+            state.action(resumed_at + NAVIGATION_TIMEOUT),
+            WatchdogAction::RecreateUnresponsive
+        );
     }
 
     #[test]
