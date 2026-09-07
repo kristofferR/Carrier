@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const chromium =
@@ -14,6 +14,7 @@ test.skipIf(!chromium)(
   "rate-limit cooldown, banner and protected automatic retry in a real DOM",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "carrier-rate-limit-test-"));
+    let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const entry = fileURLToPath(new URL("../features/rate-limit.ts", import.meta.url));
       const bundle = await build({
@@ -29,6 +30,11 @@ test.skipIf(!chromium)(
         file,
         `<!doctype html><html><body><pre id="result">RUNNING</pre><script>${bundle.outputFiles[0]!.text}</script></body></html>`,
       );
+      server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: () => new Response(Bun.file(file), { headers: { "Content-Type": "text/html" } }),
+      });
       const process = Bun.spawn(
         [
           chromium!,
@@ -40,7 +46,7 @@ test.skipIf(!chromium)(
           "--window-size=480,900",
           "--virtual-time-budget=5000",
           "--dump-dom",
-          pathToFileURL(file).href,
+          `${server.url}messages`,
         ],
         { stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" },
       );
@@ -52,6 +58,7 @@ test.skipIf(!chromium)(
       expect(exit, errors).toBe(0);
       expect(output.match(/<pre id="result">([^<]+)/)?.[1]).toBe("PASS");
     } finally {
+      server?.stop(true);
       await rm(directory, { recursive: true, force: true });
     }
   },
@@ -102,6 +109,17 @@ async function runFixtures(
     init();
     report("graphql-1675004", 120_000);
     initRecovery();
+    // Only fixture responses: never contact Facebook or exercise a live limit.
+    Object.defineProperty(window, "fetch", {
+      value: async () => new Response("{}", { status: 200 }),
+      configurable: true,
+      writable: true,
+    });
+    XMLHttpRequest.prototype.open = () => {};
+    XMLHttpRequest.prototype.send = function () {
+      Object.defineProperty(this, "status", { value: 200, configurable: true });
+      this.dispatchEvent(new Event("loadend"));
+    };
     initHealth();
     const banner = () => document.getElementById("carrier-sync-banner");
     assert("visible countdown", banner()?.textContent?.includes("2 min") === true);
@@ -188,6 +206,19 @@ async function runFixtures(
       "macOS uses one badge setter to avoid count/error races",
       !badgeCalls.some((call) => call.command === "plugin:window|set_badge_count"),
     );
+    await fetch("https://www.facebook.com/api/graphql");
+    tick();
+    assert("successful fetch clears expired rate-limit warning", !banner());
+    report("graphql-1675004");
+    await fetch("https://www.facebook.com/api/graphql");
+    tick();
+    assert("successful traffic does not hide an active cooldown", !!banner());
+    now += remaining() + 1;
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "https://www.facebook.com/api/graphql");
+    xhr.send();
+    tick();
+    assert("successful XHR clears expired rate-limit warning", !banner());
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

@@ -6929,6 +6929,15 @@ ${text}`)) {
     failed(id, now) {
       if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
     }
+    /** Generic GraphQL includes search and other unrelated operations. Only
+     * promote HTTP 429 to session-wide backoff once failures corroborate it. */
+    response(id, status, now, online) {
+      if (!this.outstanding.has(id)) return false;
+      if (syncResponseSucceeded(status)) this.succeeded(id, now);
+      else if (online) this.failed(id, now);
+      else this.abandoned(id);
+      return online && status === 429 && this.degraded(now);
+    }
     /** Forget a request without recording an outcome (e.g. it was aborted
      * locally or failed while offline — that says nothing about Facebook). */
     abandoned(id) {
@@ -6974,6 +6983,15 @@ ${text}`)) {
   var SYNC_CHECK_INTERVAL_MS = 1e4;
   function initSyncHealth() {
     const tracker = new SyncHealthTracker();
+    let sawRateLimit = false;
+    const observeResponse = (id, status, retryHeader) => {
+      const now = Date.now();
+      if (tracker.response(id, status, now, navigator.onLine)) {
+        reportRateLimit("http-429", retryAfterMs(retryHeader, now));
+      } else if (syncResponseSucceeded(status) && rateLimitRemainingMs() <= 0 && !tracker.degraded(now)) {
+        sawRateLimit = false;
+      }
+    };
     try {
       const nativeFetch = window.fetch;
       const wrappedFetch = new Proxy(nativeFetch, {
@@ -6992,14 +7010,11 @@ ${text}`)) {
             const id = tracked;
             result.then(
               (response) => {
-                if (response.status === 429)
-                  reportRateLimit(
-                    "http-429",
-                    retryAfterMs(response.headers.get("Retry-After"), Date.now())
-                  );
-                if (syncResponseSucceeded(response.status)) tracker.succeeded(id, Date.now());
-                else if (navigator.onLine) tracker.failed(id, Date.now());
-                else tracker.abandoned(id);
+                observeResponse(
+                  id,
+                  response.status,
+                  response.status === 429 ? response.headers.get("Retry-After") : null
+                );
               },
               (error) => {
                 const aborted = error?.name === "AbortError";
@@ -7039,14 +7054,11 @@ ${text}`)) {
             this.addEventListener(
               "loadend",
               () => {
-                if (this.status === 429)
-                  reportRateLimit(
-                    "http-429",
-                    retryAfterMs(this.getResponseHeader("Retry-After"), Date.now())
-                  );
-                if (syncResponseSucceeded(this.status)) tracker.succeeded(id, Date.now());
-                else if (navigator.onLine) tracker.failed(id, Date.now());
-                else tracker.abandoned(id);
+                observeResponse(
+                  id,
+                  this.status,
+                  this.status === 429 ? this.getResponseHeader("Retry-After") : null
+                );
               },
               { once: true }
             );
@@ -7177,7 +7189,6 @@ ${text}`)) {
     });
     window.addEventListener("offline", () => tracker.abandonOutstanding());
     let degraded = false;
-    let sawRateLimit = false;
     const showRateLimit = () => {
       if (rateLimitRemainingMs() > 0) {
         sawRateLimit = true;

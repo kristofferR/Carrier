@@ -144,3 +144,23 @@ describe("SyncHealthTracker", () => {
     expect(tracker.summary(SYNC_REQUEST_TIMEOUT_MS)).toBe("0 failed / 0 ok in window");
   });
 });
+
+test("isolated GraphQL throttles do not imply session-wide rate limiting", () => {
+  const tracker = new SyncHealthTracker();
+  const response = (status: number) => tracker.response(tracker.started(1000), status, 1001, true);
+  expect(response(429)).toBe(false);
+  for (let i = 0; i < 10; i++) expect(response(200)).toBe(false);
+  for (let i = 0; i < 5; i++) expect(response(429)).toBe(false);
+});
+
+test("corroborated HTTP throttles trigger backoff but offline and abandoned requests do not", () => {
+  const tracker = new SyncHealthTracker();
+  for (let i = 0; i < 4; i++)
+    expect(tracker.response(tracker.started(1000), 429, 1001, true)).toBe(false);
+  expect(tracker.response(tracker.started(1000), 429, 1001, true)).toBe(true);
+  expect(tracker.response(tracker.started(1000), 429, 1001, false)).toBe(false);
+  const abandoned = tracker.started(1000);
+  tracker.abandoned(abandoned);
+  expect(tracker.response(abandoned, 429, 1001, true)).toBe(false);
+  expect(tracker.response(tracker.started(1_000_000), 429, 1_000_001, true)).toBe(false);
+});

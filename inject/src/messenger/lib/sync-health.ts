@@ -86,6 +86,16 @@ export class SyncHealthTracker {
     if (this.outstanding.delete(id)) this.outcomes.push({ at: now, ok: false });
   }
 
+  /** Generic GraphQL includes search and other unrelated operations. Only
+   * promote HTTP 429 to session-wide backoff once failures corroborate it. */
+  response(id: number, status: number, now: number, online: boolean): boolean {
+    if (!this.outstanding.has(id)) return false;
+    if (syncResponseSucceeded(status)) this.succeeded(id, now);
+    else if (online) this.failed(id, now);
+    else this.abandoned(id);
+    return online && status === 429 && this.degraded(now);
+  }
+
   /** Forget a request without recording an outcome (e.g. it was aborted
    * locally or failed while offline — that says nothing about Facebook). */
   abandoned(id: number): void {
