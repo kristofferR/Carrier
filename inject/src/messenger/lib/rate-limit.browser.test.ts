@@ -301,6 +301,12 @@ async function runFixtures(
       "another window recovering keeps this follower queued",
       [...timers.values()].some((t) => t.delay === 8000),
     );
+    report("graphql-1675004", 1000);
+    now += 1001;
+    draft.textContent = "";
+    tick();
+    runTimer(1000);
+    assert("new cooldown invalidates the previous grant", probeRequests.length === 2);
     report("graphql-1675004");
     const firstAccount = localStorage.getItem("carrier-rate-limit:123");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.

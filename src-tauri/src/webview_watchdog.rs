@@ -69,9 +69,11 @@ struct RecoveryBudget {
     lease_until: Option<Instant>,
 }
 impl RecoveryBudget {
-    fn blocked(&self, now: RecoveryTime) -> bool {
+    fn cooling_down(&self, now: RecoveryTime) -> bool {
         self.cooldown_until.is_some_and(|until| now.wall < until)
-            || self.lease_until.is_some_and(|until| now.monotonic < until)
+    }
+    fn blocked(&self, now: RecoveryTime) -> bool {
+        self.cooling_down(now) || self.lease_until.is_some_and(|until| now.monotonic < until)
     }
 }
 #[derive(Default)]
@@ -99,6 +101,11 @@ impl RecoveryCoordinator {
         self.accounts
             .get(account)
             .is_some_and(|budget| budget.blocked(now))
+    }
+    fn cooling_down(&self, account: &str, now: RecoveryTime) -> bool {
+        self.accounts
+            .get(account)
+            .is_some_and(|budget| budget.cooling_down(now))
     }
     fn claim(&mut self, account: &str, now: RecoveryTime) -> Option<Instant> {
         let budget = self.budget(account, now)?;
@@ -428,28 +435,17 @@ impl WebviewWatchdog {
             if payload.id != watchdog_id {
                 return;
             }
-            if payload.realtime == Some(RealtimeSignal::Ok) {
-                REALTIME_RECREATES.store(0, Ordering::Relaxed);
-                // The per-source alert gate pairs this with a shown exhaustion
-                // notice and never with a sync-degraded notice from the page.
-                crate::notifications::show_sync_alert(
-                    listener_window.app_handle().clone(),
-                    crate::notifications::SyncAlertSource::Watchdog,
-                    crate::notifications::SyncAlertKind::Recovered,
-                );
-            }
             let mut state = heartbeat_state.lock().unwrap();
             let account = rate_limit_account(payload.rate_limit_account.as_deref()).to_owned();
             if state.rate_limit_account != account {
                 state.rate_limit_account.clone_from(&account);
             }
-            if let Some(remaining_ms) = payload.rate_limit_ms {
-                recovery_coordinator().lock().unwrap().observe(
-                    &account,
-                    RecoveryTime::now(),
-                    remaining_ms,
-                );
-            }
+            let cooling_down = {
+                let now = RecoveryTime::now();
+                let mut coordinator = recovery_coordinator().lock().unwrap();
+                coordinator.observe(&account, now, payload.rate_limit_ms.unwrap_or_default());
+                coordinator.cooling_down(&account, now)
+            };
             state.heartbeat(
                 started_at.elapsed(),
                 payload.protected,
@@ -457,6 +453,16 @@ impl WebviewWatchdog {
                 payload.realtime,
             );
             drop(state);
+            if payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down {
+                REALTIME_RECREATES.store(0, Ordering::Relaxed);
+                // A healthy sibling cannot announce recovery while this
+                // account is cooling down. The gate pairs watchdog notices.
+                crate::notifications::show_sync_alert(
+                    listener_window.app_handle().clone(),
+                    crate::notifications::SyncAlertSource::Watchdog,
+                    crate::notifications::SyncAlertKind::Recovered,
+                );
+            }
             if payload.rate_limit_retry == Some(true)
                 && payload.rate_limit_ms == Some(0)
                 && !payload.protected
@@ -779,6 +785,9 @@ mod tests {
         let now = RecoveryTime::now();
         let mut coordinator = RecoveryCoordinator::default();
         coordinator.observe("a", now, 900_000);
+        coordinator.observe("a", advance(now, Duration::from_secs(20)), 0);
+        assert!(coordinator.cooling_down("a", advance(now, Duration::from_secs(20))));
+        assert!(!coordinator.cooling_down("b", advance(now, Duration::from_secs(20))));
         assert!(coordinator.blocked("a", advance(now, Duration::from_secs(20))));
         assert!(coordinator
             .claim("a", advance(now, Duration::from_secs(20)))
@@ -789,6 +798,8 @@ mod tests {
         assert!(coordinator
             .claim("a", advance(now, Duration::from_secs(900)))
             .is_some());
+        // A probe lease limits reloads, but must not hide genuine recovery.
+        assert!(!coordinator.cooling_down("a", advance(now, Duration::from_secs(900))));
     }
 
     #[test]

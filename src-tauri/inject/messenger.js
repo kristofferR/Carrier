@@ -984,6 +984,7 @@
         return;
       }
       if (rateLimitRemainingMs() <= 0) return;
+      rateLimitRetryGrantUntil = 0;
       waitingForRateLimit = true;
       clearPending();
       emitHeartbeat();
