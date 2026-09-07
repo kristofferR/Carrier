@@ -388,6 +388,7 @@ impl WatchdogState {
         self.last_heartbeat_at = None;
         self.system_resumed_at = None;
         self.navigation_started_at = None;
+        self.unresponsive_reload_attempted = false;
         self.missing_content_since = None;
         self.blank_reload_attempted = false;
         self.protected = false;
