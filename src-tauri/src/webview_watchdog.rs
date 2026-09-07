@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde::Deserialize;
 use tauri::{Listener, Manager, WebviewWindow, WindowEvent};
@@ -49,15 +49,29 @@ const REALTIME_ERROR_RELOAD_LIMIT: u32 = 1;
 static RECOVERY_COORDINATOR: OnceLock<Mutex<RecoveryCoordinator>> = OnceLock::new();
 const RECOVERY_PROBE_GAP: Duration = Duration::from_secs(60);
 
+#[derive(Clone, Copy)]
+struct RecoveryTime {
+    monotonic: Instant,
+    wall: SystemTime,
+}
+impl RecoveryTime {
+    fn now() -> Self {
+        Self {
+            monotonic: Instant::now(),
+            wall: SystemTime::now(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct RecoveryBudget {
-    cooldown_until: Option<Instant>,
+    cooldown_until: Option<SystemTime>,
     lease_until: Option<Instant>,
 }
 impl RecoveryBudget {
-    fn blocked(&self, now: Instant) -> bool {
-        self.cooldown_until.is_some_and(|until| now < until)
-            || self.lease_until.is_some_and(|until| now < until)
+    fn blocked(&self, now: RecoveryTime) -> bool {
+        self.cooldown_until.is_some_and(|until| now.wall < until)
+            || self.lease_until.is_some_and(|until| now.monotonic < until)
     }
 }
 #[derive(Default)]
@@ -65,33 +79,33 @@ struct RecoveryCoordinator {
     accounts: HashMap<String, RecoveryBudget>,
 }
 impl RecoveryCoordinator {
-    fn budget(&mut self, account: &str, now: Instant) -> Option<&mut RecoveryBudget> {
+    fn budget(&mut self, account: &str, now: RecoveryTime) -> Option<&mut RecoveryBudget> {
         self.accounts.retain(|_, budget| budget.blocked(now));
         if self.accounts.len() >= 64 && !self.accounts.contains_key(account) {
             return None;
         }
         Some(self.accounts.entry(account.to_owned()).or_default())
     }
-    fn observe(&mut self, account: &str, now: Instant, remaining_ms: u64) {
+    fn observe(&mut self, account: &str, now: RecoveryTime, remaining_ms: u64) {
         if remaining_ms == 0 {
             return;
         }
         if let Some(budget) = self.budget(account, now) {
-            let until = now + Duration::from_millis(remaining_ms.min(86_400_000));
+            let until = now.wall + Duration::from_millis(remaining_ms.min(86_400_000));
             budget.cooldown_until = Some(budget.cooldown_until.map_or(until, |old| old.max(until)));
         }
     }
-    fn blocked(&self, account: &str, now: Instant) -> bool {
+    fn blocked(&self, account: &str, now: RecoveryTime) -> bool {
         self.accounts
             .get(account)
             .is_some_and(|budget| budget.blocked(now))
     }
-    fn claim(&mut self, account: &str, now: Instant) -> Option<Instant> {
+    fn claim(&mut self, account: &str, now: RecoveryTime) -> Option<Instant> {
         let budget = self.budget(account, now)?;
         if budget.blocked(now) {
             return None;
         }
-        let permit = now + RECOVERY_PROBE_GAP;
+        let permit = now.monotonic + RECOVERY_PROBE_GAP;
         budget.lease_until = Some(permit);
         Some(permit)
     }
@@ -175,7 +189,6 @@ enum WatchdogAction {
 #[derive(Debug, Default)]
 struct WatchdogState {
     rate_limit_account: String,
-    rate_limit_until: Option<Duration>,
     last_heartbeat_at: Option<Duration>,
     system_resumed_at: Option<Duration>,
     navigation_started_at: Option<Duration>,
@@ -189,16 +202,6 @@ struct WatchdogState {
 }
 
 impl WatchdogState {
-    fn rate_limited(&mut self, now: Duration, remaining_ms: u64) {
-        if remaining_ms == 0 {
-            return;
-        }
-        // Let the page's one scheduled retry finish before native recovery
-        // intervenes. Clamp remote-origin input so it cannot defer forever.
-        let until =
-            now + Duration::from_millis(remaining_ms.min(86_400_000)) + Duration::from_secs(30);
-        self.rate_limit_until = Some(self.rate_limit_until.map_or(until, |old| old.max(until)));
-    }
     fn heartbeat(
         &mut self,
         now: Duration,
@@ -249,9 +252,6 @@ impl WatchdogState {
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
-        if self.rate_limit_until.is_some_and(|until| now < until) {
-            return WatchdogAction::None;
-        }
         // Navigation gets its full loading window, while retaining the
         // underlying resume deadline in case the reload request fails.
         if let Some(navigation_started_at) = self.navigation_started_at {
@@ -441,14 +441,12 @@ impl WebviewWatchdog {
             let mut state = heartbeat_state.lock().unwrap();
             let account = rate_limit_account(payload.rate_limit_account.as_deref()).to_owned();
             if state.rate_limit_account != account {
-                state.rate_limit_until = None;
                 state.rate_limit_account.clone_from(&account);
             }
             if let Some(remaining_ms) = payload.rate_limit_ms {
-                state.rate_limited(started_at.elapsed(), remaining_ms);
                 recovery_coordinator().lock().unwrap().observe(
                     &account,
-                    Instant::now(),
+                    RecoveryTime::now(),
                     remaining_ms,
                 );
             }
@@ -466,7 +464,7 @@ impl WebviewWatchdog {
                 let permit = recovery_coordinator()
                     .lock()
                     .unwrap()
-                    .claim(&account, Instant::now());
+                    .claim(&account, RecoveryTime::now());
                 let Some(permit) = permit else {
                     return;
                 };
@@ -559,7 +557,7 @@ impl WebviewWatchdog {
                         if recovery_coordinator()
                             .lock()
                             .unwrap()
-                            .blocked(&account, Instant::now())
+                            .blocked(&account, RecoveryTime::now())
                         {
                             continue;
                         }
@@ -609,7 +607,7 @@ impl WebviewWatchdog {
                         let permit = recovery_coordinator()
                             .lock()
                             .unwrap()
-                            .claim(&account, Instant::now());
+                            .claim(&account, RecoveryTime::now());
                         let Some(permit) = permit else {
                             continue;
                         };
@@ -769,80 +767,69 @@ impl WebviewWatchdog {
 mod tests {
     use super::*;
 
+    fn advance(now: RecoveryTime, elapsed: Duration) -> RecoveryTime {
+        RecoveryTime {
+            monotonic: now.monotonic + elapsed,
+            wall: now.wall + elapsed,
+        }
+    }
+
     #[test]
     fn cooldown_blocks_other_watchdogs_for_the_same_account() {
-        let now = Instant::now();
+        let now = RecoveryTime::now();
         let mut coordinator = RecoveryCoordinator::default();
         coordinator.observe("a", now, 900_000);
-        assert!(coordinator.blocked("a", now + Duration::from_secs(20)));
+        assert!(coordinator.blocked("a", advance(now, Duration::from_secs(20))));
         assert!(coordinator
-            .claim("a", now + Duration::from_secs(20))
+            .claim("a", advance(now, Duration::from_secs(20)))
             .is_none());
         assert!(coordinator
-            .claim("b", now + Duration::from_secs(20))
+            .claim("b", advance(now, Duration::from_secs(20)))
             .is_some());
         assert!(coordinator
-            .claim("a", now + Duration::from_secs(900))
+            .claim("a", advance(now, Duration::from_secs(900)))
             .is_some());
+    }
+
+    #[test]
+    fn server_cooldown_expires_during_system_sleep() {
+        let now = RecoveryTime::now();
+        let mut coordinator = RecoveryCoordinator::default();
+        coordinator.observe("a", now, 900_000);
+        // Monotonic time can stop during suspend on Linux and macOS.
+        let awake = RecoveryTime {
+            wall: now.wall + Duration::from_secs(1800),
+            ..now
+        };
+        assert!(coordinator.claim("a", awake).is_some());
     }
 
     #[test]
     fn failed_recovery_refunds_only_its_own_lease() {
-        let now = Instant::now();
+        let now = RecoveryTime::now();
         let mut coordinator = RecoveryCoordinator::default();
         let first = coordinator.claim("a", now).unwrap();
         coordinator.refund("a", first);
-        let second = coordinator.claim("a", now + REACHABILITY_RETRY).unwrap();
+        let retry = advance(now, REACHABILITY_RETRY);
+        let second = coordinator.claim("a", retry).unwrap();
         coordinator.refund("a", first);
-        assert!(coordinator.claim("a", now + REACHABILITY_RETRY).is_none());
+        assert!(coordinator.claim("a", retry).is_none());
         coordinator.refund("a", second);
-        assert!(coordinator.claim("a", now + REACHABILITY_RETRY).is_some());
+        assert!(coordinator.claim("a", retry).is_some());
     }
 
     #[test]
     fn recovery_probe_is_shared_and_expires_when_the_owner_disappears() {
-        let now = Instant::now();
+        let now = RecoveryTime::now();
         let mut coordinator = RecoveryCoordinator::default();
-        assert!(coordinator.claim("account-a", now).is_some());
-        assert!(coordinator.claim("account-a", now).is_none());
+        assert!(coordinator.claim("a", now).is_some());
+        assert!(coordinator.claim("a", now).is_none());
         assert!(coordinator
-            .claim("account-a", now + Duration::from_secs(59))
+            .claim("a", advance(now, Duration::from_secs(59)))
             .is_none());
         assert!(coordinator
-            .claim("account-a", now + Duration::from_secs(60))
+            .claim("a", advance(now, Duration::from_secs(60)))
             .is_some());
-    }
-
-    #[test]
-    fn rate_limit_defers_native_recovery_but_expires_without_another_heartbeat() {
-        let mut state = WatchdogState::default();
-        state.heartbeat(
-            Duration::ZERO,
-            false,
-            Some(true),
-            Some(RealtimeSignal::Error),
-        );
-        state.rate_limited(Duration::ZERO, 120_000);
-        assert_eq!(state.action(Duration::from_secs(120)), WatchdogAction::None);
-        assert_ne!(state.action(Duration::from_secs(151)), WatchdogAction::None);
-    }
-
-    #[test]
-    fn rate_limit_survives_navigation_and_cannot_be_shortened_by_a_healthy_heartbeat() {
-        let mut state = WatchdogState::default();
-        state.rate_limited(Duration::ZERO, 120_000);
-        state.disarm();
-        state.navigation_started(Duration::from_secs(1));
-        state.heartbeat(
-            Duration::from_secs(5),
-            false,
-            Some(true),
-            Some(RealtimeSignal::Ok),
-        );
-        assert_eq!(state.action(Duration::from_secs(100)), WatchdogAction::None);
-        assert_eq!(state.rate_limit_until, Some(Duration::from_secs(150)));
-        state.rate_limited(Duration::from_secs(10), u64::MAX);
-        assert_eq!(state.rate_limit_until, Some(Duration::from_secs(86_440)));
     }
 
     #[test]
