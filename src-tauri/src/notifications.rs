@@ -1033,8 +1033,10 @@ fn linux_notification_hints(
         "desktop-entry",
         zbus::zvariant::Value::from(if crate::install_environment::is_snap() {
             "carrier_carrier"
-        } else {
+        } else if crate::install_environment::is_flatpak() {
             "io.github.kristofferr.carrier"
+        } else {
+            "Carrier"
         }),
     );
     if sound {

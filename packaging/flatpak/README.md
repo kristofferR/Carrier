@@ -73,13 +73,14 @@ repository lint checks the same metadata that Flathub will produce:
 
 ```sh
 sed -e 's|path: ../..|path: .|' -e 's|- cargo-sources.json|- packaging/flatpak/cargo-sources.json|' \
-  packaging/flatpak/io.github.kristofferr.carrier.yml > carrier.flatpak.yml
+  packaging/flatpak/io.github.kristofferr.carrier.yml > io.github.kristofferr.carrier.yml
 flatpak run --command=flathub-build org.flatpak.Builder \
-  --repo=flatpak-repo carrier.flatpak.yml
+  --repo=flatpak-repo io.github.kristofferr.carrier.yml
 ```
 
 The temporary manifest sits at the checkout root so sandboxed source loading
 can access the app and Cargo sources without traversing outside its directory.
+Its filename matches the app ID, as required by Flathub's manifest linter.
 
 The builder may download the SDK and runtime. The Cargo build itself is
 network-isolated: `cargo-sources.json` vendors every Cargo source from
