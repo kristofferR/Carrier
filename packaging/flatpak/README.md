@@ -1,13 +1,25 @@
-# Carrier Flatpak spike
+# Carrier Flatpak / Flathub packaging
 
-## Decision
+## Package sources
 
-**Proceed with a Flathub submission.** The 2026-07-24 spike met the runtime,
-size, and sandbox goals. The manifest in this directory is the working
-in-repository build; a Flathub submission repository should replace its local
-`dir` source with the corresponding tagged Carrier release archive.
+The manifest in this directory builds the current checkout. Generate a portable
+release manifest with a checksummed source archive, matching Cargo sources, and
+current AppStream metadata:
 
-## Evidence
+```sh
+uv run packaging/flatpak/prepare-release.py v1.13.0 /tmp/carrier-flatpak-1.13.0
+```
+
+The output directory must not exist. The script rejects a release whose lockfile
+differs from this checkout, preventing accidental use of mismatched dependencies.
+The generated files are packaging inputs; the script does not submit anything.
+
+On 2026-09-08, the generated v1.13.0 source-archive manifest built offline on
+x86-64, exported an installable bundle, and passed Flathub manifest and repository
+lint. Screenshot composition used PNG for compatibility with Flathub's linter.
+Interactive testing of this release and an ARM64 build are still required.
+
+## Historical runtime evidence
 
 The manifest was built and exported on x86-64 against:
 
@@ -49,20 +61,65 @@ enabled in a later release after implementing the Background portal.
 
 ## Build
 
-Install the GNOME 50 SDK/runtime and the matching Rust extension, then run:
+Install the GNOME 50 SDK/runtime and the matching Rust extension:
 
 ```sh
-flatpak-builder \
-  --user \
-  --force-clean \
-  --install-deps-from=flathub \
-  --install \
-  build-flatpak \
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user flathub org.gnome.Sdk//50 org.gnome.Platform//50 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.flatpak.Builder
+```
+
+Build with Flathub's maintained builder and screenshot-composition options so
+repository lint checks the same metadata that Flathub will produce:
+
+```sh
+flatpak run --command=flathub-build org.flatpak.Builder \
+  --repo=flatpak-repo \
   packaging/flatpak/io.github.kristofferr.carrier.yml
 ```
 
-`--install-deps-from=flathub` may download the SDK and runtime. The Cargo build
-itself is network-isolated: `cargo-sources.json` vendors every Cargo source from
+The builder may download the SDK and runtime. The Cargo build itself is
+network-isolated: `cargo-sources.json` vendors every Cargo source from
 `src-tauri/Cargo.lock`; regenerate it with the official
 `flatpak-builder-tools/cargo/flatpak-cargo-generator.py` whenever the lockfile
 changes.
+
+Use the generated release manifest in place of the checkout manifest to validate
+the exact release inputs. Validate and create an installable candidate:
+
+```sh
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.kristofferr.carrier.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-repo
+flatpak build-bundle flatpak-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./carrier.flatpak
+flatpak run io.github.kristofferr.carrier
+```
+
+The **Linux store packages** workflow also builds an x86-64 candidate for
+packaging PRs and manual runs. It does not publish it. Test login/session persistence, downloads and attachments,
+notifications/actions, tray, shortcuts, external links, media, and both Wayland
+and X11 before submitting. Historical spike evidence is not a substitute for
+testing the version being submitted.
+
+## Cargo source refresh
+
+Run the official generator with `uv` from the repository root. The pinned
+generator used for the current source list is
+`flatpak/flatpak-builder-tools@1fc32195e3e60fe5c97f0af646dec7a99df5962b`:
+
+```sh
+curl --fail --location https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/1fc32195e3e60fe5c97f0af646dec7a99df5962b/cargo/flatpak-cargo-generator.py -o /tmp/flatpak-cargo-generator.py
+uv run --with 'aiohttp>=3.9.5,<4' --with 'tomlkit>=0.13.3,<1' /tmp/flatpak-cargo-generator.py src-tauri/Cargo.lock -o packaging/flatpak/cargo-sources.json
+```
+
+## Submission ownership
+
+Follow [Flathub's submission process](https://docs.flathub.org/docs/for-app-authors/submission)
+after validating the portable release package. Flathub's
+[generative AI policy](https://docs.flathub.org/docs/for-app-authors/requirements#generative-ai-policy)
+requires the human submitter to disclose affected parts and approximate extent
+of AI-generated material. Agents may prepare packaging, but may not open or
+automate the submission PR or generate its commit messages, description, review
+comments, or replies. The human submitter must author those interactions.
+
+After acceptance, verify ownership through the Flathub developer dashboard and
+only then add Flathub installation links to Carrier's website and README.

@@ -244,8 +244,8 @@ pub(crate) fn overlay_badge_rgba(count: i64) -> Option<Vec<u8>> {
 }
 
 #[cfg(any(target_os = "linux", test))]
-pub(crate) fn unity_app_uri(flatpak_id: Option<&str>) -> String {
-    let desktop_file = flatpak_id
+pub(crate) fn unity_app_uri(desktop_id: Option<&str>) -> String {
+    let desktop_file = desktop_id
         .map(str::trim)
         .filter(|id| !id.is_empty())
         .map(|id| {
@@ -313,7 +313,16 @@ fn emit_launcher_update(
     let mut properties = std::collections::HashMap::new();
     properties.insert("count", zbus::zvariant::Value::from(count.max(0)));
     properties.insert("count-visible", zbus::zvariant::Value::from(count > 0));
-    let app_uri = unity_app_uri(std::env::var("FLATPAK_ID").ok().as_deref());
+    let desktop_id = if crate::install_environment::is_snap() {
+        // snapd prefixes exported desktop files with the instance name.
+        std::env::var("SNAP_INSTANCE_NAME")
+            .or_else(|_| std::env::var("SNAP_NAME"))
+            .ok()
+            .map(|name| format!("{name}_carrier"))
+    } else {
+        std::env::var("FLATPAK_ID").ok()
+    };
+    let app_uri = unity_app_uri(desktop_id.as_deref());
     let result = connection.as_ref().unwrap().emit_signal(
         None::<&str>,
         "/com/canonical/Unity/LauncherEntry",

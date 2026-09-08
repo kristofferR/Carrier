@@ -20,3 +20,15 @@ Thumbs.db
 
 docs/PARITY.md
 docs/FULL_INJECT.js
+
+# Linux store package builds
+/.flatpak-builder/
+/build-flatpak/
+/builddir/
+/parts/
+/stage/
+/prime/
+/snap/.snapcraft/
+/*.snap
+/flatpak-repo/
+/*.flatpak

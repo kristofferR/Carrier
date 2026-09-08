@@ -1,0 +1,62 @@
+name: Linux store packages
+
+# Candidate artifacts only. Store publication is a separate reviewed step.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - snap/**
+      - packaging/**
+      - .github/workflows/linux-stores.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snap:
+    name: Snap (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: arm64
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+        id: snapcraft
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-snap-${{ matrix.arch }}
+          path: ${{ steps.snapcraft.outputs.snap }}
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak (x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive flathub org.gnome.Sdk//50 org.gnome.Platform//50 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.flatpak.Builder
+      - name: Build and validate
+        run: |
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.kristofferr.carrier.yml
+          flatpak run --command=flathub-build org.flatpak.Builder --repo=flatpak-repo packaging/flatpak/io.github.kristofferr.carrier.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-repo
+          flatpak build-bundle flatpak-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: carrier-flatpak-x86_64
+          path: carrier.flatpak
+          if-no-files-found: error

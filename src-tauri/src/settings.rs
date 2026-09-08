@@ -16,7 +16,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::actions::AppAction;
 use crate::hotkey::apply_global_hotkey;
-use crate::install_environment::is_flatpak;
+use crate::install_environment::is_store_sandbox;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
@@ -129,10 +129,10 @@ impl Settings {
     /// Clamp out-of-range values (settings.json is user-editable, and the zoom
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(self) -> Self {
-        self.sanitized_for_runtime(is_flatpak())
+        self.sanitized_for_runtime(is_store_sandbox())
     }
 
-    fn sanitized_for_runtime(mut self, flatpak: bool) -> Self {
+    fn sanitized_for_runtime(mut self, store_sandbox: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
         if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
             self.tray_icon_style = "color".into();
@@ -143,9 +143,9 @@ impl Settings {
         if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
             self.title_bar = "auto".into();
         }
-        // Flatpak owns updates, and autostart requires the Background portal
-        // rather than writing a host desktop file from the sandbox.
-        if flatpak {
+        // Stores own updates. Sandboxed autostart needs platform integration
+        // rather than writing a host desktop file.
+        if store_sandbox {
             self.autostart = false;
             self.automatic_update_checks = false;
         }
@@ -586,10 +586,9 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
 /// callers can sync it *before* persisting and avoid committing a preference the
 /// OS rejected.
 pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
-    if is_flatpak() {
+    if is_store_sandbox() {
         return Err(
-            "Start on System Startup is unavailable in Flatpak until Carrier uses the Background portal."
-                .into(),
+            "Start on System Startup is unavailable in this sandboxed installation.".into(),
         );
     }
     let mgr = app.autolaunch();
@@ -892,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn flatpak_runtime_disables_host_owned_settings() {
+    fn store_sandbox_disables_host_owned_settings() {
         let settings = Settings {
             autostart: true,
             automatic_update_checks: true,

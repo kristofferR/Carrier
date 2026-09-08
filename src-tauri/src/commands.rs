@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
-use crate::install_environment::is_flatpak;
+use crate::install_environment::{is_flatpak, is_snap};
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
 use crate::settings::{
     apply_settings, save_settings, sync_autostart, AppState, SaveOutcome, Settings,
@@ -145,6 +145,18 @@ impl UpdateInstallMode {
     }
 
     #[cfg(any(target_os = "linux", test))]
+    fn snap() -> Self {
+        Self {
+            kind: UpdateInstallKind::Manual,
+            button_label: Some("Open Snap update guide".into()),
+            instructions: Some(
+                "Snap keeps Carrier up to date. To check now, run `sudo snap refresh` or use your software center.".into(),
+            ),
+            manual_url: Some("https://snapcraft.io/docs/keeping-snaps-up-to-date"),
+        }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
     fn manual_linux() -> Self {
         Self {
             kind: UpdateInstallKind::Manual,
@@ -250,6 +262,7 @@ fn is_genuine_appimage_runtime() -> bool {
 #[derive(Clone, Copy)]
 struct LinuxUpdateEvidence {
     flatpak: bool,
+    snap: bool,
     pacman_owned: bool,
     system_carrier_exists: bool,
     appimage_runtime: bool,
@@ -263,6 +276,8 @@ fn linux_update_install_mode(
 ) -> UpdateInstallMode {
     if evidence.flatpak {
         UpdateInstallMode::flatpak()
+    } else if evidence.snap {
+        UpdateInstallMode::snap()
     } else if evidence.pacman_owned {
         UpdateInstallMode::aur(has_paru, has_yay)
     } else if evidence.system_carrier_exists || !evidence.appimage_runtime {
@@ -278,6 +293,7 @@ fn current_update_install_mode() -> UpdateInstallMode {
         linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: is_flatpak(),
+                snap: is_snap(),
                 pacman_owned: pacman_owns_carrier(),
                 system_carrier_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
                 appimage_runtime: is_genuine_appimage_runtime(),
@@ -316,6 +332,7 @@ pub(crate) fn get_settings(state: State<AppState>) -> Settings {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeCapabilities {
     flatpak: bool,
+    snap: bool,
     autostart: bool,
     automatic_update_checks: bool,
 }
@@ -325,10 +342,12 @@ pub(crate) struct RuntimeCapabilities {
 #[tauri::command]
 pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
     let flatpak = is_flatpak();
+    let snap = is_snap();
     RuntimeCapabilities {
         flatpak,
-        autostart: !flatpak,
-        automatic_update_checks: !flatpak,
+        snap,
+        autostart: !flatpak && !snap,
+        automatic_update_checks: !flatpak && !snap,
     }
 }
 
@@ -1159,6 +1178,7 @@ mod tests {
     fn pacman_owned_install_uses_the_available_aur_helper() {
         let pacman_install = LinuxUpdateEvidence {
             flatpak: false,
+            snap: false,
             pacman_owned: true,
             system_carrier_exists: true,
             appimage_runtime: false,
@@ -1202,6 +1222,7 @@ mod tests {
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: false,
+                snap: false,
                 pacman_owned,
                 system_carrier_exists: true,
                 appimage_runtime: true,
@@ -1225,6 +1246,7 @@ mod tests {
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: false,
+                snap: false,
                 pacman_owned: false,
                 system_carrier_exists: false,
                 appimage_runtime: true,
@@ -1248,6 +1270,7 @@ mod tests {
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: false,
+                snap: false,
                 pacman_owned: false,
                 system_carrier_exists: false,
                 appimage_runtime: false,
@@ -1261,6 +1284,7 @@ mod tests {
         let shadowed_system_install = linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: false,
+                snap: false,
                 pacman_owned: false,
                 system_carrier_exists: true,
                 appimage_runtime: true,
@@ -1276,6 +1300,7 @@ mod tests {
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
                 flatpak: true,
+                snap: false,
                 pacman_owned: true,
                 system_carrier_exists: true,
                 appimage_runtime: true,
@@ -1292,6 +1317,23 @@ mod tests {
             .instructions
             .as_deref()
             .is_some_and(|instructions| instructions.contains("flatpak update")));
+    }
+
+    #[test]
+    fn snap_install_uses_store_updates_even_with_host_package_evidence() {
+        let mode = linux_update_install_mode(
+            LinuxUpdateEvidence {
+                flatpak: false,
+                snap: true,
+                pacman_owned: true,
+                system_carrier_exists: true,
+                appimage_runtime: true,
+            },
+            true,
+            true,
+        );
+        assert_eq!(mode, super::UpdateInstallMode::snap());
+        assert!(mode.is_manual());
     }
 
     #[test]

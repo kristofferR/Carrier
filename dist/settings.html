@@ -340,6 +340,11 @@
               key === "autostart"
                 ? "Managed by Flatpak; Carrier needs Background portal support before it can request login startup."
                 : "Managed by Flatpak and your software center.";
+          } else if (runtimeCapabilities.snap) {
+            hint =
+              key === "autostart"
+                ? "Start on System Startup is not yet supported in the Snap package."
+                : "Managed by Snap and your software center.";
           } else {
             hint = "Unavailable in this installation environment.";
           }

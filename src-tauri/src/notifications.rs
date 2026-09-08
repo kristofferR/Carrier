@@ -713,8 +713,8 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-fn should_attach_path_avatar(hide_preview: bool, flatpak: bool) -> bool {
-    !hide_preview && !flatpak
+fn should_attach_path_avatar(hide_preview: bool, store_sandbox: bool) -> bool {
+    !hide_preview && !store_sandbox
 }
 
 /// Best-effort sweep of stale avatars from this process's own directory. On
@@ -1818,10 +1818,12 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
-    // A Flatpak-private temp path is not readable by the host notification
+    // A sandbox-private temp path is not readable by the host notification
     // daemon. Skip the path attachment there instead of showing a broken icon.
-    let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
-    {
+    let image = if should_attach_path_avatar(
+        hide_preview,
+        crate::install_environment::is_store_sandbox(),
+    ) {
         avatar_to_temp_png(&msg.icon)
     } else {
         None
@@ -2192,7 +2194,7 @@ mod tests {
     }
 
     #[test]
-    fn path_avatars_are_skipped_for_private_or_flatpak_notifications() {
+    fn path_avatars_are_skipped_for_private_or_sandboxed_notifications() {
         assert!(should_attach_path_avatar(false, false));
         assert!(!should_attach_path_avatar(true, false));
         assert!(!should_attach_path_avatar(false, true));
