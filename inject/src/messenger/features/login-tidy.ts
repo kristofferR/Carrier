@@ -24,6 +24,38 @@ const FOOTER_KEEP = "data-carrier-login-footer-keep";
 const FOOTER_LINKS = "data-carrier-login-footer-links";
 const LANGUAGES = "data-carrier-login-languages";
 const LANGUAGE_LINK = "data-carrier-login-language-link";
+const LOGIN_REDIRECT = "carrier:login-redirect";
+
+function returnToMessengerAfterLogin() {
+  if (!onFacebookHost()) return;
+  const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
+  const hasLoginFields = !!document.querySelector('input[name="email"], input[type="password"]');
+  try {
+    // Clear the guard after Messenger renders its chat list or another login starts.
+    // If Facebook sends /messages straight back home, leave it set to avoid a loop.
+    const messengerReady =
+      /^\/messages(?:\/|$)/.test(location.pathname) &&
+      document.readyState === "complete" &&
+      document.querySelector('[role="navigation"] [role="grid"]');
+    if (!signedIn || hasLoginFields || messengerReady) {
+      sessionStorage.removeItem(LOGIN_REDIRECT);
+      return;
+    }
+    if (
+      document.readyState !== "complete" ||
+      !["/", "/home.php"].includes(location.pathname) ||
+      !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') ||
+      document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form') ||
+      sessionStorage.getItem(LOGIN_REDIRECT)
+    )
+      return;
+    sessionStorage.setItem(LOGIN_REDIRECT, "1");
+  } catch {
+    // Without a persistent per-window guard, a failed redirect could loop.
+    return;
+  }
+  location.replace("https://www.facebook.com/messages");
+}
 
 export function initLoginTidy() {
   let scheduled = false;
@@ -131,11 +163,11 @@ export function initLoginTidy() {
     languageLinks.forEach((link) => link.setAttribute(LANGUAGE_LINK, ""));
     languageRoot.setAttribute(LANGUAGES, "");
     footer.setAttribute(FOOTER, "");
-    for (let node: Element | null = footer; node; node = node.parentElement) {
+    for (let node: Element | null = languageRoot; node; node = node.parentElement) {
       node.removeAttribute(HIDE);
       node.removeAttribute(FOOTER_LINKS);
       if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
-      if (node === languageRoot) break;
+      if (node === footer) break;
     }
   };
 
@@ -164,6 +196,7 @@ export function initLoginTidy() {
   };
 
   function tidy() {
+    returnToMessengerAfterLogin();
     const html = document.documentElement;
     // Facebook's logged-out auth interstitials (verify-with-provider /
     // checkpoint / 2FA) render their body copy in near-black even though the
@@ -206,10 +239,12 @@ export function initLoginTidy() {
       // interstitial, page fully loaded), stop watching: this observer fires
       // on every DOM mutation forever otherwise, and login surfaces can only
       // come back via a logout — a full navigation that re-injects and
-      // re-arms everything.
+      // re-arms everything. Keep watching the home page until its feed or any
+      // required post-login dialog finishes loading.
       if (
         tidyObserver &&
         /\bc_user=/.test(document.cookie) &&
+        !["/", "/home.php"].includes(location.pathname) &&
         !html.hasAttribute("data-carrier-authtext") &&
         document.readyState === "complete"
       ) {
@@ -364,6 +399,7 @@ export function initLoginTidy() {
   // resize and a couple of short delays after load (cheap; tidy() no-ops off
   // the login page).
   window.addEventListener("resize", schedule);
+  window.addEventListener("load", schedule, { once: true });
   for (const delay of [300, 1200]) setTimeout(schedule, delay);
   if (window.matchMedia) {
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", schedule);
