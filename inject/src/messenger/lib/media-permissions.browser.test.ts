@@ -194,10 +194,12 @@ async function runFixtures(init: () => void) {
     }
     let states = { camera: "denied", microphone: "allowed" };
     let reads = 0;
+    let requests = 0;
     Object.assign(window, {
       carrierMediaPlatform: "macos",
-      carrierMediaPermissionStatus: async () => {
+      carrierMediaPermissionStatus: async (device?: "camera" | "microphone") => {
         reads++;
+        if (device) requests++;
         return states;
       },
     });
@@ -254,14 +256,22 @@ async function runFixtures(init: () => void) {
       root().querySelector('button[aria-label="Allow access to camera"]')?.textContent ===
         "Allow access",
     );
+    // Browsers may emit additional focus events while this fixture loads.
+    window.dispatchEvent(new Event("focus"));
+    await settle();
+    const readsBeforeClick = reads;
     root()
       .querySelector('button[aria-label="Allow access to camera"]')!
       .dispatchEvent(new MouseEvent("click"));
-    assert("synthetic allow cannot request OS access", reads === 4);
+    assert(
+      "synthetic allow cannot request OS access",
+      requests === 0 && reads === readsBeforeClick,
+    );
     root().querySelector("footer button")!.dispatchEvent(new MouseEvent("click"));
+    const readsAfterDismiss = reads;
     window.dispatchEvent(new Event("focus"));
     await settle();
-    assert("dismiss releases focus listener", reads === 4 && !banner());
+    assert("dismiss releases focus listener", reads === readsAfterDismiss && !banner());
     let resolveStatus: ((value: typeof states) => void) | undefined;
     Object.assign(window, {
       carrierMediaPermissionStatus: () =>
