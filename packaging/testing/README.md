@@ -68,3 +68,31 @@ recovery must only redirect the plain feed, preserving required post-login UI.
 The first CI pass also exposed missing D-Bus session setup and the Flatpak checkout
 manifest's out-of-directory source path. Keep ARM64 CI and signed-in runtime
 checks separate from the x86-64 build evidence.
+
+## Exact CI candidate: e4ec40e
+
+The x86-64 artifacts from GitHub Actions run `34281913517` were downloaded and
+installed in the Ubuntu VM on 2026-09-09. Host and guest SHA-256 hashes match:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `carrier_1.13.0_amd64.snap` | `801d353a0673e25e4630f7b84db450e6ba88176bbb0e3786798aa99658118eeb` |
+| `carrier.flatpak` | `d8d737464f184ba6c25e2b810240c8f93a7b174a9222fd7c4e4103e07b60334c` |
+
+Confirmed on X11:
+
+- Snap installation preserved the dedicated account's login and opened Messenger.
+- Flatpak installation succeeded and displayed its separate login screen.
+- Both sandboxes could write a probe file to the real Downloads directory and
+  query GNOME's notification capabilities.
+- Flatpak exposed FileChooser portal version 3 and could not read an unrelated
+  home-directory file.
+
+These permission probes do not establish end-to-end message notification or
+download behavior. Flatpak sign-in, real message delivery and actions, attachment
+downloads, media/calls, and Wayland are still pending for these exact artifacts.
+The VM's standard VGA device exposes no `/dev/dri`; switch it to a supported
+virtual GPU before testing a native Wayland desktop. Snap's WebKit memory
+pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
+cgroup memory limit while Messenger remained functional; no confinement policy
+was relaxed.

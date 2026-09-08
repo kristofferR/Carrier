@@ -46,8 +46,9 @@ the first upload enters review. Do not disable WebKit's sandbox to clear denials
 
 Snap owns updates. Carrier disables its GitHub update polling and installer in
 the package. Login startup remains unavailable until Snap autostart integration
-is implemented. Notification avatars that require host access to a private
-temporary file are omitted; notification text and actions remain enabled.
+is implemented. Notification avatars are sent as inline image data over D-Bus,
+so the host notification
+daemon does not need access to files inside the sandbox.
 
 ## Publisher setup and release
 
