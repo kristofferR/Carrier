@@ -7,7 +7,8 @@ The current images in `docs/screenshots/` were captured on Linux from a floating
 Carrier debug window with the installed Floating Mode / Hyprbars decoration.
 They retain the website demo's 993 × 620 CSS-pixel conversation area at 100% zoom.
 The resulting PNGs are 1241 × 846 pixels, including the native menu and title bar.
-The debug label is retained rather than editing the captured image.
+The capture build uses the title `Carrier`; normal debug builds retain their
+debug label. The title is rendered by the window manager, not edited into the PNG.
 
 ## Content provenance
 
@@ -28,15 +29,19 @@ notifications, pointer, underlying windows, or personal data are visible.
 
 | Image | SHA-256 |
 | --- | --- |
-| `carrier-linux-en-light.png` | `d4e2be002f9fe0fa8491e8654cb22b7397441bacc581a2c2cde2c781d0a6e1be` |
-| `carrier-linux-en-dark.png` | `dd5247862801a7f3881a0bbbd036411ee7071e0854c11fe849001c3fc05cd79e` |
+| `carrier-linux-en-light.png` | `7f621b06754bdd266a7dab9971223a1c3b34793db4911acd04f3bc72e2aaabb7` |
+| `carrier-linux-en-dark.png` | `5bafb3490dbf85cf6921746e751f2702a88b135eaf047fd1488608512ab0156d` |
 
 The AppStream URLs point to these inspected files on the permanent artifact
 host. Replacing either image requires a new privacy inspection before upload.
 
 ## Regeneration
 
-1. Build the debug app with `cargo build --manifest-path src-tauri/Cargo.toml --features mcp`.
+1. Temporarily change only `APP_TITLE`'s debug string in `src-tauri/src/lib.rs`
+   from `Carrier (debug)` to `Carrier`. Build with
+   `cargo build --manifest-path src-tauri/Cargo.toml --features mcp`, then restore
+   that source change immediately. Use this binary only for the capture; keep
+   the MCP release-build prohibition intact and rebuild normally afterwards.
 2. Launch it with fresh, empty `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and
    `XDG_CACHE_HOME` directories and a dedicated `CARRIER_MCP_SOCKET_PATH`. Never
    copy cookies, a browser profile, or user settings into this capture profile.
