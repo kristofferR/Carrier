@@ -102,6 +102,13 @@ async function runFixture(
       </main>`;
     window.requestAnimationFrame = (callback) =>
       window.setTimeout(() => callback(performance.now()), 16);
+    let retirements = 0;
+    window.MutationObserver = class extends MutationObserver {
+      override disconnect() {
+        retirements++;
+        super.disconnect();
+      }
+    };
     initTidy();
     await new Promise((resolve) => setTimeout(resolve, 200));
     const languageRoot = document.querySelector("[data-carrier-login-languages]");
@@ -138,6 +145,7 @@ async function runFixture(
     const securityForm = document.createElement("form");
     document.body.append(securityForm);
     await checkNavigation("/", 0);
+    if (retirements !== 0) throw new Error("Retired while required form was pending");
     securityForm.remove();
     testLocation.pathname = "/checkpoint/";
     for (const path of [
@@ -151,16 +159,32 @@ async function runFixture(
     testLocation.hostname = "facebook.com.example.org";
     await checkNavigation("/", 0);
     testLocation.hostname = "www.facebook.com";
+    const priorRetirements = Number(retirements);
+    initTidy();
     await checkNavigation("/", 1);
     if (redirects[0] !== "https://www.facebook.com/messages")
       throw new Error("Post-login redirect missed Messenger");
+    if (Number(retirements) !== priorRetirements + 1)
+      throw new Error("Observer survived completed recovery");
+    initTidy();
     await checkNavigation("/home.php", 1); // A bounce back must not loop.
+    if (Number(retirements) !== priorRetirements + 2)
+      throw new Error("Observer survived redirect guard");
     await checkNavigation("/messages", 1);
     await checkNavigation("/", 1); // A client-side bounce before Messenger renders must not loop.
     document.body.innerHTML = '<nav role="navigation"><div role="grid"></div></nav>';
     await checkNavigation("/messages/t/123", 1); // A rendered Messenger chat list rearms recovery.
     document.body.innerHTML = '<div data-pagelet="FeedUnit_0"></div>';
     await checkNavigation("/home.php", 2);
+    const getItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = () => {
+      throw new Error("Storage unavailable");
+    };
+    initTidy();
+    await checkNavigation("/home.php", 2);
+    Storage.prototype.getItem = getItem;
+    if (Number(retirements) !== priorRetirements + 3)
+      throw new Error("Observer survived unavailable storage");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise logout using WebKit's cookie API.
     document.cookie = "c_user=; Max-Age=0; path=/";
     await checkNavigation("/", 2);

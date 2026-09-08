@@ -2806,22 +2806,24 @@
   var LANGUAGE_LINK = "data-carrier-login-language-link";
   var LOGIN_REDIRECT = "carrier:login-redirect";
   function returnToMessengerAfterLogin() {
-    if (!onFacebookHost()) return;
+    if (!onFacebookHost()) return false;
     const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
     const hasLoginFields = !!document.querySelector('input[name="email"], input[type="password"]');
     try {
       const messengerReady = /^\/messages(?:\/|$)/.test(location.pathname) && document.readyState === "complete" && document.querySelector('[role="navigation"] [role="grid"]');
       if (!signedIn || hasLoginFields || messengerReady) {
         sessionStorage.removeItem(LOGIN_REDIRECT);
-        return;
+        return false;
       }
-      if (document.readyState !== "complete" || !["/", "/home.php"].includes(location.pathname) || !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') || document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form') || sessionStorage.getItem(LOGIN_REDIRECT))
-        return;
+      if (sessionStorage.getItem(LOGIN_REDIRECT)) return true;
+      if (document.readyState !== "complete" || !["/", "/home.php"].includes(location.pathname) || !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') || document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form'))
+        return false;
       sessionStorage.setItem(LOGIN_REDIRECT, "1");
     } catch {
-      return;
+      return true;
     }
     location.replace("https://www.facebook.com/messages");
+    return true;
   }
   function initLoginTidy() {
     let scheduled = false;
@@ -2917,7 +2919,7 @@
       }
     };
     function tidy() {
-      returnToMessengerAfterLogin();
+      const homeRecoverySettled = returnToMessengerAfterLogin();
       const html = document.documentElement;
       if (onFacebookHost() && /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
         location.pathname
@@ -2943,7 +2945,7 @@
             html.removeAttribute("data-carrier-darkswap");
           }
         }
-        if (tidyObserver && /\bc_user=/.test(document.cookie) && !["/", "/home.php"].includes(location.pathname) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
+        if (tidyObserver && /\bc_user=/.test(document.cookie) && (!["/", "/home.php"].includes(location.pathname) || homeRecoverySettled) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
           tidyObserver.disconnect();
           tidyObserver = null;
           window.removeEventListener("resize", schedule);
