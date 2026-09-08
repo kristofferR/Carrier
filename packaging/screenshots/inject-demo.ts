@@ -79,6 +79,7 @@ const result = await new Promise<unknown>((resolveResult, reject) => {
   let buffer = "";
   socket.setTimeout(15000, () => socket.destroy(new Error("MCP timed out")));
   socket.on("error", reject);
+  socket.on("close", () => reject(new Error("MCP closed before returning a result")));
   socket.on("connect", () =>
     socket.write(
       `${JSON.stringify({ id: "store-demo", command: "execute_js", payload: { window_label: "main", code }, authToken })}\n`,
@@ -89,9 +90,13 @@ const result = await new Promise<unknown>((resolveResult, reject) => {
     const newline = buffer.indexOf("\n");
     if (newline < 0) return;
     socket.end();
-    const response = JSON.parse(buffer.slice(0, newline));
-    if (!response.success) reject(new Error(response.error));
-    else resolveResult(response.data);
+    try {
+      const response = JSON.parse(buffer.slice(0, newline));
+      if (!response.success) reject(new Error(response.error));
+      else resolveResult(response.data);
+    } catch (error) {
+      reject(error);
+    }
   });
 });
 console.log(result);

@@ -26,7 +26,7 @@ platforms:
 
 layout:
   /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/webkit2gtk-4.1:
-    bind: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/webkit2gtk-4.1
+    bind: $SNAP/gnome-platform/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/webkit2gtk-4.1
 
 apps:
   carrier:
@@ -35,6 +35,7 @@ apps:
     extensions: [gnome]
     plugs:
       - network
+      - network-status
       - home
       - audio-playback
       - audio-record
@@ -61,22 +62,28 @@ slots:
 
 parts:
   carrier:
-    plugin: rust
+    plugin: nil
     source: .
-    rust-path: [src-tauri]
     build-packages:
+      - build-essential
+      - curl
+      - git
+      - rustup
       - pkg-config
       - libwebkit2gtk-4.1-dev
       - libssl-dev
       - libxdo-dev
     stage-packages:
-      - libwebkit2gtk-4.1-0
       - libxdo3
       - gstreamer1.0-libav
+    override-pull: |
+      set -eu
+      craftctl default
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml)"
     override-build: |
       set -eu
-      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml)"
-      cargo build --locked --release --manifest-path src-tauri/Cargo.toml
+      /usr/bin/rustup default stable
+      /usr/bin/cargo build --locked --release --manifest-path src-tauri/Cargo.toml
       install -Dm755 src-tauri/target/release/carrier "$CRAFT_PART_INSTALL/bin/carrier"
       install -Dm644 snap/gui/carrier.desktop "$CRAFT_PART_INSTALL/usr/share/applications/carrier.desktop"
       install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/carrier.png"

@@ -177,6 +177,16 @@ fn is_fetchable_media_host(url: &Url) -> bool {
 }
 
 pub(crate) fn downloads_dir() -> Option<PathBuf> {
+    // Snap rewrites HOME to a revision-specific data directory. Its home plug
+    // grants access to the real home without changing that environment value.
+    if crate::install_environment::is_snap() {
+        if let Some(home) = std::env::var_os("SNAP_REAL_HOME")
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+        {
+            return Some(home.join("Downloads"));
+        }
+    }
     #[cfg(target_os = "windows")]
     let base = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from);
     #[cfg(not(target_os = "windows"))]

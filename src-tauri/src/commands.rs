@@ -150,7 +150,7 @@ impl UpdateInstallMode {
             kind: UpdateInstallKind::Manual,
             button_label: Some("Open Snap update guide".into()),
             instructions: Some(
-                "Snap keeps Carrier up to date. To check now, run `sudo snap refresh` or use your software center.".into(),
+                "Snap keeps Carrier up to date. To check now, run `sudo snap refresh carrier` or use your software center.".into(),
             ),
             manual_url: Some("https://snapcraft.io/docs/keeping-snaps-up-to-date"),
         }

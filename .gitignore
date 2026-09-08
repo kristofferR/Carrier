@@ -31,4 +31,6 @@ docs/FULL_INJECT.js
 /snap/.snapcraft/
 /*.snap
 /flatpak-repo/
+/flatpak-release-repo/
 /*.flatpak
+/carrier.flatpak.yml

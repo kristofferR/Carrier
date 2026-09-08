@@ -41,7 +41,7 @@ host. Replacing either image requires a new privacy inspection before upload.
    from `Carrier (debug)` to `Carrier`. Build with
    `cargo build --manifest-path src-tauri/Cargo.toml --features mcp`, then restore
    that source change immediately. Use this binary only for the capture; keep
-   the MCP release-build prohibition intact and rebuild normally afterwards.
+   the MCP release-build prohibition intact and rebuild normally afterward.
 2. Launch it with fresh, empty `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and
    `XDG_CACHE_HOME` directories and a dedicated `CARRIER_MCP_SOCKET_PATH`. Never
    copy cookies, a browser profile, or user settings into this capture profile.

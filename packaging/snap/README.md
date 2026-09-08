@@ -28,8 +28,11 @@ not establish that the sandbox permissions are sufficient.
 
 ## Permissions and behavior
 
-- The GNOME extension supplies desktop, graphics, theme, and portal integration.
-- `network` connects to Messenger; `home` supports downloads and attachments.
+- The GNOME extension supplies desktop, graphics, theme, portal integration,
+  and WebKit. Use its matching runtime libraries; staging another GTK/WebKit
+  stack can shadow the runtime's SVG loader with an incompatible library.
+- `network` connects to Messenger; `network-status` lets WebKit query connection
+  availability through the desktop portal; `home` supports downloads and attachments.
 - `audio-playback`, `audio-record`, and `camera` support messaging and calls.
   Camera and microphone interfaces may need explicit connections by the user.
 - `unity7` supports tray and launcher integration.

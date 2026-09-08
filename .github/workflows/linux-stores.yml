@@ -50,9 +50,12 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive flathub org.gnome.Sdk//50 org.gnome.Platform//50 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.flatpak.Builder
       - name: Build and validate
+        shell: dbus-run-session -- bash -e {0}
         run: |
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.kristofferr.carrier.yml
-          flatpak run --command=flathub-build org.flatpak.Builder --repo=flatpak-repo packaging/flatpak/io.github.kristofferr.carrier.yml
+          # Sandboxed source loading requires every input to be below the manifest.
+          sed -e 's|path: ../..|path: .|' -e 's|- cargo-sources.json|- packaging/flatpak/cargo-sources.json|' packaging/flatpak/io.github.kristofferr.carrier.yml > carrier.flatpak.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest carrier.flatpak.yml
+          flatpak run --command=flathub-build org.flatpak.Builder --repo=flatpak-repo carrier.flatpak.yml
           flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-repo
           flatpak build-bundle flatpak-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

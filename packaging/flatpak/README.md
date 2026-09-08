@@ -72,10 +72,14 @@ Build with Flathub's maintained builder and screenshot-composition options so
 repository lint checks the same metadata that Flathub will produce:
 
 ```sh
+sed -e 's|path: ../..|path: .|' -e 's|- cargo-sources.json|- packaging/flatpak/cargo-sources.json|' \
+  packaging/flatpak/io.github.kristofferr.carrier.yml > carrier.flatpak.yml
 flatpak run --command=flathub-build org.flatpak.Builder \
-  --repo=flatpak-repo \
-  packaging/flatpak/io.github.kristofferr.carrier.yml
+  --repo=flatpak-repo carrier.flatpak.yml
 ```
+
+The temporary manifest sits at the checkout root so sandboxed source loading
+can access the app and Cargo sources without traversing outside its directory.
 
 The builder may download the SDK and runtime. The Cargo build itself is
 network-isolated: `cargo-sources.json` vendors every Cargo source from
@@ -83,13 +87,14 @@ network-isolated: `cargo-sources.json` vendors every Cargo source from
 `flatpak-builder-tools/cargo/flatpak-cargo-generator.py` whenever the lockfile
 changes.
 
-Use the generated release manifest in place of the checkout manifest to validate
-the exact release inputs. Validate and create an installable candidate:
+To validate the exact release inputs, build a separate repository from the
+generated release manifest, then validate and bundle that repository:
 
 ```sh
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.kristofferr.carrier.yml
-flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-repo
-flatpak build-bundle flatpak-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest /tmp/carrier-flatpak-1.13.0/io.github.kristofferr.carrier.yml
+flatpak run --command=flathub-build org.flatpak.Builder --repo=flatpak-release-repo /tmp/carrier-flatpak-1.13.0/io.github.kristofferr.carrier.yml
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-release-repo
+flatpak build-bundle flatpak-release-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
 flatpak install --user ./carrier.flatpak
 flatpak run io.github.kristofferr.carrier
 ```
