@@ -713,10 +713,6 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     Some(path)
 }
 
-fn should_attach_path_avatar(hide_preview: bool, store_sandbox: bool) -> bool {
-    !hide_preview && !store_sandbox
-}
-
 /// Best-effort sweep of stale avatars from this process's own directory. On
 /// macOS a shown notification's file is deliberately left behind for the OS to
 /// read asynchronously (see [`show_message_notification`]) and would otherwise
@@ -1033,6 +1029,14 @@ fn linux_notification_hints(
     allow_inline_reply: bool,
 ) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
     let mut hints = HashMap::new();
+    hints.insert(
+        "desktop-entry",
+        zbus::zvariant::Value::from(if crate::install_environment::is_snap() {
+            "carrier_carrier"
+        } else {
+            "io.github.kristofferr.carrier"
+        }),
+    );
     if sound {
         hints.insert(
             "sound-name",
@@ -1048,6 +1052,35 @@ fn linux_notification_hints(
         );
     }
     hints
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static>> {
+    let bytes = std::fs::read(path).ok()?;
+    // The private PNG came from the remote page. Bound dimensions before decoding
+    // to prevent a tiny compressed payload from allocating an enormous image.
+    if bytes.get(..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?);
+    let height = u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?);
+    if !(1..=256).contains(&width) || !(1..=256).contains(&height) {
+        return None;
+    }
+    let image = tauri::image::Image::from_bytes(&bytes).ok()?;
+    // Freedesktop image-data is (width, height, stride, alpha, bits, channels, RGBA).
+    Some(zbus::zvariant::Value::Structure(
+        (
+            width as i32,
+            height as i32,
+            (width * 4) as i32,
+            true,
+            8_i32,
+            4_i32,
+            image.rgba().to_vec(),
+        )
+            .into(),
+    ))
 }
 
 /// Show a Linux notification and receive the response on the same connection.
@@ -1067,8 +1100,13 @@ fn show_linux_notification(
     if !body.is_empty() {
         notification.body(body);
     }
-    if let Some(path) = image.and_then(Path::to_str) {
-        notification.icon(path);
+    notification.icon("io.github.kristofferr.carrier");
+    if crate::install_environment::is_snap() {
+        if let Ok(root) = std::env::var("SNAP") {
+            notification.icon(&format!(
+                "{root}/usr/share/icons/hicolor/512x512/apps/carrier.png"
+            ));
+        }
     }
     notification.action("default", "Open");
     if allow_inline_reply {
@@ -1078,17 +1116,7 @@ fn show_linux_notification(
     let result = (|| -> Result<LinuxNotificationResponse, String> {
         let connection =
             zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
-        let dbus =
-            zbus::blocking::fdo::DBusProxy::new(&connection).map_err(|error| error.to_string())?;
-        let notification_name =
-            zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
-        // The daemon may be D-Bus activated and have no owner until its first
-        // use. Start it before pinning the unique owner used by our match rule.
-        dbus.start_service_by_name(notification_name.clone(), 0)
-            .map_err(|error| error.to_string())?;
-        let notification_owner = dbus
-            .get_name_owner(notification_name.into())
-            .map_err(|error| error.to_string())?;
+        let notification_owner = linux_notification_owner(&connection)?;
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(notification_owner.clone())
@@ -1104,7 +1132,11 @@ fn show_linux_notification(
             Some(16),
         ))
         .map_err(|error| error.to_string())?;
-        let hints = linux_notification_hints(sound, allow_inline_reply);
+        let mut hints = linux_notification_hints(sound, allow_inline_reply);
+        if let Some(image) = image.and_then(linux_notification_image) {
+            // Send pixels over D-Bus: the host daemon cannot read sandbox-private paths.
+            hints.insert("image-data", image);
+        }
         let timeout = i32::from(notification.timeout);
         let reply = connection
             .call_method(
@@ -1140,6 +1172,27 @@ fn show_linux_notification(
         log::warn!("Linux notification response loop failed: {error}");
         LinuxNotificationResponse::Closed
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_owner(
+    connection: &zbus::blocking::Connection,
+) -> Result<zbus::names::OwnedUniqueName, String> {
+    let dbus =
+        zbus::blocking::fdo::DBusProxy::new(connection).map_err(|error| error.to_string())?;
+    let name = zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
+    match dbus.get_name_owner(name.clone().into()) {
+        Ok(owner) => Ok(owner),
+        Err(zbus::fdo::Error::NameHasNoOwner(_)) => {
+            // Activate only an absent daemon. GNOME Shell already owns the name
+            // but has no activation file, so StartServiceByName can fail for it.
+            dbus.start_service_by_name(name.clone(), 0)
+                .map_err(|error| error.to_string())?;
+            dbus.get_name_owner(name.into())
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1818,12 +1871,7 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
-    // A sandbox-private temp path is not readable by the host notification
-    // daemon. Skip the path attachment there instead of showing a broken icon.
-    let image = if should_attach_path_avatar(
-        hide_preview,
-        crate::install_environment::is_store_sandbox(),
-    ) {
+    let image = if !hide_preview {
         avatar_to_temp_png(&msg.icon)
     } else {
         None
@@ -2119,6 +2167,78 @@ pub(crate) fn on_notification_click_with_path(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notifications_use_a_running_daemon_without_an_activation_file() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+
+        struct TestBus(std::process::Child, PathBuf);
+        impl Drop for TestBus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                let _ = std::fs::remove_file(&self.1);
+            }
+        }
+        // No service directories: this models GNOME owning the name without
+        // any corresponding D-Bus activation file, regardless of the host desktop.
+        let config = std::env::temp_dir().join(format!(
+            "carrier-notification-bus-{}.conf",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(
+            &config,
+            br#"
+            <busconfig>
+              <type>session</type><listen>unix:tmpdir=/tmp</listen>
+              <policy context="default">
+                <allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/>
+              </policy>
+            </busconfig>
+        "#,
+        )
+        .unwrap();
+        let mut bus = TestBus(
+            Command::new("dbus-daemon")
+                .arg("--config-file")
+                .arg(&config)
+                .args(["--nofork", "--print-address=1"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("start isolated test bus"),
+            config,
+        );
+        let mut address = String::new();
+        BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let daemon = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        daemon
+            .request_name("org.freedesktop.Notifications")
+            .unwrap();
+        let client = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        let dbus = zbus::blocking::fdo::DBusProxy::new(&client).unwrap();
+        assert!(matches!(
+            dbus.start_service_by_name("org.freedesktop.Notifications".try_into().unwrap(), 0),
+            Err(zbus::fdo::Error::ServiceUnknown(_))
+        ));
+        assert_eq!(
+            linux_notification_owner(&client).unwrap().as_str(),
+            daemon.unique_name().unwrap().as_str()
+        );
+        daemon
+            .release_name("org.freedesktop.Notifications")
+            .unwrap();
+        assert!(linux_notification_owner(&client).is_err());
+    }
+
     #[test]
     fn sync_alert_gate_limits_degraded_notices_and_pairs_recovery() {
         let mut gate = SyncAlertGate::default();
@@ -2193,12 +2313,29 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn path_avatars_are_skipped_for_private_or_sandboxed_notifications() {
-        assert!(should_attach_path_avatar(false, false));
-        assert!(!should_attach_path_avatar(true, false));
-        assert!(!should_attach_path_avatar(false, true));
-        assert!(!should_attach_path_avatar(true, true));
+    fn linux_notification_image_carries_pixels_without_a_host_file_path() {
+        let png = include_bytes!("../icons/32x32.png");
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        );
+        let path = avatar_to_temp_png(&data_url).unwrap();
+        let image = linux_notification_image(&path).unwrap();
+        assert_eq!(image.value_signature().to_string(), "(iiibiiay)");
+        let zbus::zvariant::Value::Structure(fields) = image else {
+            panic!("expected image structure")
+        };
+        assert_eq!(i32::try_from(&fields.fields()[0]).unwrap(), 32);
+        assert_eq!(i32::try_from(&fields.fields()[2]).unwrap(), 128);
+        let mut oversized = png.to_vec();
+        oversized[16..20].copy_from_slice(&100_000_u32.to_be_bytes());
+        std::fs::write(&path, oversized).unwrap();
+        assert!(linux_notification_image(&path).is_none());
+        std::fs::write(&path, b"invalid PNG").unwrap();
+        assert!(linux_notification_image(&path).is_none());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
