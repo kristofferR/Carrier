@@ -112,9 +112,9 @@ Confirmed on Wayland:
   privacy-safe D-Bus monitor confirmed that GNOME sent `ActivationToken` before
   `ActionInvoked`; this candidate did not consume that token.
 
-The notification activation fix needs a rebuilt candidate and another Wayland
-click check. Signed-in notification actions and attachment downloads remain
-pending for the exact Snap artifact. Media/calls remain unvalidated.
+The rebuilt Flatpak activation fix passed the Wayland click check below.
+Signed-in notification actions and attachment downloads remain pending for the
+exact Snap artifact. Media/calls remain unvalidated.
 
 Snap's WebKit memory
 pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
@@ -125,7 +125,13 @@ was relaxed.
 
 The notification activation fix was built with the GNOME 50 Flatpak SDK and
 installed over the signed-in app on 2026-09-09. Login persisted and the native
-Wayland window rendered. A fresh-message click check is pending.
+Wayland window rendered. With Carrier minimized, a fresh incoming message
+displayed a native banner with the sender avatar. A single click brought Carrier
+directly to the correct chat and displayed the new message, without GNOME's
+extra “Carrier is ready” notice. The privacy-safe D-Bus monitor confirmed
+`ActivationToken`, `ActionInvoked`, and `NotificationClosed` delivery.
+After the chat became read, both dock and tray badges returned from four to
+three, preserving the other unread conversations.
 
 - Bundle SHA-256: `73fc5dd863d27d617f02247bcfae60c572973b457152e54f1194d987f96e12f6`
 - Installed Flatpak commit: `cee9847f5b52240fb6c6acec71af5652fd54a94dc7f00a7806723f9deb6b047a`
