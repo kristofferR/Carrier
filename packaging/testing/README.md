@@ -112,9 +112,14 @@ Confirmed on Wayland:
   privacy-safe D-Bus monitor confirmed that GNOME sent `ActivationToken` before
   `ActionInvoked`; this candidate did not consume that token.
 
+The exact CI Snap also downloaded the received photo into the real Downloads
+directory as `Messenger (1).jpeg`. Its contents matched the Flatpak download,
+and the original file remained unchanged. Help → Report an Issue opened the
+project's GitHub issue list in Firefox.
+
 The rebuilt Flatpak activation fix passed the Wayland click check below.
-Signed-in notification actions and attachment downloads remain pending for the
-exact Snap artifact. Media/calls remain unvalidated.
+Signed-in notification actions remain pending for the exact Snap artifact.
+Media/calls remain unvalidated.
 
 Snap's WebKit memory
 pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
@@ -137,3 +142,13 @@ three, preserving the other unread conversations.
 - Installed Flatpak commit: `cee9847f5b52240fb6c6acec71af5652fd54a94dc7f00a7806723f9deb6b047a`
 - Local validation: 266 Rust tests, Clippy with warnings denied, and
   `bun run check` (496 tests) passed. CodeRabbit local preflight was clean.
+
+## Local Snap activation-fix candidate
+
+Source commit `fa47dbc` was rebuilt with Snapcraft in the Ubuntu VM on
+2026-09-09. The extracted source matched every tracked checkout file by SHA-256.
+Installing the resulting strict-confinement Snap as local revision `x8`
+preserved login and rendered Messenger on native Wayland. It is minimized for
+a fresh-message notification check.
+
+- Bundle SHA-256: `f555b9d5f9f559ecbbe9b3e31b1beef26e5ac21ee9eee629c4bb6f1c758e0dd0`
