@@ -39,23 +39,35 @@ not establish that the sandbox permissions are sufficient.
 - `browser-support` with `allow-sandbox: true` preserves WebKit's inner sandbox.
 - The D-Bus slot matches the installed single-instance plugin's exact name:
   `io.github.kristofferr.carrier.SingleInstance`.
+- Notifications use the XDG notification portal and export actions on
+  `snap.carrier` at `/snap/carrier`. This receives Wayland activation data in
+  a directed method call; Snap blocks the freedesktop `ActivationToken` broadcast.
+- The desktop plug preserves a hidden `snap.carrier.desktop` with
+  `desktop-file-ids` (snapd 2.66 or newer). Its ID matches the portal's
+  `snap.carrier` identity. Supply it directly in `snap/gui/`; Snapcraft's app
+  `desktop` key renames extracted files. The regular `carrier.desktop` remains
+  the visible launcher: Ubuntu identifies the running window and its badges
+  through `carrier_carrier.desktop`. `NoDisplay=true` on the portal entry avoids
+  a duplicate menu item. CI checks both entries inside the built package.
 
-The D-Bus slot and sandbox permission need Snap Store review. Request the
+The two D-Bus slots, preserved desktop ID, and sandbox permission need Snap Store review. Request the
 necessary declarations and connections through the publisher dashboard when
 the first upload enters review. Do not disable WebKit's sandbox to clear denials.
 
 Snap owns updates. Carrier disables its GitHub update polling and installer in
 the package. Login startup remains unavailable until Snap autostart integration
-is implemented. Notification avatars are sent as inline image data over D-Bus,
-so the host notification
-daemon does not need access to files inside the sandbox.
+is implemented. Notification avatars are sent as serialized bytes icons over
+D-Bus, so the host does not need access to files inside the sandbox. Reply
+buttons open Carrier's composer. Portal version 1 leaves notification sound
+to the desktop; version 2 supports Carrier's sound preference.
 
 ## Publisher setup and release
 
 Create a publisher account at <https://snapcraft.io>, then register `carrier`.
 Availability is only confirmed when registration succeeds. If a different name
-is needed, update `name` in the manifest; keep the application key `carrier` so
-the desktop actions and launcher badge mapping remain consistent.
+is needed, update `name`, the `snap.<name>` desktop and action-bus identities,
+and their Rust constants together; the portal derives its identity from the
+registered Snap name. Keep the application key `carrier` for desktop actions.
 
 After strict-confinement testing and store review:
 
@@ -75,4 +87,6 @@ package-scoped store credential only after the account and name are established.
 
 References: [Tauri packaging](https://v2.tauri.app/distribute/snapcraft/),
 [GNOME extension](https://ubuntu.com/docs/snapcraft/9/reference/extensions/gnome-extension/),
-[D-Bus interface](https://snapcraft.io/docs/reference/interfaces/dbus-interface/).
+[D-Bus interface](https://snapcraft.io/docs/reference/interfaces/dbus-interface/),
+[desktop IDs](https://snapcraft.io/docs/reference/interfaces/desktop-interface/),
+[notification portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Notification.html).

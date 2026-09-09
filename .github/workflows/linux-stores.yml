@@ -31,6 +31,18 @@ jobs:
           persist-credentials: false
       - uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
         id: snapcraft
+      - name: Verify notification desktop identity
+        env:
+          SNAP_PACKAGE: ${{ steps.snapcraft.outputs.snap }}
+        run: |
+          if ! command -v unsquashfs >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y squashfs-tools
+          fi
+          # GNOME needs the normal launcher for window/badge matching and a
+          # hidden, preserved snap.carrier identity for exported portal actions.
+          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/carrier.desktop > /dev/null
+          unsquashfs -cat "$SNAP_PACKAGE" meta/gui/snap.carrier.desktop | grep -qx 'NoDisplay=true'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: carrier-snap-${{ matrix.arch }}

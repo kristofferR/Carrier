@@ -163,14 +163,48 @@ signal monitoring alone had incorrectly suggested successful delivery.
 Snapd `2.76.3+ubuntu24.04` allows `ActionInvoked`, `NotificationClosed`, and
 `NotificationReplied`, but omits `ActivationToken`. The current upstream desktop
 and unity7 interface policies also omit it. Ubuntu's notification portal exposes
-version 1; the portal's activation-token parameter requires version 2.
+version 1. Its non-exported `ActionInvoked` signal has no activation token, but
+exported `app.*` actions take a different path: GNOME calls the application's
+`org.freedesktop.Application.ActivateAction` with platform activation data.
 
 The speculative GDK-display change was removed. Keep the notification-token
 handling verified with Flatpak; do not weaken AppArmor or add GNOME overrides
-for this test. Direct notification activation remains a Snap publication
-limitation on this desktop. Avatar delivery, badge arrival, photo downloads,
+for this test. Direct notification activation was still failing in these two
+candidates. Avatar delivery, badge arrival, photo downloads,
 and external-browser launching passed; badge clearing after a successful
 notification activation has not passed for Snap.
 
 - Original token-fix bundle (`x8`) SHA-256: `f555b9d5f9f559ecbbe9b3e31b1beef26e5ac21ee9eee629c4bb6f1c758e0dd0`
 - Diagnostic follow-up bundle (`x9`) SHA-256: `72cdbc33c16fb58ed3fe516c803c63cd1fc823eca36643e23bb1ac99184efa9e`
+
+### Exported portal action
+
+A confined GTK probe on the same stock Wayland desktop passed a direct click
+from a minimized window, with no secondary activation banner. The probe used
+the portal's `snap.carrier` app ID, a matching preserved desktop file, and an
+exported `app.probe` action. A log confirmed that the action handler ran.
+This required normal package declarations only, with no host policy edits.
+
+A second probe compiled Carrier's production Rust portal module into a minimal
+GTK window, packaged it inside the same strict Snap, and repeated the click.
+It returned `Open` with an activation token and restored the minimized window
+directly, without a secondary banner. The version-1 portal rejected the newer
+sound key; the implementation now queries its version and sends that key only
+to version 2 or newer. The rebuilt signed-in application still needs its final
+message-routing and badge check.
+
+Packaging checks then caught two desktop-identity requirements. Snapcraft's
+app `desktop` extraction renames the file, so the portal entry must be supplied
+directly through `snap/gui/`. Ubuntu 24.04 also associates the running window
+with the normal `carrier_carrier.desktop` Snap ID; replacing that entry loses
+the dock icon and badge. The package therefore retains the regular launcher
+and adds a preserved `snap.carrier.desktop` with `NoDisplay=true` for portal
+actions. CI verifies both entries and that the portal entry stays hidden.
+
+The final local candidate installed as strict revision `x17` on 2026-09-09.
+The artifact identity check passed, and the confined GTK probe repeated its
+one-click activation successfully through the hidden portal entry. The package
+contains only the production Carrier executable; probe scripts stayed outside
+the package. The final real-message routing, avatar, and badge check is pending.
+
+- Portal candidate SHA-256: `bb4220e219c2b1ffda249bc1ac14e785ffddfa70e2b180afd8e825e582e25440`

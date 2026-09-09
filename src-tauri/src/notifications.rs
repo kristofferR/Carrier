@@ -1,8 +1,8 @@
 //! New-message notifications: the `carrier:notify` payload, the avatar
 //! temp-PNG cache, and the platform delivery paths (macOS goes through
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux uses
-//! the freedesktop D-Bus API with notify-rust's builder types; Windows uses
-//! notify-rust directly).
+//! the notification portal in Snap and freedesktop D-Bus elsewhere; Windows
+//! uses notify-rust directly).
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -31,6 +31,9 @@ use crate::macos::notifications::{
 };
 use crate::settings::AppState;
 use crate::tray::{show_main, show_main_with_activation_token};
+
+#[cfg(target_os = "linux")]
+mod portal;
 
 /// A new-message notification request from the page (the `carrier:notify` event).
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
@@ -676,6 +679,7 @@ pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRout
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
 
 /// Decode the avatar the page sent as a PNG data URL into a temp file the native
 /// notification can point at. Returns `None` (→ a text-only notification) on any
@@ -689,7 +693,6 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     // A 64×64 PNG is a few KB; cap far below this ceiling but well above any
     // legitimate avatar, and reject before decoding so an oversized payload
     // can't force a large allocation (base64 inflates the byte count by ~4/3).
-    const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
     if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
         return None;
     }
@@ -1068,8 +1071,18 @@ fn linux_notification_hints(
 }
 
 #[cfg(target_os = "linux")]
-fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static>> {
-    let bytes = std::fs::read(path).ok()?;
+fn linux_notification_avatar(path: &Path) -> Option<(Vec<u8>, tauri::image::Image<'static>)> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take((MAX_AVATAR_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return None;
+    }
     // The private PNG came from the remote page. Bound dimensions before decoding
     // to prevent a tiny compressed payload from allocating an enormous image.
     if bytes.get(..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
@@ -1081,6 +1094,13 @@ fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static
         return None;
     }
     let image = tauri::image::Image::from_bytes(&bytes).ok()?;
+    Some((bytes, image))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static>> {
+    let (_, image) = linux_notification_avatar(path)?;
+    let (width, height) = (image.width(), image.height());
     // Freedesktop image-data is (width, height, stride, alpha, bits, channels, RGBA).
     Some(zbus::zvariant::Value::Structure(
         (
@@ -1108,6 +1128,14 @@ fn show_linux_notification(
     sound: bool,
     allow_inline_reply: bool,
 ) -> (LinuxNotificationResponse, Option<String>) {
+    if crate::install_environment::is_snap() {
+        return portal::show(title, body, image, sound, allow_inline_reply).unwrap_or_else(
+            |error| {
+                log::warn!("Snap notification portal failed: {error}");
+                (LinuxNotificationResponse::Closed, None)
+            },
+        );
+    }
     let mut notification = notify_rust::Notification::new();
     notification.appname("Carrier").summary(title);
     if !body.is_empty() {
@@ -1118,13 +1146,6 @@ fn show_linux_notification(
     } else {
         "carrier"
     });
-    if crate::install_environment::is_snap() {
-        if let Ok(root) = std::env::var("SNAP") {
-            notification.icon(&format!(
-                "{root}/usr/share/icons/hicolor/512x512/apps/carrier.png"
-            ));
-        }
-    }
     notification.action("default", "Open");
     if allow_inline_reply {
         notification.action("inline-reply", "Reply");
@@ -2360,6 +2381,10 @@ mod tests {
         assert!(linux_notification_image(&path).is_none());
         std::fs::write(&path, b"invalid PNG").unwrap();
         assert!(linux_notification_image(&path).is_none());
+        let mut oversized_file = png.to_vec();
+        oversized_file.resize(MAX_AVATAR_BYTES + 1, 0);
+        std::fs::write(&path, oversized_file).unwrap();
+        assert!(linux_notification_avatar(&path).is_none());
         std::fs::remove_file(path).unwrap();
     }
 

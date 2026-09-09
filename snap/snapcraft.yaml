@@ -19,6 +19,7 @@ contact: https://github.com/kristofferR/Carrier/issues
 icon: src-tauri/icons/icon.png
 grade: stable
 confinement: strict
+assumes: [snapd2.66]
 
 platforms:
   amd64:
@@ -44,16 +45,23 @@ apps:
       - browser-support
     slots:
       - single-instance
+      - notification-actions
     environment:
       GTK_USE_PORTAL: "1"
 
 plugs:
+  desktop:
+    desktop-file-ids: [snap.carrier]
   browser-support:
     interface: browser-support
     # Preserve WebKit's process sandbox inside strict Snap confinement.
     allow-sandbox: true
 
 slots:
+  notification-actions:
+    interface: dbus
+    bus: session
+    name: snap.carrier
   single-instance:
     interface: dbus
     bus: session
