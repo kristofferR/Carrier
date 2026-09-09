@@ -78,6 +78,9 @@ async function runFixture(
   testLocation: Pick<Location, "hostname" | "pathname" | "href" | "replace">,
 ) {
   try {
+    // Chromium's virtual-time budget advances timers, but not animation frames.
+    window.requestAnimationFrame = (callback) =>
+      window.setTimeout(() => callback(performance.now()), 16);
     document.body.innerHTML = `
       <div style="position:fixed;left:10px;top:10px;width:500px;height:240px;overflow:hidden" role="dialog">
         <a href="https://www.facebook.com/privacy/policies/cookies/">Cookie policy</a>
@@ -90,7 +93,12 @@ async function runFixture(
           <button style="background:#0866ff;width:180px;height:40px">More information</button>
         </div>
       </div>`;
-    if (findDecline()?.id !== "decline") throw new Error("Selected a clipped or duplicate control");
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const decline = findDecline();
+    if (decline?.id !== "decline")
+      throw new Error(
+        `Selected a clipped or duplicate control: ${decline?.id || decline?.textContent || "null"}`,
+      );
     const cover = document.createElement("div");
     cover.style.cssText = "position:fixed;inset:0;z-index:999;background:white";
     document.body.append(cover);
@@ -100,8 +108,6 @@ async function runFixture(
         <section style="width:400px"><form><input name="email"><input name="pass" type="password"></form></section>
         <footer><div><ul class="localeSelectorList"><li><a href="#">English (US)</a></li><li><a href="#">Norsk (bokmål)</a></li></ul></div></footer>
       </main>`;
-    window.requestAnimationFrame = (callback) =>
-      window.setTimeout(() => callback(performance.now()), 16);
     let retirements = 0;
     window.MutationObserver = class extends MutationObserver {
       override disconnect() {
