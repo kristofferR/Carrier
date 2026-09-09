@@ -2815,6 +2815,10 @@
         sessionStorage.removeItem(LOGIN_REDIRECT);
         return false;
       }
+      if (["/", "/home.php"].includes(location.pathname) && document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form')) {
+        sessionStorage.removeItem(LOGIN_REDIRECT);
+        return false;
+      }
       if (sessionStorage.getItem(LOGIN_REDIRECT)) return true;
       if (document.readyState !== "complete" || !["/", "/home.php"].includes(location.pathname) || !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') || document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form'))
         return false;

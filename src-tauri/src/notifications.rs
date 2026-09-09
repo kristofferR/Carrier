@@ -1031,13 +1031,7 @@ fn linux_notification_hints(
     let mut hints = HashMap::new();
     hints.insert(
         "desktop-entry",
-        zbus::zvariant::Value::from(if crate::install_environment::is_snap() {
-            "carrier_carrier"
-        } else if crate::install_environment::is_flatpak() {
-            "io.github.kristofferr.carrier"
-        } else {
-            "Carrier"
-        }),
+        zbus::zvariant::Value::from(crate::install_environment::linux_desktop_id()),
     );
     if sound {
         hints.insert(
@@ -1102,7 +1096,11 @@ fn show_linux_notification(
     if !body.is_empty() {
         notification.body(body);
     }
-    notification.icon("io.github.kristofferr.carrier");
+    notification.icon(if crate::install_environment::is_flatpak() {
+        "io.github.kristofferr.carrier"
+    } else {
+        "carrier"
+    });
     if crate::install_environment::is_snap() {
         if let Ok(root) = std::env::var("SNAP") {
             notification.icon(&format!(

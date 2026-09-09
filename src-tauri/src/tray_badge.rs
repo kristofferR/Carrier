@@ -313,16 +313,8 @@ fn emit_launcher_update(
     let mut properties = std::collections::HashMap::new();
     properties.insert("count", zbus::zvariant::Value::from(count.max(0)));
     properties.insert("count-visible", zbus::zvariant::Value::from(count > 0));
-    let desktop_id = if crate::install_environment::is_snap() {
-        // snapd prefixes exported desktop files with the instance name.
-        std::env::var("SNAP_INSTANCE_NAME")
-            .or_else(|_| std::env::var("SNAP_NAME"))
-            .ok()
-            .map(|name| format!("{name}_carrier"))
-    } else {
-        std::env::var("FLATPAK_ID").ok()
-    };
-    let app_uri = unity_app_uri(desktop_id.as_deref());
+    let desktop_id = crate::install_environment::linux_desktop_id();
+    let app_uri = unity_app_uri(Some(&desktop_id));
     let result = connection.as_ref().unwrap().emit_signal(
         None::<&str>,
         "/com/canonical/Unity/LauncherEntry",

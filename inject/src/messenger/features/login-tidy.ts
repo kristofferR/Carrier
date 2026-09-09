@@ -41,7 +41,15 @@ function returnToMessengerAfterLogin(): boolean {
       sessionStorage.removeItem(LOGIN_REDIRECT);
       return false;
     }
-    // A bounced redirect cannot be retried in this document.
+    if (
+      ["/", "/home.php"].includes(location.pathname) &&
+      document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form')
+    ) {
+      // Required UI may explain the bounce. Retry only after it has been removed.
+      sessionStorage.removeItem(LOGIN_REDIRECT);
+      return false;
+    }
+    // A plain-feed bounce cannot be retried in this document.
     if (sessionStorage.getItem(LOGIN_REDIRECT)) return true;
     if (
       document.readyState !== "complete" ||

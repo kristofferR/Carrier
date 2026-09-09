@@ -38,3 +38,18 @@ pub(crate) fn is_snap() -> bool {
 pub(crate) fn is_store_sandbox() -> bool {
     is_flatpak() || is_snap()
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_desktop_id() -> String {
+    if is_snap() {
+        // snapd prefixes exported desktop files with the instance name.
+        let name = std::env::var("SNAP_INSTANCE_NAME")
+            .or_else(|_| std::env::var("SNAP_NAME"))
+            .unwrap_or_else(|_| "carrier".into());
+        format!("{name}_carrier")
+    } else if is_flatpak() {
+        "io.github.kristofferr.carrier".into()
+    } else {
+        "Carrier".into()
+    }
+}

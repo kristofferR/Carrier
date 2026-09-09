@@ -185,9 +185,28 @@ async function runFixture(
     Storage.prototype.getItem = getItem;
     if (Number(retirements) !== priorRetirements + 3)
       throw new Error("Observer survived unavailable storage");
+    for (const requiredUi of [
+      '<div role="dialog">Terms</div>',
+      '<div aria-modal="true">Consent</div>',
+      "<form>Required confirmation</form>",
+    ]) {
+      document.body.innerHTML = `<div role="feed"></div>${requiredUi}`;
+      const beforeRedirects = redirects.length;
+      const beforeRetirements = Number(retirements);
+      initTidy();
+      await checkNavigation("/home.php", beforeRedirects);
+      if (Number(retirements) !== beforeRetirements)
+        throw new Error("Retired on guarded post-login UI");
+      document.body.lastElementChild!.remove();
+      // Only the mutation observer can recover after required UI disappears.
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      if (redirects.length !== beforeRedirects + 1)
+        throw new Error("Did not recover after guarded post-login UI");
+      await checkNavigation("/home.php", beforeRedirects + 1);
+    }
     // biome-ignore lint/suspicious/noDocumentCookie: exercise logout using WebKit's cookie API.
     document.cookie = "c_user=; Max-Age=0; path=/";
-    await checkNavigation("/", 2);
+    await checkNavigation("/", 5);
     document.documentElement.dataset.testResult = "PASS";
   } catch (error) {
     document.documentElement.dataset.testResult = String(error);

@@ -114,7 +114,7 @@ generator used for the current source list is
 
 ```sh
 curl --fail --location https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/1fc32195e3e60fe5c97f0af646dec7a99df5962b/cargo/flatpak-cargo-generator.py -o /tmp/flatpak-cargo-generator.py
-uv run --with 'aiohttp>=3.9.5,<4' --with 'tomlkit>=0.13.3,<1' /tmp/flatpak-cargo-generator.py src-tauri/Cargo.lock -o packaging/flatpak/cargo-sources.json
+uv run --with 'aiohttp==3.14.3' --with 'tomlkit==0.13.3' /tmp/flatpak-cargo-generator.py src-tauri/Cargo.lock -o packaging/flatpak/cargo-sources.json
 ```
 
 ## Submission ownership

@@ -7,6 +7,7 @@ on:
     paths:
       - snap/**
       - packaging/**
+      - src-tauri/Cargo.lock
       - .github/workflows/linux-stores.yml
 
 permissions:
