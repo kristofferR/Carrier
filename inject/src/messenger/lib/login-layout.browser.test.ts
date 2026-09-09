@@ -176,10 +176,16 @@ async function runFixture(
     await checkNavigation("/home.php", 1); // A bounce back must not loop.
     if (Number(retirements) !== priorRetirements + 2)
       throw new Error("Observer survived redirect guard");
+    const beforeMessengerRecovery = Number(retirements);
+    initTidy();
     await checkNavigation("/messages", 1);
+    if (Number(retirements) !== beforeMessengerRecovery)
+      throw new Error("Observer retired before Messenger rendered");
     await checkNavigation("/", 1); // A client-side bounce before Messenger renders must not loop.
     document.body.innerHTML = '<nav role="navigation"><div role="grid"></div></nav>';
     await checkNavigation("/messages/t/123", 1); // A rendered Messenger chat list rearms recovery.
+    if (Number(retirements) !== beforeMessengerRecovery + 1)
+      throw new Error("Observer survived rendered Messenger");
     document.body.innerHTML = '<div data-pagelet="FeedUnit_0"></div>';
     await checkNavigation("/home.php", 2);
     const getItem = Storage.prototype.getItem;
@@ -189,7 +195,7 @@ async function runFixture(
     initTidy();
     await checkNavigation("/home.php", 2);
     Storage.prototype.getItem = getItem;
-    if (Number(retirements) !== priorRetirements + 3)
+    if (Number(retirements) !== priorRetirements + 4)
       throw new Error("Observer survived unavailable storage");
     for (const requiredUi of [
       '<div role="dialog">Terms</div>',

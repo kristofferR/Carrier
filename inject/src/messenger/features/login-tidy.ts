@@ -26,8 +26,10 @@ const LANGUAGES = "data-carrier-login-languages";
 const LANGUAGE_LINK = "data-carrier-login-language-link";
 const LOGIN_REDIRECT = "carrier:login-redirect";
 
-function returnToMessengerAfterLogin(): boolean {
-  if (!onFacebookHost()) return false;
+type LoginRecoveryState = "idle" | "pending" | "settled";
+
+function returnToMessengerAfterLogin(): LoginRecoveryState {
+  if (!onFacebookHost()) return "idle";
   const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
   const hasLoginFields = !!document.querySelector('input[name="email"], input[type="password"]');
   try {
@@ -39,7 +41,7 @@ function returnToMessengerAfterLogin(): boolean {
       document.querySelector('[role="navigation"] [role="grid"]');
     if (!signedIn || hasLoginFields || messengerReady) {
       sessionStorage.removeItem(LOGIN_REDIRECT);
-      return false;
+      return messengerReady ? "settled" : "idle";
     }
     if (
       ["/", "/home.php"].includes(location.pathname) &&
@@ -47,24 +49,26 @@ function returnToMessengerAfterLogin(): boolean {
     ) {
       // Required UI may explain the bounce. Retry only after it has been removed.
       sessionStorage.removeItem(LOGIN_REDIRECT);
-      return false;
+      return "idle";
     }
     // A plain-feed bounce cannot be retried in this document.
-    if (sessionStorage.getItem(LOGIN_REDIRECT)) return true;
+    if (sessionStorage.getItem(LOGIN_REDIRECT)) {
+      return ["/", "/home.php"].includes(location.pathname) ? "settled" : "pending";
+    }
     if (
       document.readyState !== "complete" ||
       !["/", "/home.php"].includes(location.pathname) ||
       !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') ||
       document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form')
     )
-      return false;
+      return "idle";
     sessionStorage.setItem(LOGIN_REDIRECT, "1");
   } catch {
     // Without a persistent per-window guard, a failed redirect could loop.
-    return true;
+    return "settled";
   }
   location.replace("https://www.facebook.com/messages");
-  return true;
+  return "settled";
 }
 
 export function initLoginTidy() {
@@ -206,7 +210,7 @@ export function initLoginTidy() {
   };
 
   function tidy() {
-    const homeRecoverySettled = returnToMessengerAfterLogin();
+    const loginRecovery = returnToMessengerAfterLogin();
     const html = document.documentElement;
     // Facebook's logged-out auth interstitials (verify-with-provider /
     // checkpoint / 2FA) render their body copy in near-black even though the
@@ -254,7 +258,8 @@ export function initLoginTidy() {
       if (
         tidyObserver &&
         /\bc_user=/.test(document.cookie) &&
-        (!["/", "/home.php"].includes(location.pathname) || homeRecoverySettled) &&
+        (loginRecovery === "settled" ||
+          (loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname))) &&
         !html.hasAttribute("data-carrier-authtext") &&
         document.readyState === "complete"
       ) {

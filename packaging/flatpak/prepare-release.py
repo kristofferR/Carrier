@@ -30,6 +30,9 @@ def main() -> None:
     packaging = Path(__file__).resolve().parent
     root = packaging.parent.parent
     app_id = "io.github.kristofferr.carrier"
+    checkout_version = json.loads((root / "package.json").read_text())["version"]
+    if checkout_version != args.tag[1:]:
+        parser.error("checkout application version differs from tag")
     url = f"https://github.com/kristofferR/Carrier/archive/refs/tags/{args.tag}.tar.gz"
     with urllib.request.urlopen(url, timeout=120) as response:
         archive = response.read()

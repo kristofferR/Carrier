@@ -2806,28 +2806,30 @@
   var LANGUAGE_LINK = "data-carrier-login-language-link";
   var LOGIN_REDIRECT = "carrier:login-redirect";
   function returnToMessengerAfterLogin() {
-    if (!onFacebookHost()) return false;
+    if (!onFacebookHost()) return "idle";
     const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
     const hasLoginFields = !!document.querySelector('input[name="email"], input[type="password"]');
     try {
       const messengerReady = /^\/messages(?:\/|$)/.test(location.pathname) && document.readyState === "complete" && document.querySelector('[role="navigation"] [role="grid"]');
       if (!signedIn || hasLoginFields || messengerReady) {
         sessionStorage.removeItem(LOGIN_REDIRECT);
-        return false;
+        return messengerReady ? "settled" : "idle";
       }
       if (["/", "/home.php"].includes(location.pathname) && document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form')) {
         sessionStorage.removeItem(LOGIN_REDIRECT);
-        return false;
+        return "idle";
       }
-      if (sessionStorage.getItem(LOGIN_REDIRECT)) return true;
+      if (sessionStorage.getItem(LOGIN_REDIRECT)) {
+        return ["/", "/home.php"].includes(location.pathname) ? "settled" : "pending";
+      }
       if (document.readyState !== "complete" || !["/", "/home.php"].includes(location.pathname) || !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') || document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form'))
-        return false;
+        return "idle";
       sessionStorage.setItem(LOGIN_REDIRECT, "1");
     } catch {
-      return true;
+      return "settled";
     }
     location.replace("https://www.facebook.com/messages");
-    return true;
+    return "settled";
   }
   function initLoginTidy() {
     let scheduled = false;
@@ -2923,7 +2925,7 @@
       }
     };
     function tidy() {
-      const homeRecoverySettled = returnToMessengerAfterLogin();
+      const loginRecovery = returnToMessengerAfterLogin();
       const html = document.documentElement;
       if (onFacebookHost() && /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
         location.pathname
@@ -2949,7 +2951,7 @@
             html.removeAttribute("data-carrier-darkswap");
           }
         }
-        if (tidyObserver && /\bc_user=/.test(document.cookie) && (!["/", "/home.php"].includes(location.pathname) || homeRecoverySettled) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
+        if (tidyObserver && /\bc_user=/.test(document.cookie) && (loginRecovery === "settled" || loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname)) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
           tidyObserver.disconnect();
           tidyObserver = null;
           window.removeEventListener("resize", schedule);
