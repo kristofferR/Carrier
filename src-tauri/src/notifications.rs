@@ -23,14 +23,14 @@ use futures_util::{pin_mut, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::actions::{run_app_action, validated_thread_path, AppAction};
+use crate::actions::{run_app_action_with_activation_token, validated_thread_path, AppAction};
 #[cfg(target_os = "macos")]
 use crate::macos::notifications::{
     clear_delivered_for_thread, deliver_notification_macos,
     update_pending_notification_route_macos, MacNotificationOptions,
 };
 use crate::settings::AppState;
-use crate::tray::show_main;
+use crate::tray::{show_main, show_main_with_activation_token};
 
 /// A new-message notification request from the page (the `carrier:notify` event).
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
@@ -868,6 +868,7 @@ fn windows_reply_eligible(
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 enum LinuxNotificationSignal {
+    ActivationToken(String),
     Action(String),
     Reply(String),
     Closed,
@@ -876,6 +877,7 @@ enum LinuxNotificationSignal {
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 enum LinuxSignalDecision {
+    ActivationToken(String),
     Ignore,
     Open,
     Reply(String),
@@ -889,6 +891,9 @@ fn classify_linux_signal(
     awaiting_reply: bool,
 ) -> LinuxSignalDecision {
     match signal {
+        LinuxNotificationSignal::ActivationToken(token) => {
+            LinuxSignalDecision::ActivationToken(token)
+        }
         LinuxNotificationSignal::Action(action) if action == "inline-reply" => {
             LinuxSignalDecision::AwaitReply
         }
@@ -960,6 +965,10 @@ fn decode_linux_notification_signal(
         return None;
     }
     match header.member()?.as_str() {
+        "ActivationToken" => {
+            let (id, token) = message.body().deserialize::<(u32, String)>().ok()?;
+            (id == expected_id).then_some(LinuxNotificationSignal::ActivationToken(token))
+        }
         "ActionInvoked" => {
             let (id, action) = message.body().deserialize::<(u32, String)>().ok()?;
             (id == expected_id).then_some(LinuxNotificationSignal::Action(action))
@@ -978,12 +987,13 @@ fn decode_linux_notification_signal(
 
 #[cfg(target_os = "linux")]
 async fn wait_for_linux_notification_response(
-    mut messages: zbus::MessageStream,
+    mut messages: impl futures_util::Stream<Item = Result<zbus::Message, zbus::Error>> + Unpin,
     notification_id: u32,
     notification_sender: &str,
-) -> Result<LinuxNotificationResponse, zbus::Error> {
+) -> Result<(LinuxNotificationResponse, Option<String>), zbus::Error> {
     let terminal_deadline = Instant::now() + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
     let mut reply_deadline: Option<Instant> = None;
+    let mut activation_token = None;
 
     loop {
         let next_message = messages.next();
@@ -991,17 +1001,19 @@ async fn wait_for_linux_notification_response(
         let (deadline, timeout_kind) = next_linux_wait_deadline(reply_deadline, terminal_deadline);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return Ok(linux_timeout_response(timeout_kind));
+            return Ok((linux_timeout_response(timeout_kind), activation_token));
         }
         let timeout = async_io::Timer::after(remaining);
         pin_mut!(timeout);
         let next = match select(next_message, timeout).await {
             Either::Left((message, _)) => message,
-            Either::Right((_, _)) => return Ok(linux_timeout_response(timeout_kind)),
+            Either::Right((_, _)) => {
+                return Ok((linux_timeout_response(timeout_kind), activation_token))
+            }
         };
 
         let Some(message) = next else {
-            return Ok(LinuxNotificationResponse::Closed);
+            return Ok((LinuxNotificationResponse::Closed, activation_token));
         };
         let message = message?;
         let Some(signal) =
@@ -1010,12 +1022,17 @@ async fn wait_for_linux_notification_response(
             continue;
         };
         match classify_linux_signal(signal, reply_deadline.is_some()) {
+            LinuxSignalDecision::ActivationToken(token) => activation_token = Some(token),
             LinuxSignalDecision::Ignore => {}
-            LinuxSignalDecision::Open => return Ok(LinuxNotificationResponse::Open),
-            LinuxSignalDecision::Reply(text) => {
-                return Ok(LinuxNotificationResponse::Reply(text));
+            LinuxSignalDecision::Open => {
+                return Ok((LinuxNotificationResponse::Open, activation_token))
             }
-            LinuxSignalDecision::Closed => return Ok(LinuxNotificationResponse::Closed),
+            LinuxSignalDecision::Reply(text) => {
+                return Ok((LinuxNotificationResponse::Reply(text), activation_token));
+            }
+            LinuxSignalDecision::Closed => {
+                return Ok((LinuxNotificationResponse::Closed, activation_token))
+            }
             LinuxSignalDecision::AwaitReply => {
                 reply_deadline = Some(Instant::now() + REPLY_SIGNAL_GRACE);
             }
@@ -1090,7 +1107,7 @@ fn show_linux_notification(
     image: Option<&Path>,
     sound: bool,
     allow_inline_reply: bool,
-) -> LinuxNotificationResponse {
+) -> (LinuxNotificationResponse, Option<String>) {
     let mut notification = notify_rust::Notification::new();
     notification.appname("Carrier").summary(title);
     if !body.is_empty() {
@@ -1113,7 +1130,7 @@ fn show_linux_notification(
         notification.action("inline-reply", "Reply");
     }
 
-    let result = (|| -> Result<LinuxNotificationResponse, String> {
+    let result = (|| -> Result<(LinuxNotificationResponse, Option<String>), String> {
         let connection =
             zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
         let notification_owner = linux_notification_owner(&connection)?;
@@ -1170,7 +1187,7 @@ fn show_linux_notification(
 
     result.unwrap_or_else(|error| {
         log::warn!("Linux notification response loop failed: {error}");
-        LinuxNotificationResponse::Closed
+        (LinuxNotificationResponse::Closed, None)
     })
 }
 
@@ -1559,9 +1576,14 @@ fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text
 }
 
 #[cfg(target_os = "linux")]
-fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
+fn open_notification_composer(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: u64,
+    activation_token: Option<String>,
+) {
     let Some(thread_path) = take_notification_route(id) else {
-        on_notification_click_with_path(app, id, Some(page_id), None);
+        activate_notification(app, id, Some(page_id), None, activation_token);
         return;
     };
     let attempt = next_reply_attempt();
@@ -1570,7 +1592,7 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
         quick_reply_script(id, attempt, &thread_path, "", PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        show_main(&main_app);
+        show_main_with_activation_token(&main_app, activation_token.as_deref());
         if let Some(window) = main_app.get_webview_window("main") {
             let _ = window.eval(script);
         }
@@ -1946,20 +1968,20 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        let response =
+        let (response, activation_token) =
             show_linux_notification(&title, &body, image.as_deref(), sound, allow_inline_reply);
         if let Some(path) = image.as_deref() {
             let _ = std::fs::remove_file(path);
         }
         match response {
             LinuxNotificationResponse::Open => {
-                on_notification_click_with_path(app, native_id, Some(page_id), None)
+                activate_notification(app, native_id, Some(page_id), None, activation_token)
             }
             LinuxNotificationResponse::OpenComposer => {
-                open_notification_composer(app, native_id, page_id)
+                open_notification_composer(app, native_id, page_id, activation_token)
             }
             LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
-                on_notification_click_with_path(app, native_id, Some(page_id), None);
+                activate_notification(app, native_id, Some(page_id), None, activation_token);
             }
             LinuxNotificationResponse::Reply(text) => {
                 on_notification_reply(app, native_id, Some(page_id), None, text)
@@ -2074,7 +2096,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     log::warn!("sync alert notification shown ({kind:?})");
 
     // A fresh id no message notification uses: clicking just surfaces the
-    // window (`on_notification_click` finds no route for it).
+    // window (notification activation finds no route for it).
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -2118,22 +2140,15 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
+        let (response, activation_token) =
+            show_linux_notification(title, &body, None, false, false);
         if matches!(
-            show_linux_notification(title, &body, None, false, false),
+            response,
             LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
         ) {
-            on_notification_click(app, id);
+            activate_notification(app, id, None, None, activation_token);
         }
     });
-}
-
-/// A notification was clicked: surface Carrier and open its retained route, or
-/// fall back to the page's original notification callback when no route exists.
-/// Only Linux still uses the route-less form — Windows toast activations always
-/// carry the route through [`on_notification_click_with_path`].
-#[cfg(target_os = "linux")]
-pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
-    on_notification_click_with_path(app, id, None, None);
 }
 
 /// Notification activation with an optional route persisted in native
@@ -2145,18 +2160,28 @@ pub(crate) fn on_notification_click_with_path(
     page_id: Option<u64>,
     fallback_path: Option<String>,
 ) {
+    activate_notification(app, id, page_id, fallback_path, None);
+}
+
+fn activate_notification(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+    activation_token: Option<String>,
+) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     if let Some(thread_path) = thread_path {
-        run_app_action(&app, AppAction::OpenThread(thread_path));
+        run_app_action_with_activation_token(
+            &app,
+            AppAction::OpenThread(thread_path),
+            activation_token,
+        );
         return;
     }
-    let Some(page_id) = page_id else {
-        show_main(&app);
-        return;
-    };
     let _ = app.clone().run_on_main_thread(move || {
-        show_main(&app);
-        if let Some(w) = app.get_webview_window("main") {
+        show_main_with_activation_token(&app, activation_token.as_deref());
+        if let (Some(w), Some(page_id)) = (app.get_webview_window("main"), page_id) {
             let script = format!("window.__carrierNotifyClick?.({page_id});");
             let _ = w.eval(script);
         }
@@ -2469,6 +2494,53 @@ mod tests {
         assert_eq!(
             classify_linux_signal(LinuxNotificationSignal::Action("default".into()), false),
             LinuxSignalDecision::Open
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_activation_retains_only_its_daemons_token() {
+        fn signal(sender: &str, member: &str, id: u32, value: &str) -> zbus::Message {
+            zbus::Message::signal(
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+                member,
+            )
+            .unwrap()
+            .sender(sender)
+            .unwrap()
+            .build(&(id, value))
+            .unwrap()
+        }
+
+        let token = signal(":1.42", "ActivationToken", 7, "compositor-token");
+        assert!(decode_linux_notification_signal(&token, 8, ":1.42").is_none());
+        assert!(decode_linux_notification_signal(&token, 7, ":1.99").is_none());
+        let messages = futures_util::stream::iter([
+            Ok(token),
+            Ok(signal(":1.99", "ActivationToken", 7, "foreign-token")),
+            Ok(signal(
+                ":1.42",
+                "ActivationToken",
+                8,
+                "another-notification",
+            )),
+            Ok(signal(":1.42", "ActionInvoked", 7, "default")),
+        ]);
+        assert_eq!(
+            async_io::block_on(wait_for_linux_notification_response(messages, 7, ":1.42")).unwrap(),
+            (
+                LinuxNotificationResponse::Open,
+                Some("compositor-token".into())
+            )
+        );
+
+        // Older notification servers do not emit an activation token.
+        let messages =
+            futures_util::stream::iter([Ok(signal(":1.42", "ActionInvoked", 7, "default"))]);
+        assert_eq!(
+            async_io::block_on(wait_for_linux_notification_response(messages, 7, ":1.42")).unwrap(),
+            (LinuxNotificationResponse::Open, None)
         );
     }
 

@@ -8,7 +8,7 @@ use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
 
-/// Transfer the compositor-granted GlobalShortcuts activation to GTK before
+/// Transfer the compositor-granted activation to GTK before
 /// showing the window. GTK 3.24 forwards a real startup ID to
 /// xdg-activation-v1 on Wayland and preserves its established X11 behavior.
 pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str) {
@@ -17,7 +17,7 @@ pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str)
     }
     match window.gtk_window() {
         Ok(window) => window.set_startup_id(token),
-        Err(error) => log::warn!("failed to apply Global Hotkey activation token: {error}"),
+        Err(error) => log::warn!("failed to apply window activation token: {error}"),
     }
 }
 

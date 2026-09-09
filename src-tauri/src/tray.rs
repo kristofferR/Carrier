@@ -363,7 +363,10 @@ fn reveal_window(window: &WebviewWindow, activation_token: Option<&str>) {
     }
 }
 
-fn show_main_with_activation_token(app: &tauri::AppHandle, activation_token: Option<&str>) {
+pub(crate) fn show_main_with_activation_token(
+    app: &tauri::AppHandle,
+    activation_token: Option<&str>,
+) {
     if let Some(window) = app.get_webview_window("main") {
         reveal_window(&window, activation_token);
         return;

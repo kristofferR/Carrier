@@ -103,10 +103,31 @@ Confirmed on Wayland:
   Global-hotkey registration cannot be validated on this desktop without that
   portal; the desktop was not modified to add it.
 
-These permission and rendering checks do not establish end-to-end message
-notification or download behavior. Real message delivery and actions,
-attachment downloads, and media/calls remain pending for these exact artifacts.
+- A real incoming Flatpak message produced a native notification with its
+  sender avatar and increased the unread badge.
+- Downloading a received photo from Messenger saved a valid 2160 × 3840 JPEG
+  (2,478,216 bytes) to the real Downloads directory.
+- Clicking the Flatpak notification routed to the chat but did not bring the
+  window forward: GNOME displayed a second “Carrier is ready” notice. The
+  privacy-safe D-Bus monitor confirmed that GNOME sent `ActivationToken` before
+  `ActionInvoked`; this candidate did not consume that token.
+
+The notification activation fix needs a rebuilt candidate and another Wayland
+click check. Signed-in notification actions and attachment downloads remain
+pending for the exact Snap artifact. Media/calls remain unvalidated.
+
 Snap's WebKit memory
 pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
 cgroup memory limit while Messenger remained functional; no confinement policy
 was relaxed.
+
+## Local activation-fix candidate
+
+The notification activation fix was built with the GNOME 50 Flatpak SDK and
+installed over the signed-in app on 2026-09-09. Login persisted and the native
+Wayland window rendered. A fresh-message click check is pending.
+
+- Bundle SHA-256: `73fc5dd863d27d617f02247bcfae60c572973b457152e54f1194d987f96e12f6`
+- Installed Flatpak commit: `cee9847f5b52240fb6c6acec71af5652fd54a94dc7f00a7806723f9deb6b047a`
+- Local validation: 266 Rust tests, Clippy with warnings denied, and
+  `bun run check` (496 tests) passed. CodeRabbit local preflight was clean.

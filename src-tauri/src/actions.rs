@@ -10,7 +10,7 @@ use tauri::Manager;
 use url::Url;
 
 use crate::settings::AppState;
-use crate::tray::show_main;
+use crate::tray::show_main_with_activation_token;
 use crate::window::show_settings_window;
 
 pub(crate) const NEW_CONVERSATION_JS: &str =
@@ -173,6 +173,14 @@ fn dispatch_or_retain_page_action(app: &tauri::AppHandle, action: AppAction) {
 /// Run an app action now when Messenger is ready, otherwise retain the newest
 /// action for the main window's next completed Messenger load.
 pub(crate) fn run_app_action(app: &tauri::AppHandle, action: AppAction) {
+    run_app_action_with_activation_token(app, action, None);
+}
+
+pub(crate) fn run_app_action_with_activation_token(
+    app: &tauri::AppHandle,
+    action: AppAction,
+    activation_token: Option<String>,
+) {
     if action == AppAction::Settings {
         // Window creation from a single-instance callback can deadlock on
         // Windows; dispatch it away from that callback just like F3.
@@ -181,13 +189,13 @@ pub(crate) fn run_app_action(app: &tauri::AppHandle, action: AppAction) {
         return;
     }
 
-    show_main(app);
     // Page-load callbacks run on the main thread. Put readiness inspection and
     // eval there too so a Started transition cannot race a background
     // notification/CLI action between the ready read and script dispatch.
     let main_app = app.clone();
     let fallback_action = action.clone();
     if let Err(error) = app.run_on_main_thread(move || {
+        show_main_with_activation_token(&main_app, activation_token.as_deref());
         dispatch_or_retain_page_action(&main_app, action);
     }) {
         log::warn!("failed to queue app action on the main thread: {error}");
