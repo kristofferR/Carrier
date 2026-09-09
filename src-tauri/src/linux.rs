@@ -2,42 +2,21 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
-use gtk::glib::translate::{from_glib, ToGlibPtr};
-use gtk::prelude::{GtkWindowExt, ObjectExt};
+use gtk::prelude::GtkWindowExt;
 use tauri::Manager;
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
 
-/// Retain the compositor-granted token for GTK's next focus request, including
-/// when restoring a minimized window does not run GTK's window-map hook.
+/// Transfer the compositor-granted activation to GTK before
+/// showing the window. GTK 3.24 forwards a real startup ID to
+/// xdg-activation-v1 on Wayland and preserves its established X11 behavior.
 pub(crate) fn apply_activation_token(window: &tauri::WebviewWindow, token: &str) {
     if token.is_empty() {
         return;
     }
     match window.gtk_window() {
-        Ok(window) => {
-            let Ok(startup_id) = std::ffi::CString::new(token) else {
-                return;
-            };
-            let display = gtk::prelude::WidgetExt::display(&window);
-            // SAFETY: GDK is initialized and this runs on GTK's main thread.
-            let wayland_type =
-                unsafe { from_glib(gdk_wayland_sys::gdk_wayland_display_get_type()) };
-            if display.type_().is_a(wayland_type) {
-                let display_ptr: *mut gtk::gdk::ffi::GdkDisplay = display.to_glib_none().0;
-                // SAFETY: The runtime type check establishes GdkWaylandDisplay.
-                // GDK copies the NUL-terminated token before this call returns.
-                unsafe {
-                    gdk_wayland_sys::gdk_wayland_display_set_startup_notification_id(
-                        display_ptr.cast(),
-                        startup_id.as_ptr(),
-                    );
-                }
-            } else {
-                window.set_startup_id(token);
-            }
-        }
+        Ok(window) => window.set_startup_id(token),
         Err(error) => log::warn!("failed to apply window activation token: {error}"),
     }
 }

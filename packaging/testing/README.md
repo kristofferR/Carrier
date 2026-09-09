@@ -154,11 +154,23 @@ displayed the sender avatar, but clicking still produced GNOME's extra
 reproduced the failure. The protocol trace showed GTK requesting a new token
 instead of using the notification's supplied token.
 
-The follow-up fix retains the supplied token on GDK's Wayland display for its
-next focus request. Its rebuilt Snap was installed as local revision `x9`,
-preserved login, and is minimized with a different chat selected for the next
-notification-click check. Both badges showed three after reading the test chat.
+A follow-up build (`x9`) passed the token to GDK's display instead, but the
+same failure remained. The system journal then established the cause:
+Snap's AppArmor policy denied receiving the `ActivationToken` D-Bus signal
+on `/org/freedesktop/Notifications` from the notification daemon. Host-side
+signal monitoring alone had incorrectly suggested successful delivery.
 
-- Follow-up bundle SHA-256: `72cdbc33c16fb58ed3fe516c803c63cd1fc823eca36643e23bb1ac99184efa9e`
+Snapd `2.76.3+ubuntu24.04` allows `ActionInvoked`, `NotificationClosed`, and
+`NotificationReplied`, but omits `ActivationToken`. The current upstream desktop
+and unity7 interface policies also omit it. Ubuntu's notification portal exposes
+version 1; the portal's activation-token parameter requires version 2.
 
-- Bundle SHA-256: `f555b9d5f9f559ecbbe9b3e31b1beef26e5ac21ee9eee629c4bb6f1c758e0dd0`
+The speculative GDK-display change was removed. Keep the notification-token
+handling verified with Flatpak; do not weaken AppArmor or add GNOME overrides
+for this test. Direct notification activation remains a Snap publication
+limitation on this desktop. Avatar delivery, badge arrival, photo downloads,
+and external-browser launching passed; badge clearing after a successful
+notification activation has not passed for Snap.
+
+- Original token-fix bundle (`x8`) SHA-256: `f555b9d5f9f559ecbbe9b3e31b1beef26e5ac21ee9eee629c4bb6f1c758e0dd0`
+- Diagnostic follow-up bundle (`x9`) SHA-256: `72cdbc33c16fb58ed3fe516c803c63cd1fc823eca36643e23bb1ac99184efa9e`

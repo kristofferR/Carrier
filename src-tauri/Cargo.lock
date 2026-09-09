@@ -669,7 +669,6 @@ dependencies = [
  "block2",
  "dark-light",
  "futures-util",
- "gdkwayland-sys",
  "gtk",
  "hex",
  "hmac",
