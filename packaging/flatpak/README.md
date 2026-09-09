@@ -10,9 +10,11 @@ current AppStream metadata:
 uv run packaging/flatpak/prepare-release.py v1.13.0 /tmp/carrier-flatpak-1.13.0
 ```
 
-The output directory must not exist. The script rejects a release whose lockfile
-differs from this checkout, preventing accidental use of mismatched dependencies.
-The generated files are packaging inputs; the script does not submit anything.
+The output directory must not exist. The script resolves the local release tag
+to an immutable commit archive, requires that commit to be an ancestor of the
+packaging checkout, and rejects uncommitted AppStream metadata or a mismatched
+lockfile. The generated files are packaging inputs; the script does not submit
+anything.
 
 On 2026-09-08, the generated v1.13.0 source-archive manifest built offline on
 x86-64, exported an installable bundle, and passed Flathub manifest and repository
