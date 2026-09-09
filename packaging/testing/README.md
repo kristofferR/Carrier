@@ -148,7 +148,17 @@ three, preserving the other unread conversations.
 Source commit `fa47dbc` was rebuilt with Snapcraft in the Ubuntu VM on
 2026-09-09. The extracted source matched every tracked checkout file by SHA-256.
 Installing the resulting strict-confinement Snap as local revision `x8`
-preserved login and rendered Messenger on native Wayland. It is minimized for
-a fresh-message notification check.
+preserved login and rendered Messenger on native Wayland. A real message
+displayed the sender avatar, but clicking still produced GNOME's extra
+“Carrier is ready” notice. A second test with no concurrent VM interaction
+reproduced the failure. The protocol trace showed GTK requesting a new token
+instead of using the notification's supplied token.
+
+The follow-up fix retains the supplied token on GDK's Wayland display for its
+next focus request. Its rebuilt Snap was installed as local revision `x9`,
+preserved login, and is minimized with a different chat selected for the next
+notification-click check. Both badges showed three after reading the test chat.
+
+- Follow-up bundle SHA-256: `72cdbc33c16fb58ed3fe516c803c63cd1fc823eca36643e23bb1ac99184efa9e`
 
 - Bundle SHA-256: `f555b9d5f9f559ecbbe9b3e31b1beef26e5ac21ee9eee629c4bb6f1c758e0dd0`
