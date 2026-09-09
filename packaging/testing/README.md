@@ -190,8 +190,7 @@ GTK window, packaged it inside the same strict Snap, and repeated the click.
 It returned `Open` with an activation token and restored the minimized window
 directly, without a secondary banner. The version-1 portal rejected the newer
 sound key; the implementation now queries its version and sends that key only
-to version 2 or newer. The rebuilt signed-in application still needs its final
-message-routing and badge check.
+to version 2 or newer. The rebuilt signed-in application's result is below.
 
 Packaging checks then caught two desktop-identity requirements. Snapcraft's
 app `desktop` extraction renames the file, so the portal entry must be supplied
@@ -205,6 +204,30 @@ The final local candidate installed as strict revision `x17` on 2026-09-09.
 The artifact identity check passed, and the confined GTK probe repeated its
 one-click activation successfully through the hidden portal entry. The package
 contains only the production Carrier executable; probe scripts stayed outside
-the package. The final real-message routing, avatar, and badge check is pending.
+the package.
 
 - Portal candidate SHA-256: `bb4220e219c2b1ffda249bc1ac14e785ffddfa70e2b180afd8e825e582e25440`
+
+### Real-message result
+
+On 2026-09-09, a fresh message arrived while the signed-in Snap was minimized
+on a different conversation. One click on its native notification brought
+Carrier forward and selected the sender's chat, without a second “Carrier is
+ready” banner. The sender's unread marker cleared; tray and dock counts both
+fell from four to three.
+
+The avatar did not appear. The host portal logged `Icon validation: Child
+process exited with code 1`. At the same instant, AppArmor denied `setpcap` and
+`net_admin` to the icon validator's Bubblewrap process under `unprivileged_userns`.
+The packaged Carrier PNG passed direct icon validation, while the same validator
+with `--sandbox` failed with `Failed RTM_NEWADDR: Operation not permitted`.
+This establishes a host icon-validation failure independent of Messenger's
+avatar extraction or Carrier's PNG payload.
+
+Ubuntu's installed and available versions were xdg-desktop-portal
+`1.18.4-1ubuntu2.24.04.2`, AppArmor `4.0.1really4.0.1-0ubuntu0.24.04.7`, and
+Bubblewrap `0.9.0-1ubuntu0.1`. This matches the outstanding Ubuntu 24.04 issue
+in [Launchpad #2069526](https://bugs.launchpad.net/bugs/2069526). The VM remains
+stock: no policy exemptions or validator bypasses were installed. Real-message
+activation and badge clearing pass; notification avatars remain a documented
+limitation on this host. Runtime screenshots remain private.

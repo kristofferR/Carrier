@@ -61,6 +61,12 @@ D-Bus, so the host does not need access to files inside the sandbox. Reply
 buttons open Carrier's composer. Portal version 1 leaves notification sound
 to the desktop; version 2 supports Carrier's sound preference.
 
+Ubuntu 24.04 can strip notification avatars because AppArmor blocks the host
+portal's sandboxed icon validator ([Ubuntu #2069526](https://bugs.launchpad.net/bugs/2069526)).
+One-click activation still works. See the [VM results](../testing/README.md)
+for tested package versions and evidence; do not disable host confinement to
+make the avatar test pass.
+
 ## Publisher setup and release
 
 Create a publisher account at <https://snapcraft.io>, then register `carrier`.
