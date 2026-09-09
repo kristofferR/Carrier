@@ -9,7 +9,8 @@ The workstation lab lives outside the checkout at
 `~/.cache/carrier-store-tools/vm/`. It uses Ubuntu 24.04.4, KVM, four vCPUs,
 6 GiB RAM, and a 48 GiB sparse overlay over a checksummed official Ubuntu cloud
 image. Ubuntu Desktop, snapd, Snapcraft, Flatpak, and desktop portals are installed.
-The current desktop session is GNOME on X11 with a basic virtual display.
+The lab has been tested with GNOME on X11 and Wayland. Its current virtual
+display is Virtio VGA, which exposes the DRM devices needed by native Wayland.
 
 Management uses a dedicated SSH key and a host key verified against the VM's
 serial console. SSH and the browser console listen on loopback; a Tailscale Serve
@@ -83,16 +84,29 @@ Confirmed on X11:
 
 - Snap installation preserved the dedicated account's login and opened Messenger.
 - Flatpak installation succeeded and displayed its separate login screen.
+- Flatpak sign-in reached Messenger and persisted through a full app restart.
+- A second Flatpak launch with `--settings` opened Settings in the existing
+  instance. Unsupported autostart was disabled with its Flatpak explanation.
 - Both sandboxes could write a probe file to the real Downloads directory and
   query GNOME's notification capabilities.
 - Flatpak exposed FileChooser portal version 3 and could not read an unrelated
   home-directory file.
 
-These permission probes do not establish end-to-end message notification or
-download behavior. Flatpak sign-in, real message delivery and actions, attachment
-downloads, media/calls, and Wayland are still pending for these exact artifacts.
-The VM's standard VGA device exposes no `/dev/dri`; switch it to a supported
-virtual GPU before testing a native Wayland desktop. Snap's WebKit memory
+Confirmed on Wayland:
+
+- Replacing standard VGA with Virtio VGA enabled `/dev/dri/card0` and
+  `/dev/dri/renderD128`; `loginctl` confirmed the desktop's session type.
+- Both CI packages rendered signed-in Messenger after the VM restart. Explicit
+  `GDK_BACKEND=wayland` launches succeeded; Carrier was absent from `xlsclients`.
+- Flatpak registered its tray item with Ubuntu's StatusNotifierWatcher.
+- Stock Ubuntu's portal did not expose `org.freedesktop.portal.GlobalShortcuts`.
+  Global-hotkey registration cannot be validated on this desktop without that
+  portal; the desktop was not modified to add it.
+
+These permission and rendering checks do not establish end-to-end message
+notification or download behavior. Real message delivery and actions,
+attachment downloads, and media/calls remain pending for these exact artifacts.
+Snap's WebKit memory
 pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
 cgroup memory limit while Messenger remained functional; no confinement policy
 was relaxed.
