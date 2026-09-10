@@ -58,7 +58,7 @@ def main() -> None:
             [
                 "git",
                 "show",
-                f"{release_commit}:{metadata_path.relative_to(root).as_posix()}",
+                f"{checkout_commit}:{metadata_path.relative_to(root).as_posix()}",
             ],
             cwd=root,
             check=True,
@@ -69,7 +69,7 @@ def main() -> None:
 
     metadata = metadata_path.read_bytes()
     if metadata != committed_metadata:
-        parser.error("AppStream metadata must match the release tag")
+        parser.error("AppStream metadata must be committed")
     checkout_version = json.loads((root / "package.json").read_text())["version"]
     if checkout_version != args.tag[1:]:
         parser.error("checkout application version differs from tag")
