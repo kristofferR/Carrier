@@ -144,22 +144,23 @@ pub(super) fn show(
         "AddNotification",
         &(&identifier, notification),
     );
-    let response = submitted.map(|_| {
-        receiver
-            .recv_timeout(LINUX_NOTIFICATION_RESPONSE_TIMEOUT)
-            .unwrap_or((LinuxNotificationResponse::Closed, None))
-    });
+    let response = submitted.map(|_| receiver.recv_timeout(LINUX_NOTIFICATION_RESPONSE_TIMEOUT));
+    let action_received = matches!(&response, Ok(Ok(_)));
+    // Bound retained action routes without removing unattended notifications
+    // from the desktop's history when the response wait expires.
     portal.pending.lock().unwrap().remove(&identifier);
-    // The portal has no dismissed signal. Retire entries when the bounded
-    // response wait ends so stale notifications cannot appear actionable.
-    let _ = portal.connection.call_method(
-        Some("org.freedesktop.portal.Desktop"),
-        "/org/freedesktop/portal/desktop",
-        Some("org.freedesktop.portal.Notification"),
-        "RemoveNotification",
-        &identifier,
-    );
-    response.map_err(|error| error.to_string())
+    if action_received {
+        let _ = portal.connection.call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.portal.Notification"),
+            "RemoveNotification",
+            &identifier,
+        );
+    }
+    response
+        .map_err(|error| error.to_string())
+        .map(|response| response.unwrap_or((LinuxNotificationResponse::Closed, None)))
 }
 
 #[cfg(test)]
