@@ -54,22 +54,18 @@ def main() -> None:
             check=True,
             capture_output=True,
         )
-        committed_metadata = subprocess.run(
+        metadata = subprocess.run(
             [
                 "git",
                 "show",
-                f"{checkout_commit}:{metadata_path.relative_to(root).as_posix()}",
+                f"{release_commit}:{metadata_path.relative_to(root).as_posix()}",
             ],
             cwd=root,
             check=True,
             capture_output=True,
         ).stdout
     except subprocess.CalledProcessError:
-        parser.error("tag must resolve to an ancestor of the packaging checkout")
-
-    metadata = metadata_path.read_bytes()
-    if metadata != committed_metadata:
-        parser.error("AppStream metadata must be committed")
+        parser.error("tag must be an ancestor of the checkout and contain AppStream metadata")
     checkout_version = json.loads((root / "package.json").read_text())["version"]
     if checkout_version != args.tag[1:]:
         parser.error("checkout application version differs from tag")
@@ -93,7 +89,7 @@ def main() -> None:
     ]
     metadata_text = metadata.decode()
     if f'<release version="{args.tag[1:]}"' not in metadata_text:
-        parser.error("AppStream metadata needs release notes for this version")
+        parser.error("tagged AppStream metadata needs release notes for this version")
 
     args.output.mkdir(parents=True)
     (args.output / f"{app_id}.yml").write_text(yaml.safe_dump(manifest, sort_keys=False))

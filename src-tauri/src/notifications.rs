@@ -30,7 +30,7 @@ use crate::macos::notifications::{
     update_pending_notification_route_macos, MacNotificationOptions,
 };
 use crate::settings::AppState;
-use crate::tray::{show_main, show_main_with_activation_token};
+use crate::tray::show_main_with_activation_token;
 
 #[cfg(target_os = "linux")]
 mod portal;
@@ -839,12 +839,12 @@ fn linux_reply_eligible(
     notification_id: u64,
     thread_path: Option<&str>,
     capabilities: LinuxNotificationCapabilities,
+    snap: bool,
 ) -> bool {
     !hide_preview
         && notification_id != 0
         && thread_path.is_some()
-        && capabilities.actions
-        && capabilities.inline_reply
+        && (snap || (capabilities.actions && capabilities.inline_reply))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1579,14 +1579,20 @@ fn show_reply_failure_notification(app: &tauri::AppHandle) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
+fn open_reply_fallback(
+    app: tauri::AppHandle,
+    id: u64,
+    thread_path: String,
+    text: String,
+    activation_token: Option<String>,
+) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
     let script =
         quick_reply_script(id, attempt, &thread_path, &text, PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        show_main(&main_app);
+        show_main_with_activation_token(&main_app, activation_token.as_deref());
         if let Some(window) = main_app.get_webview_window("main") {
             let _ = window.eval(script);
         }
@@ -1629,23 +1635,24 @@ fn deliver_quick_reply(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
+    activation_token: Option<String>,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
         show_reply_failure_notification(&app);
-        on_notification_click_with_path(app, id, page_id, None);
+        activate_notification(app, id, page_id, None, activation_token);
         return;
     };
     let text = trimmed_reply_text(&raw_text);
     if text.is_empty() {
         // Empty input is equivalent to activating the notification.
-        on_notification_click_with_path(app, id, page_id, Some(thread_path));
+        activate_notification(app, id, page_id, Some(thread_path), activation_token);
         return;
     }
     if text.chars().count() > MAX_QUICK_REPLY_CHARS {
         log::warn!("quick reply exceeds the inline send limit (id {id})");
-        open_reply_fallback(app, id, thread_path, text);
+        open_reply_fallback(app, id, thread_path, text, activation_token);
         return;
     }
 
@@ -1702,7 +1709,7 @@ fn deliver_quick_reply(
         } else {
             log::warn!("quick-reply delivery failed or timed out (id {id})");
         }
-        open_reply_fallback(app, id, thread_path, text);
+        open_reply_fallback(app, id, thread_path, text, activation_token);
     }
 }
 
@@ -1716,10 +1723,11 @@ pub(crate) fn on_notification_reply(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     text: String,
+    activation_token: Option<String>,
 ) {
     let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
         log::warn!("quick reply rejected because the native worker cap was reached (id {id})");
-        open_rejected_reply_fallback(app, id, page_id, fallback_path, text);
+        open_rejected_reply_fallback(app, id, page_id, fallback_path, text, activation_token);
         return;
     };
 
@@ -1727,6 +1735,7 @@ pub(crate) fn on_notification_reply(
     let fallback_page_id = page_id;
     let fallback_path_copy = fallback_path.clone();
     let fallback_text = text.clone();
+    let fallback_token = activation_token.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("carrier-quick-reply".into())
         .spawn(move || {
@@ -1736,7 +1745,7 @@ pub(crate) fn on_notification_reply(
                 .get_or_init(|| Mutex::new(()))
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            deliver_quick_reply(app, id, page_id, fallback_path, text);
+            deliver_quick_reply(app, id, page_id, fallback_path, text, activation_token);
         })
     {
         log::warn!("failed to start quick-reply worker (id {id}): {error}");
@@ -1746,6 +1755,7 @@ pub(crate) fn on_notification_reply(
             fallback_page_id,
             fallback_path_copy,
             fallback_text,
+            fallback_token,
         );
     }
 }
@@ -1757,15 +1767,16 @@ fn open_rejected_reply_fallback(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
+    activation_token: Option<String>,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let text = trimmed_reply_text(&raw_text);
     match (thread_path, text.is_empty()) {
-        (Some(path), false) => open_reply_fallback(app, id, path, text),
-        (Some(path), true) => on_notification_click_with_path(app, id, page_id, Some(path)),
+        (Some(path), false) => open_reply_fallback(app, id, path, text, activation_token),
+        (Some(path), true) => activate_notification(app, id, page_id, Some(path), activation_token),
         (None, _) => {
             show_reply_failure_notification(&app);
-            on_notification_click_with_path(app, id, page_id, None);
+            activate_notification(app, id, page_id, None, activation_token);
         }
     }
 }
@@ -1902,7 +1913,12 @@ pub(crate) fn show_message_notification(
         hide_preview,
         native_id,
         thread_path.as_deref(),
-        linux_notification_capabilities(),
+        if crate::install_environment::is_snap() {
+            LinuxNotificationCapabilities::default()
+        } else {
+            linux_notification_capabilities()
+        },
+        crate::install_environment::is_snap(),
     );
     // The native id is generated on the trusted side and never reused when the
     // page's callback counter restarts. Old Notification Center entries retain
@@ -2005,7 +2021,7 @@ pub(crate) fn show_message_notification(
                 activate_notification(app, native_id, Some(page_id), None, activation_token);
             }
             LinuxNotificationResponse::Reply(text) => {
-                on_notification_reply(app, native_id, Some(page_id), None, text)
+                on_notification_reply(app, native_id, Some(page_id), None, text, activation_token)
             }
             LinuxNotificationResponse::Closed => {
                 let _ = take_notification_route(native_id);
@@ -2175,6 +2191,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 /// Notification activation with an optional route persisted in native
 /// `userInfo`. The request-local path wins; native-id caches keep requests
 /// useful when no path was embedded or after an app restart.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_click_with_path(
     app: tauri::AppHandle,
     id: u64,
@@ -2467,10 +2484,28 @@ mod tests {
             actions: true,
             inline_reply: true,
         };
-        assert!(linux_reply_eligible(false, 7, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(true, 7, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(false, 0, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(false, 7, None, supported));
+        assert!(linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(
+            true,
+            7,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(
+            false,
+            0,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(false, 7, None, supported, false));
         assert!(!linux_reply_eligible(
             false,
             7,
@@ -2478,7 +2513,43 @@ mod tests {
             LinuxNotificationCapabilities {
                 actions: true,
                 inline_reply: false,
-            }
+            },
+            false,
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn snap_reply_uses_portal_buttons_without_legacy_capabilities() {
+        let capabilities = LinuxNotificationCapabilities::default();
+        assert!(linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(
+            true,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(
+            false,
+            0,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(false, 7, None, capabilities, true));
+        assert!(!linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            false
         ));
     }
 

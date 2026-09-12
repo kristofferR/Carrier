@@ -320,6 +320,8 @@
           IS_WINDOWS &&
           (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
         const runtimeUnavailable =
+          (key === "multi_instance" &&
+            (!runtimeCapabilities || !runtimeCapabilities.multiInstance)) ||
           (key === "autostart" &&
             (!runtimeCapabilities || !runtimeCapabilities.autostart)) ||
           (key === "automatic_update_checks" &&
@@ -335,6 +337,8 @@
         } else if (runtimeUnavailable) {
           if (!runtimeCapabilities) {
             hint = "Unavailable because Carrier could not verify this runtime capability.";
+          } else if (key === "multi_instance") {
+            hint = "The Snap package supports one Carrier process at a time.";
           } else if (runtimeCapabilities.flatpak) {
             hint =
               key === "autostart"

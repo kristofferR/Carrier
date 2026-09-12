@@ -16,7 +16,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::actions::AppAction;
 use crate::hotkey::apply_global_hotkey;
-use crate::install_environment::is_store_sandbox;
+use crate::install_environment::{is_snap, is_store_sandbox};
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
@@ -129,10 +129,10 @@ impl Settings {
     /// Clamp out-of-range values (settings.json is user-editable, and the zoom
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(self) -> Self {
-        self.sanitized_for_runtime(is_store_sandbox())
+        self.sanitized_for_runtime(is_store_sandbox(), is_snap())
     }
 
-    fn sanitized_for_runtime(mut self, store_sandbox: bool) -> Self {
+    fn sanitized_for_runtime(mut self, store_sandbox: bool, snap: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
         if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
             self.tray_icon_style = "color".into();
@@ -148,6 +148,10 @@ impl Settings {
         if store_sandbox {
             self.autostart = false;
             self.automatic_update_checks = false;
+        }
+        // Snap notification actions require a single owner of snap.carrier.
+        if snap {
+            self.multi_instance = false;
         }
         // Every Windows tray-oriented behavior can make the main window
         // disappear without closing it. Keep the escape hatch explicit and
@@ -897,10 +901,22 @@ mod tests {
             automatic_update_checks: true,
             ..Default::default()
         }
-        .sanitized_for_runtime(true);
+        .sanitized_for_runtime(true, false);
 
         assert!(!settings.autostart);
         assert!(!settings.automatic_update_checks);
+    }
+
+    #[test]
+    fn snap_disables_multiple_processes_but_other_packages_preserve_the_setting() {
+        for (store, snap) in [(false, false), (true, false), (true, true)] {
+            let settings = Settings {
+                multi_instance: true,
+                ..Default::default()
+            }
+            .sanitized_for_runtime(store, snap);
+            assert_eq!(settings.multi_instance, !snap);
+        }
     }
 
     #[cfg(target_os = "windows")]

@@ -56,7 +56,8 @@ the first upload enters review. Do not disable WebKit's sandbox to clear denials
 
 Snap owns updates. Carrier disables its GitHub update polling and installer in
 the package. Login startup remains unavailable until Snap autostart integration
-is implemented. Notification avatars are sent as serialized bytes icons over
+is implemented. Multi Instance is disabled because exported notification actions
+require one Carrier process to own the application bus name. Notification avatars are sent as serialized bytes icons over
 D-Bus, so the host does not need access to files inside the sandbox. Reply
 buttons open Carrier's composer. Portal version 1 leaves notification sound
 to the desktop; version 2 supports Carrier's sound preference.

@@ -335,6 +335,7 @@ pub(crate) struct RuntimeCapabilities {
     snap: bool,
     autostart: bool,
     automatic_update_checks: bool,
+    multi_instance: bool,
 }
 
 /// Tell the trusted Settings page which host-owned features the package can
@@ -348,6 +349,7 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
         snap,
         autostart: !flatpak && !snap,
         automatic_update_checks: !flatpak && !snap,
+        multi_instance: !snap,
     }
 }
 
