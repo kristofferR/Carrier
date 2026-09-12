@@ -3,14 +3,23 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use zbus::zvariant::{OwnedValue, Value};
 
-use super::{LinuxNotificationResponse, LINUX_NOTIFICATION_RESPONSE_TIMEOUT};
+use super::LinuxNotificationResponse;
 
 type Response = (LinuxNotificationResponse, Option<String>);
-type Pending = Arc<Mutex<HashMap<String, mpsc::Sender<Response>>>>;
+type ResponseHandler = Box<dyn FnOnce(Response) + Send>;
+
+struct PendingAction {
+    inserted_at: Instant,
+    handler: ResponseHandler,
+}
+
+type Pending = Arc<Mutex<HashMap<String, PendingAction>>>;
+const MAX_PENDING_ACTIONS: usize = 128;
 
 struct ApplicationActions {
     pending: Pending,
@@ -36,11 +45,11 @@ impl ApplicationActions {
             return;
         };
         // Only live, unguessable notification IDs can activate a retained route.
-        let Some(sender) = self.pending.lock().unwrap().remove(identifier) else {
+        let Some(action) = self.pending.lock().unwrap().remove(identifier) else {
             return;
         };
         let token = activation_token(&platform_data);
-        let _ = sender.send((response, token));
+        (action.handler)((response, token));
     }
 }
 
@@ -92,25 +101,60 @@ pub(super) fn show(
     image: Option<&Path>,
     sound: bool,
     reply: bool,
-) -> Result<Response, String> {
+    on_response: impl FnOnce(Response) + Send + 'static,
+) -> Result<(), String> {
     // Serialize initialization, but allow a later notification to retry a failed
     // session-bus connection. Keep one name owner for all pending notifications.
     static PORTAL: OnceLock<Mutex<Option<Arc<Portal>>>> = OnceLock::new();
     let portal = {
         let mut portal = PORTAL.get_or_init(Default::default).lock().unwrap();
         if portal.is_none() {
-            *portal = Some(Arc::new(Portal::connect().map_err(|e| e.to_string())?));
+            match Portal::connect() {
+                Ok(connected) => *portal = Some(Arc::new(connected)),
+                Err(error) => {
+                    drop(portal);
+                    on_response((LinuxNotificationResponse::Closed, None));
+                    return Err(error.to_string());
+                }
+            }
         }
         portal.as_ref().unwrap().clone()
     };
     let identifier = uuid::Uuid::new_v4().to_string();
-    let (sender, receiver) = mpsc::channel();
-    {
+    let response_connection = portal.connection.clone();
+    let response_identifier = identifier.clone();
+    let handler = Box::new(move |response| {
+        on_response(response);
+        let _ = response_connection.call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.portal.Notification"),
+            "RemoveNotification",
+            &response_identifier,
+        );
+    });
+    let evicted = {
         let mut pending = portal.pending.lock().unwrap();
-        if pending.len() >= 128 {
-            return Err("too many pending notification actions".into());
-        }
-        pending.insert(identifier.clone(), sender);
+        let evicted = if pending.len() >= MAX_PENDING_ACTIONS {
+            pending
+                .iter()
+                .min_by_key(|(_, action)| action.inserted_at)
+                .map(|(identifier, _)| identifier.clone())
+                .and_then(|identifier| pending.remove(&identifier).map(|action| action.handler))
+        } else {
+            None
+        };
+        pending.insert(
+            identifier.clone(),
+            PendingAction {
+                inserted_at: Instant::now(),
+                handler,
+            },
+        );
+        evicted
+    };
+    if let Some(handler) = evicted {
+        handler((LinuxNotificationResponse::Closed, None));
     }
     let mut notification = HashMap::<&str, Value<'_>>::from([
         ("title", title.into()),
@@ -144,23 +188,13 @@ pub(super) fn show(
         "AddNotification",
         &(&identifier, notification),
     );
-    let response = submitted.map(|_| receiver.recv_timeout(LINUX_NOTIFICATION_RESPONSE_TIMEOUT));
-    let action_received = matches!(&response, Ok(Ok(_)));
-    // Bound retained action routes without removing unattended notifications
-    // from the desktop's history when the response wait expires.
-    portal.pending.lock().unwrap().remove(&identifier);
-    if action_received {
-        let _ = portal.connection.call_method(
-            Some("org.freedesktop.portal.Desktop"),
-            "/org/freedesktop/portal/desktop",
-            Some("org.freedesktop.portal.Notification"),
-            "RemoveNotification",
-            &identifier,
-        );
+    if let Err(error) = submitted {
+        if let Some(action) = portal.pending.lock().unwrap().remove(&identifier) {
+            (action.handler)((LinuxNotificationResponse::Closed, None));
+        }
+        return Err(error.to_string());
     }
-    response
-        .map_err(|error| error.to_string())
-        .map(|response| response.unwrap_or((LinuxNotificationResponse::Closed, None)))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -177,11 +211,16 @@ mod tests {
         let actions = ApplicationActions {
             pending: pending.clone(),
         };
-        let (sender, receiver) = mpsc::channel();
-        pending
-            .lock()
-            .unwrap()
-            .insert("notification-a".into(), sender);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        pending.lock().unwrap().insert(
+            "notification-a".into(),
+            PendingAction {
+                inserted_at: Instant::now(),
+                handler: Box::new(move |response| {
+                    let _ = sender.send(response);
+                }),
+            },
+        );
         actions.activate_action("unknown", vec![owned("notification-a")], HashMap::new());
         actions.activate_action("open-notification", vec![owned("unknown")], HashMap::new());
         assert!(receiver.try_recv().is_err());

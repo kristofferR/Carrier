@@ -1116,25 +1116,27 @@ fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static
     ))
 }
 
-/// Show a Linux notification and receive the response on the same connection.
-/// KDE targets `NotificationReplied` to the sender's unique D-Bus name, which
-/// is why notify-rust's private handle connection cannot be replaced by a
-/// second listener connection after `show()`.
+/// Show a Linux notification and dispatch its eventual response. KDE targets
+/// `NotificationReplied` to the sender's unique D-Bus name, which is why
+/// notify-rust's private handle connection cannot be replaced by a second
+/// listener connection after `show()`.
 #[cfg(target_os = "linux")]
-fn show_linux_notification(
+fn show_linux_notification<F>(
     title: &str,
     body: &str,
     image: Option<&Path>,
     sound: bool,
     allow_inline_reply: bool,
-) -> (LinuxNotificationResponse, Option<String>) {
+    on_response: F,
+) where
+    F: FnOnce((LinuxNotificationResponse, Option<String>)) + Send + 'static,
+{
     if crate::install_environment::is_snap() {
-        return portal::show(title, body, image, sound, allow_inline_reply).unwrap_or_else(
-            |error| {
-                log::warn!("Snap notification portal failed: {error}");
-                (LinuxNotificationResponse::Closed, None)
-            },
-        );
+        if let Err(error) = portal::show(title, body, image, sound, allow_inline_reply, on_response)
+        {
+            log::warn!("Snap notification portal failed: {error}");
+        }
+        return;
     }
     let mut notification = notify_rust::Notification::new();
     notification.appname("Carrier").summary(title);
@@ -1206,10 +1208,11 @@ fn show_linux_notification(
         .map_err(|error| error.to_string())
     })();
 
-    result.unwrap_or_else(|error| {
+    let response = result.unwrap_or_else(|error| {
         log::warn!("Linux notification response loop failed: {error}");
         (LinuxNotificationResponse::Closed, None)
-    })
+    });
+    on_response(response);
 }
 
 #[cfg(target_os = "linux")]
@@ -1821,8 +1824,9 @@ fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: 
 /// non-blocking and clicks arrive later through the
 /// [`NotifyDelegate`](crate::macos::notifications::NotifyDelegate) (set up at
 /// startup), so there's no per-notification thread. Linux and Windows each
-/// park one thread per notification until the server reports a response;
-/// Linux additionally handles KDE's inline-reply signal.
+/// receive responses asynchronously; non-Snap Linux parks one thread per
+/// notification because KDE targets inline-reply signals to the connection
+/// that created it.
 pub(crate) fn show_message_notification(
     app: tauri::AppHandle,
     msg: NotifyMsg,
@@ -2005,12 +2009,7 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        let (response, activation_token) =
-            show_linux_notification(&title, &body, image.as_deref(), sound, allow_inline_reply);
-        if let Some(path) = image.as_deref() {
-            let _ = std::fs::remove_file(path);
-        }
-        match response {
+        let on_response = move |(response, activation_token)| match response {
             LinuxNotificationResponse::Open => {
                 activate_notification(app, native_id, Some(page_id), None, activation_token)
             }
@@ -2026,6 +2025,17 @@ pub(crate) fn show_message_notification(
             LinuxNotificationResponse::Closed => {
                 let _ = take_notification_route(native_id);
             }
+        };
+        show_linux_notification(
+            &title,
+            &body,
+            image.as_deref(),
+            sound,
+            allow_inline_reply,
+            on_response,
+        );
+        if let Some(path) = image.as_deref() {
+            let _ = std::fs::remove_file(path);
         }
     });
 
@@ -2177,14 +2187,21 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        let (response, activation_token) =
-            show_linux_notification(title, &body, None, false, false);
-        if matches!(
-            response,
-            LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
-        ) {
-            activate_notification(app, id, None, None, activation_token);
-        }
+        show_linux_notification(
+            title,
+            &body,
+            None,
+            false,
+            false,
+            move |(response, activation_token)| {
+                if matches!(
+                    response,
+                    LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
+                ) {
+                    activate_notification(app, id, None, None, activation_token);
+                }
+            },
+        );
     });
 }
 
