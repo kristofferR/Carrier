@@ -32,11 +32,21 @@
   </content_rating>
   <screenshots>
     <screenshot type="default">
-      <image>https://kristofferr.github.io/Carrier/carrier-screenshot.png</image>
-      <caption>Messenger in Carrier's focused desktop window</caption>
+      <image>https://files.kristofferr.com/artifacts/carrier-linux-en-light.png-1788905297.858775-1lUXqXRY.png?k=391s409Xp7NZ</image>
+      <caption>Carrier on Linux with fictional English demo conversations</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://files.kristofferr.com/artifacts/carrier-linux-en-dark.png-1788905303.679180-1lUXqXRY.png?k=IaaOs0_Oq-KY</image>
+      <caption>Dark appearance with the same fictional English demo conversations</caption>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.13.0" date="2026-09-08">
+      <description>
+        <p>Improved recovery when Messenger stops responding or limits requests, and added clearer camera and microphone troubleshooting.</p>
+        <p>Restored native desktop menus and improved Linux Wayland startup.</p>
+      </description>
+    </release>
     <release version="1.7.0" date="2026-07-26">
       <description>
         <p>Completed Linux desktop integration and cut Messenger memory and CPU use.</p>

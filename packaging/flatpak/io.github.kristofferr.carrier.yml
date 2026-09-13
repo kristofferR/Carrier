@@ -52,7 +52,13 @@ modules:
           - .flatpak-builder
           - .git
           - .worktrees
+          - build-flatpak
+          - builddir
+          - flatpak-repo
           - node_modules
+          - parts
+          - prime
           - src-tauri/target
+          - stage
           - target
       - cargo-sources.json

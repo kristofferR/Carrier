@@ -99,7 +99,7 @@ objc2::define_class!(
                 completion_handler.call(());
                 if let Some(id) = id {
                     if let Some(text) = text {
-                        on_notification_reply(self.ivars().app.clone(), id, page_id, path, text);
+                        on_notification_reply(self.ivars().app.clone(), id, page_id, path, text, None);
                     } else {
                         on_notification_click_with_path(
                             self.ivars().app.clone(),

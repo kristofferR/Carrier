@@ -418,6 +418,7 @@ fn handle_activation(
             page_id,
             route.clone(),
             text,
+            None,
         );
         return;
     }

@@ -1710,7 +1710,7 @@
     const buttons = [];
     if (root.matches?.(selector)) buttons.push(root);
     buttons.push(...root.querySelectorAll?.(selector) || []);
-    return buttons.filter((button) => {
+    const visible = buttons.filter((button) => {
       if (button.closest('[aria-hidden="true"]')) return false;
       const r = visibleBox(button);
       if (!r || r.width < 90 || r.height < 28) return false;
@@ -1718,8 +1718,13 @@
         return false;
       if (button.hasAttribute("aria-expanded")) return false;
       if (button.getAttribute("aria-haspopup")) return false;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!hit || !button.contains(hit)) return false;
       return true;
     });
+    return visible.filter(
+      (button) => !visible.some((other) => other !== button && button.contains(other))
+    );
   };
   var bottomActionRow = (root) => {
     const rootRect = visibleBox(root);
@@ -2799,6 +2804,33 @@
   var FOOTER_LINKS = "data-carrier-login-footer-links";
   var LANGUAGES = "data-carrier-login-languages";
   var LANGUAGE_LINK = "data-carrier-login-language-link";
+  var LOGIN_REDIRECT = "carrier:login-redirect";
+  function returnToMessengerAfterLogin() {
+    if (!onFacebookHost()) return "idle";
+    const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
+    const hasLoginFields = !!document.querySelector('input[name="email"], input[type="password"]');
+    try {
+      const messengerReady = /^\/messages(?:\/|$)/.test(location.pathname) && document.readyState === "complete" && document.querySelector('[role="navigation"] [role="grid"]');
+      if (!signedIn || hasLoginFields || messengerReady) {
+        sessionStorage.removeItem(LOGIN_REDIRECT);
+        return messengerReady ? "settled" : "idle";
+      }
+      if (["/", "/home.php"].includes(location.pathname) && document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form')) {
+        sessionStorage.removeItem(LOGIN_REDIRECT);
+        return "idle";
+      }
+      if (sessionStorage.getItem(LOGIN_REDIRECT)) {
+        return ["/", "/home.php"].includes(location.pathname) ? "settled" : "pending";
+      }
+      if (document.readyState !== "complete" || !["/", "/home.php"].includes(location.pathname) || !document.querySelector('[role="feed"], [data-pagelet^="FeedUnit_"]') || document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], form'))
+        return "idle";
+      sessionStorage.setItem(LOGIN_REDIRECT, "1");
+    } catch {
+      return "settled";
+    }
+    location.replace("https://www.facebook.com/messages");
+    return "settled";
+  }
   function initLoginTidy() {
     let scheduled = false;
     let tidyObserver = null;
@@ -2865,11 +2897,11 @@
       languageLinks.forEach((link) => link.setAttribute(LANGUAGE_LINK, ""));
       languageRoot.setAttribute(LANGUAGES, "");
       footer.setAttribute(FOOTER, "");
-      for (let node = footer; node; node = node.parentElement) {
+      for (let node = languageRoot; node; node = node.parentElement) {
         node.removeAttribute(HIDE);
         node.removeAttribute(FOOTER_LINKS);
         if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
-        if (node === languageRoot) break;
+        if (node === footer) break;
       }
     };
     const tidyFooter = (col) => {
@@ -2893,6 +2925,7 @@
       }
     };
     function tidy() {
+      const loginRecovery = returnToMessengerAfterLogin();
       const html = document.documentElement;
       if (onFacebookHost() && /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
         location.pathname
@@ -2918,7 +2951,7 @@
             html.removeAttribute("data-carrier-darkswap");
           }
         }
-        if (tidyObserver && /\bc_user=/.test(document.cookie) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
+        if (tidyObserver && /\bc_user=/.test(document.cookie) && (loginRecovery === "settled" || loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname)) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
           tidyObserver.disconnect();
           tidyObserver = null;
           window.removeEventListener("resize", schedule);
@@ -3039,6 +3072,7 @@
     tidyObserver.observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener("carrier:settings", schedule);
     window.addEventListener("resize", schedule);
+    window.addEventListener("load", schedule, { once: true });
     for (const delay of [300, 1200]) setTimeout(schedule, delay);
     if (window.matchMedia) {
       window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", schedule);

@@ -1,8 +1,8 @@
 //! New-message notifications: the `carrier:notify` payload, the avatar
 //! temp-PNG cache, and the platform delivery paths (macOS goes through
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux uses
-//! the freedesktop D-Bus API with notify-rust's builder types; Windows uses
-//! notify-rust directly).
+//! the notification portal in Snap and freedesktop D-Bus elsewhere; Windows
+//! uses notify-rust directly).
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -23,14 +23,17 @@ use futures_util::{pin_mut, StreamExt};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::actions::{run_app_action, validated_thread_path, AppAction};
+use crate::actions::{run_app_action_with_activation_token, validated_thread_path, AppAction};
 #[cfg(target_os = "macos")]
 use crate::macos::notifications::{
     clear_delivered_for_thread, deliver_notification_macos,
     update_pending_notification_route_macos, MacNotificationOptions,
 };
 use crate::settings::AppState;
-use crate::tray::show_main;
+use crate::tray::show_main_with_activation_token;
+
+#[cfg(target_os = "linux")]
+mod portal;
 
 /// A new-message notification request from the page (the `carrier:notify` event).
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
@@ -676,6 +679,7 @@ pub(crate) fn update_notification_route(app: &tauri::AppHandle, msg: &NotifyRout
 /// Unique-name counter for avatar temp files (see [`avatar_to_temp_png`]).
 static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
 
 /// Decode the avatar the page sent as a PNG data URL into a temp file the native
 /// notification can point at. Returns `None` (→ a text-only notification) on any
@@ -689,7 +693,6 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     // A 64×64 PNG is a few KB; cap far below this ceiling but well above any
     // legitimate avatar, and reject before decoding so an oversized payload
     // can't force a large allocation (base64 inflates the byte count by ~4/3).
-    const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
     if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
         return None;
     }
@@ -711,10 +714,6 @@ fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     let path = dir.join(format!("{seq}.png"));
     std::fs::write(&path, &bytes).ok()?;
     Some(path)
-}
-
-fn should_attach_path_avatar(hide_preview: bool, flatpak: bool) -> bool {
-    !hide_preview && !flatpak
 }
 
 /// Best-effort sweep of stale avatars from this process's own directory. On
@@ -840,12 +839,12 @@ fn linux_reply_eligible(
     notification_id: u64,
     thread_path: Option<&str>,
     capabilities: LinuxNotificationCapabilities,
+    snap: bool,
 ) -> bool {
     !hide_preview
         && notification_id != 0
         && thread_path.is_some()
-        && capabilities.actions
-        && capabilities.inline_reply
+        && (snap || (capabilities.actions && capabilities.inline_reply))
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -872,6 +871,7 @@ fn windows_reply_eligible(
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 enum LinuxNotificationSignal {
+    ActivationToken(String),
     Action(String),
     Reply(String),
     Closed,
@@ -880,6 +880,7 @@ enum LinuxNotificationSignal {
 #[cfg(target_os = "linux")]
 #[derive(Debug, PartialEq, Eq)]
 enum LinuxSignalDecision {
+    ActivationToken(String),
     Ignore,
     Open,
     Reply(String),
@@ -893,6 +894,9 @@ fn classify_linux_signal(
     awaiting_reply: bool,
 ) -> LinuxSignalDecision {
     match signal {
+        LinuxNotificationSignal::ActivationToken(token) => {
+            LinuxSignalDecision::ActivationToken(token)
+        }
         LinuxNotificationSignal::Action(action) if action == "inline-reply" => {
             LinuxSignalDecision::AwaitReply
         }
@@ -964,6 +968,10 @@ fn decode_linux_notification_signal(
         return None;
     }
     match header.member()?.as_str() {
+        "ActivationToken" => {
+            let (id, token) = message.body().deserialize::<(u32, String)>().ok()?;
+            (id == expected_id).then_some(LinuxNotificationSignal::ActivationToken(token))
+        }
         "ActionInvoked" => {
             let (id, action) = message.body().deserialize::<(u32, String)>().ok()?;
             (id == expected_id).then_some(LinuxNotificationSignal::Action(action))
@@ -982,12 +990,13 @@ fn decode_linux_notification_signal(
 
 #[cfg(target_os = "linux")]
 async fn wait_for_linux_notification_response(
-    mut messages: zbus::MessageStream,
+    mut messages: impl futures_util::Stream<Item = Result<zbus::Message, zbus::Error>> + Unpin,
     notification_id: u32,
     notification_sender: &str,
-) -> Result<LinuxNotificationResponse, zbus::Error> {
+) -> Result<(LinuxNotificationResponse, Option<String>), zbus::Error> {
     let terminal_deadline = Instant::now() + LINUX_NOTIFICATION_RESPONSE_TIMEOUT;
     let mut reply_deadline: Option<Instant> = None;
+    let mut activation_token = None;
 
     loop {
         let next_message = messages.next();
@@ -995,17 +1004,19 @@ async fn wait_for_linux_notification_response(
         let (deadline, timeout_kind) = next_linux_wait_deadline(reply_deadline, terminal_deadline);
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return Ok(linux_timeout_response(timeout_kind));
+            return Ok((linux_timeout_response(timeout_kind), activation_token));
         }
         let timeout = async_io::Timer::after(remaining);
         pin_mut!(timeout);
         let next = match select(next_message, timeout).await {
             Either::Left((message, _)) => message,
-            Either::Right((_, _)) => return Ok(linux_timeout_response(timeout_kind)),
+            Either::Right((_, _)) => {
+                return Ok((linux_timeout_response(timeout_kind), activation_token))
+            }
         };
 
         let Some(message) = next else {
-            return Ok(LinuxNotificationResponse::Closed);
+            return Ok((LinuxNotificationResponse::Closed, activation_token));
         };
         let message = message?;
         let Some(signal) =
@@ -1014,12 +1025,17 @@ async fn wait_for_linux_notification_response(
             continue;
         };
         match classify_linux_signal(signal, reply_deadline.is_some()) {
+            LinuxSignalDecision::ActivationToken(token) => activation_token = Some(token),
             LinuxSignalDecision::Ignore => {}
-            LinuxSignalDecision::Open => return Ok(LinuxNotificationResponse::Open),
-            LinuxSignalDecision::Reply(text) => {
-                return Ok(LinuxNotificationResponse::Reply(text));
+            LinuxSignalDecision::Open => {
+                return Ok((LinuxNotificationResponse::Open, activation_token))
             }
-            LinuxSignalDecision::Closed => return Ok(LinuxNotificationResponse::Closed),
+            LinuxSignalDecision::Reply(text) => {
+                return Ok((LinuxNotificationResponse::Reply(text), activation_token));
+            }
+            LinuxSignalDecision::Closed => {
+                return Ok((LinuxNotificationResponse::Closed, activation_token))
+            }
             LinuxSignalDecision::AwaitReply => {
                 reply_deadline = Some(Instant::now() + REPLY_SIGNAL_GRACE);
             }
@@ -1033,6 +1049,10 @@ fn linux_notification_hints(
     allow_inline_reply: bool,
 ) -> HashMap<&'static str, zbus::zvariant::Value<'static>> {
     let mut hints = HashMap::new();
+    hints.insert(
+        "desktop-entry",
+        zbus::zvariant::Value::from(crate::install_environment::linux_desktop_id()),
+    );
     if sound {
         hints.insert(
             "sound-name",
@@ -1050,45 +1070,93 @@ fn linux_notification_hints(
     hints
 }
 
-/// Show a Linux notification and receive the response on the same connection.
-/// KDE targets `NotificationReplied` to the sender's unique D-Bus name, which
-/// is why notify-rust's private handle connection cannot be replaced by a
-/// second listener connection after `show()`.
 #[cfg(target_os = "linux")]
-fn show_linux_notification(
+fn linux_notification_avatar(path: &Path) -> Option<(Vec<u8>, tauri::image::Image<'static>)> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take((MAX_AVATAR_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return None;
+    }
+    // The private PNG came from the remote page. Bound dimensions before decoding
+    // to prevent a tiny compressed payload from allocating an enormous image.
+    if bytes.get(..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?);
+    let height = u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?);
+    if !(1..=256).contains(&width) || !(1..=256).contains(&height) {
+        return None;
+    }
+    let image = tauri::image::Image::from_bytes(&bytes).ok()?;
+    Some((bytes, image))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_image(path: &Path) -> Option<zbus::zvariant::Value<'static>> {
+    let (_, image) = linux_notification_avatar(path)?;
+    let (width, height) = (image.width(), image.height());
+    // Freedesktop image-data is (width, height, stride, alpha, bits, channels, RGBA).
+    Some(zbus::zvariant::Value::Structure(
+        (
+            width as i32,
+            height as i32,
+            (width * 4) as i32,
+            true,
+            8_i32,
+            4_i32,
+            image.rgba().to_vec(),
+        )
+            .into(),
+    ))
+}
+
+/// Show a Linux notification and dispatch its eventual response. KDE targets
+/// `NotificationReplied` to the sender's unique D-Bus name, which is why
+/// notify-rust's private handle connection cannot be replaced by a second
+/// listener connection after `show()`.
+#[cfg(target_os = "linux")]
+fn show_linux_notification<F>(
     title: &str,
     body: &str,
     image: Option<&Path>,
     sound: bool,
     allow_inline_reply: bool,
-) -> LinuxNotificationResponse {
+    on_response: F,
+) where
+    F: FnOnce((LinuxNotificationResponse, Option<String>)) + Send + 'static,
+{
+    if crate::install_environment::is_snap() {
+        if let Err(error) = portal::show(title, body, image, sound, allow_inline_reply, on_response)
+        {
+            log::warn!("Snap notification portal failed: {error}");
+        }
+        return;
+    }
     let mut notification = notify_rust::Notification::new();
     notification.appname("Carrier").summary(title);
     if !body.is_empty() {
         notification.body(body);
     }
-    if let Some(path) = image.and_then(Path::to_str) {
-        notification.icon(path);
-    }
+    notification.icon(if crate::install_environment::is_flatpak() {
+        "io.github.kristofferr.carrier"
+    } else {
+        "carrier"
+    });
     notification.action("default", "Open");
     if allow_inline_reply {
         notification.action("inline-reply", "Reply");
     }
 
-    let result = (|| -> Result<LinuxNotificationResponse, String> {
+    let result = (|| -> Result<(LinuxNotificationResponse, Option<String>), String> {
         let connection =
             zbus::blocking::Connection::session().map_err(|error| error.to_string())?;
-        let dbus =
-            zbus::blocking::fdo::DBusProxy::new(&connection).map_err(|error| error.to_string())?;
-        let notification_name =
-            zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
-        // The daemon may be D-Bus activated and have no owner until its first
-        // use. Start it before pinning the unique owner used by our match rule.
-        dbus.start_service_by_name(notification_name.clone(), 0)
-            .map_err(|error| error.to_string())?;
-        let notification_owner = dbus
-            .get_name_owner(notification_name.into())
-            .map_err(|error| error.to_string())?;
+        let notification_owner = linux_notification_owner(&connection)?;
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender(notification_owner.clone())
@@ -1104,7 +1172,11 @@ fn show_linux_notification(
             Some(16),
         ))
         .map_err(|error| error.to_string())?;
-        let hints = linux_notification_hints(sound, allow_inline_reply);
+        let mut hints = linux_notification_hints(sound, allow_inline_reply);
+        if let Some(image) = image.and_then(linux_notification_image) {
+            // Send pixels over D-Bus: the host daemon cannot read sandbox-private paths.
+            hints.insert("image-data", image);
+        }
         let timeout = i32::from(notification.timeout);
         let reply = connection
             .call_method(
@@ -1136,10 +1208,32 @@ fn show_linux_notification(
         .map_err(|error| error.to_string())
     })();
 
-    result.unwrap_or_else(|error| {
+    let response = result.unwrap_or_else(|error| {
         log::warn!("Linux notification response loop failed: {error}");
-        LinuxNotificationResponse::Closed
-    })
+        (LinuxNotificationResponse::Closed, None)
+    });
+    on_response(response);
+}
+
+#[cfg(target_os = "linux")]
+fn linux_notification_owner(
+    connection: &zbus::blocking::Connection,
+) -> Result<zbus::names::OwnedUniqueName, String> {
+    let dbus =
+        zbus::blocking::fdo::DBusProxy::new(connection).map_err(|error| error.to_string())?;
+    let name = zbus::names::WellKnownName::try_from("org.freedesktop.Notifications").unwrap();
+    match dbus.get_name_owner(name.clone().into()) {
+        Ok(owner) => Ok(owner),
+        Err(zbus::fdo::Error::NameHasNoOwner(_)) => {
+            // Activate only an absent daemon. GNOME Shell already owns the name
+            // but has no activation file, so StartServiceByName can fail for it.
+            dbus.start_service_by_name(name.clone(), 0)
+                .map_err(|error| error.to_string())?;
+            dbus.get_name_owner(name.into())
+                .map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1488,14 +1582,20 @@ fn show_reply_failure_notification(app: &tauri::AppHandle) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text: String) {
+fn open_reply_fallback(
+    app: tauri::AppHandle,
+    id: u64,
+    thread_path: String,
+    text: String,
+    activation_token: Option<String>,
+) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
     let script =
         quick_reply_script(id, attempt, &thread_path, &text, PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        show_main(&main_app);
+        show_main_with_activation_token(&main_app, activation_token.as_deref());
         if let Some(window) = main_app.get_webview_window("main") {
             let _ = window.eval(script);
         }
@@ -1506,9 +1606,14 @@ fn open_reply_fallback(app: tauri::AppHandle, id: u64, thread_path: String, text
 }
 
 #[cfg(target_os = "linux")]
-fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
+fn open_notification_composer(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: u64,
+    activation_token: Option<String>,
+) {
     let Some(thread_path) = take_notification_route(id) else {
-        on_notification_click_with_path(app, id, Some(page_id), None);
+        activate_notification(app, id, Some(page_id), None, activation_token);
         return;
     };
     let attempt = next_reply_attempt();
@@ -1517,7 +1622,7 @@ fn open_notification_composer(app: tauri::AppHandle, id: u64, page_id: u64) {
         quick_reply_script(id, attempt, &thread_path, "", PendingReplyMode::Draft).unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
-        show_main(&main_app);
+        show_main_with_activation_token(&main_app, activation_token.as_deref());
         if let Some(window) = main_app.get_webview_window("main") {
             let _ = window.eval(script);
         }
@@ -1533,23 +1638,24 @@ fn deliver_quick_reply(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
+    activation_token: Option<String>,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let Some(thread_path) = thread_path else {
         log::warn!("quick reply had no validated notification route (id {id})");
         show_reply_failure_notification(&app);
-        on_notification_click_with_path(app, id, page_id, None);
+        activate_notification(app, id, page_id, None, activation_token);
         return;
     };
     let text = trimmed_reply_text(&raw_text);
     if text.is_empty() {
         // Empty input is equivalent to activating the notification.
-        on_notification_click_with_path(app, id, page_id, Some(thread_path));
+        activate_notification(app, id, page_id, Some(thread_path), activation_token);
         return;
     }
     if text.chars().count() > MAX_QUICK_REPLY_CHARS {
         log::warn!("quick reply exceeds the inline send limit (id {id})");
-        open_reply_fallback(app, id, thread_path, text);
+        open_reply_fallback(app, id, thread_path, text, activation_token);
         return;
     }
 
@@ -1606,7 +1712,7 @@ fn deliver_quick_reply(
         } else {
             log::warn!("quick-reply delivery failed or timed out (id {id})");
         }
-        open_reply_fallback(app, id, thread_path, text);
+        open_reply_fallback(app, id, thread_path, text, activation_token);
     }
 }
 
@@ -1620,10 +1726,11 @@ pub(crate) fn on_notification_reply(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     text: String,
+    activation_token: Option<String>,
 ) {
     let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
         log::warn!("quick reply rejected because the native worker cap was reached (id {id})");
-        open_rejected_reply_fallback(app, id, page_id, fallback_path, text);
+        open_rejected_reply_fallback(app, id, page_id, fallback_path, text, activation_token);
         return;
     };
 
@@ -1631,6 +1738,7 @@ pub(crate) fn on_notification_reply(
     let fallback_page_id = page_id;
     let fallback_path_copy = fallback_path.clone();
     let fallback_text = text.clone();
+    let fallback_token = activation_token.clone();
     if let Err(error) = std::thread::Builder::new()
         .name("carrier-quick-reply".into())
         .spawn(move || {
@@ -1640,7 +1748,7 @@ pub(crate) fn on_notification_reply(
                 .get_or_init(|| Mutex::new(()))
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            deliver_quick_reply(app, id, page_id, fallback_path, text);
+            deliver_quick_reply(app, id, page_id, fallback_path, text, activation_token);
         })
     {
         log::warn!("failed to start quick-reply worker (id {id}): {error}");
@@ -1650,6 +1758,7 @@ pub(crate) fn on_notification_reply(
             fallback_page_id,
             fallback_path_copy,
             fallback_text,
+            fallback_token,
         );
     }
 }
@@ -1661,15 +1770,16 @@ fn open_rejected_reply_fallback(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     raw_text: String,
+    activation_token: Option<String>,
 ) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     let text = trimmed_reply_text(&raw_text);
     match (thread_path, text.is_empty()) {
-        (Some(path), false) => open_reply_fallback(app, id, path, text),
-        (Some(path), true) => on_notification_click_with_path(app, id, page_id, Some(path)),
+        (Some(path), false) => open_reply_fallback(app, id, path, text, activation_token),
+        (Some(path), true) => activate_notification(app, id, page_id, Some(path), activation_token),
         (None, _) => {
             show_reply_failure_notification(&app);
-            on_notification_click_with_path(app, id, page_id, None);
+            activate_notification(app, id, page_id, None, activation_token);
         }
     }
 }
@@ -1714,8 +1824,9 @@ fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: 
 /// non-blocking and clicks arrive later through the
 /// [`NotifyDelegate`](crate::macos::notifications::NotifyDelegate) (set up at
 /// startup), so there's no per-notification thread. Linux and Windows each
-/// park one thread per notification until the server reports a response;
-/// Linux additionally handles KDE's inline-reply signal.
+/// receive responses asynchronously; non-Snap Linux parks one thread per
+/// notification because KDE targets inline-reply signals to the connection
+/// that created it.
 pub(crate) fn show_message_notification(
     app: tauri::AppHandle,
     msg: NotifyMsg,
@@ -1806,7 +1917,12 @@ pub(crate) fn show_message_notification(
         hide_preview,
         native_id,
         thread_path.as_deref(),
-        linux_notification_capabilities(),
+        if crate::install_environment::is_snap() {
+            LinuxNotificationCapabilities::default()
+        } else {
+            linux_notification_capabilities()
+        },
+        crate::install_environment::is_snap(),
     );
     // The native id is generated on the trusted side and never reused when the
     // page's callback counter restarts. Old Notification Center entries retain
@@ -1818,10 +1934,7 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
-    // A Flatpak-private temp path is not readable by the host notification
-    // daemon. Skip the path attachment there instead of showing a broken icon.
-    let image = if should_attach_path_avatar(hide_preview, crate::install_environment::is_flatpak())
-    {
+    let image = if !hide_preview {
         avatar_to_temp_png(&msg.icon)
     } else {
         None
@@ -1896,27 +2009,33 @@ pub(crate) fn show_message_notification(
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        let response =
-            show_linux_notification(&title, &body, image.as_deref(), sound, allow_inline_reply);
-        if let Some(path) = image.as_deref() {
-            let _ = std::fs::remove_file(path);
-        }
-        match response {
+        let on_response = move |(response, activation_token)| match response {
             LinuxNotificationResponse::Open => {
-                on_notification_click_with_path(app, native_id, Some(page_id), None)
+                activate_notification(app, native_id, Some(page_id), None, activation_token)
             }
             LinuxNotificationResponse::OpenComposer => {
-                open_notification_composer(app, native_id, page_id)
+                open_notification_composer(app, native_id, page_id, activation_token)
             }
             LinuxNotificationResponse::Reply(text) if text.trim().is_empty() => {
-                on_notification_click_with_path(app, native_id, Some(page_id), None);
+                activate_notification(app, native_id, Some(page_id), None, activation_token);
             }
             LinuxNotificationResponse::Reply(text) => {
-                on_notification_reply(app, native_id, Some(page_id), None, text)
+                on_notification_reply(app, native_id, Some(page_id), None, text, activation_token)
             }
             LinuxNotificationResponse::Closed => {
                 let _ = take_notification_route(native_id);
             }
+        };
+        show_linux_notification(
+            &title,
+            &body,
+            image.as_deref(),
+            sound,
+            allow_inline_reply,
+            on_response,
+        );
+        if let Some(path) = image.as_deref() {
+            let _ = std::fs::remove_file(path);
         }
     });
 
@@ -2024,7 +2143,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
     log::warn!("sync alert notification shown ({kind:?})");
 
     // A fresh id no message notification uses: clicking just surfaces the
-    // window (`on_notification_click` finds no route for it).
+    // window (notification activation finds no route for it).
     let id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -2068,45 +2187,56 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
 
     #[cfg(target_os = "linux")]
     std::thread::spawn(move || {
-        if matches!(
-            show_linux_notification(title, &body, None, false, false),
-            LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
-        ) {
-            on_notification_click(app, id);
-        }
+        show_linux_notification(
+            title,
+            &body,
+            None,
+            false,
+            false,
+            move |(response, activation_token)| {
+                if matches!(
+                    response,
+                    LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
+                ) {
+                    activate_notification(app, id, None, None, activation_token);
+                }
+            },
+        );
     });
-}
-
-/// A notification was clicked: surface Carrier and open its retained route, or
-/// fall back to the page's original notification callback when no route exists.
-/// Only Linux still uses the route-less form — Windows toast activations always
-/// carry the route through [`on_notification_click_with_path`].
-#[cfg(target_os = "linux")]
-pub(crate) fn on_notification_click(app: tauri::AppHandle, id: u64) {
-    on_notification_click_with_path(app, id, None, None);
 }
 
 /// Notification activation with an optional route persisted in native
 /// `userInfo`. The request-local path wins; native-id caches keep requests
 /// useful when no path was embedded or after an app restart.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_click_with_path(
     app: tauri::AppHandle,
     id: u64,
     page_id: Option<u64>,
     fallback_path: Option<String>,
 ) {
+    activate_notification(app, id, page_id, fallback_path, None);
+}
+
+fn activate_notification(
+    app: tauri::AppHandle,
+    id: u64,
+    page_id: Option<u64>,
+    fallback_path: Option<String>,
+    activation_token: Option<String>,
+) {
     let thread_path = resolved_notification_route(&app, id, fallback_path.as_deref());
     if let Some(thread_path) = thread_path {
-        run_app_action(&app, AppAction::OpenThread(thread_path));
+        run_app_action_with_activation_token(
+            &app,
+            AppAction::OpenThread(thread_path),
+            activation_token,
+        );
         return;
     }
-    let Some(page_id) = page_id else {
-        show_main(&app);
-        return;
-    };
     let _ = app.clone().run_on_main_thread(move || {
-        show_main(&app);
-        if let Some(w) = app.get_webview_window("main") {
+        show_main_with_activation_token(&app, activation_token.as_deref());
+        if let (Some(w), Some(page_id)) = (app.get_webview_window("main"), page_id) {
             let script = format!("window.__carrierNotifyClick?.({page_id});");
             let _ = w.eval(script);
         }
@@ -2116,6 +2246,78 @@ pub(crate) fn on_notification_click_with_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notifications_use_a_running_daemon_without_an_activation_file() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+
+        struct TestBus(std::process::Child, PathBuf);
+        impl Drop for TestBus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                let _ = std::fs::remove_file(&self.1);
+            }
+        }
+        // No service directories: this models GNOME owning the name without
+        // any corresponding D-Bus activation file, regardless of the host desktop.
+        let config = std::env::temp_dir().join(format!(
+            "carrier-notification-bus-{}.conf",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(
+            &config,
+            br#"
+            <busconfig>
+              <type>session</type><listen>unix:tmpdir=/tmp</listen>
+              <policy context="default">
+                <allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/>
+              </policy>
+            </busconfig>
+        "#,
+        )
+        .unwrap();
+        let mut bus = TestBus(
+            Command::new("dbus-daemon")
+                .arg("--config-file")
+                .arg(&config)
+                .args(["--nofork", "--print-address=1"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("start isolated test bus"),
+            config,
+        );
+        let mut address = String::new();
+        BufReader::new(bus.0.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        let daemon = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        daemon
+            .request_name("org.freedesktop.Notifications")
+            .unwrap();
+        let client = zbus::blocking::connection::Builder::address(address.trim())
+            .unwrap()
+            .build()
+            .unwrap();
+        let dbus = zbus::blocking::fdo::DBusProxy::new(&client).unwrap();
+        assert!(matches!(
+            dbus.start_service_by_name("org.freedesktop.Notifications".try_into().unwrap(), 0),
+            Err(zbus::fdo::Error::ServiceUnknown(_))
+        ));
+        assert_eq!(
+            linux_notification_owner(&client).unwrap().as_str(),
+            daemon.unique_name().unwrap().as_str()
+        );
+        daemon
+            .release_name("org.freedesktop.Notifications")
+            .unwrap();
+        assert!(linux_notification_owner(&client).is_err());
+    }
 
     #[test]
     fn sync_alert_gate_limits_degraded_notices_and_pairs_recovery() {
@@ -2191,12 +2393,33 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn path_avatars_are_skipped_for_private_or_flatpak_notifications() {
-        assert!(should_attach_path_avatar(false, false));
-        assert!(!should_attach_path_avatar(true, false));
-        assert!(!should_attach_path_avatar(false, true));
-        assert!(!should_attach_path_avatar(true, true));
+    fn linux_notification_image_carries_pixels_without_a_host_file_path() {
+        let png = include_bytes!("../icons/32x32.png");
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png)
+        );
+        let path = avatar_to_temp_png(&data_url).unwrap();
+        let image = linux_notification_image(&path).unwrap();
+        assert_eq!(image.value_signature().to_string(), "(iiibiiay)");
+        let zbus::zvariant::Value::Structure(fields) = image else {
+            panic!("expected image structure")
+        };
+        assert_eq!(i32::try_from(&fields.fields()[0]).unwrap(), 32);
+        assert_eq!(i32::try_from(&fields.fields()[2]).unwrap(), 128);
+        let mut oversized = png.to_vec();
+        oversized[16..20].copy_from_slice(&100_000_u32.to_be_bytes());
+        std::fs::write(&path, oversized).unwrap();
+        assert!(linux_notification_image(&path).is_none());
+        std::fs::write(&path, b"invalid PNG").unwrap();
+        assert!(linux_notification_image(&path).is_none());
+        let mut oversized_file = png.to_vec();
+        oversized_file.resize(MAX_AVATAR_BYTES + 1, 0);
+        std::fs::write(&path, oversized_file).unwrap();
+        assert!(linux_notification_avatar(&path).is_none());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -2278,10 +2501,28 @@ mod tests {
             actions: true,
             inline_reply: true,
         };
-        assert!(linux_reply_eligible(false, 7, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(true, 7, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(false, 0, Some("/t/123/"), supported));
-        assert!(!linux_reply_eligible(false, 7, None, supported));
+        assert!(linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(
+            true,
+            7,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(
+            false,
+            0,
+            Some("/t/123/"),
+            supported,
+            false
+        ));
+        assert!(!linux_reply_eligible(false, 7, None, supported, false));
         assert!(!linux_reply_eligible(
             false,
             7,
@@ -2289,7 +2530,43 @@ mod tests {
             LinuxNotificationCapabilities {
                 actions: true,
                 inline_reply: false,
-            }
+            },
+            false,
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn snap_reply_uses_portal_buttons_without_legacy_capabilities() {
+        let capabilities = LinuxNotificationCapabilities::default();
+        assert!(linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(
+            true,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(
+            false,
+            0,
+            Some("/t/123/"),
+            capabilities,
+            true
+        ));
+        assert!(!linux_reply_eligible(false, 7, None, capabilities, true));
+        assert!(!linux_reply_eligible(
+            false,
+            7,
+            Some("/t/123/"),
+            capabilities,
+            false
         ));
     }
 
@@ -2330,6 +2607,53 @@ mod tests {
         assert_eq!(
             classify_linux_signal(LinuxNotificationSignal::Action("default".into()), false),
             LinuxSignalDecision::Open
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_notification_activation_retains_only_its_daemons_token() {
+        fn signal(sender: &str, member: &str, id: u32, value: &str) -> zbus::Message {
+            zbus::Message::signal(
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+                member,
+            )
+            .unwrap()
+            .sender(sender)
+            .unwrap()
+            .build(&(id, value))
+            .unwrap()
+        }
+
+        let token = signal(":1.42", "ActivationToken", 7, "compositor-token");
+        assert!(decode_linux_notification_signal(&token, 8, ":1.42").is_none());
+        assert!(decode_linux_notification_signal(&token, 7, ":1.99").is_none());
+        let messages = futures_util::stream::iter([
+            Ok(token),
+            Ok(signal(":1.99", "ActivationToken", 7, "foreign-token")),
+            Ok(signal(
+                ":1.42",
+                "ActivationToken",
+                8,
+                "another-notification",
+            )),
+            Ok(signal(":1.42", "ActionInvoked", 7, "default")),
+        ]);
+        assert_eq!(
+            async_io::block_on(wait_for_linux_notification_response(messages, 7, ":1.42")).unwrap(),
+            (
+                LinuxNotificationResponse::Open,
+                Some("compositor-token".into())
+            )
+        );
+
+        // Older notification servers do not emit an activation token.
+        let messages =
+            futures_util::stream::iter([Ok(signal(":1.42", "ActionInvoked", 7, "default"))]);
+        assert_eq!(
+            async_io::block_on(wait_for_linux_notification_response(messages, 7, ":1.42")).unwrap(),
+            (LinuxNotificationResponse::Open, None)
         );
     }
 

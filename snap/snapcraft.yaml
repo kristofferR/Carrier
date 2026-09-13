@@ -1,0 +1,97 @@
+name: carrier
+title: Carrier
+base: core24
+adopt-info: carrier
+summary: A focused desktop client for Facebook Messenger
+description: |
+  Carrier puts Messenger in a focused desktop window, with native notifications,
+  unread badges, keyboard shortcuts, privacy controls, and a system tray.
+  Choose light or dark appearance and keep conversations close without the
+  surrounding Facebook feed, Reels, or Marketplace.
+
+  A Facebook account is required. Carrier is an independent project and is not
+  affiliated with or endorsed by Meta.
+license: MIT
+website: https://kristofferr.github.io/Carrier/
+source-code: https://github.com/kristofferR/Carrier
+issues: https://github.com/kristofferR/Carrier/issues
+contact: https://github.com/kristofferR/Carrier/issues
+icon: src-tauri/icons/icon.png
+grade: stable
+confinement: strict
+assumes: [snapd2.66]
+
+platforms:
+  amd64:
+  arm64:
+
+layout:
+  /usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/webkit2gtk-4.1:
+    bind: $SNAP/gnome-platform/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/webkit2gtk-4.1
+
+apps:
+  carrier:
+    command: bin/carrier
+    desktop: usr/share/applications/carrier.desktop
+    extensions: [gnome]
+    plugs:
+      - network
+      - network-status
+      - home
+      - audio-playback
+      - audio-record
+      - camera
+      - unity7
+      - browser-support
+    slots:
+      - single-instance
+      - notification-actions
+    environment:
+      GTK_USE_PORTAL: "1"
+
+plugs:
+  desktop:
+    desktop-file-ids: [snap.carrier]
+  browser-support:
+    interface: browser-support
+    # Preserve WebKit's process sandbox inside strict Snap confinement.
+    allow-sandbox: true
+
+slots:
+  notification-actions:
+    interface: dbus
+    bus: session
+    name: snap.carrier
+  single-instance:
+    interface: dbus
+    bus: session
+    # tauri-plugin-single-instance 2.4.4 uses the identifier verbatim.
+    name: io.github.kristofferr.carrier.SingleInstance
+
+parts:
+  carrier:
+    plugin: nil
+    source: .
+    build-packages:
+      - build-essential
+      - curl
+      - git
+      - rustup
+      - pkg-config
+      - libwebkit2gtk-4.1-dev
+      - libssl-dev
+      - libxdo-dev
+    stage-packages:
+      - libxdo3
+      - gstreamer1.0-libav
+    override-pull: |
+      set -eu
+      craftctl default
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml)"
+    override-build: |
+      set -eu
+      /usr/bin/rustup default stable
+      /usr/bin/cargo build --locked --release --manifest-path src-tauri/Cargo.toml
+      install -Dm755 src-tauri/target/release/carrier "$CRAFT_PART_INSTALL/bin/carrier"
+      install -Dm644 snap/gui/carrier.desktop "$CRAFT_PART_INSTALL/usr/share/applications/carrier.desktop"
+      install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/512x512/apps/carrier.png"

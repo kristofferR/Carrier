@@ -46,7 +46,7 @@ const actionButtonsIn = (root: Element | Document) => {
   const buttons: HTMLElement[] = [];
   if ((root as Element).matches?.(selector)) buttons.push(root as HTMLElement);
   buttons.push(...(root.querySelectorAll?.<HTMLElement>(selector) || []));
-  return buttons.filter((button) => {
+  const visible = buttons.filter((button) => {
     if (button.closest('[aria-hidden="true"]')) return false;
     const r = visibleBox(button);
     if (!r || r.width < 90 || r.height < 28) return false;
@@ -54,8 +54,16 @@ const actionButtonsIn = (root: Element | Document) => {
       return false;
     if (button.hasAttribute("aria-expanded")) return false;
     if (button.getAttribute("aria-haspopup")) return false;
+    // A positive rectangle can still be clipped by the consent panel or
+    // covered by another dialog. Never activate those hidden information links.
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!hit || !button.contains(hit)) return false;
     return true;
   });
+  // Facebook sometimes nests two role=button wrappers for one action.
+  return visible.filter(
+    (button) => !visible.some((other) => other !== button && button.contains(other)),
+  );
 };
 
 const bottomActionRow = (root: Element) => {
