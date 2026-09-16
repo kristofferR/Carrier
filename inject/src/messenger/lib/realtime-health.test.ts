@@ -129,6 +129,13 @@ describe("RealtimeHealthWatchdog", () => {
 });
 
 describe("WorkerConnectionWatchdog", () => {
+  test("a replacement document still detects a previously connected worker staying down", () => {
+    const watchdog = new WorkerConnectionWatchdog(true);
+    expect(watchdog.observe(false, 0)).toBe(false);
+    expect(watchdog.observe(false, REALTIME_NEVER_CONNECTED_MS - 1)).toBe(false);
+    expect(watchdog.observe(false, REALTIME_NEVER_CONNECTED_MS)).toBe(true);
+    expect(watchdog.observe(true, REALTIME_NEVER_CONNECTED_MS + 1)).toBe(false);
+  });
   test("requires an observed connection before judging disconnected state", () => {
     const watchdog = new WorkerConnectionWatchdog();
     expect(watchdog.observe(false, 0)).toBe(false);

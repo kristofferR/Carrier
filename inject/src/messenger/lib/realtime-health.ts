@@ -90,15 +90,20 @@ export class WorkerConnectionWatchdog {
   private everConnected = false;
   private disconnectedAt: number | null = null;
 
+  constructor(private readonly previouslyConnected = false) {}
+
   observe(connected: boolean | undefined, now: number): boolean {
     if (connected !== false) {
       this.everConnected ||= connected === true;
       this.disconnectedAt = null;
       return false;
     }
-    if (!this.everConnected) return false;
+    if (!this.everConnected && !this.previouslyConnected) return false;
     this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
-    return elapsed(now, this.disconnectedAt) >= REALTIME_CONNECT_GRACE_MS;
+    // A fresh document needs time to initialize the worker, even when an
+    // earlier document established that this account uses encrypted sync.
+    const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
+    return elapsed(now, this.disconnectedAt) >= grace;
   }
 }
 

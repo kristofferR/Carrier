@@ -259,7 +259,8 @@
     }
   };
   var WorkerConnectionWatchdog = class {
-    constructor() {
+    constructor(previouslyConnected = false) {
+      __publicField(this, "previouslyConnected", previouslyConnected);
       __publicField(this, "everConnected", false);
       __publicField(this, "disconnectedAt", null);
     }
@@ -269,9 +270,10 @@
         this.disconnectedAt = null;
         return false;
       }
-      if (!this.everConnected) return false;
+      if (!this.everConnected && !this.previouslyConnected) return false;
       this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
-      return elapsed2(now, this.disconnectedAt) >= REALTIME_CONNECT_GRACE_MS;
+      const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
+      return elapsed2(now, this.disconnectedAt) >= grace;
     }
   };
   var RealtimeRecoveryTracker = class {
@@ -692,7 +694,13 @@
   function monitorRealtimeHealth(callbacks) {
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-    const workerConnection = new WorkerConnectionWatchdog();
+    const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
+    let connectionRemembered = false;
+    try {
+      connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
+    } catch (_) {
+    }
+    const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
     const checkSockets = () => {
@@ -734,7 +742,15 @@
       });
     };
     const check = () => {
-      const disconnected = workerConnection.observe(workerIsConnected(), Date.now());
+      const connected = workerIsConnected();
+      if (connected === true && connectionKey && !connectionRemembered) {
+        try {
+          localStorage.setItem(connectionKey, "1");
+          connectionRemembered = true;
+        } catch (_) {
+        }
+      }
+      const disconnected = workerConnection.observe(connected, Date.now());
       if (disconnected !== workerDisconnected) {
         workerDisconnected = disconnected;
         if (disconnected) {

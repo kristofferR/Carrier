@@ -6,6 +6,7 @@ import {
   RealtimeHealthWatchdog,
   WorkerConnectionWatchdog,
 } from "../lib/realtime-health";
+import { accountScopedStorageKey } from "../lib/threads";
 
 type RealtimeHealthCallbacks = {
   onHealthy: (source: RealtimeHealthSource) => void;
@@ -63,7 +64,12 @@ const workerIsConnected = (): boolean | undefined => {
 export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): RealtimeHealthMonitor {
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-  const workerConnection = new WorkerConnectionWatchdog();
+  const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
+  let connectionRemembered = false;
+  try {
+    connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
+  } catch (_) {}
+  const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
 
@@ -114,7 +120,16 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       });
   };
   const check = () => {
-    const disconnected = workerConnection.observe(workerIsConnected(), Date.now());
+    const connected = workerIsConnected();
+    // Survive reloads and native webview recreation, without letting another
+    // account's connection history arm a worker that has never initialized.
+    if (connected === true && connectionKey && !connectionRemembered) {
+      try {
+        localStorage.setItem(connectionKey, "1");
+        connectionRemembered = true;
+      } catch (_) {}
+    }
+    const disconnected = workerConnection.observe(connected, Date.now());
     if (disconnected !== workerDisconnected) {
       workerDisconnected = disconnected;
       if (disconnected) {
