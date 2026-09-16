@@ -10,6 +10,7 @@ import {
   REALTIME_UNOBSERVED_MS,
   RealtimeHealthWatchdog,
   RealtimeRecoveryTracker,
+  WorkerConnectionWatchdog,
 } from "./realtime-health";
 
 describe("isMessengerRealtimeUrl", () => {
@@ -127,15 +128,60 @@ describe("RealtimeHealthWatchdog", () => {
   });
 });
 
+describe("WorkerConnectionWatchdog", () => {
+  test("requires an observed connection before judging disconnected state", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    expect(watchdog.observe(false, 0)).toBe(false);
+    expect(watchdog.observe(false, REALTIME_NEVER_CONNECTED_MS * 2)).toBe(false);
+  });
+
+  test("bounds reconnect grace and clears the fault when connected", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    watchdog.observe(true, 0);
+    expect(watchdog.observe(false, 100)).toBe(false);
+    expect(watchdog.observe(false, 100 + REALTIME_CONNECT_GRACE_MS - 1)).toBe(false);
+    expect(watchdog.observe(false, 100 + REALTIME_CONNECT_GRACE_MS)).toBe(true);
+    expect(watchdog.observe(true, 101 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
+    expect(watchdog.observe(false, 102 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
+  });
+
+  test("withdraws an unavailable connection signal and restarts its grace", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    watchdog.observe(true, 0);
+    watchdog.observe(false, 100);
+    expect(watchdog.observe(false, 100 + REALTIME_CONNECT_GRACE_MS)).toBe(true);
+    expect(watchdog.observe(undefined, 101 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
+    expect(watchdog.observe(false, 102 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
+  });
+
+  test("rebases disconnect timing after a backwards clock correction", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    watchdog.observe(true, 100_000);
+    watchdog.observe(false, 100_001);
+    expect(watchdog.observe(false, 0)).toBe(false);
+    expect(watchdog.observe(false, REALTIME_CONNECT_GRACE_MS)).toBe(true);
+  });
+});
+
 describe("realtime recovery signals", () => {
+  test("an encrypted connection failure overrides worker heartbeats and page traffic", () => {
+    const tracker = new RealtimeRecoveryTracker(0);
+    tracker.stale("worker-connection");
+    tracker.healthy("worker", 100);
+    tracker.healthy("socket", 100);
+    expect(tracker.needsRecovery(100)).toBe(true);
+    expect(tracker.status(100)).toBe("stale");
+    tracker.withdraw("worker-connection");
+    expect(tracker.needsRecovery(100)).toBe(false);
+  });
   test("lets a recently healthy source vouch for a stale one", () => {
     const tracker = new RealtimeRecoveryTracker(0);
     tracker.stale("socket");
     tracker.stale("worker");
 
     tracker.healthy("worker", 0);
-    // A responsive worker proves messages are still flowing, so a dead page
-    // socket alongside it must not force a reload.
+    // Without a known encrypted-connection failure, allow worker-based sync
+    // to take over from the page socket without forcing a reload.
     expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS)).toBe(false);
     // Once that proof goes stale the socket's verdict stands on its own.
     expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(true);

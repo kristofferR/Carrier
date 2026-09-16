@@ -35,7 +35,7 @@ export const REALTIME_UNOBSERVED_MS = 60_000;
 export const REALTIME_UNOBSERVED_SETTLE_MS = 15_000;
 
 export type RealtimeHealth = "healthy" | "recovering" | "stale" | "starting";
-export type RealtimeHealthSource = "socket" | "worker";
+export type RealtimeHealthSource = "socket" | "worker" | "worker-connection";
 /**
  * Transport status reported to the native watchdog in every heartbeat.
  * "never" flags a page whose realtime transport has not connected once since
@@ -83,6 +83,25 @@ export class ConsecutiveFailureThreshold {
   }
 }
 
+/** The worker can answer heartbeats while its encrypted-message connection is
+ * down. Arm only after observing a connection: an unused/uninitialized state
+ * manager also starts at false and is not evidence of a failed connection. */
+export class WorkerConnectionWatchdog {
+  private everConnected = false;
+  private disconnectedAt: number | null = null;
+
+  observe(connected: boolean | undefined, now: number): boolean {
+    if (connected !== false) {
+      this.everConnected ||= connected === true;
+      this.disconnectedAt = null;
+      return false;
+    }
+    if (!this.everConnected) return false;
+    this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
+    return elapsed(now, this.disconnectedAt) >= REALTIME_CONNECT_GRACE_MS;
+  }
+}
+
 export class RealtimeRecoveryTracker {
   private readonly staleSources = new Set<RealtimeHealthSource>();
   private readonly lastHealthyAt = new Map<RealtimeHealthSource, number>();
@@ -111,13 +130,16 @@ export class RealtimeRecoveryTracker {
   }
 
   /**
-   * Recovery is only warranted when no source can still vouch for the
-   * transport. A recently healthy source proves messages are flowing, so a
-   * different source's staleness must not force a reload on its own — a dead
-   * page socket alongside a responsive worker is the normal shape of current
-   * Messenger, not a fault.
+   * General transport failures can be corroborated by either observer, since
+   * Messenger may move its page socket into a worker. An explicitly observed
+   * encrypted-connection failure is independent of that fallback.
    */
   needsRecovery(now = Date.now()): boolean {
+    // Page MQTT and encrypted-message sync are separate connections. Neither
+    // page traffic nor a responsive worker can vouch for an observed loss of
+    // the encrypted connection. This source only reports a sustained fault;
+    // clearing it withdraws the veto, without claiming transport health.
+    if (this.staleSources.has("worker-connection")) return true;
     // A backwards wall-clock adjustment would otherwise leave reports dated in
     // the future: elapsed() clamps those to zero, so they would vouch for a
     // stale source forever and the unobserved window could not elapse until

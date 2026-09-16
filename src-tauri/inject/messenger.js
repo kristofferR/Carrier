@@ -258,6 +258,22 @@
       return this.failures >= this.limit;
     }
   };
+  var WorkerConnectionWatchdog = class {
+    constructor() {
+      __publicField(this, "everConnected", false);
+      __publicField(this, "disconnectedAt", null);
+    }
+    observe(connected, now) {
+      if (connected !== false) {
+        this.everConnected || (this.everConnected = connected === true);
+        this.disconnectedAt = null;
+        return false;
+      }
+      if (!this.everConnected) return false;
+      this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
+      return elapsed2(now, this.disconnectedAt) >= REALTIME_CONNECT_GRACE_MS;
+    }
+  };
   var RealtimeRecoveryTracker = class {
     constructor(startedAt) {
       __publicField(this, "startedAt", startedAt);
@@ -283,13 +299,12 @@
       this.staleSources.delete(source);
     }
     /**
-     * Recovery is only warranted when no source can still vouch for the
-     * transport. A recently healthy source proves messages are flowing, so a
-     * different source's staleness must not force a reload on its own — a dead
-     * page socket alongside a responsive worker is the normal shape of current
-     * Messenger, not a fault.
+     * General transport failures can be corroborated by either observer, since
+     * Messenger may move its page socket into a worker. An explicitly observed
+     * encrypted-connection failure is independent of that fallback.
      */
     needsRecovery(now = Date.now()) {
+      if (this.staleSources.has("worker-connection")) return true;
       for (const [source, at] of this.lastHealthyAt) {
         if (at > now) this.lastHealthyAt.set(source, now);
       }
@@ -664,10 +679,22 @@
       return null;
     }
   };
+  var workerIsConnected = () => {
+    try {
+      const facebookRequire = window.require;
+      const module = facebookRequire?.("WACommsConnectionState");
+      const connected = module?.WACommsConnectionState?.isConnected?.();
+      return typeof connected === "boolean" ? connected : void 0;
+    } catch (_) {
+      return void 0;
+    }
+  };
   function monitorRealtimeHealth(callbacks) {
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
+    const workerConnection = new WorkerConnectionWatchdog();
     let workerProbePending = false;
+    let workerDisconnected = false;
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
       if (health === "healthy") callbacks.onHealthy("socket");
@@ -707,6 +734,15 @@
       });
     };
     const check = () => {
+      const disconnected = workerConnection.observe(workerIsConnected(), Date.now());
+      if (disconnected !== workerDisconnected) {
+        workerDisconnected = disconnected;
+        if (disconnected) {
+          diag("sync.worker-disconnected", "encrypted-message connection stayed disconnected");
+        }
+      }
+      if (disconnected) callbacks.onStale("worker-connection");
+      else callbacks.onUnknown("worker-connection");
       checkSockets();
       checkWorker();
     };
