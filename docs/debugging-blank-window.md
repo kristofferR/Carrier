@@ -53,10 +53,32 @@ an absence of console errors. The dev-only capability now allows `mcp:allow-push
   logs `sync.reload-unfinished` if the same document survives 15 seconds after
   requesting a reload, including whether `beforeunload` ran.
 
-Frame stalls alone do **not** trigger reloads. Occlusion can suppress frames even
-when JavaScript reports a visible document, and a pending or cancelled navigation
-is not by itself permission to discard a draft. Existing heartbeat, missing-DOM,
-transport, draft and call recovery rules continue to govern recovery.
+## Bounded frame recovery
+
+After the probe reports a stall, a focused window needs another 30 seconds of
+continuous stalled samples; an unfocused window needs 120 seconds. Both the
+native window and document must report visible, the window must not be minimized,
+and the page must be a Messenger inbox/thread route. These thresholds are roughly
+45 and 135 seconds from the first unanswered frame request, plus polling time.
+Focus changes, hiding, navigation and long sample gaps restart confirmation.
+
+Unfocused windows reported visible are deliberately eligible. GTK/Tauri visibility
+does not reliably distinguish an exposed window from one covered by another app,
+so a covered window can be reloaded after the longer delay.
+
+Recovery respects draft/call protection, DNS reachability and account rate-limit
+cooldowns. It attempts one native reload, waits at least 60 seconds for frames,
+then rebuilds that window once if necessary. A changed document or a responsive
+JavaScript heartbeat alone is not successful recovery. The rebuild budget follows
+the replacement window; another healthy window cannot reset it. Further native
+watchdog recovery stops and logs exhaustion until frame samples stay healthy for
+60 seconds. Existing page-side lifecycle/sync refresh rules remain separate.
+An unfocused replacement is created without requesting focus. If native window
+construction fails after its bounded retries, frame recovery logs the failure
+and stops rather than restarting the whole app and resetting its budget.
+
+Logs identify the initial reload, escalation, failure and exhausted budget. This
+is a recovery policy for the observed failure, not a confirmed root-cause fix.
 
 ## Preserve the next occurrence
 

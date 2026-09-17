@@ -941,7 +941,7 @@
       if (typeof heartbeatId !== "number") return;
       const protectedNow = heartbeatProtection();
       const contentPresent = messengerContentPresent();
-      const visible = !document.hidden && document.readyState === "complete" && !systemSleeping;
+      const visible = !document.hidden && !systemSleeping;
       lastHeartbeatProtection = protectedNow;
       invoke("plugin:event|emit", {
         event: "carrier:webview-heartbeat",
@@ -951,12 +951,13 @@
           content_present: contentPresent,
           render: {
             ...renderProbe.sample(
-              visible && contentPresent && isMessengerContentPath(location.pathname)
+              visible && document.readyState === "complete" && contentPresent && isMessengerContentPath(location.pathname)
             ),
             document_epoch_ms: documentEpochMs,
             document_age_ms: Math.round(nativeNow()),
             visible,
-            focused: document.hasFocus()
+            focused: document.hasFocus(),
+            content_page: isMessengerContentPath(location.pathname)
           },
           realtime: realtimeStatus(),
           rate_limit_ms: rateLimitRemainingMs(),

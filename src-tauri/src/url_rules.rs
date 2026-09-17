@@ -16,6 +16,21 @@ pub(crate) fn is_messenger_web_url(url: &Url) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
 }
 
+/// Inbox/thread routes, excluding login and checkpoint surfaces even while
+/// their previous document's heartbeat is still in flight.
+pub(crate) fn is_messenger_content_url(url: &Url) -> bool {
+    if !is_messenger_web_url(url) {
+        return false;
+    }
+    let path = url.path();
+    path == "/messages"
+        || path.starts_with("/messages/")
+        || path.strip_prefix("/t/").is_some_and(|thread| {
+            let thread = thread.strip_suffix('/').unwrap_or(thread);
+            !thread.is_empty() && thread.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
 /// Facebook wraps external links in tracking redirects
 /// (`l.facebook.com/l.php?u=…`, `lm.facebook.com/l.php?u=…`, `facebook.com/l.php`).
 /// Return the real destination if `url` is such a redirect.
@@ -211,6 +226,29 @@ mod tests {
             "http://tauri.localhost/",
         ] {
             assert!(!is_messenger_web_url(&Url::parse(url).unwrap()));
+        }
+    }
+
+    #[test]
+    fn frame_recovery_excludes_authentication_and_non_content_routes() {
+        for url in [
+            "https://www.facebook.com/messages",
+            "https://www.facebook.com/messages/t/123",
+            "https://www.messenger.com/t/123/",
+        ] {
+            assert!(is_messenger_content_url(&u(url)), "{url}");
+        }
+        for url in [
+            "https://www.facebook.com/login/?next=/messages",
+            "https://www.facebook.com/checkpoint/",
+            "https://www.facebook.com/messages-other",
+            "https://www.messenger.com/t/",
+            "https://www.messenger.com/t/123/extra",
+            "https://example.com/messages",
+            "https://facebook.com.evil.example/messages",
+            "file:///messages",
+        ] {
+            assert!(!is_messenger_content_url(&u(url)), "{url}");
         }
     }
 

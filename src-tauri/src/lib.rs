@@ -38,6 +38,7 @@ mod media_permissions;
 mod menu;
 mod notifications;
 mod preflight;
+mod render_recovery;
 mod settings;
 mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
