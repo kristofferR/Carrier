@@ -939,6 +939,25 @@ describe("NotificationCorrelationQueue", () => {
     expect(await deliveryGate).toBe("cancelled");
   });
 
+  test("keeps the card route wait alive when muted filtering is disabled", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const body = "https://youtu.be/_TP-ZzKbXJk";
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body });
+    const cancel = new AbortController();
+    const deliveryGate = waitForPageNotificationMatch(signal, 10_000, cancel.signal);
+    const cardGate = waitForPageNotificationMatch(signal, 100);
+    cancel.abort();
+    expect(await deliveryGate).toBe("cancelled");
+
+    queueMicrotask(() => {
+      const matched = queue.consumePageForRow({ key: "1", title: "Jane", body }, 1_100, 3_000);
+      matched!.threadPath = "/messages/t/1";
+    });
+
+    expect(await cardGate).toBe("matched");
+    expect(signal.threadPath).toBe("/messages/t/1");
+  });
+
   test("recovers a page-first signal after its eager delivery wait timed out", async () => {
     const queue = new NotificationCorrelationQueue<RowSignal>();
     const signal = queue.addPage({ at: 1_000, title: "Jane", body: "Hello" });

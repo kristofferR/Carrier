@@ -435,12 +435,20 @@ export function initNotificationBridge() {
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
+      // Link enrichment needs its own bounded route wait even when muted
+      // filtering is disabled or its longer wait is cancelled by a setting change.
+      const cardMatchWait =
+        pageMatch.signal &&
+        !hidePreviewAtConstruction &&
+        /^https?:\/\/\S+$/i.test(originalBody.trim())
+          ? waitForPageNotificationMatch(pageMatch.signal, 1000)
+          : Promise.resolve();
       // Card lookup needs the route supplied by a page-first match. Keep any
       // late image load ahead of the four-second auto-refresh nudge.
       const imageDeadline = Date.now() + 3500;
       const thumbnail = opts.image
         ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image)
-        : matchWait.then(() => {
+        : Promise.all([matchWait, cardMatchWait]).then(() => {
             if (
               hidePreviewAtConstruction ||
               window.__CARRIER_SETTINGS__?.hide_notification_preview
@@ -458,6 +466,7 @@ export function initNotificationBridge() {
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
         matchWait,
         thumbnail,
+        cardMatchWait,
       ]).then(([icon, , image]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;

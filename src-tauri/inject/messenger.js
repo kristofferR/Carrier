@@ -5744,8 +5744,9 @@
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
         const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
+        const cardMatchWait = pageMatch.signal && !hidePreviewAtConstruction && /^https?:\/\/\S+$/i.test(originalBody.trim()) ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
         const imageDeadline = Date.now() + 3500;
-        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : matchWait.then(() => {
+        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : Promise.all([matchWait, cardMatchWait]).then(() => {
           if (hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview) {
             return "";
           }
@@ -5759,7 +5760,8 @@
         Promise.all([
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           matchWait,
-          thumbnail
+          thumbnail,
+          cardMatchWait
         ]).then(([icon, , image]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
