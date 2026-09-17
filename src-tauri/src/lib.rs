@@ -2131,6 +2131,32 @@ mod tests {
         assert!(!should_enforce_single_instance(true, false, false));
     }
 
+    #[cfg(all(feature = "mcp", debug_assertions))]
+    #[test]
+    fn debug_console_forwarding_is_allowed_only_by_the_scoped_dev_capability() {
+        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let authority = context.runtime_authority_mut();
+        let messenger = tauri::ipc::Origin::Remote {
+            url: url::Url::parse("https://www.facebook.com/messages").unwrap(),
+        };
+        let allowed = |authority: &tauri::ipc::RuntimeAuthority, window, origin| {
+            authority
+                .resolve_access("plugin:mcp|push_log", window, window, origin)
+                .is_some()
+        };
+        assert!(!allowed(authority, "main", &messenger));
+        authority
+            .add_capability(include_str!("../dev-capabilities/mcp.json"))
+            .unwrap();
+        assert!(allowed(authority, "main", &messenger));
+        assert!(allowed(authority, "win-2", &messenger));
+        assert!(!allowed(authority, "settings", &messenger));
+        let external = tauri::ipc::Origin::Remote {
+            url: url::Url::parse("https://example.org").unwrap(),
+        };
+        assert!(!allowed(authority, "main", &external));
+    }
+
     #[test]
     fn mcp_socket_selection_skips_empty_overrides() {
         use std::ffi::OsString;

@@ -400,6 +400,49 @@
     }
   };
 
+  // inject/src/messenger/lib/render-health.ts
+  var FRAME_TIMEOUT_MS = 15e3;
+  var RenderHealthProbe = class {
+    constructor(requestFrame, cancelFrame, now) {
+      __publicField(this, "requestFrame", requestFrame);
+      __publicField(this, "cancelFrame", cancelFrame);
+      __publicField(this, "now", now);
+      __publicField(this, "request");
+      __publicField(this, "lastSample");
+      __publicField(this, "hasFrame", false);
+    }
+    reset() {
+      if (this.request) this.cancelFrame(this.request.handle);
+      this.request = void 0;
+      this.lastSample = void 0;
+      this.hasFrame = false;
+    }
+    sample(visible) {
+      const now = this.now();
+      if (!visible || this.lastSample !== void 0 && now - this.lastSample > FRAME_TIMEOUT_MS) {
+        this.reset();
+      }
+      if (!visible) return { state: "pending", wait_ms: 0 };
+      this.lastSample = now;
+      if (!this.request) {
+        const request = {
+          since: now,
+          handle: this.requestFrame(() => {
+            if (this.request !== request) return;
+            this.request = void 0;
+            this.hasFrame = true;
+          })
+        };
+        this.request = request;
+      }
+      const wait_ms = Math.max(0, Math.round(now - this.request.since));
+      return {
+        state: wait_ms >= FRAME_TIMEOUT_MS ? "stalled" : this.hasFrame ? "ok" : "pending",
+        wait_ms
+      };
+    }
+  };
+
   // inject/src/messenger/lib/threads.ts
   function threadIdFromHref(href) {
     const m = (href || "").match(/\/t\/(\d+)/);
@@ -800,6 +843,21 @@
 
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
+    const renderProbe = new RenderHealthProbe(
+      window.requestAnimationFrame.bind(window),
+      window.cancelAnimationFrame.bind(window),
+      performance.now.bind(performance)
+    );
+    const documentEpochMs = Math.floor(performance.timeOrigin);
+    const nativeSetTimeout3 = window.setTimeout.bind(window);
+    const nativeNow = performance.now.bind(performance);
+    let reloadRequestedAt;
+    let unloadObserved = false;
+    window.addEventListener("beforeunload", () => {
+      unloadObserved = true;
+    });
+    window.addEventListener("visibilitychange", () => renderProbe.reset());
+    window.addEventListener("pagehide", () => renderProbe.reset());
     const pageIsActive = () => !document.hidden && document.hasFocus();
     const isMac4 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
     const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac4);
@@ -882,13 +940,24 @@
     const emitHeartbeat = (requestRateLimitRetry = false) => {
       if (typeof heartbeatId !== "number") return;
       const protectedNow = heartbeatProtection();
+      const contentPresent = messengerContentPresent();
+      const visible = !document.hidden && document.readyState === "complete" && !systemSleeping;
       lastHeartbeatProtection = protectedNow;
       invoke("plugin:event|emit", {
         event: "carrier:webview-heartbeat",
         payload: {
           id: heartbeatId,
           protected: protectedNow,
-          content_present: messengerContentPresent(),
+          content_present: contentPresent,
+          render: {
+            ...renderProbe.sample(
+              visible && contentPresent && isMessengerContentPath(location.pathname)
+            ),
+            document_epoch_ms: documentEpochMs,
+            document_age_ms: Math.round(nativeNow()),
+            visible,
+            focused: document.hasFocus()
+          },
           realtime: realtimeStatus(),
           rate_limit_ms: rateLimitRemainingMs(),
           rate_limit_account: rateLimitAccountScope(),
@@ -944,6 +1013,17 @@
         }
       }
       pending = false;
+      if (reloadRequestedAt === void 0) {
+        reloadRequestedAt = nativeNow();
+        unloadObserved = false;
+        nativeSetTimeout3(() => {
+          diag(
+            "sync.reload-unfinished",
+            `same document alive ${Math.round(nativeNow() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
+          );
+          reloadRequestedAt = void 0;
+        }, 15e3);
+      }
       location.reload();
     };
     window.__carrierRateLimitRetry = (expectedId, expires) => {

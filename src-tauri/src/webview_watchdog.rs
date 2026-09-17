@@ -168,6 +168,62 @@ struct HeartbeatPayload {
     rate_limit_ms: Option<u64>,
     rate_limit_account: Option<String>,
     rate_limit_retry: Option<bool>,
+    /// Frame delivery is diagnostic only: occluded windows may legitimately
+    /// stop painting even while the DOM reports itself visible.
+    render: Option<RenderHeartbeat>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RenderHeartbeat {
+    state: RenderSignal,
+    wait_ms: u64,
+    document_epoch_ms: u64,
+    document_age_ms: u64,
+    visible: bool,
+    focused: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RenderSignal {
+    Pending,
+    Ok,
+    Stalled,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Default)]
+struct RenderDiagnostics {
+    document_epoch_ms: Option<u64>,
+    // Retain the episode across hidden/pending samples. Log again only when
+    // frames resume, the document changes, or a stalled window gains focus.
+    stalled_focus: Option<bool>,
+}
+
+impl RenderDiagnostics {
+    fn observe(&mut self, sample: &RenderHeartbeat) -> (bool, Option<RenderSignal>) {
+        let new_document = self.document_epoch_ms != Some(sample.document_epoch_ms);
+        if new_document {
+            self.document_epoch_ms = Some(sample.document_epoch_ms);
+            self.stalled_focus = None;
+        }
+        let transition = match sample.state {
+            RenderSignal::Stalled if sample.visible => {
+                let report = self.stalled_focus.is_none()
+                    || (self.stalled_focus == Some(false) && sample.focused);
+                if report {
+                    self.stalled_focus = Some(sample.focused);
+                    Some(RenderSignal::Stalled)
+                } else {
+                    None
+                }
+            }
+            RenderSignal::Ok if self.stalled_focus.take().is_some() => Some(RenderSignal::Ok),
+            _ => None,
+        };
+        (new_document, transition)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -445,12 +501,36 @@ impl WebviewWatchdog {
         let started_at = self.started_at;
         let heartbeat_state = Arc::clone(&self.state);
         let listener_window = window.clone();
+        let render_diagnostics = Mutex::new(RenderDiagnostics::default());
         let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
             let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
                 return;
             };
             if payload.id != watchdog_id {
                 return;
+            }
+            if let Some(render) = &payload.render {
+                let (new_document, transition) = render_diagnostics.lock().unwrap().observe(render);
+                let label = listener_window.label();
+                if new_document && cfg!(debug_assertions) {
+                    log::info!(
+                        "webview {label} document heartbeat started; document_age_ms={}",
+                        render.document_age_ms
+                    );
+                }
+                if let Some(transition) = transition {
+                    log::warn!(
+                        "webview {label} frame delivery {transition:?}; wait_ms={} document_age_ms={} visible={} focused={} content_present={:?} protected={}",
+                        render.wait_ms,
+                        render.document_age_ms,
+                        render.visible,
+                        render.focused,
+                        payload.content_present,
+                        payload.protected,
+                    );
+                    #[cfg(target_os = "linux")]
+                    crate::linux::log_messenger_webview_state(&listener_window);
+                }
             }
             let mut state = heartbeat_state.lock().unwrap();
             let account = rate_limit_account(payload.rate_limit_account.as_deref()).to_owned();
@@ -800,6 +880,49 @@ impl WebviewWatchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_diagnostics_deduplicate_stalls_but_capture_focus_and_recovery() {
+        let mut diagnostics = RenderDiagnostics::default();
+        let mut sample = RenderHeartbeat {
+            state: RenderSignal::Stalled,
+            wait_ms: 15_000,
+            document_epoch_ms: 1,
+            document_age_ms: 20_000,
+            visible: true,
+            focused: false,
+        };
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (true, Some(RenderSignal::Stalled))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Pending;
+        sample.visible = false;
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Stalled;
+        sample.visible = true;
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.focused = true;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Stalled))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Ok;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Ok))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.document_epoch_ms = 2;
+        assert_eq!(diagnostics.observe(&sample), (true, None));
+        sample.state = RenderSignal::Stalled;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Stalled))
+        );
+    }
 
     fn advance(now: RecoveryTime, elapsed: Duration) -> RecoveryTime {
         RecoveryTime {

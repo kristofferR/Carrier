@@ -314,7 +314,10 @@ pub(crate) fn build_app_window(
     };
     let window = builder.build().inspect(|window| {
         #[cfg(target_os = "linux")]
-        crate::linux::configure_messenger_webview_memory(window);
+        {
+            crate::linux::configure_messenger_webview_memory(window);
+            crate::linux::install_webview_diagnostics(window);
+        }
         // New windows inherit the current always-on-top preference.
         let _ = window.set_always_on_top(settings.always_on_top);
         #[cfg(not(target_os = "macos"))]
