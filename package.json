@@ -17,7 +17,7 @@
     "check": "bun run lint && bun run typecheck && bun test && bun run build:inject"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.5.14",
     "@tauri-apps/cli": "^2.11.4",
     "@types/bun": "^1.4.2",
     "esbuild": "^0.28.2",
@@ -27,8 +27,8 @@
   "overrides": {
     "@hono/node-server": "2.1.1",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "fast-uri": "3.1.7",
-    "hono": "4.13.7",
-    "ip-address": "10.7.0"
+    "fast-uri": "3.1.8",
+    "hono": "4.13.8",
+    "ip-address": "10.7.2"
   }
 }
