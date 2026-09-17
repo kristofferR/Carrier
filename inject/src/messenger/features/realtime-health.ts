@@ -4,7 +4,9 @@ import {
   isMessengerRealtimeUrl,
   type RealtimeHealthSource,
   RealtimeHealthWatchdog,
+  WorkerConnectionWatchdog,
 } from "../lib/realtime-health";
+import { accountScopedStorageKey } from "../lib/threads";
 
 type RealtimeHealthCallbacks = {
   onHealthy: (source: RealtimeHealthSource) => void;
@@ -39,16 +41,37 @@ const facebookBridgeModule = (): FacebookBridgeModule | null => {
   }
 };
 
+const workerIsConnected = (): boolean | undefined => {
+  try {
+    const facebookRequire = (window as unknown as { require?: (name: string) => unknown }).require;
+    const module = facebookRequire?.("WACommsConnectionState") as
+      | { WACommsConnectionState?: { isConnected?: () => unknown } }
+      | undefined;
+    const connected = module?.WACommsConnectionState?.isConnected?.();
+    return typeof connected === "boolean" ? connected : undefined;
+  } catch (_) {
+    return undefined;
+  }
+};
+
 /**
  * Observe Messenger's live MQTT transport without reading or modifying any
  * payloads. Current Messenger keeps sync in a worker, so prefer its own
- * content-free heartbeat bridge. The WebSocket proxy covers page-owned and
- * fallback transports while preserving the native constructor.
+ * content-free heartbeat bridge plus its encrypted-connection state. A worker
+ * heartbeat alone proves only responsiveness. The WebSocket proxy covers
+ * page-owned and fallback transports while preserving the native constructor.
  */
 export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): RealtimeHealthMonitor {
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
+  const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
+  let connectionRemembered = false;
+  try {
+    connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
+  } catch (_) {}
+  const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
+  let workerDisconnected = false;
 
   const checkSockets = () => {
     const health = watchdog.health(Date.now());
@@ -67,7 +90,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     const sendAndReceive = bridge.sendAndReceive.bind(bridge);
 
     workerProbePending = true;
-    let timeout: number | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(
         () => reject(new Error("Messenger worker heartbeat timed out")),
@@ -97,6 +120,24 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       });
   };
   const check = () => {
+    const connected = workerIsConnected();
+    // Survive reloads and native webview recreation, without letting another
+    // account's connection history arm a worker that has never initialized.
+    if (connected === true && connectionKey && !connectionRemembered) {
+      try {
+        localStorage.setItem(connectionKey, "1");
+        connectionRemembered = true;
+      } catch (_) {}
+    }
+    const disconnected = workerConnection.observe(connected, Date.now());
+    if (disconnected !== workerDisconnected) {
+      workerDisconnected = disconnected;
+      if (disconnected) {
+        diag("sync.worker-disconnected", "encrypted-message connection stayed disconnected");
+      }
+    }
+    if (disconnected) callbacks.onStale("worker-connection");
+    else callbacks.onUnknown("worker-connection");
     checkSockets();
     checkWorker();
   };
