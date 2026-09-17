@@ -36,7 +36,7 @@ import {
   UnreadArrivalTracker,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
-import { notificationThumbnail } from "../lib/notification-images";
+import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
 import {
   notificationLinkBody,
   notificationLinkCards,
@@ -435,14 +435,29 @@ export function initNotificationBridge() {
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
-      const imageSource = hidePreviewAtConstruction
-        ? ""
-        : opts.image ||
-          notificationLinkImage(originalBody, messageLinkCards(originalBody, pageMatch.threadPath));
+      // Card lookup needs the route supplied by a page-first match. Keep any
+      // late image load ahead of the four-second auto-refresh nudge.
+      const imageDeadline = Date.now() + 3500;
+      const thumbnail = opts.image
+        ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image)
+        : matchWait.then(() => {
+            if (
+              hidePreviewAtConstruction ||
+              window.__CARRIER_SETTINGS__?.hide_notification_preview
+            ) {
+              return "";
+            }
+            const route = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+            const source = notificationLinkImage(
+              originalBody,
+              messageLinkCards(originalBody, route),
+            );
+            return notificationThumbnail(source, imageDeadline - Date.now());
+          });
       Promise.all([
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
         matchWait,
-        notificationThumbnail(imageSource),
+        thumbnail,
       ]).then(([icon, , image]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
@@ -511,10 +526,15 @@ export function initNotificationBridge() {
         if (pageMatch.signal && !pageMatch.signal.matched) {
           pageNotificationReceipts.add(originalTitle, originalBody, id);
         }
+        const text = notificationPhotoText(
+          originalTitle,
+          richMessageBody(originalBody, threadPath),
+          Boolean(image),
+        );
         emitNotification(
           id,
-          hidePreview ? "Messenger" : originalTitle,
-          hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
+          hidePreview ? "Messenger" : text.title,
+          hidePreview ? "New message" : text.body,
           hidePreview ? "" : icon,
           pageMatch.dedupeKey ??
             pageMatch.signal?.dedupeKey ??
@@ -1123,10 +1143,15 @@ export function initNotificationBridge() {
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
+      const text = notificationPhotoText(
+        content.title,
+        richMessageBody(content.body, conversation.threadPath),
+        Boolean(image),
+      );
       emitNotification(
         ++notifySeq,
-        hidePreview ? "Messenger" : content.title,
-        hidePreview ? "New message" : richMessageBody(content.body, conversation.threadPath),
+        hidePreview ? "Messenger" : text.title,
+        hidePreview ? "New message" : text.body,
         hidePreview ? "" : icon,
         dedupeKey,
         () => {

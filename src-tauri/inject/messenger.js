@@ -4960,6 +4960,13 @@
   }
 
   // inject/src/messenger/lib/notification-images.ts
+  function notificationPhotoText(title, body, hasThumbnail) {
+    const photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+    if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
+      return { title: `${title}: sent an image:`, body: "" };
+    }
+    return { title, body };
+  }
   function notificationThumbnailSize(width, height) {
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
     const scale = Math.min(1, 256 / Math.max(width, height));
@@ -4968,8 +4975,8 @@
       height: Math.max(1, Math.round(height * scale))
     };
   }
-  function notificationThumbnail(source) {
-    if (!source) return Promise.resolve("");
+  function notificationThumbnail(source, timeoutMs = 2500) {
+    if (!source || timeoutMs <= 0) return Promise.resolve("");
     return new Promise((resolve) => {
       const image = new Image();
       image.crossOrigin = "anonymous";
@@ -4983,7 +4990,7 @@
         image.removeAttribute("src");
         resolve(result);
       };
-      const timer = setTimeout(() => finish(""), 2500);
+      const timer = setTimeout(() => finish(""), Math.min(timeoutMs, 2500));
       image.onerror = () => finish("");
       image.onload = () => {
         try {
@@ -5737,11 +5744,22 @@
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
         const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        const imageSource = hidePreviewAtConstruction ? "" : opts.image || notificationLinkImage(originalBody, messageLinkCards(originalBody, pageMatch.threadPath));
+        const imageDeadline = Date.now() + 3500;
+        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : matchWait.then(() => {
+          if (hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview) {
+            return "";
+          }
+          const route = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+          const source = notificationLinkImage(
+            originalBody,
+            messageLinkCards(originalBody, route)
+          );
+          return notificationThumbnail(source, imageDeadline - Date.now());
+        });
         Promise.all([
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           matchWait,
-          notificationThumbnail(imageSource)
+          thumbnail
         ]).then(([icon, , image]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
@@ -5788,10 +5806,15 @@
           if (pageMatch.signal && !pageMatch.signal.matched) {
             pageNotificationReceipts.add(originalTitle, originalBody, id);
           }
+          const text = notificationPhotoText(
+            originalTitle,
+            richMessageBody(originalBody, threadPath),
+            Boolean(image)
+          );
           emitNotification(
             id,
-            hidePreview ? "Messenger" : originalTitle,
-            hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
+            hidePreview ? "Messenger" : text.title,
+            hidePreview ? "New message" : text.body,
             hidePreview ? "" : icon,
             pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
             () => {
@@ -6187,10 +6210,15 @@
           "notify.fallback",
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
+        const text = notificationPhotoText(
+          content.title,
+          richMessageBody(content.body, conversation.threadPath),
+          Boolean(image)
+        );
         emitNotification(
           ++notifySeq,
-          hidePreview ? "Messenger" : content.title,
-          hidePreview ? "New message" : richMessageBody(content.body, conversation.threadPath),
+          hidePreview ? "Messenger" : text.title,
+          hidePreview ? "New message" : text.body,
           hidePreview ? "" : icon,
           dedupeKey,
           () => {

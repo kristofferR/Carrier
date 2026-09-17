@@ -1,3 +1,13 @@
+/** Use the sender line to introduce an attached photo, keeping link and caption text intact. */
+export function notificationPhotoText(title: string, body: string, hasThumbnail: boolean) {
+  const photoSummary =
+    /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+  if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
+    return { title: `${title}: sent an image:`, body: "" };
+  }
+  return { title, body };
+}
+
 /** Keep the whole image, bounded to the native notification decoder's limit. */
 export function notificationThumbnailSize(width: number, height: number) {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
@@ -9,8 +19,8 @@ export function notificationThumbnailSize(width: number, height: number) {
 }
 
 /** Best-effort CORS conversion, with a deadline so a photo cannot delay delivery indefinitely. */
-export function notificationThumbnail(source: string): Promise<string> {
-  if (!source) return Promise.resolve("");
+export function notificationThumbnail(source: string, timeoutMs = 2500): Promise<string> {
+  if (!source || timeoutMs <= 0) return Promise.resolve("");
   return new Promise((resolve) => {
     const image = new Image();
     image.crossOrigin = "anonymous";
@@ -24,7 +34,7 @@ export function notificationThumbnail(source: string): Promise<string> {
       image.removeAttribute("src");
       resolve(result);
     };
-    const timer = setTimeout(() => finish(""), 2500);
+    const timer = setTimeout(() => finish(""), Math.min(timeoutMs, 2500));
     image.onerror = () => finish("");
     image.onload = () => {
       try {
