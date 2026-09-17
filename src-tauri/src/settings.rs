@@ -16,7 +16,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::actions::AppAction;
 use crate::hotkey::apply_global_hotkey;
-use crate::install_environment::{is_snap, is_store_sandbox};
+use crate::install_environment::is_snap;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
 use crate::menu::{rebuild_recent_menus, RecentThread};
@@ -129,10 +129,10 @@ impl Settings {
     /// Clamp out-of-range values (settings.json is user-editable, and the zoom
     /// event payload comes from the remote-origin page).
     pub(crate) fn sanitized(self) -> Self {
-        self.sanitized_for_runtime(is_store_sandbox(), is_snap())
+        self.sanitized_for_runtime(is_snap())
     }
 
-    fn sanitized_for_runtime(mut self, store_sandbox: bool, snap: bool) -> Self {
+    fn sanitized_for_runtime(mut self, snap: bool) -> Self {
         self.zoom = clamp_zoom(self.zoom);
         if self.tray_icon_style != "color" && self.tray_icon_style != "symbolic" {
             self.tray_icon_style = "color".into();
@@ -143,14 +143,12 @@ impl Settings {
         if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
             self.title_bar = "auto".into();
         }
-        // Stores own updates. Sandboxed autostart needs platform integration
+        // Snap owns updates. Sandboxed autostart needs platform integration
         // rather than writing a host desktop file.
-        if store_sandbox {
+        if snap {
             self.autostart = false;
             self.automatic_update_checks = false;
-        }
-        // Snap notification actions require a single owner of snap.carrier.
-        if snap {
+            // Snap notification actions require a single owner of snap.carrier.
             self.multi_instance = false;
         }
         // Every Windows tray-oriented behavior can make the main window
@@ -590,7 +588,7 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
 /// callers can sync it *before* persisting and avoid committing a preference the
 /// OS rejected.
 pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), String> {
-    if is_store_sandbox() {
+    if is_snap() {
         return Err(
             "Start on System Startup is unavailable in this sandboxed installation.".into(),
         );
@@ -895,13 +893,13 @@ mod tests {
     }
 
     #[test]
-    fn store_sandbox_disables_host_owned_settings() {
+    fn snap_disables_host_owned_settings() {
         let settings = Settings {
             autostart: true,
             automatic_update_checks: true,
             ..Default::default()
         }
-        .sanitized_for_runtime(true, false);
+        .sanitized_for_runtime(true);
 
         assert!(!settings.autostart);
         assert!(!settings.automatic_update_checks);
@@ -909,12 +907,12 @@ mod tests {
 
     #[test]
     fn snap_disables_multiple_processes_but_other_packages_preserve_the_setting() {
-        for (store, snap) in [(false, false), (true, false), (true, true)] {
+        for snap in [false, true] {
             let settings = Settings {
                 multi_instance: true,
                 ..Default::default()
             }
-            .sanitized_for_runtime(store, snap);
+            .sanitized_for_runtime(snap);
             assert_eq!(settings.multi_instance, !snap);
         }
     }

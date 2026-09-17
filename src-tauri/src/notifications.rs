@@ -1143,11 +1143,7 @@ fn show_linux_notification<F>(
     if !body.is_empty() {
         notification.body(body);
     }
-    notification.icon(if crate::install_environment::is_flatpak() {
-        "io.github.kristofferr.carrier"
-    } else {
-        "carrier"
-    });
+    notification.icon("carrier");
     notification.action("default", "Open");
     if allow_inline_reply {
         notification.action("inline-reply", "Reply");

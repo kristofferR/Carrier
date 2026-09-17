@@ -1,14 +1,14 @@
 # Linux store runtime testing
 
-Use a disposable Ubuntu desktop VM for strict Snap testing and an independent
-Flatpak installation. Build success does not validate desktop integration.
+Use a disposable Ubuntu desktop VM for strict Snap testing. Build success does
+not validate desktop integration.
 
 ## Local lab
 
 The workstation lab lives outside the checkout at
 `~/.cache/carrier-store-tools/vm/`. It uses Ubuntu 24.04.4, KVM, four vCPUs,
 6 GiB RAM, and a 48 GiB sparse overlay over a checksummed official Ubuntu cloud
-image. Ubuntu Desktop, snapd, Snapcraft, Flatpak, and desktop portals are installed.
+image. Ubuntu Desktop, snapd, Snapcraft, and desktop portals are installed.
 The lab has been tested with GNOME on X11 and Wayland. Its current virtual
 display is Virtio VGA, which exposes the DRM devices needed by native Wayland.
 
@@ -44,10 +44,8 @@ installation can interrupt SSH and subsequent boots can stall waiting for it.
 
 ## Checks before publication
 
-Test Snap and Flatpak separately: both use Carrier's single-instance D-Bus name.
-Quit the actual app before switching packages; stopping the launcher alone may
-leave the sandbox's app scope running. For Flatpak, use
-`flatpak kill io.github.kristofferr.carrier`.
+Quit the actual app before switching package builds; stopping the launcher alone
+may leave the sandbox's app scope running.
 
 - Clean install, launch, cookie refusal, login, and persistence after restart.
 - Settings, store-owned updates, disabled unsupported autostart, and second launch.
@@ -66,58 +64,38 @@ The first VM pass exposed a missing Snap network-status permission, a Rustup
 Snap/SDK libc conflict during builds, and login consent/layout bugs. The first
 signed-in pass also landed on Facebook's home feed instead of Messenger;
 recovery must only redirect the plain feed, preserving required post-login UI.
-The first CI pass also exposed missing D-Bus session setup and the Flatpak checkout
-manifest's out-of-directory source path. Keep ARM64 CI and signed-in runtime
-checks separate from the x86-64 build evidence.
+The first CI pass also exposed missing D-Bus session setup. Keep ARM64 CI and
+signed-in runtime checks separate from the x86-64 build evidence.
 
 ## Exact CI candidate: e4ec40e
 
-The x86-64 artifacts from GitHub Actions run `34281913517` were downloaded and
+The x86-64 Snap artifact from GitHub Actions run `34281913517` was downloaded and
 installed in the Ubuntu VM on 2026-09-09. Host and guest SHA-256 hashes match:
 
 | Artifact | SHA-256 |
 | --- | --- |
 | `carrier_1.13.0_amd64.snap` | `801d353a0673e25e4630f7b84db450e6ba88176bbb0e3786798aa99658118eeb` |
-| `carrier.flatpak` | `d8d737464f184ba6c25e2b810240c8f93a7b174a9222fd7c4e4103e07b60334c` |
 
 Confirmed on X11:
 
 - Snap installation preserved the dedicated account's login and opened Messenger.
-- Flatpak installation succeeded and displayed its separate login screen.
-- Flatpak sign-in reached Messenger and persisted through a full app restart.
-- A second Flatpak launch with `--settings` opened Settings in the existing
-  instance. Unsupported autostart was disabled with its Flatpak explanation.
-- Both sandboxes could write a probe file to the real Downloads directory and
+- The sandbox could write a probe file to the real Downloads directory and
   query GNOME's notification capabilities.
-- Flatpak exposed FileChooser portal version 3 and could not read an unrelated
-  home-directory file.
 
 Confirmed on Wayland:
 
 - Replacing standard VGA with Virtio VGA enabled `/dev/dri/card0` and
   `/dev/dri/renderD128`; `loginctl` confirmed the desktop's session type.
-- Both CI packages rendered signed-in Messenger after the VM restart. Explicit
+- The CI Snap rendered signed-in Messenger after the VM restart. Explicit
   `GDK_BACKEND=wayland` launches succeeded; Carrier was absent from `xlsclients`.
-- Flatpak registered its tray item with Ubuntu's StatusNotifierWatcher.
 - Stock Ubuntu's portal did not expose `org.freedesktop.portal.GlobalShortcuts`.
   Global-hotkey registration cannot be validated on this desktop without that
   portal; the desktop was not modified to add it.
 
-- A real incoming Flatpak message produced a native notification with its
-  sender avatar and increased the unread badge.
-- Downloading a received photo from Messenger saved a valid 2160 × 3840 JPEG
-  (2,478,216 bytes) to the real Downloads directory.
-- Clicking the Flatpak notification routed to the chat but did not bring the
-  window forward: GNOME displayed a second “Carrier is ready” notice. The
-  privacy-safe D-Bus monitor confirmed that GNOME sent `ActivationToken` before
-  `ActionInvoked`; this candidate did not consume that token.
+The exact CI Snap downloaded a received photo into the real Downloads directory
+as `Messenger (1).jpeg`, preserving the existing file. Help → Report an Issue
+opened the project's GitHub issue list in Firefox.
 
-The exact CI Snap also downloaded the received photo into the real Downloads
-directory as `Messenger (1).jpeg`. Its contents matched the Flatpak download,
-and the original file remained unchanged. Help → Report an Issue opened the
-project's GitHub issue list in Firefox.
-
-The rebuilt Flatpak activation fix passed the Wayland click check below.
 Signed-in notification actions remain pending for the exact Snap artifact.
 Media/calls remain unvalidated.
 
@@ -125,23 +103,6 @@ Snap's WebKit memory
 pressure monitor also produced AppArmor denials for `/proc/zoneinfo` and its
 cgroup memory limit while Messenger remained functional; no confinement policy
 was relaxed.
-
-## Local activation-fix candidate
-
-The notification activation fix was built with the GNOME 50 Flatpak SDK and
-installed over the signed-in app on 2026-09-09. Login persisted and the native
-Wayland window rendered. With Carrier minimized, a fresh incoming message
-displayed a native banner with the sender avatar. A single click brought Carrier
-directly to the correct chat and displayed the new message, without GNOME's
-extra “Carrier is ready” notice. The privacy-safe D-Bus monitor confirmed
-`ActivationToken`, `ActionInvoked`, and `NotificationClosed` delivery.
-After the chat became read, both dock and tray badges returned from four to
-three, preserving the other unread conversations.
-
-- Bundle SHA-256: `73fc5dd863d27d617f02247bcfae60c572973b457152e54f1194d987f96e12f6`
-- Installed Flatpak commit: `cee9847f5b52240fb6c6acec71af5652fd54a94dc7f00a7806723f9deb6b047a`
-- Local validation: 266 Rust tests, Clippy with warnings denied, and
-  `bun run check` (496 tests) passed. CodeRabbit local preflight was clean.
 
 ## Local Snap activation-fix candidate
 
@@ -167,10 +128,9 @@ version 1. Its non-exported `ActionInvoked` signal has no activation token, but
 exported `app.*` actions take a different path: GNOME calls the application's
 `org.freedesktop.Application.ActivateAction` with platform activation data.
 
-The speculative GDK-display change was removed. Keep the notification-token
-handling verified with Flatpak; do not weaken AppArmor or add GNOME overrides
-for this test. Direct notification activation was still failing in these two
-candidates. Avatar delivery, badge arrival, photo downloads,
+The speculative GDK-display change was removed. Do not weaken AppArmor or add
+GNOME overrides for this test. Direct notification activation was still failing
+in these two candidates. Avatar delivery, badge arrival, photo downloads,
 and external-browser launching passed; badge clearing after a successful
 notification activation has not passed for Snap.
 

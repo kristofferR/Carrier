@@ -446,15 +446,15 @@ mod tests {
     }
 
     #[test]
-    fn launcher_uri_uses_the_flatpak_desktop_id_when_present() {
+    fn launcher_uri_uses_the_snap_desktop_id_when_present() {
         assert_eq!(unity_app_uri(None), "application://Carrier.desktop");
         assert_eq!(
-            unity_app_uri(Some("io.github.kristofferr.carrier")),
-            "application://io.github.kristofferr.carrier.desktop"
+            unity_app_uri(Some("carrier_carrier")),
+            "application://carrier_carrier.desktop"
         );
         assert_eq!(
-            unity_app_uri(Some("io.github.kristofferr.carrier.desktop")),
-            "application://io.github.kristofferr.carrier.desktop"
+            unity_app_uri(Some("carrier_carrier.desktop")),
+            "application://carrier_carrier.desktop"
         );
     }
 }

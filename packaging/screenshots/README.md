@@ -69,6 +69,3 @@ host. Replacing either image requires a new privacy inspection before upload.
 6. Inspect every pixel region and PNG metadata before uploading. Update the
    images, checksums, and AppStream URLs together. Restore temporary compositor
    settings and close only the capture instance when finished.
-
-The fixture's provenance, including its generated portraits, must be disclosed
-by the human author of the Flathub submission.

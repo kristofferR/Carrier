@@ -95,5 +95,4 @@ package-scoped store credential only after the account and name are established.
 References: [Tauri packaging](https://v2.tauri.app/distribute/snapcraft/),
 [GNOME extension](https://ubuntu.com/docs/snapcraft/9/reference/extensions/gnome-extension/),
 [D-Bus interface](https://snapcraft.io/docs/reference/interfaces/dbus-interface/),
-[desktop IDs](https://snapcraft.io/docs/reference/interfaces/desktop-interface/),
-[notification portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Notification.html).
+[desktop IDs](https://snapcraft.io/docs/reference/interfaces/desktop-interface/).
