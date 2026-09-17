@@ -7,6 +7,7 @@ import {
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
+  notificationPresentation,
   notificationTextMatches,
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
@@ -27,6 +28,38 @@ const memoryStorage = () => {
     setItem: (key: string, value: string) => void data.set(key, value),
   };
 };
+
+describe("notificationPresentation", () => {
+  test("separates the sender, group, and actual message", () => {
+    expect(
+      notificationPresentation("Weekend trip 🍗", "Kim: Shared a link. (youtube.com)", true),
+    ).toEqual({
+      title: "Kim",
+      subtitle: "Weekend trip 🍗",
+      body: "Shared a link. (youtube.com)",
+    });
+    expect(notificationPresentation("Weekend trip 🍗", "Kim: 🍗", true)).toEqual({
+      title: "Kim",
+      subtitle: "Weekend trip 🍗",
+      body: "🍗",
+    });
+  });
+
+  test("preserves unknown senders and direct messages without guessing", () => {
+    for (const body of ["Shared a link", "https://youtube.com/watch", "Kim: "]) {
+      expect(notificationPresentation("Weekend trip", body, true)).toEqual({
+        title: "Weekend trip",
+        subtitle: "",
+        body,
+      });
+    }
+    expect(notificationPresentation("Kim", "Note: bring lunch", false)).toEqual({
+      title: "Kim",
+      subtitle: "",
+      body: "Note: bring lunch",
+    });
+  });
+});
 
 describe("notificationDedupeKey", () => {
   test("normalizes equivalent notification text to the same opaque key", () => {
@@ -904,6 +937,25 @@ describe("NotificationCorrelationQueue", () => {
     cancel.abort();
 
     expect(await deliveryGate).toBe("cancelled");
+  });
+
+  test("keeps the card route wait alive when muted filtering is disabled", async () => {
+    const queue = new NotificationCorrelationQueue<RowSignal>();
+    const body = "https://youtu.be/_TP-ZzKbXJk";
+    const signal = queue.addPage({ at: 1_000, title: "Jane", body });
+    const cancel = new AbortController();
+    const deliveryGate = waitForPageNotificationMatch(signal, 10_000, cancel.signal);
+    const cardGate = waitForPageNotificationMatch(signal, 100);
+    cancel.abort();
+    expect(await deliveryGate).toBe("cancelled");
+
+    queueMicrotask(() => {
+      const matched = queue.consumePageForRow({ key: "1", title: "Jane", body }, 1_100, 3_000);
+      matched!.threadPath = "/messages/t/1";
+    });
+
+    expect(await cardGate).toBe("matched");
+    expect(signal.threadPath).toBe("/messages/t/1");
   });
 
   test("recovers a page-first signal after its eager delivery wait timed out", async () => {

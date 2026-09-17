@@ -6,6 +6,7 @@ export interface ConversationTextNode {
   nodeValue?: string | null;
   tagName?: string;
   childNodes?: ArrayLike<ConversationTextNode> | null;
+  parentNode?: ConversationTextNode | null;
   getAttribute?: (name: string) => string | null;
 }
 
@@ -60,6 +61,7 @@ export function hasCandidateTextChild(node: ConversationTextNode): boolean {
 }
 
 export interface ConversationTextCandidate {
+  node?: ConversationTextNode;
   text: string;
   x: number;
   y: number;
@@ -76,16 +78,25 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
   body: string;
 } {
   const values: { text: string; y: number }[] = [];
-  for (const candidate of candidates
-    .filter(
-      ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) =>
-        !ariaHidden &&
-        !inAbbreviation &&
-        !hasTextChild &&
-        width > 1 &&
-        height > 1 &&
-        text.trim().length > 0,
-    )
+  const eligible = candidates.filter(
+    ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) =>
+      !ariaHidden &&
+      !inAbbreviation &&
+      !hasTextChild &&
+      width > 1 &&
+      height > 1 &&
+      text.trim().length > 0,
+  );
+  const textNodes = new Set(eligible.map(({ node }) => node).filter(Boolean));
+  for (const candidate of eligible
+    .filter(({ node }) => {
+      // A nested sprite is already included in its text-bearing ancestor,
+      // even when its baseline differs or the title wraps onto another line.
+      for (let parent = node?.parentNode; parent; parent = parent.parentNode) {
+        if (textNodes.has(parent)) return false;
+      }
+      return true;
+    })
     .sort((left, right) => left.y - right.y || left.x - right.x)) {
     const text = candidate.text.replace(/\s+/g, " ").trim();
     if (!text) continue;

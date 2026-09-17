@@ -3831,9 +3831,16 @@
   }
   function conversationTextParts(candidates) {
     const values = [];
-    for (const candidate of candidates.filter(
+    const eligible = candidates.filter(
       ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
-    ).sort((left, right) => left.y - right.y || left.x - right.x)) {
+    );
+    const textNodes = new Set(eligible.map(({ node }) => node).filter(Boolean));
+    for (const candidate of eligible.filter(({ node }) => {
+      for (let parent = node?.parentNode; parent; parent = parent.parentNode) {
+        if (textNodes.has(parent)) return false;
+      }
+      return true;
+    }).sort((left, right) => left.y - right.y || left.x - right.x)) {
       const text = candidate.text.replace(/\s+/g, " ").trim();
       if (!text) continue;
       const last = values[values.length - 1];
@@ -5009,6 +5016,13 @@
   function groupPreviewSender(value) {
     return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
   }
+  function notificationPresentation(title, body, isGroup) {
+    const { sender, message } = splitGroupSender(body);
+    if (isGroup && sender && message.trim()) {
+      return { title: sender, subtitle: title, body: message };
+    }
+    return { title, subtitle: "", body };
+  }
   function isOwnMessagePreview(value) {
     return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
       value.trim().replace(/\s+/g, " ")
@@ -5024,6 +5038,126 @@
     const row = splitGroupSender(normalizedRowBody);
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
+  }
+
+  // inject/src/messenger/lib/notification-images.ts
+  function notificationPhotoText(title, body, hasThumbnail) {
+    const photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+    if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
+      return { title: `${title} sent an image:`, body: "" };
+    }
+    return { title, body };
+  }
+  function notificationThumbnailSize(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const scale = Math.min(1, 256 / Math.max(width, height));
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    };
+  }
+  function notificationThumbnail(source, timeoutMs = 2500) {
+    if (!source || timeoutMs <= 0) return Promise.resolve("");
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute("src");
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish(""), Math.min(timeoutMs, 2500));
+      image.onerror = () => finish("");
+      image.onload = () => {
+        try {
+          const size = notificationThumbnailSize(image.naturalWidth, image.naturalHeight);
+          if (!size) return finish("");
+          const canvas = document.createElement("canvas");
+          canvas.width = size.width;
+          canvas.height = size.height;
+          const context = canvas.getContext("2d");
+          if (!context) return finish("");
+          context.drawImage(image, 0, 0, size.width, size.height);
+          finish(canvas.toDataURL("image/png"));
+        } catch {
+          finish("");
+        }
+      };
+      image.src = source;
+    });
+  }
+
+  // inject/src/messenger/lib/notification-links.ts
+  function linkTarget(value) {
+    if (!/^https?:\/\/\S+$/i.test(value)) return null;
+    try {
+      const url = new URL(stripFacebookTracking(value, value));
+      if (!/^https?:$/.test(url.protocol)) return null;
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      const youtube = ["youtube.com", "m.youtube.com", "youtu.be"].includes(host);
+      const spotify = ["spotify.com", "open.spotify.com", "spotify.link"].includes(host);
+      const video = youtube ? host === "youtu.be" ? url.pathname.slice(1) : url.pathname === "/watch" ? url.searchParams.get("v") : /^\/(?:shorts|live)\/([^/]+)$/.exec(url.pathname)?.[1] : null;
+      const spotifyItem = host === "open.spotify.com" ? /^\/(?:intl-[a-z]{2}\/)?(track|album|artist|playlist|episode|show)\/([A-Za-z0-9]{22})\/?$/.exec(
+        url.pathname
+      ) : null;
+      let key = url.href;
+      if (video && /^[\w-]{11}$/.test(video)) key = `youtube:${video}`;
+      else if (spotifyItem) key = `spotify:${spotifyItem[1]}:${spotifyItem[2]}`;
+      return {
+        key,
+        host,
+        provider: youtube ? "YouTube" : spotify ? "Spotify" : host
+      };
+    } catch {
+      return null;
+    }
+  }
+  function notificationLinkCards(root) {
+    const cards = [];
+    for (const link of root.querySelectorAll('[role="article"] a[href]')) {
+      const target = linkTarget(link.href);
+      if (!target || link.closest('[aria-hidden="true"]')) continue;
+      const leaves = [...link.querySelectorAll("span")].filter(
+        (span) => !span.closest('[aria-hidden="true"]') && !hasCandidateTextChild(span)
+      );
+      const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => {
+        const label = text.toLowerCase().replace(/^www\./, "");
+        return text && !linkTarget(text) && label !== target.host && label !== target.provider.toLowerCase();
+      });
+      const title = labels[0] || "";
+      const image = [...link.querySelectorAll("img")].find((image2) => {
+        const rect = image2.getBoundingClientRect();
+        return !image2.closest('[aria-hidden="true"]') && !EMOJI_SOURCE_RE.test(image2.currentSrc || image2.src) && rect.width >= 96 && rect.height >= 96;
+      });
+      if (title || image) cards.push({ href: link.href, title, image });
+    }
+    return cards;
+  }
+  function notificationLinkImage(body, cards) {
+    const target = linkTarget(body.trim());
+    if (!target) return "";
+    const sources = new Set(
+      cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.image?.currentSrc || card.image?.src || "").filter(Boolean)
+    );
+    return sources.size === 1 ? [...sources][0] : "";
+  }
+  function notificationLinkBody(body, cards = []) {
+    const target = linkTarget(body.trim());
+    if (!target) return body;
+    const titles = new Set(
+      cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.title.replace(/\s+/g, " ").trim()).filter(Boolean)
+    );
+    const title = titles.size === 1 ? [...titles][0] : "";
+    if (target.provider === "YouTube" || target.provider === "Spotify") {
+      const summary = `Sent a ${target.provider} link`;
+      return title ? `${summary}: ${title}`.slice(0, 240) : summary;
+    }
+    return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
   // inject/src/messenger/lib/sender-avatars.ts
@@ -5578,7 +5712,7 @@
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery) => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "") => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -5589,7 +5723,16 @@
       }
       invoke("plugin:event|emit", {
         event: "carrier:notify",
-        payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
+        payload: {
+          id,
+          title,
+          subtitle,
+          body,
+          icon,
+          image,
+          dedupe_key: dedupeKey,
+          thread_path: threadPath || ""
+        }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
         diag("notify.emit", "carrier:notify emit failed");
@@ -5682,86 +5825,109 @@
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
         const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-          ([icon]) => {
-            const signal = pageMatch.signal;
-            const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
-            if (signal) notificationCorrelations.discardPage(signal);
-            const deliverySettings = window.__CARRIER_SETTINGS__ || {};
-            if (deliverySettings.mute_notifications === true) {
-              pendingPageNotifications.remove(id);
-            }
-            if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
-              diag("notify.unresolved", "page notification had no correlated thread identity");
-              return;
-            }
+        const cardMatchWait = pageMatch.signal && !hidePreviewAtConstruction && /^https?:\/\/\S+$/i.test(originalBody.trim()) ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
+        const imageDeadline = Date.now() + 3500;
+        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : Promise.all([matchWait, cardMatchWait]).then(() => {
+          if (hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview) {
+            return "";
+          }
+          const route = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+          const source = notificationLinkImage(
+            originalBody,
+            messageLinkCards(originalBody, route)
+          );
+          return notificationThumbnail(source, imageDeadline - Date.now());
+        });
+        Promise.all([
+          avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
+          matchWait,
+          thumbnail,
+          cardMatchWait
+        ]).then(([icon, , image]) => {
+          const signal = pageMatch.signal;
+          const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
+          if (signal) notificationCorrelations.discardPage(signal);
+          const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          if (deliverySettings.mute_notifications === true) {
             pendingPageNotifications.remove(id);
-            if (pageMatch.suppressed) {
-              notifiedStore.markSuppressed(
-                pageMatch.suppressed.key,
-                pageMatch.suppressed.fingerprint,
-                pageMatch.suppressed.bodyHash
-              );
-              return;
-            }
-            const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
-            const threadId = threadPathId(threadPath || "");
-            const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-            if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
-              const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
-              if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
-                notifiedStore.markSuppressed(
-                  suppressed.key,
-                  suppressed.fingerprint,
-                  suppressed.bodyHash
-                );
-              } else if (threadId && !suppressed) {
-                notifiedStore.markSuppressed(
-                  threadId,
-                  notificationDedupeKey(originalTitle, originalBody),
-                  notificationDedupeKey("", originalBody)
-                );
-              }
-              if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
-              return;
-            }
-            const hidePreview = deliverySettings.hide_notification_preview === true;
-            if (pageMatch.signal && !pageMatch.signal.matched) {
-              pageNotificationReceipts.add(originalTitle, originalBody, id);
-            }
-            emitNotification(
-              id,
-              hidePreview ? "Messenger" : originalTitle,
-              hidePreview ? "New message" : originalBody,
-              hidePreview ? "" : icon,
-              pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
-              () => {
-                this.onclick?.(new Event("click"));
-              },
-              threadPath,
-              pageMatch.signal ? (delivery) => {
-                pageMatch.signal.nativeDelivery = delivery;
-                const handler = pageMatch.signal.onNativeDelivery;
-                pageMatch.signal.onNativeDelivery = void 0;
-                handler?.(delivery);
-              } : void 0
+          }
+          if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+            diag("notify.unresolved", "page notification had no correlated thread identity");
+            return;
+          }
+          pendingPageNotifications.remove(id);
+          if (pageMatch.suppressed) {
+            notifiedStore.markSuppressed(
+              pageMatch.suppressed.key,
+              pageMatch.suppressed.fingerprint,
+              pageMatch.suppressed.bodyHash
             );
-            if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-              notifiedStore.markNotified(
-                pageMatch.deliver.key,
-                pageMatch.deliver.fingerprint,
-                pageMatch.deliver.bodyHash
+            return;
+          }
+          const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+          const threadId = threadPathId(threadPath || "");
+          const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
+          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+            if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
+              notifiedStore.markSuppressed(
+                suppressed.key,
+                suppressed.fingerprint,
+                suppressed.bodyHash
+              );
+            } else if (threadId && !suppressed) {
+              notifiedStore.markSuppressed(
+                threadId,
+                notificationDedupeKey(originalTitle, originalBody),
+                notificationDedupeKey("", originalBody)
               );
             }
-            if (pageMatch.signal) {
-              pageMatch.signal.emitted = true;
-              const delivery = pageMatch.signal.pendingDelivery;
-              if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-                notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
-              }
+            if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
+            return;
+          }
+          const hidePreview = deliverySettings.hide_notification_preview === true;
+          if (pageMatch.signal && !pageMatch.signal.matched) {
+            pageNotificationReceipts.add(originalTitle, originalBody, id);
+          }
+          const text = notificationPhotoText(
+            originalTitle,
+            richMessageBody(originalBody, threadPath),
+            Boolean(image)
+          );
+          emitNotification(
+            id,
+            hidePreview ? "Messenger" : text.title,
+            hidePreview ? "New message" : text.body,
+            hidePreview ? "" : icon,
+            pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
+            () => {
+              this.onclick?.(new Event("click"));
+            },
+            threadPath,
+            pageMatch.signal ? (delivery) => {
+              pageMatch.signal.nativeDelivery = delivery;
+              const handler = pageMatch.signal.onNativeDelivery;
+              pageMatch.signal.onNativeDelivery = void 0;
+              handler?.(delivery);
+            } : void 0,
+            "",
+            hidePreview ? "" : image
+          );
+          if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
+            notifiedStore.markNotified(
+              pageMatch.deliver.key,
+              pageMatch.deliver.fingerprint,
+              pageMatch.deliver.bodyHash
+            );
+          }
+          if (pageMatch.signal) {
+            pageMatch.signal.emitted = true;
+            const delivery = pageMatch.signal.pendingDelivery;
+            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
             }
           }
-        );
+        });
       } else {
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
           notifiedStore.markSuppressed(
@@ -5818,6 +5984,16 @@
       }
       return "yes";
     };
+    const messageLinkCards = (body, threadPath) => {
+      if (!/^https?:\/\/\S+$/i.test(body.trim())) return [];
+      const thread = threadPathId(threadPath || "");
+      const title = thread ? rowTitles.get(thread) : void 0;
+      const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
+      const paneMatches = title && thread === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
+      const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
+      return log ? notificationLinkCards(log) : [];
+    };
+    const richMessageBody = (body, threadPath) => notificationLinkBody(body, messageLinkCards(body, threadPath));
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
@@ -5915,6 +6091,7 @@
       const surfaces = [...row.querySelectorAll("span")].map((el) => {
         const rect = el.getBoundingClientRect();
         return {
+          node: el,
           text: conversationNodeText(el),
           x: rect.x,
           y: rect.y,
@@ -6074,12 +6251,20 @@
         });
         return;
       }
+      const content = notificationPresentation(
+        conversation.title,
+        conversation.body,
+        conversation.isGroup
+      );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const rowIcons = conversation.icons;
-      const rowAvatar = () => facesToDataUrl(rowIcons);
-      const avatar = senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0]) ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
-        ([sender, row]) => sender || row
-      ) : rowAvatar();
+      const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
+      const avatar = hiddenAtConstruction ? Promise.resolve("") : content.subtitle ? avatarToDataUrl(senderIcon) : facesToDataUrl(conversation.icons);
+      const thumbnail = notificationThumbnail(
+        hiddenAtConstruction ? "" : notificationLinkImage(
+          content.body,
+          messageLinkCards(content.body, conversation.threadPath)
+        )
+      );
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
@@ -6089,13 +6274,14 @@
           }
           return;
         }
-        const hidePreview = settings.hide_notification_preview === true;
-        const icon = hidePreview ? "" : await avatar;
-        if (!hidePreview && !icon && conversation.isGroup) {
-          diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+        const hiddenBeforeImages = settings.hide_notification_preview === true;
+        const [icon, image] = hiddenBeforeImages ? ["", ""] : await Promise.all([avatar, thumbnail]);
+        if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
+          diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        const hidePreview = deliverySettings.hide_notification_preview === true;
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
@@ -6107,16 +6293,24 @@
           "notify.fallback",
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
+        const text = notificationPhotoText(
+          content.title,
+          richMessageBody(content.body, conversation.threadPath),
+          Boolean(image)
+        );
         emitNotification(
           ++notifySeq,
-          hidePreview ? "Messenger" : conversation.title,
-          hidePreview ? "New message" : conversation.body,
-          icon,
+          hidePreview ? "Messenger" : text.title,
+          hidePreview ? "New message" : text.body,
+          hidePreview ? "" : icon,
           dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
-          conversation.threadPath
+          conversation.threadPath,
+          void 0,
+          hidePreview ? "" : content.subtitle,
+          hidePreview ? "" : image
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -7867,6 +8061,7 @@ ${text}`)) {
           spans.map((span) => {
             const rect = span.getBoundingClientRect();
             return {
+              node: span,
               text: conversationNodeText(span),
               x: rect.x,
               y: rect.y,

@@ -1,4 +1,4 @@
-//! New-message notifications: the `carrier:notify` payload, the avatar
+//! New-message notifications: the `carrier:notify` payload, the image
 //! temp-PNG cache, and the platform delivery paths (macOS goes through
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux uses
 //! the notification portal in Snap and freedesktop D-Bus elsewhere; Windows
@@ -48,9 +48,14 @@ pub(crate) struct NotifyMsg {
     #[serde(default)]
     title: String,
     #[serde(default)]
+    subtitle: String,
+    #[serde(default)]
     body: String,
     #[serde(default)]
     icon: String,
+    /// Shared-media thumbnail, separate from the sender's avatar.
+    #[serde(default)]
+    image: String,
     /// Opaque fingerprint of the original sender and preview, computed before
     /// hidden-preview redaction so unrelated private notifications do not
     /// collapse into one. Older page bundles omit it and fall back to text.
@@ -60,6 +65,28 @@ pub(crate) struct NotifyMsg {
     /// Kept native-side so notification clicks still work after a page reload.
     #[serde(default)]
     thread_path: String,
+}
+
+impl NotifyMsg {
+    fn visible_images(&self, hide_preview: bool) -> (&str, &str) {
+        if hide_preview {
+            ("", "")
+        } else {
+            (&self.icon, &self.image)
+        }
+    }
+
+    fn content(&self, hide_preview: bool) -> (String, String, String) {
+        if hide_preview {
+            return ("Messenger".into(), String::new(), "New message".into());
+        }
+        let title = if self.title.trim().is_empty() {
+            "Messenger".into()
+        } else {
+            self.title.clone()
+        };
+        (title, self.subtitle.clone(), self.body.clone())
+    }
 }
 
 const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(30);
@@ -117,6 +144,7 @@ impl NotificationDeduper {
             // Compatibility with an already-loaded older injected bundle.
             1_u8.hash(&mut hasher);
             msg.title.trim().hash(&mut hasher);
+            msg.subtitle.trim().hash(&mut hasher);
             msg.body.trim().hash(&mut hasher);
         }
         hasher.finish()
@@ -681,17 +709,16 @@ static AVATAR_SEQ: AtomicUsize = AtomicUsize::new(0);
 static AVATAR_CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
 
-/// Decode the avatar the page sent as a PNG data URL into a temp file the native
-/// notification can point at. Returns `None` (→ a text-only notification) on any
-/// problem; the avatar is strictly best-effort.
+/// Decode an avatar or media thumbnail into a private PNG for native delivery.
+/// Images are best-effort: invalid input returns `None`.
 fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
     // `carrier:notify` crosses from the remote page, so validate the shape
-    // before decoding or writing. Our injected bridge always builds the avatar
+    // before decoding or writing. Our injected bridge always builds the image
     // with `canvas.toDataURL("image/png")`, so require exactly a base64 PNG data
     // URL rather than trusting an arbitrary `image/*` type from the page.
     let b64 = data_url.strip_prefix("data:image/png;base64,")?.trim();
-    // A 64×64 PNG is a few KB; cap far below this ceiling but well above any
-    // legitimate avatar, and reject before decoding so an oversized payload
+    // Avatars and aspect-preserving media thumbnails are at most 256×256.
+    // Reject before decoding so an oversized payload
     // can't force a large allocation (base64 inflates the byte count by ~4/3).
     if b64.len() > MAX_AVATAR_BYTES / 3 * 4 + 4 {
         return None;
@@ -1567,6 +1594,7 @@ fn show_reply_failure_notification(app: &tauri::AppHandle) {
             title: "Carrier".into(),
             body: "Reply not sent — opening the conversation".into(),
             avatar: None,
+            image: None,
             sound: false,
             native_id: 0,
             page_id: None,
@@ -1897,16 +1925,14 @@ pub(crate) fn show_message_notification(
         return NativeNotificationDelivery::Suppressed;
     }
 
-    // Same redaction the page applies: generic title/body, no avatar.
-    let title = if hide_preview || msg.title.trim().is_empty() {
-        "Messenger".to_string()
+    // Redact the conversation subtitle too: it can contain private names.
+    let (title, subtitle, body) = msg.content(hide_preview);
+    // These platforms do not expose a separate subtitle field.
+    #[cfg(not(target_os = "macos"))]
+    let body = if subtitle.is_empty() {
+        body
     } else {
-        msg.title
-    };
-    let body = if hide_preview {
-        "New message".to_string()
-    } else {
-        msg.body
+        format!("{subtitle}\n{body}")
     };
     #[cfg(target_os = "linux")]
     let allow_inline_reply = linux_reply_eligible(
@@ -1930,11 +1956,12 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
-    let image = if !hide_preview {
-        avatar_to_temp_png(&msg.icon)
-    } else {
-        None
-    };
+    let (icon, preview) = msg.visible_images(hide_preview);
+    let preview = avatar_to_temp_png(preview);
+    #[cfg(not(target_os = "windows"))]
+    let image = preview.or_else(|| avatar_to_temp_png(icon));
+    #[cfg(target_os = "windows")]
+    let avatar = avatar_to_temp_png(icon);
 
     // Ask the desktop for attention when a message arrives and no Messenger
     // window is focused: a Dock bounce on macOS, a taskbar flash on Windows
@@ -1957,6 +1984,7 @@ pub(crate) fn show_message_notification(
             image.as_deref(),
             sound,
             MacNotificationOptions {
+                subtitle: &subtitle,
                 thread_path: thread_path.as_deref(),
                 group_by_conversation,
                 reply_eligible: macos_reply_eligible(
@@ -1990,7 +2018,10 @@ pub(crate) fn show_message_notification(
             crate::windows::toast::WindowsToastOptions {
                 title,
                 body,
-                avatar: image
+                avatar: avatar
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+                image: preview
                     .as_ref()
                     .map(|path| path.to_string_lossy().into_owned()),
                 sound,
@@ -2171,6 +2202,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
                 title: title.to_string(),
                 body,
                 avatar: None,
+                image: None,
                 sound: false,
                 native_id: id,
                 page_id: None,
@@ -2479,12 +2511,36 @@ mod tests {
         assert!(avatar_to_temp_png(&huge).is_none());
     }
 
+    #[test]
+    fn group_notification_content_preserves_and_redacts_the_conversation() {
+        let msg = NotifyMsg {
+            title: "Kim".into(),
+            subtitle: "Weekend trip".into(),
+            body: "Shared a link".into(),
+            icon: "avatar".into(),
+            image: "shared image".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            msg.content(false),
+            ("Kim".into(), "Weekend trip".into(), "Shared a link".into())
+        );
+        assert_eq!(
+            msg.content(true),
+            ("Messenger".into(), String::new(), "New message".into())
+        );
+        assert_eq!(msg.visible_images(false), ("avatar", "shared image"));
+        assert_eq!(msg.visible_images(true), ("", ""));
+    }
+
     fn notify_msg(id: u64, title: &str, body: &str, dedupe_key: &str) -> NotifyMsg {
         NotifyMsg {
             id,
             title: title.into(),
+            subtitle: String::new(),
             body: body.into(),
             icon: String::new(),
+            image: String::new(),
             dedupe_key: dedupe_key.into(),
             thread_path: String::new(),
         }

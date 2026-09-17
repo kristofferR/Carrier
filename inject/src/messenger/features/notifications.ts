@@ -26,6 +26,7 @@ import {
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
+  notificationPresentation,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   PendingPageNotificationStore,
@@ -35,6 +36,12 @@ import {
   UnreadArrivalTracker,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
+import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
+import {
+  notificationLinkBody,
+  notificationLinkCards,
+  notificationLinkImage,
+} from "../lib/notification-links";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -227,6 +234,8 @@ export function initNotificationBridge() {
     onClick: () => void,
     threadPath?: string,
     onDelivery?: (delivery: NativeNotificationDelivery) => void,
+    subtitle = "",
+    image = "",
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -238,7 +247,16 @@ export function initNotificationBridge() {
     }
     invoke("plugin:event|emit", {
       event: "carrier:notify",
-      payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" },
+      payload: {
+        id,
+        title,
+        subtitle,
+        body,
+        icon,
+        image,
+        dedupe_key: dedupeKey,
+        thread_path: threadPath || "",
+      },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
       diag("notify.emit", "carrier:notify emit failed");
@@ -380,7 +398,7 @@ export function initNotificationBridge() {
   function CarrierNotification(
     this: CarrierNotificationInstance,
     title?: string,
-    options: { icon?: string; body?: string } | null = {},
+    options: { icon?: string; image?: string; body?: string } | null = {},
   ) {
     const opts = options || {};
     const s = window.__CARRIER_SETTINGS__ || {};
@@ -417,127 +435,164 @@ export function initNotificationBridge() {
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
-      Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-        ([icon]) => {
-          const signal = pageMatch.signal;
-          const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
-          if (signal) notificationCorrelations.discardPage(signal);
-          const deliverySettings = window.__CARRIER_SETTINGS__ || {};
-          // A delivery-boundary global mute is final for this logical page
-          // notification. Do not let its cross-reload receipt revive it after
-          // notifications are enabled again.
-          if (deliverySettings.mute_notifications === true) {
-            pendingPageNotifications.remove(id);
-          }
-          if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
-            // The page gives Carrier content but no trustworthy thread id. An
-            // unresolved banner cannot be retracted if a later row proves it
-            // muted, so fail closed while muted filtering is enabled. A later
-            // row mutation still takes the ordinary routed fallback path.
-            diag("notify.unresolved", "page notification had no correlated thread identity");
-            return;
-          }
-          pendingPageNotifications.remove(id);
-          if (pageMatch.suppressed) {
-            notifiedStore.markSuppressed(
-              pageMatch.suppressed.key,
-              pageMatch.suppressed.fingerprint,
-              pageMatch.suppressed.bodyHash,
-            );
-            return;
-          }
-          const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
-          const threadId = threadPathId(threadPath || "");
-          const threadMuted = threadId
-            ? mutedThreads.isMuted(threadId)
-            : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
-          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
-            const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+      // Link enrichment needs its own bounded route wait even when muted
+      // filtering is disabled or its longer wait is cancelled by a setting change.
+      const cardMatchWait =
+        pageMatch.signal &&
+        !hidePreviewAtConstruction &&
+        /^https?:\/\/\S+$/i.test(originalBody.trim())
+          ? waitForPageNotificationMatch(pageMatch.signal, 1000)
+          : Promise.resolve();
+      // Card lookup needs the route supplied by a page-first match. Keep any
+      // late image load ahead of the four-second auto-refresh nudge.
+      const imageDeadline = Date.now() + 3500;
+      const thumbnail = opts.image
+        ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image)
+        : Promise.all([matchWait, cardMatchWait]).then(() => {
             if (
-              suppressed &&
-              notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect
+              hidePreviewAtConstruction ||
+              window.__CARRIER_SETTINGS__?.hide_notification_preview
             ) {
-              notifiedStore.markSuppressed(
-                suppressed.key,
-                suppressed.fingerprint,
-                suppressed.bodyHash,
-              );
-            } else if (threadId && !suppressed) {
-              notifiedStore.markSuppressed(
-                threadId,
-                notificationDedupeKey(originalTitle, originalBody),
-                notificationDedupeKey("", originalBody),
-              );
+              return "";
             }
-            if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
-            return;
-          }
-          const hidePreview = deliverySettings.hide_notification_preview === true;
-          // Persist only content-opaque matching hashes, and only now that the
-          // native emit is actually queued. If a reload destroys the in-memory
-          // page queue before the row appears, the next document's first
-          // hydrated scan can still attach the route and suppress the fallback
-          // copy — but a reload that lands during the avatar conversion (before
-          // any banner exists) must leave no receipt, or the fallback would be
-          // suppressed for a notification that was never shown. Likewise a
-          // signal a row already consumed during the conversion is delivered
-          // and done — a receipt written now would outlive it and swallow a
-          // later same-text message.
-          if (pageMatch.signal && !pageMatch.signal.matched) {
-            pageNotificationReceipts.add(originalTitle, originalBody, id);
-          }
-          emitNotification(
-            id,
-            hidePreview ? "Messenger" : originalTitle,
-            hidePreview ? "New message" : originalBody,
-            hidePreview ? "" : icon,
-            pageMatch.dedupeKey ??
-              pageMatch.signal?.dedupeKey ??
-              notificationDedupeKey(originalTitle, originalBody),
-            () => {
-              // Facebook's onclick expects the click Event (it can read it / call
-              // preventDefault); a native notification click carries no DOM
-              // event, so hand it a synthetic one. Called through the captured
-              // instance so `this` stays bound to the Notification.
-              this.onclick?.(new Event("click"));
-            },
-            threadPath,
-            pageMatch.signal
-              ? (delivery) => {
-                  pageMatch.signal!.nativeDelivery = delivery;
-                  const handler = pageMatch.signal!.onNativeDelivery;
-                  pageMatch.signal!.onNativeDelivery = undefined;
-                  handler?.(delivery);
-                }
-              : undefined,
+            const route = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+            const source = notificationLinkImage(
+              originalBody,
+              messageLinkCards(originalBody, route),
+            );
+            return notificationThumbnail(source, imageDeadline - Date.now());
+          });
+      Promise.all([
+        avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
+        matchWait,
+        thumbnail,
+        cardMatchWait,
+      ]).then(([icon, , image]) => {
+        const signal = pageMatch.signal;
+        const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
+        if (signal) notificationCorrelations.discardPage(signal);
+        const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        // A delivery-boundary global mute is final for this logical page
+        // notification. Do not let its cross-reload receipt revive it after
+        // notifications are enabled again.
+        if (deliverySettings.mute_notifications === true) {
+          pendingPageNotifications.remove(id);
+        }
+        if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+          // The page gives Carrier content but no trustworthy thread id. An
+          // unresolved banner cannot be retracted if a later row proves it
+          // muted, so fail closed while muted filtering is enabled. A later
+          // row mutation still takes the ordinary routed fallback path.
+          diag("notify.unresolved", "page notification had no correlated thread identity");
+          return;
+        }
+        pendingPageNotifications.remove(id);
+        if (pageMatch.suppressed) {
+          notifiedStore.markSuppressed(
+            pageMatch.suppressed.key,
+            pageMatch.suppressed.fingerprint,
+            pageMatch.suppressed.bodyHash,
           );
-          // The banner is queued — only now is it safe to persist "delivered"
-          // for the pairings this signal absorbed, whether the row matched
-          // before construction (deliver) or during the conversion
-          // (pendingDelivery, parked by scheduleFallback). Each write is
-          // conditional on the store still holding what it held at pairing
-          // time: if a NEWER message in the thread was delivered during the
-          // conversion, this late write must not regress the store to the
-          // older fingerprint (the next scan would mismatch and replay).
+          return;
+        }
+        const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+        const threadId = threadPathId(threadPath || "");
+        const threadMuted = threadId
+          ? mutedThreads.isMuted(threadId)
+          : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
+        if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+          const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
           if (
-            pageMatch.deliver &&
-            notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+            suppressed &&
+            notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect
           ) {
-            notifiedStore.markNotified(
-              pageMatch.deliver.key,
-              pageMatch.deliver.fingerprint,
-              pageMatch.deliver.bodyHash,
+            notifiedStore.markSuppressed(
+              suppressed.key,
+              suppressed.fingerprint,
+              suppressed.bodyHash,
+            );
+          } else if (threadId && !suppressed) {
+            notifiedStore.markSuppressed(
+              threadId,
+              notificationDedupeKey(originalTitle, originalBody),
+              notificationDedupeKey("", originalBody),
             );
           }
-          if (pageMatch.signal) {
-            pageMatch.signal.emitted = true;
-            const delivery = pageMatch.signal.pendingDelivery;
-            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
-            }
+          if (pageMatch.signal) pageMatch.signal.pendingDelivery = undefined;
+          return;
+        }
+        const hidePreview = deliverySettings.hide_notification_preview === true;
+        // Persist only content-opaque matching hashes, and only now that the
+        // native emit is actually queued. If a reload destroys the in-memory
+        // page queue before the row appears, the next document's first
+        // hydrated scan can still attach the route and suppress the fallback
+        // copy — but a reload that lands during the avatar conversion (before
+        // any banner exists) must leave no receipt, or the fallback would be
+        // suppressed for a notification that was never shown. Likewise a
+        // signal a row already consumed during the conversion is delivered
+        // and done — a receipt written now would outlive it and swallow a
+        // later same-text message.
+        if (pageMatch.signal && !pageMatch.signal.matched) {
+          pageNotificationReceipts.add(originalTitle, originalBody, id);
+        }
+        const text = notificationPhotoText(
+          originalTitle,
+          richMessageBody(originalBody, threadPath),
+          Boolean(image),
+        );
+        emitNotification(
+          id,
+          hidePreview ? "Messenger" : text.title,
+          hidePreview ? "New message" : text.body,
+          hidePreview ? "" : icon,
+          pageMatch.dedupeKey ??
+            pageMatch.signal?.dedupeKey ??
+            notificationDedupeKey(originalTitle, originalBody),
+          () => {
+            // Facebook's onclick expects the click Event (it can read it / call
+            // preventDefault); a native notification click carries no DOM
+            // event, so hand it a synthetic one. Called through the captured
+            // instance so `this` stays bound to the Notification.
+            this.onclick?.(new Event("click"));
+          },
+          threadPath,
+          pageMatch.signal
+            ? (delivery) => {
+                pageMatch.signal!.nativeDelivery = delivery;
+                const handler = pageMatch.signal!.onNativeDelivery;
+                pageMatch.signal!.onNativeDelivery = undefined;
+                handler?.(delivery);
+              }
+            : undefined,
+          "",
+          hidePreview ? "" : image,
+        );
+        // The banner is queued — only now is it safe to persist "delivered"
+        // for the pairings this signal absorbed, whether the row matched
+        // before construction (deliver) or during the conversion
+        // (pendingDelivery, parked by scheduleFallback). Each write is
+        // conditional on the store still holding what it held at pairing
+        // time: if a NEWER message in the thread was delivered during the
+        // conversion, this late write must not regress the store to the
+        // older fingerprint (the next scan would mismatch and replay).
+        if (
+          pageMatch.deliver &&
+          notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
+        ) {
+          notifiedStore.markNotified(
+            pageMatch.deliver.key,
+            pageMatch.deliver.fingerprint,
+            pageMatch.deliver.bodyHash,
+          );
+        }
+        if (pageMatch.signal) {
+          pageMatch.signal.emitted = true;
+          const delivery = pageMatch.signal.pendingDelivery;
+          if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+            notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
           }
-        },
-      );
+        }
+      });
     } else {
       if (
         pageMatch.deliver &&
@@ -650,6 +705,24 @@ export function initNotificationBridge() {
     }
     return "yes";
   };
+
+  const messageLinkCards = (body: string, threadPath?: string) => {
+    if (!/^https?:\/\/\S+$/i.test(body.trim())) return [];
+    const thread = threadPathId(threadPath || "");
+    const title = thread ? rowTitles.get(thread) : undefined;
+    // A route changes before Messenger replaces the pane. Require the pane's
+    // own conversation label, and reject titles shared with another row.
+    const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
+    const paneMatches =
+      title &&
+      thread === threadIdFromHref(location.pathname) &&
+      paneShowsThread(title, otherTitles) === "yes";
+    const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
+    return log ? notificationLinkCards(log) : [];
+  };
+
+  const richMessageBody = (body: string, threadPath?: string) =>
+    notificationLinkBody(body, messageLinkCards(body, threadPath));
 
   const harvestSenderAvatars = (now: number) => {
     if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
@@ -801,6 +874,7 @@ export function initNotificationBridge() {
     const surfaces = [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
       const rect = el.getBoundingClientRect();
       return {
+        node: el,
         text: conversationNodeText(el),
         x: rect.x,
         y: rect.y,
@@ -1018,31 +1092,31 @@ export function initNotificationBridge() {
       });
       return;
     }
-    // Start the bounded avatar conversion during the pairing grace period.
-    // Delivery therefore stays ahead of the four-second auto-refresh nudge.
-    // In a group, show whoever wrote rather than the thread picture — falling
-    // back to the row's single group photo when the sender is unknown or their
-    // cached avatar URL has expired.
-    // Both conversions run under their own bounded timeout at the same time:
-    // chaining them could outlast the four-second auto-refresh nudge and lose
-    // the banner entirely.
+    const content = notificationPresentation(
+      conversation.title,
+      conversation.body,
+      conversation.isGroup,
+    );
+    // Start the bounded conversion during the pairing grace period. A banner
+    // naming a sender must not substitute other group members' faces when the
+    // sender's photo is unavailable. Group-titled banners keep the group icon.
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    // When the sender is unknown the row's own picture stands in — drawn from
-    // every face the row carries, not just the first. A photo-less group's
-    // first face is only whoever sorts first: alone it would label one member's
-    // message with another's face, and every other message in the thread with
-    // that same face. Drawn together they are a picture of the group, which is
-    // what belongs beside a title naming the group.
-    const rowIcons = conversation.icons;
-    const rowAvatar = () => facesToDataUrl(rowIcons);
-    const avatar =
-      senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0])
-        ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
-            ([sender, row]) => sender || row,
-          )
-        : rowAvatar();
+    const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
+    const avatar = hiddenAtConstruction
+      ? Promise.resolve("")
+      : content.subtitle
+        ? avatarToDataUrl(senderIcon)
+        : facesToDataUrl(conversation.icons);
+    const thumbnail = notificationThumbnail(
+      hiddenAtConstruction
+        ? ""
+        : notificationLinkImage(
+            content.body,
+            messageLinkCards(content.body, conversation.threadPath),
+          ),
+    );
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
@@ -1052,21 +1126,19 @@ export function initNotificationBridge() {
         }
         return;
       }
-      const hidePreview = settings.hide_notification_preview === true;
-      const icon = hidePreview ? "" : await avatar;
-      // Content-free breadcrumb: a group notification with nothing to show
-      // means neither the sender's harvested face nor the row's own picture
-      // resolved, which is otherwise invisible until someone reports a blank
-      // banner. Not logged when the preview is hidden — that is meant to be
-      // pictureless.
-      if (!hidePreview && !icon && conversation.isGroup) {
-        diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+      const hiddenBeforeImages = settings.hide_notification_preview === true;
+      const [icon, image] = hiddenBeforeImages ? ["", ""] : await Promise.all([avatar, thumbnail]);
+      // Content-free breadcrumb for missing photos; private banners deliberately
+      // carry no picture and should not report a failed conversion.
+      if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
+        diag("notify.avatar", "group notification has no photo for its displayed identity");
       }
       // Keep the entry cancellable until the avatar conversion finishes. A
       // late page Notification must still win instead of producing a second
       // native notification while this fallback is in flight.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+      const hidePreview = deliverySettings.hide_notification_preview === true;
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         notificationCorrelations.removeRow(conversation.key);
@@ -1080,16 +1152,24 @@ export function initNotificationBridge() {
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
+      const text = notificationPhotoText(
+        content.title,
+        richMessageBody(content.body, conversation.threadPath),
+        Boolean(image),
+      );
       emitNotification(
         ++notifySeq,
-        hidePreview ? "Messenger" : conversation.title,
-        hidePreview ? "New message" : conversation.body,
-        icon,
+        hidePreview ? "Messenger" : text.title,
+        hidePreview ? "New message" : text.body,
+        hidePreview ? "" : icon,
         dedupeKey,
         () => {
           window.__carrierOpenThread?.(conversation.threadPath);
         },
         conversation.threadPath,
+        undefined,
+        hidePreview ? "" : content.subtitle,
+        hidePreview ? "" : image,
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({

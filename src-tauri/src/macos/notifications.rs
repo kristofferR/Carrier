@@ -17,6 +17,7 @@ const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MacNotificationOptions<'a> {
+    pub(crate) subtitle: &'a str,
     pub(crate) thread_path: Option<&'a str>,
     pub(crate) group_by_conversation: bool,
     pub(crate) reply_eligible: bool,
@@ -337,6 +338,7 @@ pub(crate) fn deliver_notification_macos(
 
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
+    content.setSubtitle(&NSString::from_str(options.subtitle));
     content.setBody(&NSString::from_str(body));
     if sound {
         content.setSound(Some(&UNNotificationSound::defaultSound()));
@@ -354,11 +356,11 @@ pub(crate) fn deliver_notification_macos(
         options.reply_eligible,
     );
 
-    // Avatar attachment (Caprine-style thumbnail). Best-effort: if the OS
-    // rejects the file, send the notification without it.
+    // Prefer a shared-media thumbnail, falling back to the sender's avatar.
+    // Best-effort: if the OS rejects the file, deliver the text without it.
     if let Some(path) = image.and_then(|p| p.to_str()) {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path));
-        let ident = NSString::from_str("avatar");
+        let ident = NSString::from_str("image");
         // SAFETY: no attachment options are passed (`None`), so there's no
         // option-type contract to uphold.
         let attachment = unsafe {

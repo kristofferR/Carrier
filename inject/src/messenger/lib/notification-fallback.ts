@@ -1406,6 +1406,15 @@ export function groupPreviewSender(value: string): string {
   return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
 }
 
+/** Present an identified group sender above the conversation and message. */
+export function notificationPresentation(title: string, body: string, isGroup: boolean) {
+  const { sender, message } = splitGroupSender(body);
+  if (isGroup && sender && message.trim()) {
+    return { title: sender, subtitle: title, body: message };
+  }
+  return { title, subtitle: "", body };
+}
+
 /** Best-effort suppression for previews produced by the signed-in user. */
 export function isOwnMessagePreview(value: string): boolean {
   return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
