@@ -356,11 +356,11 @@ pub(crate) fn deliver_notification_macos(
         options.reply_eligible,
     );
 
-    // Avatar attachment (Caprine-style thumbnail). Best-effort: if the OS
-    // rejects the file, send the notification without it.
+    // Prefer a shared-media thumbnail, falling back to the sender's avatar.
+    // Best-effort: if the OS rejects the file, deliver the text without it.
     if let Some(path) = image.and_then(|p| p.to_str()) {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path));
-        let ident = NSString::from_str("avatar");
+        let ident = NSString::from_str("image");
         // SAFETY: no attachment options are passed (`None`), so there's no
         // option-type contract to uphold.
         let attachment = unsafe {

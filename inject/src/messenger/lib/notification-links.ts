@@ -1,9 +1,11 @@
 import { conversationNodeText, hasCandidateTextChild } from "./conversation-row";
+import { EMOJI_SOURCE_RE } from "./emoji";
 import { stripFacebookTracking } from "./links";
 
 export interface NotificationLinkCard {
   href: string;
   title: string;
+  image?: Pick<HTMLImageElement, "currentSrc" | "src">;
 }
 
 function linkTarget(value: string) {
@@ -61,10 +63,32 @@ export function notificationLinkCards(root: ParentNode): NotificationLinkCard[] 
           label !== target.provider.toLowerCase()
         );
       });
-    const title = labels[0];
-    if (title) cards.push({ href: link.href, title });
+    const title = labels[0] || "";
+    const image = [...link.querySelectorAll<HTMLImageElement>("img")].find((image) => {
+      const rect = image.getBoundingClientRect();
+      return (
+        !image.closest('[aria-hidden="true"]') &&
+        !EMOJI_SOURCE_RE.test(image.currentSrc || image.src) &&
+        rect.width >= 96 &&
+        rect.height >= 96
+      );
+    });
+    if (title || image) cards.push({ href: link.href, title, image });
   }
   return cards;
+}
+
+/** Only attach a thumbnail when the notification identifies its exact link. */
+export function notificationLinkImage(body: string, cards: NotificationLinkCard[]): string {
+  const target = linkTarget(body.trim());
+  if (!target) return "";
+  const sources = new Set(
+    cards
+      .filter((card) => linkTarget(card.href)?.key === target.key)
+      .map((card) => card.image?.currentSrc || card.image?.src || "")
+      .filter(Boolean),
+  );
+  return sources.size === 1 ? [...sources][0]! : "";
 }
 
 /** Enrich a bare shared URL without rewriting the sender's accompanying text. */

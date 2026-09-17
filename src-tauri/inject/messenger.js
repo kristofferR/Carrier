@@ -4959,6 +4959,51 @@
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
 
+  // inject/src/messenger/lib/notification-images.ts
+  function notificationThumbnailSize(width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const scale = Math.min(1, 256 / Math.max(width, height));
+    return {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale))
+    };
+  }
+  function notificationThumbnail(source) {
+    if (!source) return Promise.resolve("");
+    return new Promise((resolve) => {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute("src");
+        resolve(result);
+      };
+      const timer = setTimeout(() => finish(""), 2500);
+      image.onerror = () => finish("");
+      image.onload = () => {
+        try {
+          const size = notificationThumbnailSize(image.naturalWidth, image.naturalHeight);
+          if (!size) return finish("");
+          const canvas = document.createElement("canvas");
+          canvas.width = size.width;
+          canvas.height = size.height;
+          const context = canvas.getContext("2d");
+          if (!context) return finish("");
+          context.drawImage(image, 0, 0, size.width, size.height);
+          finish(canvas.toDataURL("image/png"));
+        } catch {
+          finish("");
+        }
+      };
+      image.src = source;
+    });
+  }
+
   // inject/src/messenger/lib/notification-links.ts
   function linkTarget(value) {
     if (!/^https?:\/\/\S+$/i.test(value)) return null;
@@ -4996,10 +5041,22 @@
         const label = text.toLowerCase().replace(/^www\./, "");
         return text && !linkTarget(text) && label !== target.host && label !== target.provider.toLowerCase();
       });
-      const title = labels[0];
-      if (title) cards.push({ href: link.href, title });
+      const title = labels[0] || "";
+      const image = [...link.querySelectorAll("img")].find((image2) => {
+        const rect = image2.getBoundingClientRect();
+        return !image2.closest('[aria-hidden="true"]') && !EMOJI_SOURCE_RE.test(image2.currentSrc || image2.src) && rect.width >= 96 && rect.height >= 96;
+      });
+      if (title || image) cards.push({ href: link.href, title, image });
     }
     return cards;
+  }
+  function notificationLinkImage(body, cards) {
+    const target = linkTarget(body.trim());
+    if (!target) return "";
+    const sources = new Set(
+      cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.image?.currentSrc || card.image?.src || "").filter(Boolean)
+    );
+    return sources.size === 1 ? [...sources][0] : "";
   }
   function notificationLinkBody(body, cards = []) {
     const target = linkTarget(body.trim());
@@ -5567,7 +5624,7 @@
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "") => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "") => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -5584,6 +5641,7 @@
           subtitle,
           body,
           icon,
+          image,
           dedupe_key: dedupeKey,
           thread_path: threadPath || ""
         }
@@ -5679,86 +5737,91 @@
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
         const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        Promise.all([avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon), matchWait]).then(
-          ([icon]) => {
-            const signal = pageMatch.signal;
-            const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
-            if (signal) notificationCorrelations.discardPage(signal);
-            const deliverySettings = window.__CARRIER_SETTINGS__ || {};
-            if (deliverySettings.mute_notifications === true) {
-              pendingPageNotifications.remove(id);
-            }
-            if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
-              diag("notify.unresolved", "page notification had no correlated thread identity");
-              return;
-            }
+        const imageSource = hidePreviewAtConstruction ? "" : opts.image || notificationLinkImage(originalBody, messageLinkCards(originalBody, pageMatch.threadPath));
+        Promise.all([
+          avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
+          matchWait,
+          notificationThumbnail(imageSource)
+        ]).then(([icon, , image]) => {
+          const signal = pageMatch.signal;
+          const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
+          if (signal) notificationCorrelations.discardPage(signal);
+          const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          if (deliverySettings.mute_notifications === true) {
             pendingPageNotifications.remove(id);
-            if (pageMatch.suppressed) {
-              notifiedStore.markSuppressed(
-                pageMatch.suppressed.key,
-                pageMatch.suppressed.fingerprint,
-                pageMatch.suppressed.bodyHash
-              );
-              return;
-            }
-            const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
-            const threadId = threadPathId(threadPath || "");
-            const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-            if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
-              const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
-              if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
-                notifiedStore.markSuppressed(
-                  suppressed.key,
-                  suppressed.fingerprint,
-                  suppressed.bodyHash
-                );
-              } else if (threadId && !suppressed) {
-                notifiedStore.markSuppressed(
-                  threadId,
-                  notificationDedupeKey(originalTitle, originalBody),
-                  notificationDedupeKey("", originalBody)
-                );
-              }
-              if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
-              return;
-            }
-            const hidePreview = deliverySettings.hide_notification_preview === true;
-            if (pageMatch.signal && !pageMatch.signal.matched) {
-              pageNotificationReceipts.add(originalTitle, originalBody, id);
-            }
-            emitNotification(
-              id,
-              hidePreview ? "Messenger" : originalTitle,
-              hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
-              hidePreview ? "" : icon,
-              pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
-              () => {
-                this.onclick?.(new Event("click"));
-              },
-              threadPath,
-              pageMatch.signal ? (delivery) => {
-                pageMatch.signal.nativeDelivery = delivery;
-                const handler = pageMatch.signal.onNativeDelivery;
-                pageMatch.signal.onNativeDelivery = void 0;
-                handler?.(delivery);
-              } : void 0
+          }
+          if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
+            diag("notify.unresolved", "page notification had no correlated thread identity");
+            return;
+          }
+          pendingPageNotifications.remove(id);
+          if (pageMatch.suppressed) {
+            notifiedStore.markSuppressed(
+              pageMatch.suppressed.key,
+              pageMatch.suppressed.fingerprint,
+              pageMatch.suppressed.bodyHash
             );
-            if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-              notifiedStore.markNotified(
-                pageMatch.deliver.key,
-                pageMatch.deliver.fingerprint,
-                pageMatch.deliver.bodyHash
+            return;
+          }
+          const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
+          const threadId = threadPathId(threadPath || "");
+          const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
+          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
+            if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
+              notifiedStore.markSuppressed(
+                suppressed.key,
+                suppressed.fingerprint,
+                suppressed.bodyHash
+              );
+            } else if (threadId && !suppressed) {
+              notifiedStore.markSuppressed(
+                threadId,
+                notificationDedupeKey(originalTitle, originalBody),
+                notificationDedupeKey("", originalBody)
               );
             }
-            if (pageMatch.signal) {
-              pageMatch.signal.emitted = true;
-              const delivery = pageMatch.signal.pendingDelivery;
-              if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-                notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
-              }
+            if (pageMatch.signal) pageMatch.signal.pendingDelivery = void 0;
+            return;
+          }
+          const hidePreview = deliverySettings.hide_notification_preview === true;
+          if (pageMatch.signal && !pageMatch.signal.matched) {
+            pageNotificationReceipts.add(originalTitle, originalBody, id);
+          }
+          emitNotification(
+            id,
+            hidePreview ? "Messenger" : originalTitle,
+            hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
+            hidePreview ? "" : icon,
+            pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
+            () => {
+              this.onclick?.(new Event("click"));
+            },
+            threadPath,
+            pageMatch.signal ? (delivery) => {
+              pageMatch.signal.nativeDelivery = delivery;
+              const handler = pageMatch.signal.onNativeDelivery;
+              pageMatch.signal.onNativeDelivery = void 0;
+              handler?.(delivery);
+            } : void 0,
+            "",
+            hidePreview ? "" : image
+          );
+          if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
+            notifiedStore.markNotified(
+              pageMatch.deliver.key,
+              pageMatch.deliver.fingerprint,
+              pageMatch.deliver.bodyHash
+            );
+          }
+          if (pageMatch.signal) {
+            pageMatch.signal.emitted = true;
+            const delivery = pageMatch.signal.pendingDelivery;
+            if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
+              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
             }
           }
-        );
+        });
       } else {
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
           notifiedStore.markSuppressed(
@@ -5815,15 +5878,16 @@
       }
       return "yes";
     };
-    const richMessageBody = (body, threadPath) => {
-      if (!/^https?:\/\/\S+$/i.test(body.trim())) return body;
+    const messageLinkCards = (body, threadPath) => {
+      if (!/^https?:\/\/\S+$/i.test(body.trim())) return [];
       const thread = threadPathId(threadPath || "");
       const title = thread ? rowTitles.get(thread) : void 0;
       const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
       const paneMatches = title && thread === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
       const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
-      return notificationLinkBody(body, log ? notificationLinkCards(log) : []);
+      return log ? notificationLinkCards(log) : [];
     };
+    const richMessageBody = (body, threadPath) => notificationLinkBody(body, messageLinkCards(body, threadPath));
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
       const openThread = threadIdFromHref(location.pathname);
@@ -6087,7 +6151,14 @@
         conversation.isGroup
       );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const avatar = content.subtitle ? avatarToDataUrl(senderIcon) : facesToDataUrl(conversation.icons);
+      const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
+      const avatar = hiddenAtConstruction ? Promise.resolve("") : content.subtitle ? avatarToDataUrl(senderIcon) : facesToDataUrl(conversation.icons);
+      const thumbnail = notificationThumbnail(
+        hiddenAtConstruction ? "" : notificationLinkImage(
+          content.body,
+          messageLinkCards(content.body, conversation.threadPath)
+        )
+      );
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
@@ -6097,13 +6168,14 @@
           }
           return;
         }
-        const hidePreview = settings.hide_notification_preview === true;
-        const icon = hidePreview ? "" : await avatar;
-        if (!hidePreview && !icon && conversation.isGroup) {
+        const hiddenBeforeImages = settings.hide_notification_preview === true;
+        const [icon, image] = hiddenBeforeImages ? ["", ""] : await Promise.all([avatar, thumbnail]);
+        if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
           diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        const hidePreview = deliverySettings.hide_notification_preview === true;
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
@@ -6119,14 +6191,15 @@
           ++notifySeq,
           hidePreview ? "Messenger" : content.title,
           hidePreview ? "New message" : richMessageBody(content.body, conversation.threadPath),
-          icon,
+          hidePreview ? "" : icon,
           dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
           conversation.threadPath,
           void 0,
-          hidePreview ? "" : content.subtitle
+          hidePreview ? "" : content.subtitle,
+          hidePreview ? "" : image
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({

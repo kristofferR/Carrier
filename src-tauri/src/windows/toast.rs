@@ -46,6 +46,8 @@ pub(crate) struct ToastSpec {
     pub body: String,
     /// Absolute path to the sender-avatar PNG, if one was attached.
     pub avatar: Option<String>,
+    /// Shared-media thumbnail displayed in the notification body.
+    pub image: Option<String>,
     pub hex_id: String,
     pub sound: bool,
     /// Eligible message toasts gain a reply input plus Reply/Open actions.
@@ -104,6 +106,9 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
             "<image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"{}\"/>",
             escape_xml(avatar),
         ));
+    }
+    if let Some(image) = &spec.image {
+        xml.push_str(&format!("<image src=\"{}\"/>", escape_xml(image)));
     }
     xml.push_str("</binding></visual>");
 
@@ -169,6 +174,7 @@ pub(crate) struct WindowsToastOptions {
     pub title: String,
     pub body: String,
     pub avatar: Option<String>,
+    pub image: Option<String>,
     pub sound: bool,
     pub native_id: u64,
     /// The page's own notification handle, echoed back on a route-less click.
@@ -297,6 +303,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
         title: opts.title.clone(),
         body: opts.body.clone(),
         avatar: opts.avatar.clone(),
+        image: opts.image.clone(),
         hex_id: hex.clone(),
         sound: opts.sound,
         reply_eligible: opts.reply_eligible,
@@ -599,6 +606,7 @@ mod tests {
             title: "Jane".into(),
             body: "hi".into(),
             avatar: None,
+            image: None,
             hex_id: hex_id(0x2a),
             sound: true,
             reply_eligible,
@@ -638,6 +646,18 @@ mod tests {
         assert!(xml.contains("action=reply&amp;id=000000000000002a"));
         assert!(xml.contains("hint-inputId=\"reply\" activationType=\"background\""));
         assert!(xml.contains("content=\"Open\""));
+    }
+
+    #[test]
+    fn shared_image_is_inline_and_separate_from_the_round_avatar() {
+        let mut s = spec(false, false);
+        s.avatar = Some("avatar.png".into());
+        s.image = Some("shared & image.png".into());
+        let xml = build_toast_xml(&s);
+        assert!(xml.contains(
+            "<image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"avatar.png\"/>"
+        ));
+        assert!(xml.contains("<image src=\"shared &amp; image.png\"/>"));
     }
 
     #[test]

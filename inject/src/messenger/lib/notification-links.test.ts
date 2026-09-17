@@ -1,8 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { notificationLinkBody } from "./notification-links";
+import { notificationLinkBody, notificationLinkImage } from "./notification-links";
 
 const video = "https://youtube.com/watch?v=_TP-ZzKbXJk&si=sharing";
 const card = { href: video, title: "Japanese toilet experience 1" };
+
+test("image attachments require one unambiguous image for the exact link", () => {
+  const src = "https://images.example.org/thumbnail.png";
+  const imageCard = { ...card, image: { currentSrc: src, src } };
+  expect(notificationLinkImage(video, [imageCard])).toBe(src);
+  expect(notificationLinkImage("https://youtu.be/_TP-ZzKbXJk", [imageCard])).toBe(src);
+  expect(notificationLinkImage("https://youtu.be/abcdefghijk", [imageCard])).toBe("");
+  expect(notificationLinkImage("Sent a photo", [imageCard])).toBe("");
+  expect(
+    notificationLinkImage(video, [
+      imageCard,
+      { ...imageCard, image: { currentSrc: "other", src: "other" } },
+    ]),
+  ).toBe("");
+});
 
 describe("notificationLinkBody", () => {
   test("names Spotify links and matches the card across locale and sharing parameters", () => {
