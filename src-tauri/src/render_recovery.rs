@@ -160,6 +160,11 @@ impl RenderRecovery {
             RenderSignal::Pending | RenderSignal::Unknown => {
                 self.stalled_since = None;
                 self.healthy_since = None;
+                // A brief frame can be followed by missing content. Keep that
+                // failed recovery bounded even while heartbeats still arrive.
+                if self.reload_attempted || self.budget.used() {
+                    self.reload_pending_since.get_or_insert(now);
+                }
             }
         }
     }
@@ -416,6 +421,51 @@ mod tests {
             recovery.action(Duration::from_secs(300), false),
             Some(RenderAction::Wait)
         );
+    }
+
+    #[test]
+    fn brief_frame_recovery_cannot_leave_pending_content_stuck() {
+        for rebuilt in [false, true] {
+            let mut recovery = stalled(true);
+            recovery.reload_started(Duration::from_secs(120));
+            if rebuilt {
+                assert!(recovery.budget().claim());
+            }
+            recovery.observe(
+                Duration::from_secs(125),
+                Some(&sample(RenderSignal::Ok, true)),
+            );
+            let pending = sample(RenderSignal::Pending, true);
+            feed(&mut recovery, 130, 185, &pending);
+            assert_eq!(
+                recovery.action(Duration::from_secs(185), false),
+                Some(RenderAction::Wait)
+            );
+            recovery.observe(Duration::from_secs(190), Some(&pending));
+            assert_eq!(
+                recovery.action(Duration::from_secs(190), true),
+                Some(RenderAction::Protected)
+            );
+            assert_eq!(
+                recovery.action(Duration::from_secs(190), false),
+                Some(if rebuilt {
+                    RenderAction::Exhausted
+                } else {
+                    RenderAction::Rebuild
+                })
+            );
+        }
+        // Once a full healthy minute rearms recovery, pending alone is not a stall.
+        let mut recovered = stalled(true);
+        recovered.reload_started(Duration::from_secs(120));
+        feed(&mut recovered, 125, 185, &sample(RenderSignal::Ok, true));
+        feed(
+            &mut recovered,
+            190,
+            300,
+            &sample(RenderSignal::Pending, true),
+        );
+        assert_eq!(recovered.action(Duration::from_secs(300), false), None);
     }
 
     #[test]

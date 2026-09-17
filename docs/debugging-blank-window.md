@@ -34,6 +34,17 @@ The MCP console bridge had tried to forward 18 log entries, all rejected with
 `mcp.push_log not allowed`. Its empty log buffer was therefore not evidence of
 an absence of console errors. The dev-only capability now allows `mcp:allow-push-log`.
 
+The window later became visible without a new process or document, but the open
+chat contained only one message and a loading placeholder. During that partial
+reappearance, native and wrapped frame callbacks still did not fire over five
+seconds, and a new IntersectionObserver on the message log did not deliver its
+initial callback; ordinary timers fired 19 times. It then became blank again
+while the same populated document remained responsive. A later user-authorized
+restart of the unchanged installed build restored both frame callbacks and the
+observer callback; the open message log contained 14 articles. This supports
+treating a brief visual reappearance as insufficient evidence of recovery, while
+still leaving the underlying cause unproven.
+
 ## What Carrier records
 
 - Heartbeats sample one animation frame at most every heartbeat. There is no
