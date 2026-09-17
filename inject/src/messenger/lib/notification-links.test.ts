@@ -5,6 +5,26 @@ const video = "https://youtube.com/watch?v=_TP-ZzKbXJk&si=sharing";
 const card = { href: video, title: "Japanese toilet experience 1" };
 
 describe("notificationLinkBody", () => {
+  test("names Spotify links and matches the card across locale and sharing parameters", () => {
+    const href = "https://open.spotify.com/track/0123456789ABCDEFGHIJKL?si=shared";
+    const spotifyCard = {
+      href: "https://open.spotify.com/intl-no/track/0123456789ABCDEFGHIJKL?si=card",
+      title: "Example song",
+    };
+    expect(notificationLinkBody(href)).toBe("Sent a Spotify link");
+    expect(notificationLinkBody(href, [spotifyCard])).toBe("Sent a Spotify link: Example song");
+    expect(notificationLinkBody("https://spotify.link/example")).toBe("Sent a Spotify link");
+    expect(notificationLinkBody(href.replace("track", "album"), [spotifyCard])).toBe(
+      "Sent a Spotify link",
+    );
+    expect(notificationLinkBody(href.replace("0123456789", "9876543210"), [spotifyCard])).toBe(
+      "Sent a Spotify link",
+    );
+    const impostor = href.replace("open.spotify.com", "open.spotify.com.example.org");
+    expect(notificationLinkBody(impostor, [spotifyCard])).toBe(impostor);
+    expect(notificationLinkBody(`Listen: ${href}`, [spotifyCard])).toBe(`Listen: ${href}`);
+  });
+
   test("uses the matching card title and provider", () => {
     expect(notificationLinkBody(video, [card])).toBe(
       "Sent a YouTube link: Japanese toilet experience 1",

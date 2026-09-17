@@ -4967,11 +4967,18 @@
       if (!/^https?:$/.test(url.protocol)) return null;
       const host = url.hostname.toLowerCase().replace(/^www\./, "");
       const youtube = ["youtube.com", "m.youtube.com", "youtu.be"].includes(host);
+      const spotify = ["spotify.com", "open.spotify.com", "spotify.link"].includes(host);
       const video = youtube ? host === "youtu.be" ? url.pathname.slice(1) : url.pathname === "/watch" ? url.searchParams.get("v") : /^\/(?:shorts|live)\/([^/]+)$/.exec(url.pathname)?.[1] : null;
+      const spotifyItem = host === "open.spotify.com" ? /^\/(?:intl-[a-z]{2}\/)?(track|album|artist|playlist|episode|show)\/([A-Za-z0-9]{22})\/?$/.exec(
+        url.pathname
+      ) : null;
+      let key = url.href;
+      if (video && /^[\w-]{11}$/.test(video)) key = `youtube:${video}`;
+      else if (spotifyItem) key = `spotify:${spotifyItem[1]}:${spotifyItem[2]}`;
       return {
-        key: video && /^[\w-]{11}$/.test(video) ? `youtube:${video}` : url.href,
+        key,
         host,
-        provider: youtube ? "YouTube" : host
+        provider: youtube ? "YouTube" : spotify ? "Spotify" : host
       };
     } catch {
       return null;
@@ -5001,8 +5008,9 @@
       cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.title.replace(/\s+/g, " ").trim()).filter(Boolean)
     );
     const title = titles.size === 1 ? [...titles][0] : "";
-    if (target.provider === "YouTube") {
-      return title ? `Sent a YouTube link: ${title}`.slice(0, 240) : "Sent a YouTube link";
+    if (target.provider === "YouTube" || target.provider === "Spotify") {
+      const summary = `Sent a ${target.provider} link`;
+      return title ? `${summary}: ${title}`.slice(0, 240) : summary;
     }
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
