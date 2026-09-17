@@ -3,7 +3,7 @@ export function notificationPhotoText(title: string, body: string, hasThumbnail:
   const photoSummary =
     /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
   if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
-    return { title: `${title}: sent an image:`, body: "" };
+    return { title: `${title} sent an image:`, body: "" };
   }
   return { title, body };
 }

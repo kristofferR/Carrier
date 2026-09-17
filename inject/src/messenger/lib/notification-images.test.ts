@@ -10,7 +10,7 @@ test("photo notifications introduce the thumbnail with the sender and a colon", 
     "Sendte et bilde.",
   ]) {
     expect(notificationPhotoText("Person", body, true)).toEqual({
-      title: "Person: sent an image:",
+      title: "Person sent an image:",
       body: "",
     });
   }
