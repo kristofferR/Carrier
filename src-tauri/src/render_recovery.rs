@@ -521,7 +521,24 @@ mod tests {
         );
         assert!(budget.claim());
         let mut replacement = RenderRecovery::new(budget);
-        replacement.window_changed(Duration::ZERO, visible(false));
+        replacement.window_changed(
+            Duration::ZERO,
+            RenderWindowState {
+                visible: false,
+                focused: false,
+            },
+        );
+        assert_eq!(
+            replacement.action(Duration::from_secs(60), false),
+            Some(RenderAction::Wait)
+        );
+        replacement.window_changed(
+            Duration::from_secs(60),
+            RenderWindowState {
+                visible: true,
+                focused: false,
+            },
+        );
         assert_eq!(
             replacement.action(Duration::from_secs(60), false),
             Some(RenderAction::Exhausted)
