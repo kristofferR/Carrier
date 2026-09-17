@@ -36,6 +36,7 @@ import {
   UnreadArrivalTracker,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
+import { notificationLinkBody, notificationLinkCards } from "../lib/notification-links";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -499,7 +500,7 @@ export function initNotificationBridge() {
           emitNotification(
             id,
             hidePreview ? "Messenger" : originalTitle,
-            hidePreview ? "New message" : originalBody,
+            hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
             hidePreview ? "" : icon,
             pageMatch.dedupeKey ??
               pageMatch.signal?.dedupeKey ??
@@ -659,6 +660,21 @@ export function initNotificationBridge() {
       if (other && (other === needle || label.includes(other))) return "unknown";
     }
     return "yes";
+  };
+
+  const richMessageBody = (body: string, threadPath?: string) => {
+    if (!/^https?:\/\/\S+$/i.test(body.trim())) return body;
+    const thread = threadPathId(threadPath || "");
+    const title = thread ? rowTitles.get(thread) : undefined;
+    // A route changes before Messenger replaces the pane. Require the pane's
+    // own conversation label, and reject titles shared with another row.
+    const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
+    const paneMatches =
+      title &&
+      thread === threadIdFromHref(location.pathname) &&
+      paneShowsThread(title, otherTitles) === "yes";
+    const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
+    return notificationLinkBody(body, log ? notificationLinkCards(log) : []);
   };
 
   const harvestSenderAvatars = (now: number) => {
@@ -1080,7 +1096,7 @@ export function initNotificationBridge() {
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : content.title,
-        hidePreview ? "New message" : content.body,
+        hidePreview ? "New message" : richMessageBody(content.body, conversation.threadPath),
         icon,
         dedupeKey,
         () => {

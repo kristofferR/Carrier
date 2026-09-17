@@ -4959,6 +4959,54 @@
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
 
+  // inject/src/messenger/lib/notification-links.ts
+  function linkTarget(value) {
+    if (!/^https?:\/\/\S+$/i.test(value)) return null;
+    try {
+      const url = new URL(stripFacebookTracking(value, value));
+      if (!/^https?:$/.test(url.protocol)) return null;
+      const host = url.hostname.toLowerCase().replace(/^www\./, "");
+      const youtube = ["youtube.com", "m.youtube.com", "youtu.be"].includes(host);
+      const video = youtube ? host === "youtu.be" ? url.pathname.slice(1) : url.pathname === "/watch" ? url.searchParams.get("v") : /^\/(?:shorts|live)\/([^/]+)$/.exec(url.pathname)?.[1] : null;
+      return {
+        key: video && /^[\w-]{11}$/.test(video) ? `youtube:${video}` : url.href,
+        host,
+        provider: youtube ? "YouTube" : host
+      };
+    } catch {
+      return null;
+    }
+  }
+  function notificationLinkCards(root) {
+    const cards = [];
+    for (const link of root.querySelectorAll('[role="article"] a[href]')) {
+      const target = linkTarget(link.href);
+      if (!target || link.closest('[aria-hidden="true"]')) continue;
+      const leaves = [...link.querySelectorAll("span")].filter(
+        (span) => !span.closest('[aria-hidden="true"]') && !hasCandidateTextChild(span)
+      );
+      const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => {
+        const label = text.toLowerCase().replace(/^www\./, "");
+        return text && !linkTarget(text) && label !== target.host && label !== target.provider.toLowerCase();
+      });
+      const title = labels[0];
+      if (title) cards.push({ href: link.href, title });
+    }
+    return cards;
+  }
+  function notificationLinkBody(body, cards = []) {
+    const target = linkTarget(body.trim());
+    if (!target) return body;
+    const titles = new Set(
+      cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.title.replace(/\s+/g, " ").trim()).filter(Boolean)
+    );
+    const title = titles.size === 1 ? [...titles][0] : "";
+    if (target.provider === "YouTube") {
+      return title ? `Sent a YouTube link: ${title}`.slice(0, 240) : "Sent a YouTube link";
+    }
+    return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
+  }
+
   // inject/src/messenger/lib/sender-avatars.ts
   var SENDER_AVATAR_LIMIT = 500;
   var SENDER_AVATAR_VERSION = 3;
@@ -5673,7 +5721,7 @@
             emitNotification(
               id,
               hidePreview ? "Messenger" : originalTitle,
-              hidePreview ? "New message" : originalBody,
+              hidePreview ? "New message" : richMessageBody(originalBody, threadPath),
               hidePreview ? "" : icon,
               pageMatch.dedupeKey ?? pageMatch.signal?.dedupeKey ?? notificationDedupeKey(originalTitle, originalBody),
               () => {
@@ -5758,6 +5806,15 @@
         if (other && (other === needle || label.includes(other))) return "unknown";
       }
       return "yes";
+    };
+    const richMessageBody = (body, threadPath) => {
+      if (!/^https?:\/\/\S+$/i.test(body.trim())) return body;
+      const thread = threadPathId(threadPath || "");
+      const title = thread ? rowTitles.get(thread) : void 0;
+      const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
+      const paneMatches = title && thread === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
+      const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
+      return notificationLinkBody(body, log ? notificationLinkCards(log) : []);
     };
     const harvestSenderAvatars = (now) => {
       if (now - lastHarvestAt < HARVEST_THROTTLE_MS) return;
@@ -6053,7 +6110,7 @@
         emitNotification(
           ++notifySeq,
           hidePreview ? "Messenger" : content.title,
-          hidePreview ? "New message" : content.body,
+          hidePreview ? "New message" : richMessageBody(content.body, conversation.threadPath),
           icon,
           dedupeKey,
           () => {
