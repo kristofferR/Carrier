@@ -26,6 +26,7 @@ import {
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
+  notificationPresentation,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   PendingPageNotificationStore,
@@ -227,6 +228,7 @@ export function initNotificationBridge() {
     onClick: () => void,
     threadPath?: string,
     onDelivery?: (delivery: NativeNotificationDelivery) => void,
+    subtitle = "",
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -238,7 +240,15 @@ export function initNotificationBridge() {
     }
     invoke("plugin:event|emit", {
       event: "carrier:notify",
-      payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" },
+      payload: {
+        id,
+        title,
+        subtitle,
+        body,
+        icon,
+        dedupe_key: dedupeKey,
+        thread_path: threadPath || "",
+      },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
       diag("notify.emit", "carrier:notify emit failed");
@@ -801,6 +811,7 @@ export function initNotificationBridge() {
     const surfaces = [...row.querySelectorAll<HTMLElement>("span")].map((el) => {
       const rect = el.getBoundingClientRect();
       return {
+        node: el,
         text: conversationNodeText(el),
         x: rect.x,
         y: rect.y,
@@ -1018,31 +1029,20 @@ export function initNotificationBridge() {
       });
       return;
     }
-    // Start the bounded avatar conversion during the pairing grace period.
-    // Delivery therefore stays ahead of the four-second auto-refresh nudge.
-    // In a group, show whoever wrote rather than the thread picture — falling
-    // back to the row's single group photo when the sender is unknown or their
-    // cached avatar URL has expired.
-    // Both conversions run under their own bounded timeout at the same time:
-    // chaining them could outlast the four-second auto-refresh nudge and lose
-    // the banner entirely.
+    const content = notificationPresentation(
+      conversation.title,
+      conversation.body,
+      conversation.isGroup,
+    );
+    // Start the bounded conversion during the pairing grace period. A banner
+    // naming a sender must not substitute other group members' faces when the
+    // sender's photo is unavailable. Group-titled banners keep the group icon.
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    // When the sender is unknown the row's own picture stands in — drawn from
-    // every face the row carries, not just the first. A photo-less group's
-    // first face is only whoever sorts first: alone it would label one member's
-    // message with another's face, and every other message in the thread with
-    // that same face. Drawn together they are a picture of the group, which is
-    // what belongs beside a title naming the group.
-    const rowIcons = conversation.icons;
-    const rowAvatar = () => facesToDataUrl(rowIcons);
-    const avatar =
-      senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0])
-        ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
-            ([sender, row]) => sender || row,
-          )
-        : rowAvatar();
+    const avatar = content.subtitle
+      ? avatarToDataUrl(senderIcon)
+      : facesToDataUrl(conversation.icons);
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
@@ -1054,13 +1054,10 @@ export function initNotificationBridge() {
       }
       const hidePreview = settings.hide_notification_preview === true;
       const icon = hidePreview ? "" : await avatar;
-      // Content-free breadcrumb: a group notification with nothing to show
-      // means neither the sender's harvested face nor the row's own picture
-      // resolved, which is otherwise invisible until someone reports a blank
-      // banner. Not logged when the preview is hidden — that is meant to be
-      // pictureless.
+      // Content-free breadcrumb for missing photos; private banners deliberately
+      // carry no picture and should not report a failed conversion.
       if (!hidePreview && !icon && conversation.isGroup) {
-        diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+        diag("notify.avatar", "group notification has no photo for its displayed identity");
       }
       // Keep the entry cancellable until the avatar conversion finishes. A
       // late page Notification must still win instead of producing a second
@@ -1082,14 +1079,16 @@ export function initNotificationBridge() {
       );
       emitNotification(
         ++notifySeq,
-        hidePreview ? "Messenger" : conversation.title,
-        hidePreview ? "New message" : conversation.body,
+        hidePreview ? "Messenger" : content.title,
+        hidePreview ? "New message" : content.body,
         icon,
         dedupeKey,
         () => {
           window.__carrierOpenThread?.(conversation.threadPath);
         },
         conversation.threadPath,
+        undefined,
+        hidePreview ? "" : content.subtitle,
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({

@@ -78,6 +78,7 @@ export function initUnreadBadge() {
           spans.map((span) => {
             const rect = span.getBoundingClientRect();
             return {
+              node: span,
               text: conversationNodeText(span),
               x: rect.x,
               y: rect.y,

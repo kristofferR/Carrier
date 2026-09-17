@@ -3750,9 +3750,16 @@
   }
   function conversationTextParts(candidates) {
     const values = [];
-    for (const candidate of candidates.filter(
+    const eligible = candidates.filter(
       ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
-    ).sort((left, right) => left.y - right.y || left.x - right.x)) {
+    );
+    const textNodes = new Set(eligible.map(({ node }) => node).filter(Boolean));
+    for (const candidate of eligible.filter(({ node }) => {
+      for (let parent = node?.parentNode; parent; parent = parent.parentNode) {
+        if (textNodes.has(parent)) return false;
+      }
+      return true;
+    }).sort((left, right) => left.y - right.y || left.x - right.x)) {
       const text = candidate.text.replace(/\s+/g, " ").trim();
       if (!text) continue;
       const last = values[values.length - 1];
@@ -4928,6 +4935,13 @@
   function groupPreviewSender(value) {
     return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
   }
+  function notificationPresentation(title, body, isGroup) {
+    const { sender, message } = splitGroupSender(body);
+    if (isGroup && sender && message.trim()) {
+      return { title: sender, subtitle: title, body: message };
+    }
+    return { title, subtitle: "", body };
+  }
   function isOwnMessagePreview(value) {
     return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
       value.trim().replace(/\s+/g, " ")
@@ -5497,7 +5511,7 @@
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery) => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "") => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -5508,7 +5522,15 @@
       }
       invoke("plugin:event|emit", {
         event: "carrier:notify",
-        payload: { id, title, body, icon, dedupe_key: dedupeKey, thread_path: threadPath || "" }
+        payload: {
+          id,
+          title,
+          subtitle,
+          body,
+          icon,
+          dedupe_key: dedupeKey,
+          thread_path: threadPath || ""
+        }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
         diag("notify.emit", "carrier:notify emit failed");
@@ -5834,6 +5856,7 @@
       const surfaces = [...row.querySelectorAll("span")].map((el) => {
         const rect = el.getBoundingClientRect();
         return {
+          node: el,
           text: conversationNodeText(el),
           x: rect.x,
           y: rect.y,
@@ -5993,12 +6016,13 @@
         });
         return;
       }
+      const content = notificationPresentation(
+        conversation.title,
+        conversation.body,
+        conversation.isGroup
+      );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const rowIcons = conversation.icons;
-      const rowAvatar = () => facesToDataUrl(rowIcons);
-      const avatar = senderIcon && !(rowIcons.length === 1 && senderIcon === rowIcons[0]) ? Promise.all([avatarToDataUrl(senderIcon), rowAvatar()]).then(
-        ([sender, row]) => sender || row
-      ) : rowAvatar();
+      const avatar = content.subtitle ? avatarToDataUrl(senderIcon) : facesToDataUrl(conversation.icons);
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
@@ -6011,7 +6035,7 @@
         const hidePreview = settings.hide_notification_preview === true;
         const icon = hidePreview ? "" : await avatar;
         if (!hidePreview && !icon && conversation.isGroup) {
-          diag("notify.avatar", "group notification resolved no sender face and no thread picture");
+          diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
@@ -6028,14 +6052,16 @@
         );
         emitNotification(
           ++notifySeq,
-          hidePreview ? "Messenger" : conversation.title,
-          hidePreview ? "New message" : conversation.body,
+          hidePreview ? "Messenger" : content.title,
+          hidePreview ? "New message" : content.body,
           icon,
           dedupeKey,
           () => {
             window.__carrierOpenThread?.(conversation.threadPath);
           },
-          conversation.threadPath
+          conversation.threadPath,
+          void 0,
+          hidePreview ? "" : content.subtitle
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -7786,6 +7812,7 @@ ${text}`)) {
           spans.map((span) => {
             const rect = span.getBoundingClientRect();
             return {
+              node: span,
               text: conversationNodeText(span),
               x: rect.x,
               y: rect.y,

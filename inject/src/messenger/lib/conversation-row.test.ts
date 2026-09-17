@@ -83,6 +83,36 @@ describe("conversationTextParts", () => {
     });
   });
 
+  test("does not mistake an offset title emoji for the message preview", () => {
+    const sprite = element("SPAN", { "aria-label": "🍗" });
+    const title = element("SPAN", {}, [textNode("Weekend trip 🍗 "), sprite]);
+    sprite.parentNode = title;
+    for (const y of [-2, 3, 24]) {
+      expect(
+        conversationTextParts([
+          candidate(conversationNodeText(title), { node: title, height: 40 }),
+          candidate(conversationNodeText(sprite), { node: sprite, x: 80, y }),
+          candidate("Kim: Shared a link. (youtube.com)", { y: 44 }),
+        ]),
+      ).toEqual({ title: "Weekend trip 🍗 🍗", body: "Kim: Shared a link. (youtube.com)" });
+    }
+  });
+
+  test("keeps a standalone emoji preview matching a nested title emoji", () => {
+    const sprite = element("SPAN", { "aria-label": "🍗" });
+    const title = element("SPAN", {}, [textNode("Weekend trip "), sprite]);
+    sprite.parentNode = title;
+    const surfaces = [
+      candidate(conversationNodeText(title), { node: title }),
+      candidate("🍗", { node: sprite, y: 3, x: 80 }),
+    ];
+    expect(conversationTextParts(surfaces)).toEqual({ title: "Weekend trip 🍗", body: "" });
+    expect(conversationTextParts([...surfaces, candidate("🍗", { y: 24 })])).toEqual({
+      title: "Weekend trip 🍗",
+      body: "🍗",
+    });
+  });
+
   test("uses safe defaults and caps scraped text", () => {
     expect(conversationTextParts([])).toEqual({
       title: "Messenger",

@@ -7,6 +7,7 @@ import {
   NotifiedSignatureStore,
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
+  notificationPresentation,
   notificationTextMatches,
   PAGE_NOTIFICATION_RECEIPT_TTL_MS,
   PageNotificationQueue,
@@ -27,6 +28,38 @@ const memoryStorage = () => {
     setItem: (key: string, value: string) => void data.set(key, value),
   };
 };
+
+describe("notificationPresentation", () => {
+  test("separates the sender, group, and actual message", () => {
+    expect(
+      notificationPresentation("Weekend trip 🍗", "Kim: Shared a link. (youtube.com)", true),
+    ).toEqual({
+      title: "Kim",
+      subtitle: "Weekend trip 🍗",
+      body: "Shared a link. (youtube.com)",
+    });
+    expect(notificationPresentation("Weekend trip 🍗", "Kim: 🍗", true)).toEqual({
+      title: "Kim",
+      subtitle: "Weekend trip 🍗",
+      body: "🍗",
+    });
+  });
+
+  test("preserves unknown senders and direct messages without guessing", () => {
+    for (const body of ["Shared a link", "https://youtube.com/watch", "Kim: "]) {
+      expect(notificationPresentation("Weekend trip", body, true)).toEqual({
+        title: "Weekend trip",
+        subtitle: "",
+        body,
+      });
+    }
+    expect(notificationPresentation("Kim", "Note: bring lunch", false)).toEqual({
+      title: "Kim",
+      subtitle: "",
+      body: "Note: bring lunch",
+    });
+  });
+});
 
 describe("notificationDedupeKey", () => {
   test("normalizes equivalent notification text to the same opaque key", () => {
