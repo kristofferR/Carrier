@@ -39,10 +39,13 @@ const DIAG_RAW_PAYLOAD_MAX_LEN: usize = DIAG_MAX_LEN * 8;
 /// Cap page diagnostics per session so a misbehaving (or malicious) page
 /// script can't grow the log without bound. The page already rate-limits to
 /// one report per key per minute; this is the backstop.
-pub(crate) const DIAG_SESSION_CAP: u32 = 200;
+// Long-running debug installs need enough history to catch intermittent sync
+// failures days later, while retaining a finite backstop for untrusted events.
+pub(crate) const DIAG_SESSION_CAP: u32 = if cfg!(debug_assertions) { 100_000 } else { 200 };
 
 /// Keep the app log bounded even if page diagnostics keep reporting over time.
-pub(crate) const LOG_FILE_MAX_BYTES: u128 = 5 * 1024 * 1024;
+pub(crate) const LOG_FILE_MAX_BYTES: u128 =
+    if cfg!(debug_assertions) { 20 } else { 5 } * 1024 * 1024;
 
 #[cfg(test)]
 mod tests {

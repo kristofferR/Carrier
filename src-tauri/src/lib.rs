@@ -1082,7 +1082,11 @@ pub fn run() {
                 .level(log::LevelFilter::Warn)
                 .level_for("carrier_lib", log::LevelFilter::Info)
                 .max_file_size(LOG_FILE_MAX_BYTES)
-                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .rotation_strategy(if cfg!(debug_assertions) {
+                    tauri_plugin_log::RotationStrategy::KeepSome(5)
+                } else {
+                    tauri_plugin_log::RotationStrategy::KeepOne
+                })
                 .build(),
         )
         .manage(AppState {
