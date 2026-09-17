@@ -15,6 +15,14 @@ on:
         description: Build and notarize one macOS app without publishing a release
         type: boolean
         default: false
+      debug_build:
+        description: Enable debug symbols and MCP in the notarization smoke app
+        type: boolean
+        default: false
+      source_ref:
+        description: Optional source ref for the notarization smoke app
+        type: string
+        default: ""
 
 concurrency:
   group: release-${{ github.ref }}
@@ -89,6 +97,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
@@ -127,21 +136,32 @@ jobs:
 
       - name: Build, sign, and notarize the macOS app
         env:
+          DEBUG_BUILD: ${{ inputs.debug_build }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          bun run tauri build --bundles app --ci \
+          build_args=()
+          if [ "$DEBUG_BUILD" = "true" ]; then
+            build_args+=(--debug --features mcp)
+          fi
+          bun run tauri build --bundles app --ci "${build_args[@]}" \
             --config src-tauri/tauri.conf.release.json \
             --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify Gatekeeper and the stapled nested bundle
+        env:
+          DEBUG_BUILD: ${{ inputs.debug_build }}
         run: |
           set -euo pipefail
+          profile=release
+          if [ "$DEBUG_BUILD" = "true" ]; then
+            profile=debug
+          fi
           APP=""
-          for candidate in src-tauri/target/release/bundle/macos/*.app; do
+          for candidate in src-tauri/target/"$profile"/bundle/macos/*.app; do
             if [ -d "$candidate" ]; then
               APP="$candidate"
               break
