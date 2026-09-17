@@ -310,8 +310,7 @@ async fn run_portal_session(
     ready_delivered: &mut bool,
 ) -> Result<(), BindFailure> {
     // Recent portals require an unsandboxed app to register its application ID
-    // on the shared ashpd connection before using any desktop portal. In
-    // Flatpak, ashpd detects the sandbox and this is a no-op.
+    // on the shared ashpd connection before using any desktop portal.
     let register = register_host_app(app);
     pin_mut!(register);
     match select(&mut *stop, register).await {

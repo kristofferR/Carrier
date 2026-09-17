@@ -48,31 +48,3 @@ jobs:
           name: carrier-snap-${{ matrix.arch }}
           path: ${{ steps.snapcraft.outputs.snap }}
           if-no-files-found: error
-
-  flatpak:
-    name: Flatpak (x86_64)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install build environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak
-          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --noninteractive flathub org.gnome.Sdk//50 org.gnome.Platform//50 org.freedesktop.Sdk.Extension.rust-stable//25.08 org.flatpak.Builder
-      - name: Build and validate
-        shell: dbus-run-session -- bash -e {0}
-        run: |
-          # Sandboxed source loading requires every input to be below the manifest.
-          sed -e 's|path: ../..|path: .|' -e 's|- cargo-sources.json|- packaging/flatpak/cargo-sources.json|' packaging/flatpak/io.github.kristofferr.carrier.yml > io.github.kristofferr.carrier.yml
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest io.github.kristofferr.carrier.yml
-          flatpak run --command=flathub-build org.flatpak.Builder --repo=flatpak-repo io.github.kristofferr.carrier.yml
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo flatpak-repo
-          flatpak build-bundle flatpak-repo carrier.flatpak io.github.kristofferr.carrier --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: carrier-flatpak-x86_64
-          path: carrier.flatpak
-          if-no-files-found: error

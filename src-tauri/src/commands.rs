@@ -7,7 +7,7 @@ use url::Url;
 
 use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
-use crate::install_environment::{is_flatpak, is_snap};
+use crate::install_environment::is_snap;
 use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
 use crate::settings::{
     apply_settings, save_settings, sync_autostart, AppState, SaveOutcome, Settings,
@@ -18,8 +18,6 @@ use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 #[cfg(any(target_os = "linux", test))]
 const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
-#[cfg(any(target_os = "linux", test))]
-const FLATPAK_UPDATE_URL: &str = "https://docs.flatpak.org/en/latest/using-flatpak.html#updating";
 #[cfg(any(target_os = "linux", test))]
 const RELEASES_URL: &str = "https://github.com/kristofferR/Carrier/releases/latest";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
@@ -128,19 +126,6 @@ impl UpdateInstallMode {
             button_label: Some("Open Carrier on AUR".into()),
             instructions: Some(instructions.into()),
             manual_url: Some(AUR_PACKAGE_URL),
-        }
-    }
-
-    #[cfg(any(target_os = "linux", test))]
-    fn flatpak() -> Self {
-        Self {
-            kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Flatpak update guide".into()),
-            instructions: Some(
-                "Update Carrier with your Flatpak software manager or run `flatpak update io.github.kristofferr.carrier`."
-                    .into(),
-            ),
-            manual_url: Some(FLATPAK_UPDATE_URL),
         }
     }
 
@@ -261,7 +246,6 @@ fn is_genuine_appimage_runtime() -> bool {
 #[cfg(any(target_os = "linux", test))]
 #[derive(Clone, Copy)]
 struct LinuxUpdateEvidence {
-    flatpak: bool,
     snap: bool,
     pacman_owned: bool,
     system_carrier_exists: bool,
@@ -274,9 +258,7 @@ fn linux_update_install_mode(
     has_paru: bool,
     has_yay: bool,
 ) -> UpdateInstallMode {
-    if evidence.flatpak {
-        UpdateInstallMode::flatpak()
-    } else if evidence.snap {
+    if evidence.snap {
         UpdateInstallMode::snap()
     } else if evidence.pacman_owned {
         UpdateInstallMode::aur(has_paru, has_yay)
@@ -292,7 +274,6 @@ fn current_update_install_mode() -> UpdateInstallMode {
     {
         linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: is_flatpak(),
                 snap: is_snap(),
                 pacman_owned: pacman_owns_carrier(),
                 system_carrier_exists: std::path::Path::new("/usr/bin/carrier").is_file(),
@@ -331,7 +312,6 @@ pub(crate) fn get_settings(state: State<AppState>) -> Settings {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RuntimeCapabilities {
-    flatpak: bool,
     snap: bool,
     autostart: bool,
     automatic_update_checks: bool,
@@ -342,13 +322,11 @@ pub(crate) struct RuntimeCapabilities {
 /// safely expose. Backend sanitization remains the enforcement boundary.
 #[tauri::command]
 pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
-    let flatpak = is_flatpak();
     let snap = is_snap();
     RuntimeCapabilities {
-        flatpak,
         snap,
-        autostart: !flatpak && !snap,
-        automatic_update_checks: !flatpak && !snap,
+        autostart: !snap,
+        automatic_update_checks: !snap,
         multi_instance: !snap,
     }
 }
@@ -1179,7 +1157,6 @@ mod tests {
     #[test]
     fn pacman_owned_install_uses_the_available_aur_helper() {
         let pacman_install = LinuxUpdateEvidence {
-            flatpak: false,
             snap: false,
             pacman_owned: true,
             system_carrier_exists: true,
@@ -1223,7 +1200,6 @@ mod tests {
 
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: false,
                 snap: false,
                 pacman_owned,
                 system_carrier_exists: true,
@@ -1247,7 +1223,6 @@ mod tests {
         ));
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: false,
                 snap: false,
                 pacman_owned: false,
                 system_carrier_exists: false,
@@ -1271,7 +1246,6 @@ mod tests {
         ));
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: false,
                 snap: false,
                 pacman_owned: false,
                 system_carrier_exists: false,
@@ -1285,7 +1259,6 @@ mod tests {
 
         let shadowed_system_install = linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: false,
                 snap: false,
                 pacman_owned: false,
                 system_carrier_exists: true,
@@ -1298,34 +1271,9 @@ mod tests {
     }
 
     #[test]
-    fn flatpak_install_uses_distribution_owned_updates() {
-        let mode = linux_update_install_mode(
-            LinuxUpdateEvidence {
-                flatpak: true,
-                snap: false,
-                pacman_owned: true,
-                system_carrier_exists: true,
-                appimage_runtime: true,
-            },
-            true,
-            true,
-        );
-        assert_eq!(mode.kind, UpdateInstallKind::Manual);
-        assert_eq!(
-            mode.button_label.as_deref(),
-            Some("Open Flatpak update guide")
-        );
-        assert!(mode
-            .instructions
-            .as_deref()
-            .is_some_and(|instructions| instructions.contains("flatpak update")));
-    }
-
-    #[test]
     fn snap_install_uses_store_updates_even_with_host_package_evidence() {
         let mode = linux_update_install_mode(
             LinuxUpdateEvidence {
-                flatpak: false,
                 snap: true,
                 pacman_owned: true,
                 system_carrier_exists: true,

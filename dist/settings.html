@@ -339,11 +339,6 @@
             hint = "Unavailable because Carrier could not verify this runtime capability.";
           } else if (key === "multi_instance") {
             hint = "The Snap package supports one Carrier process at a time.";
-          } else if (runtimeCapabilities.flatpak) {
-            hint =
-              key === "autostart"
-                ? "Managed by Flatpak; Carrier needs Background portal support before it can request login startup."
-                : "Managed by Flatpak and your software center.";
           } else if (runtimeCapabilities.snap) {
             hint =
               key === "autostart"
