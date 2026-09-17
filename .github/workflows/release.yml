@@ -137,6 +137,7 @@ jobs:
       - name: Build, sign, and notarize the macOS app
         env:
           DEBUG_BUILD: ${{ inputs.debug_build }}
+          CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -195,12 +196,24 @@ jobs:
           spctl --assess --type execute --verbose=2 "$APP"
           xcrun stapler validate "$APP"
           ditto -c -k --sequesterRsrc --keepParent "$APP" Carrier-notarized-smoke.zip
+          if [ "$DEBUG_BUILD" = "true" ]; then
+            symbols=src-tauri/target/debug/carrier.dSYM
+            app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
+            symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
+            if [ -z "$app_uuid" ] || [ "$app_uuid" != "$symbols_uuid" ]; then
+              echo "Debug symbols do not match the signed app." >&2
+              exit 1
+            fi
+            ditto -c -k --sequesterRsrc --keepParent "$symbols" Carrier-debug-symbols.zip
+          fi
 
       - name: Upload notarized smoke app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Carrier-notarized-smoke
-          path: Carrier-notarized-smoke.zip
+          path: |
+            Carrier-notarized-smoke.zip
+            Carrier-debug-symbols.zip
           if-no-files-found: error
           retention-days: 1
 
