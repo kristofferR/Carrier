@@ -16,6 +16,7 @@ import {
   REALTIME_UNOBSERVED_SETTLE_MS,
   RealtimeRecoveryTracker,
 } from "../lib/realtime-health";
+import { RenderHealthProbe } from "../lib/render-health";
 import { isMessengerContentPath } from "../lib/threads";
 import {
   hasRateLimitEpisode,
@@ -28,6 +29,22 @@ import {
 import { monitorRealtimeHealth } from "./realtime-health";
 
 export function initAutoRefresh() {
+  // Capture these at document start, before Facebook wraps the scheduling APIs.
+  const renderProbe = new RenderHealthProbe(
+    window.requestAnimationFrame.bind(window),
+    window.cancelAnimationFrame.bind(window),
+    performance.now.bind(performance),
+  );
+  const documentEpochMs = Math.floor(performance.timeOrigin);
+  const nativeSetTimeout = window.setTimeout.bind(window);
+  const nativeNow = performance.now.bind(performance);
+  let reloadRequestedAt: number | undefined;
+  let unloadObserved = false;
+  window.addEventListener("beforeunload", () => {
+    unloadObserved = true;
+  });
+  window.addEventListener("visibilitychange", () => renderProbe.reset());
+  window.addEventListener("pagehide", () => renderProbe.reset());
   // A full reload re-boots the whole Facebook SPA, so only do it after a
   // lifecycle signal that makes its live connection suspect. Drafts and calls
   // are always protected, even for a forced catch-up after sleep or refocus.
@@ -138,13 +155,28 @@ export function initAutoRefresh() {
   const emitHeartbeat = (requestRateLimitRetry = false) => {
     if (typeof heartbeatId !== "number") return;
     const protectedNow = heartbeatProtection();
+    const contentPresent = messengerContentPresent();
+    const visible = !document.hidden && !systemSleeping;
     lastHeartbeatProtection = protectedNow;
     invoke("plugin:event|emit", {
       event: "carrier:webview-heartbeat",
       payload: {
         id: heartbeatId,
         protected: protectedNow,
-        content_present: messengerContentPresent(),
+        content_present: contentPresent,
+        render: {
+          ...renderProbe.sample(
+            visible &&
+              document.readyState === "complete" &&
+              contentPresent &&
+              isMessengerContentPath(location.pathname),
+          ),
+          document_epoch_ms: documentEpochMs,
+          document_age_ms: Math.round(nativeNow()),
+          visible,
+          focused: document.hasFocus(),
+          content_page: isMessengerContentPath(location.pathname),
+        },
         realtime: realtimeStatus(),
         rate_limit_ms: rateLimitRemainingMs(),
         rate_limit_account: rateLimitAccountScope(),
@@ -203,6 +235,19 @@ export function initAutoRefresh() {
       } catch (_) {}
     }
     pending = false;
+    // A reload request is not proof of a replacement document. This timeout
+    // disappears on real navigation; surviving it exposes cancelled/stuck loads.
+    if (reloadRequestedAt === undefined) {
+      reloadRequestedAt = nativeNow();
+      unloadObserved = false;
+      nativeSetTimeout(() => {
+        diag(
+          "sync.reload-unfinished",
+          `same document alive ${Math.round(nativeNow() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`,
+        );
+        reloadRequestedAt = undefined;
+      }, 15_000);
+    }
     location.reload();
   };
   window.__carrierRateLimitRetry = (expectedId, expires) => {

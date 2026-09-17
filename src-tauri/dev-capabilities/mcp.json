@@ -1,6 +1,6 @@
 {
   "identifier": "mcp-event-listen",
-  "description": "Dev-only event listening used by the tauri-mcp responder. Added dynamically only when Carrier is compiled with the mcp Cargo feature.",
+  "description": "Dev-only event listening and console-log forwarding used by the tauri-mcp responder. Added dynamically only when Carrier is compiled with the mcp Cargo feature.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
@@ -14,5 +14,5 @@
       "https://*.fbsbx.com"
     ]
   },
-  "permissions": ["core:event:allow-listen"]
+  "permissions": ["core:event:allow-listen", "mcp:allow-push-log"]
 }

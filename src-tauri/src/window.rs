@@ -18,6 +18,7 @@ use crate::download::{
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
+use crate::render_recovery::RenderRecoveryBudget;
 use crate::settings::{
     load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
 };
@@ -113,6 +114,16 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
+    build_app_window_with_render_budget(app, label, settings, RenderRecoveryBudget::default(), true)
+}
+
+fn build_app_window_with_render_budget(
+    app: &tauri::AppHandle,
+    label: &str,
+    settings: &Settings,
+    render_budget: RenderRecoveryBudget,
+    focused: bool,
+) -> tauri::Result<WebviewWindow> {
     if label == "main" {
         let state = app.state::<AppState>();
         let _pending = state.pending_action.lock().unwrap();
@@ -120,7 +131,7 @@ pub(crate) fn build_app_window(
             .messenger_loaded
             .store(false, std::sync::atomic::Ordering::Release);
     }
-    let watchdog = WebviewWatchdog::new();
+    let watchdog = WebviewWatchdog::new(render_budget);
     let watchdog_id = watchdog.id();
     let page_load_watchdog = watchdog.clone();
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
@@ -128,6 +139,7 @@ pub(crate) fn build_app_window(
     let download_label = label.to_string();
     let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
+        .focused(focused)
         .inner_size(1200.0, 780.0)
         .min_inner_size(420.0, 520.0)
         .theme(theme_for(settings))
@@ -314,7 +326,10 @@ pub(crate) fn build_app_window(
     };
     let window = builder.build().inspect(|window| {
         #[cfg(target_os = "linux")]
-        crate::linux::configure_messenger_webview_memory(window);
+        {
+            crate::linux::configure_messenger_webview_memory(window);
+            crate::linux::install_webview_diagnostics(window);
+        }
         // New windows inherit the current always-on-top preference.
         let _ = window.set_always_on_top(settings.always_on_top);
         #[cfg(not(target_os = "macos"))]
@@ -598,6 +613,7 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
 pub(crate) fn recreate_messenger_window(
     app: &tauri::AppHandle,
     label: &str,
+    render_budget: RenderRecoveryBudget,
     on_abandoned: Option<Box<dyn FnOnce() + Send>>,
 ) -> bool {
     use std::sync::atomic::Ordering;
@@ -655,7 +671,13 @@ pub(crate) fn recreate_messenger_window(
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         let settings = app.state::<AppState>().settings.lock().unwrap().clone();
         for attempt in 1..=MAX_BUILD_ATTEMPTS {
-            match build_app_window(&app, &label, &settings) {
+            match build_app_window_with_render_budget(
+                &app,
+                &label,
+                &settings,
+                render_budget.clone(),
+                was_focused,
+            ) {
                 Ok(rebuilt) => {
                     if label == "main" {
                         install_main_close_handler(&app, &rebuilt);
@@ -696,6 +718,16 @@ pub(crate) fn recreate_messenger_window(
                     }
                 }
             }
+        }
+
+        if render_budget.used() {
+            // Frame recovery is bounded to this window. Restarting the entire
+            // app would reset its budget and discard drafts in other windows.
+            log::error!("failed to construct replacement Messenger window {label}; automatic frame recovery stopped, reopen Carrier from the tray or relaunch manually");
+            app.state::<AppState>()
+                .recreating
+                .store(false, Ordering::SeqCst);
+            return;
         }
 
         // The old window is already gone, so there is nothing left for its

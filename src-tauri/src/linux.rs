@@ -2,7 +2,7 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
-use gtk::prelude::GtkWindowExt;
+use gtk::prelude::{GtkWindowExt, WidgetExt};
 use tauri::Manager;
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
@@ -30,11 +30,96 @@ pub(crate) fn configure_messenger_webview_memory(window: &tauri::WebviewWindow) 
         if let Some(context) = webview.context() {
             context.set_cache_model(CacheModel::DocumentBrowser);
         }
-        if let Some(settings) = webview.settings() {
+        if let Some(settings) = WebViewExt::settings(&webview) {
             settings.set_enable_page_cache(false);
         }
     }) {
         log::warn!("failed to configure Messenger WebKit memory policy: {error}");
+    }
+}
+
+/// Native evidence for a live DOM with stalled frame delivery. No pixels,
+/// page content, URLs, error messages, or account identifiers are logged.
+pub(crate) fn log_messenger_webview_state(window: &tauri::WebviewWindow) {
+    let label = window.label().to_owned();
+    if let Err(error) = window.with_webview(move |platform_webview| {
+        let view = platform_webview.inner();
+        log::warn!(
+            "webview {label} GTK state: mapped={} visible={} drawable={} realized={} size={}x{} scale={} frame_counter={:?} responsive={} loading={} progress={:.2} acceleration={:?}",
+            view.is_mapped(),
+            view.is_visible(),
+            view.is_drawable(),
+            view.is_realized(),
+            view.allocated_width(),
+            view.allocated_height(),
+            view.scale_factor(),
+            view.frame_clock().map(|clock| clock.frame_counter()),
+            view.is_web_process_responsive(),
+            view.is_loading(),
+            view.estimated_load_progress(),
+            WebViewExt::settings(&view).map(|settings| settings.hardware_acceleration_policy()),
+        );
+    }) {
+        log::warn!("failed to capture native webview state: {error}");
+    }
+}
+
+pub(crate) fn install_webview_diagnostics(window: &tauri::WebviewWindow) {
+    let label = window.label().to_owned();
+    if let Err(error) = window.with_webview(move |platform_webview| {
+        let view = platform_webview.inner();
+        let failed_label = label.clone();
+        view.connect_load_failed(move |_, phase, _, error| {
+            // GLib error messages can contain full URLs. Record only the
+            // domain and known error enums, and preserve WebKit's handler.
+            log::warn!(
+                "webview {failed_label} load failed: phase={phase:?} domain={} network={:?} policy={:?}",
+                error.domain().as_str(),
+                error.kind::<webkit2gtk::NetworkError>(),
+                error.kind::<webkit2gtk::PolicyError>(),
+            );
+            false
+        });
+        let tls_label = label.clone();
+        view.connect_load_failed_with_tls_errors(move |_, _, _, errors| {
+            log::warn!("webview {tls_label} TLS load failed: flags={errors:?}");
+            false
+        });
+        let terminated_label = label.clone();
+        view.connect_web_process_terminated(move |_, reason| {
+            log::warn!("webview {terminated_label} web process terminated: reason={reason:?}");
+        });
+        let responsive_label = label.clone();
+        view.connect_is_web_process_responsive_notify(move |view| {
+            log::warn!(
+                "webview {responsive_label} process responsiveness changed: responsive={}",
+                view.is_web_process_responsive()
+            );
+        });
+        if cfg!(debug_assertions) {
+            log::info!(
+                "webview {label} renderer configuration: dmabuf_disabled={} compositing_disabled={}",
+                std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() == Ok("1"),
+                std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").as_deref() == Ok("1"),
+            );
+            let mapped_label = label.clone();
+            view.connect_map(move |_| {
+                log::info!("webview {mapped_label} GTK mapped");
+            });
+            let unmapped_label = label.clone();
+            view.connect_unmap(move |_| {
+                log::info!("webview {unmapped_label} GTK unmapped");
+            });
+            view.connect_load_changed(move |view, phase| {
+                log::info!(
+                    "webview {label} load phase={phase:?} loading={} progress={:.2}",
+                    view.is_loading(),
+                    view.estimated_load_progress(),
+                );
+            });
+        }
+    }) {
+        log::warn!("failed to install native webview diagnostics: {error}");
     }
 }
 

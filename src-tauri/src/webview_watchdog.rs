@@ -13,7 +13,11 @@ use serde::Deserialize;
 use tauri::{Listener, Manager, WebviewWindow, WindowEvent};
 
 use crate::preflight::messenger_dns_preflight;
-use crate::url_rules::is_messenger_web_url;
+use crate::render_recovery::{
+    RenderAction, RenderHeartbeat, RenderRecovery, RenderRecoveryBudget, RenderSignal,
+    RenderWindowState,
+};
+use crate::url_rules::{is_messenger_content_url, is_messenger_web_url};
 use crate::MESSENGER_DNS_TIMEOUT;
 
 const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
@@ -168,6 +172,42 @@ struct HeartbeatPayload {
     rate_limit_ms: Option<u64>,
     rate_limit_account: Option<String>,
     rate_limit_retry: Option<bool>,
+    /// Frame delivery feeds bounded recovery, with a longer grace for
+    /// unfocused windows that may be covered despite reporting visible.
+    render: Option<RenderHeartbeat>,
+}
+
+#[derive(Default)]
+struct RenderDiagnostics {
+    document_epoch_ms: Option<u64>,
+    // Retain the episode across hidden/pending samples. Log again only when
+    // frames resume, the document changes, or a stalled window gains focus.
+    stalled_focus: Option<bool>,
+}
+
+impl RenderDiagnostics {
+    fn observe(&mut self, sample: &RenderHeartbeat) -> (bool, Option<RenderSignal>) {
+        let new_document = self.document_epoch_ms != Some(sample.document_epoch_ms);
+        if new_document {
+            self.document_epoch_ms = Some(sample.document_epoch_ms);
+            self.stalled_focus = None;
+        }
+        let transition = match sample.state {
+            RenderSignal::Stalled if sample.visible => {
+                let report = self.stalled_focus.is_none()
+                    || (self.stalled_focus == Some(false) && sample.focused);
+                if report {
+                    self.stalled_focus = Some(sample.focused);
+                    Some(RenderSignal::Stalled)
+                } else {
+                    None
+                }
+            }
+            RenderSignal::Ok if self.stalled_focus.take().is_some() => Some(RenderSignal::Ok),
+            _ => None,
+        };
+        (new_document, transition)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -192,6 +232,9 @@ enum WatchdogAction {
     RecreateBlank,
     ReloadRealtime,
     RecreateRealtime,
+    ReloadRender,
+    RecreateRender,
+    RenderExhausted,
 }
 
 #[derive(Debug, Default)]
@@ -208,6 +251,7 @@ struct WatchdogState {
     realtime_error_page: bool,
     realtime_reloads: u32,
     realtime_exhausted: bool,
+    render: RenderRecovery,
 }
 
 impl WatchdogState {
@@ -262,6 +306,15 @@ impl WatchdogState {
     }
 
     fn action(&self, now: Duration) -> WatchdogAction {
+        if let Some(action) = self.render.action(now, self.protected) {
+            return match action {
+                RenderAction::Wait => WatchdogAction::None,
+                RenderAction::Protected => WatchdogAction::Protected,
+                RenderAction::Reload => WatchdogAction::ReloadRender,
+                RenderAction::Rebuild => WatchdogAction::RecreateRender,
+                RenderAction::Exhausted => WatchdogAction::RenderExhausted,
+            };
+        }
         // Navigation gets its full loading window, while retaining the
         // underlying resume deadline in case the reload request fails.
         if let Some(navigation_started_at) = self.navigation_started_at {
@@ -331,6 +384,7 @@ impl WatchdogState {
 
     fn navigation_started(&mut self, now: Duration) {
         self.navigation_started_at = Some(now);
+        self.render.pause(now);
     }
 
     fn unresponsive_action(&self) -> WatchdogAction {
@@ -352,6 +406,7 @@ impl WatchdogState {
 
     #[cfg(any(target_os = "macos", test))]
     fn system_resumed(&mut self, now: Duration) {
+        self.render.pause(now);
         // Pre-sleep ages say nothing about the newly woken renderer. Give it a
         // fresh heartbeat window, then fall back to a reload if it cannot
         // answer. Recovery attempt budgets remain intact across sleep.
@@ -407,11 +462,14 @@ pub(crate) struct WebviewWatchdog {
 }
 
 impl WebviewWatchdog {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(render_budget: RenderRecoveryBudget) -> Self {
         Self {
             id: NEXT_WATCHDOG_ID.fetch_add(1, Ordering::Relaxed),
             started_at: Instant::now(),
-            state: Arc::new(Mutex::new(WatchdogState::default())),
+            state: Arc::new(Mutex::new(WatchdogState {
+                render: RenderRecovery::new(render_budget),
+                ..WatchdogState::default()
+            })),
         }
     }
 
@@ -431,7 +489,9 @@ impl WebviewWatchdog {
     /// Forget the previous document when navigation reaches a page outside the
     /// Messenger injection scope, such as an OAuth or captcha surface.
     pub(crate) fn disarm(&self) {
-        self.state.lock().unwrap().disarm();
+        let mut state = self.state.lock().unwrap();
+        state.render.pause(self.started_at.elapsed());
+        state.disarm();
     }
 
     /// Install one watchdog task for this Messenger window generation.
@@ -445,6 +505,7 @@ impl WebviewWatchdog {
         let started_at = self.started_at;
         let heartbeat_state = Arc::clone(&self.state);
         let listener_window = window.clone();
+        let render_diagnostics = Mutex::new(RenderDiagnostics::default());
         let listener_id = window.listen(HEARTBEAT_EVENT, move |event| {
             let Ok(payload) = serde_json::from_str::<HeartbeatPayload>(event.payload()) else {
                 return;
@@ -452,7 +513,34 @@ impl WebviewWatchdog {
             if payload.id != watchdog_id {
                 return;
             }
+            let native_window = render_window_state(&listener_window);
+            if let Some(render) = &payload.render {
+                let (new_document, transition) = render_diagnostics.lock().unwrap().observe(render);
+                let label = listener_window.label();
+                if new_document && cfg!(debug_assertions) {
+                    log::info!(
+                        "webview {label} document heartbeat started; document_age_ms={}",
+                        render.document_age_ms
+                    );
+                }
+                if let Some(transition) = transition {
+                    log::warn!(
+                        "webview {label} frame delivery {transition:?}; wait_ms={} document_age_ms={} visible={} focused={} content_present={:?} protected={}",
+                        render.wait_ms,
+                        render.document_age_ms,
+                        render.visible,
+                        render.focused,
+                        payload.content_present,
+                        payload.protected,
+                    );
+                    #[cfg(target_os = "linux")]
+                    crate::linux::log_messenger_webview_state(&listener_window);
+                }
+            }
             let mut state = heartbeat_state.lock().unwrap();
+            let now = started_at.elapsed();
+            state.render.window_changed(now, native_window);
+            state.render.observe(now, payload.render.as_ref());
             let account = rate_limit_account(payload.rate_limit_account.as_deref()).to_owned();
             if state.rate_limit_account != account {
                 state.rate_limit_account.clone_from(&account);
@@ -512,9 +600,17 @@ impl WebviewWatchdog {
 
         let alive = Arc::new(AtomicBool::new(true));
         let window_alive = Arc::clone(&alive);
+        let focus_state = Arc::clone(&self.state);
         window.on_window_event(move |event| {
             if matches!(event, WindowEvent::Destroyed) {
                 window_alive.store(false, Ordering::Release);
+            }
+            if matches!(event, WindowEvent::Focused(_)) {
+                focus_state
+                    .lock()
+                    .unwrap()
+                    .render
+                    .pause(started_at.elapsed());
             }
         });
 
@@ -540,6 +636,7 @@ impl WebviewWatchdog {
                 crate::macos::power::sync_power_state(&watchdog_window);
                 #[cfg(target_os = "macos")]
                 if crate::macos::power::is_system_sleeping() {
+                    state.lock().unwrap().render.pause(started_at.elapsed());
                     continue;
                 }
                 #[cfg(target_os = "macos")]
@@ -564,15 +661,28 @@ impl WebviewWatchdog {
                     continue;
                 }
 
-                let action = state.lock().unwrap().action(started_at.elapsed());
+                let native_window = render_window_state(&watchdog_window);
+                let action = {
+                    let mut state = state.lock().unwrap();
+                    state
+                        .render
+                        .window_changed(started_at.elapsed(), native_window);
+                    state.action(started_at.elapsed())
+                };
                 match action {
                     WatchdogAction::None | WatchdogAction::Protected => {}
+                    WatchdogAction::RenderExhausted => {
+                        state.lock().unwrap().render.exhausted();
+                        log::warn!("Messenger webview {label} frames still stalled after rebuilding; automatic frame recovery stopped until frames stay healthy for a minute");
+                    }
                     WatchdogAction::Reload
                     | WatchdogAction::RecreateUnresponsive
                     | WatchdogAction::ReloadBlank
                     | WatchdogAction::RecreateBlank
                     | WatchdogAction::ReloadRealtime
-                    | WatchdogAction::RecreateRealtime => {
+                    | WatchdogAction::RecreateRealtime
+                    | WatchdogAction::ReloadRender
+                    | WatchdogAction::RecreateRender => {
                         let now = started_at.elapsed();
                         if now < next_recovery_attempt {
                             continue;
@@ -594,6 +704,14 @@ impl WebviewWatchdog {
                         // than reloading a user out of an in-progress login flow.
                         if !is_messenger_web_url(&url) {
                             state.lock().unwrap().disarm();
+                            continue;
+                        }
+                        if matches!(
+                            action,
+                            WatchdogAction::ReloadRender | WatchdogAction::RecreateRender
+                        ) && !is_messenger_content_url(&url)
+                        {
+                            state.lock().unwrap().render.pause(now);
                             continue;
                         }
 
@@ -623,8 +741,24 @@ impl WebviewWatchdog {
                         let now = started_at.elapsed();
                         // Heartbeats and navigation can change the decision
                         // while DNS is pending, for reloads as well as rebuilds.
-                        if state.lock().unwrap().action(now) != action {
+                        let native_window = render_window_state(&watchdog_window);
+                        let current_action = {
+                            let mut state = state.lock().unwrap();
+                            state.render.window_changed(now, native_window);
+                            state.action(now)
+                        };
+                        if current_action != action {
                             next_recovery_attempt = Duration::ZERO;
+                            continue;
+                        }
+                        if matches!(
+                            action,
+                            WatchdogAction::ReloadRender | WatchdogAction::RecreateRender
+                        ) && !watchdog_window
+                            .url()
+                            .is_ok_and(|url| is_messenger_content_url(&url))
+                        {
+                            state.lock().unwrap().render.pause(now);
                             continue;
                         }
                         let account = state.lock().unwrap().rate_limit_account.clone();
@@ -636,6 +770,22 @@ impl WebviewWatchdog {
                             continue;
                         };
                         match action {
+                            WatchdogAction::ReloadRender => {
+                                log::warn!("Messenger webview {label} frame delivery stayed stalled (native_focused={}); attempting one native reload", native_window.focused);
+                                state.lock().unwrap().render.reload_started(now);
+                                if let Err(error) = watchdog_window.reload() {
+                                    recovery_coordinator()
+                                        .lock()
+                                        .unwrap()
+                                        .refund(&account, permit);
+                                    log::warn!(
+                                        "failed to reload stalled renderer {label}: {error}"
+                                    );
+                                }
+                                // Even a rejected reload consumes this episode's
+                                // attempt. Escalate after grace instead of looping.
+                                next_recovery_attempt = Duration::ZERO;
+                            }
                             WatchdogAction::Reload => {
                                 log::warn!(
                                     "Messenger webview {label} stopped responding; reloading to restore sync"
@@ -708,7 +858,18 @@ impl WebviewWatchdog {
                             }
                             WatchdogAction::RecreateBlank
                             | WatchdogAction::RecreateUnresponsive
-                            | WatchdogAction::RecreateRealtime => {
+                            | WatchdogAction::RecreateRealtime
+                            | WatchdogAction::RecreateRender => {
+                                let render_budget = state.lock().unwrap().render.budget();
+                                if action == WatchdogAction::RecreateRender
+                                    && !render_budget.claim()
+                                {
+                                    recovery_coordinator()
+                                        .lock()
+                                        .unwrap()
+                                        .refund(&account, permit);
+                                    continue;
+                                }
                                 if action == WatchdogAction::RecreateRealtime {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
@@ -741,6 +902,8 @@ impl WebviewWatchdog {
                                     log::warn!(
                                         "Messenger webview {label} realtime transport stayed dead across reloads; rebuilding the webview"
                                     );
+                                } else if action == WatchdogAction::RecreateRender {
+                                    log::warn!("Messenger webview {label} frames did not recover after reload; rebuilding the webview once");
                                 } else if action == WatchdogAction::RecreateUnresponsive {
                                     log::warn!(
                                         "Messenger webview {label} stayed unresponsive after reload; rebuilding it"
@@ -755,6 +918,8 @@ impl WebviewWatchdog {
                                 // destroy call failed — must refund its budget.
                                 let refund_account = account.clone();
                                 let refund_realtime = action == WatchdogAction::RecreateRealtime;
+                                let refund_render = action == WatchdogAction::RecreateRender;
+                                let abandoned_render_budget = render_budget.clone();
                                 let refund = Some(Box::new(move || {
                                     recovery_coordinator()
                                         .lock()
@@ -763,11 +928,15 @@ impl WebviewWatchdog {
                                     if refund_realtime {
                                         refund_realtime_recreate();
                                     }
+                                    if refund_render {
+                                        abandoned_render_budget.refund();
+                                    }
                                 })
                                     as Box<dyn FnOnce() + Send>);
                                 if crate::window::recreate_messenger_window(
                                     watchdog_window.app_handle(),
                                     &label,
+                                    render_budget.clone(),
                                     refund,
                                 ) {
                                     // Keep supervising until the async rebuild
@@ -785,9 +954,14 @@ impl WebviewWatchdog {
                                 if action == WatchdogAction::RecreateRealtime {
                                     refund_realtime_recreate();
                                 }
+                                if refund_render {
+                                    render_budget.refund();
+                                }
                                 next_recovery_attempt = now + REACHABILITY_RETRY;
                             }
-                            WatchdogAction::None | WatchdogAction::Protected => unreachable!(),
+                            WatchdogAction::None
+                            | WatchdogAction::Protected
+                            | WatchdogAction::RenderExhausted => unreachable!(),
                         }
                     }
                 }
@@ -797,9 +971,136 @@ impl WebviewWatchdog {
     }
 }
 
+fn render_window_state(window: &WebviewWindow) -> RenderWindowState {
+    RenderWindowState {
+        visible: window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true),
+        focused: window.is_focused().unwrap_or(false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn responsive_heartbeats_cannot_reset_or_bypass_frame_recovery() {
+        let mut state = WatchdogState::default();
+        state.render.window_changed(
+            Duration::ZERO,
+            RenderWindowState {
+                visible: true,
+                focused: true,
+            },
+        );
+        let sample = RenderHeartbeat {
+            state: RenderSignal::Stalled,
+            wait_ms: 15_000,
+            document_epoch_ms: 1,
+            document_age_ms: 20_000,
+            visible: true,
+            focused: true,
+            content_page: true,
+        };
+        for seconds in (0..=30).step_by(5) {
+            let now = Duration::from_secs(seconds);
+            state.render.observe(now, Some(&sample));
+            state.heartbeat(now, false, Some(true), Some(RealtimeSignal::Ok));
+        }
+        assert_eq!(
+            state.action(Duration::from_secs(30)),
+            WatchdogAction::ReloadRender
+        );
+        state.render.reload_started(Duration::from_secs(30));
+        for seconds in (35..=90).step_by(5) {
+            let now = Duration::from_secs(seconds);
+            state.render.observe(now, Some(&sample));
+            state.heartbeat(now, false, Some(true), Some(RealtimeSignal::Ok));
+        }
+        state.protected = true;
+        assert_eq!(
+            state.action(Duration::from_secs(90)),
+            WatchdogAction::Protected
+        );
+        state.protected = false;
+        assert_eq!(
+            state.action(Duration::from_secs(90)),
+            WatchdogAction::RecreateRender
+        );
+
+        let budget = state.render.budget();
+        assert!(budget.claim());
+        let mut replacement = WatchdogState {
+            render: RenderRecovery::new(budget),
+            ..WatchdogState::default()
+        };
+        replacement.render.window_changed(
+            Duration::ZERO,
+            RenderWindowState {
+                visible: true,
+                focused: true,
+            },
+        );
+        replacement.heartbeat(
+            Duration::ZERO,
+            false,
+            Some(false),
+            Some(RealtimeSignal::Error),
+        );
+        assert_eq!(
+            replacement.action(Duration::from_secs(60)),
+            WatchdogAction::RenderExhausted
+        );
+        replacement.render.exhausted();
+        // Blank DOM, dead transport and missing heartbeats cannot bypass the cap.
+        assert_eq!(
+            replacement.action(Duration::from_secs(3600)),
+            WatchdogAction::None
+        );
+    }
+
+    #[test]
+    fn frame_diagnostics_deduplicate_stalls_but_capture_focus_and_recovery() {
+        let mut diagnostics = RenderDiagnostics::default();
+        let mut sample = RenderHeartbeat {
+            state: RenderSignal::Stalled,
+            wait_ms: 15_000,
+            document_epoch_ms: 1,
+            document_age_ms: 20_000,
+            visible: true,
+            focused: false,
+            content_page: true,
+        };
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (true, Some(RenderSignal::Stalled))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Pending;
+        sample.visible = false;
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Stalled;
+        sample.visible = true;
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.focused = true;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Stalled))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.state = RenderSignal::Ok;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Ok))
+        );
+        assert_eq!(diagnostics.observe(&sample), (false, None));
+        sample.document_epoch_ms = 2;
+        assert_eq!(diagnostics.observe(&sample), (true, None));
+        sample.state = RenderSignal::Stalled;
+        assert_eq!(
+            diagnostics.observe(&sample),
+            (false, Some(RenderSignal::Stalled))
+        );
+    }
 
     fn advance(now: RecoveryTime, elapsed: Duration) -> RecoveryTime {
         RecoveryTime {
