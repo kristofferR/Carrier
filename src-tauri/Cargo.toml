@@ -119,7 +119,7 @@ mac-notification-sys = "0.6"
 # NSMenu is built with muda directly (the same crate Tauri's menus wrap — same
 # version, no extra build cost) and served via an `applicationDockMenu:` hook.
 # Menu events still flow through Tauri's regular menu-event plumbing.
-muda = "0.19"
+muda = "0.20"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Win32_System_Registry: read the taskbar's light/dark preference for the
