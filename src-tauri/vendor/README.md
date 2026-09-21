@@ -30,3 +30,31 @@ The check repeatedly creates an isolated blank webview, exercises
 `with_webview`, destroys the window, and verifies through a weak Objective-C
 reference that the webview deallocated. It does not open Messenger or use its
 session. The unpatched runtime should fail this check.
+
+## muda native menu item ownership fix
+
+`muda/` is the published **0.19.3** crate with the macOS use-after-free fix from
+[`a1550bd9698208b6698cd8fb27c5169808ed892f`](https://github.com/tauri-apps/muda/commit/a1550bd9698208b6698cd8fb27c5169808ed892f)
+([muda #361](https://github.com/tauri-apps/muda/pull/361)) backported. The About-item
+hunk is adapted to 0.19.3's unsafe-block layout; behavior matches upstream.
+Native menu items retain their Rust owner instead of storing a dangling raw
+pointer when AppKit keeps an item alive after its Rust menu is dropped.
+Only `src/platform_impl/macos/mod.rs` differs from the published source.
+Registry bookkeeping, the original manifest, lockfile, and examples are omitted;
+upstream licenses are included.
+
+Do not independently upgrade Carrier's direct dependency to 0.20 while Tauri
+still uses 0.19: these versions have separate global event handlers and register
+the same Objective-C class names. Carrier's Dock menu and Tauri must share one
+instance. This backport covers the memory-safety fix in the Dependabot update
+(Ref #287), rather than importing 0.20's breaking API and GTK changes.
+
+Remove this patch once Tauri and Carrier can use the same stable muda release
+containing #361. Validate on macOS with:
+
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml --example menu_lifecycle
+```
+
+The check retains a native menu item after dropping its Rust menu and item,
+invokes its action, and verifies both event delivery and native teardown.

@@ -23,7 +23,7 @@ mcp = ["dep:tauri-plugin-mcp"]
 
 [dependencies]
 tauri = { version = "2", features = ["image-png"] }
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "2.12"
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
@@ -162,3 +162,5 @@ strip = true
 # See vendor/README.md for provenance and removal instructions.
 [patch.crates-io]
 tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
+# Keep Tauri and the Dock menu on one muda instance while backporting #361.
+muda = { path = "vendor/muda" }
