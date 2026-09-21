@@ -241,7 +241,8 @@ async function install(dir: string, info: BuildInfo) {
     `${Date.now()}-${info.revision}`,
     mac ? "Carrier.app" : "carrier",
   );
-  await mkdir(dirname(previous), { recursive: true });
+  const backup = dirname(previous);
+  await mkdir(backup, { recursive: true });
   const hadPrevious = await exists(target);
   if (hadPrevious) await rename(target, previous);
   try {
@@ -251,6 +252,7 @@ async function install(dir: string, info: BuildInfo) {
     if (await exists(target)) await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
     await removeStagedBestEffort(staged);
+    await rm(backup, { recursive: true, force: true });
     throw error;
   }
   try {
@@ -283,6 +285,7 @@ async function install(dir: string, info: BuildInfo) {
     await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
     await removeStagedBestEffort(staged);
+    await rm(backup, { recursive: true, force: true });
     throw error;
   }
   await rm(join(root, "pending.json"), { force: true });

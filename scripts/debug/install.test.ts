@@ -122,6 +122,7 @@ if (a[0] === "api") {
       expect(failed.code).toBe(1);
       expect(await readFile(target, "utf8")).toBe("previous-install");
       expect(await Bun.file(join(root, "installed.json")).exists()).toBe(false);
+      expect(await readdir(join(root, "backups"))).toEqual([]);
       expect(
         (await readdir(join(home, ".local/bin"))).filter((name) => name.endsWith(".tmp")),
       ).toEqual([]);
