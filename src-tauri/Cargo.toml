@@ -157,3 +157,8 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# Backport Tauri #15224 until the fix reaches a stable runtime release.
+# See vendor/README.md for provenance and removal instructions.
+[patch.crates-io]
+tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
