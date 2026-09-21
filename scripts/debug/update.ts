@@ -238,6 +238,14 @@ async function install(dir: string, info: BuildInfo) {
     const binarySha256 = createHash("sha256")
       .update(await readFile(binary(target)))
       .digest("hex");
+    if (mac) {
+      await mkdir(join(root, "symbols"), { recursive: true });
+      await copyFile(
+        join(dir, "Carrier-debug-symbols.zip"),
+        join(root, "symbols", `${info.revision}.zip`),
+      );
+      await copyFile(join(dir, "build.json"), join(root, "symbols", `${info.revision}.json`));
+    }
     await atomicJson(join(root, "installed.json"), {
       binarySha256,
       ...info,
@@ -250,14 +258,6 @@ async function install(dir: string, info: BuildInfo) {
     throw error;
   }
   await rm(join(root, "pending.json"), { force: true });
-  if (mac) {
-    await mkdir(join(root, "symbols"), { recursive: true });
-    await copyFile(
-      join(dir, "Carrier-debug-symbols.zip"),
-      join(root, "symbols", `${info.revision}.zip`),
-    );
-    await copyFile(join(dir, "build.json"), join(root, "symbols", `${info.revision}.json`));
-  }
   await prune(info.revision);
   log(
     `Installed Carrier ${info.version} debug ${info.revision.slice(0, 12)}. Previous app and symbols retained.`,
@@ -318,34 +318,45 @@ async function update() {
     return;
   const releases = await api("releases?per_page=100");
   if (!Array.isArray(releases)) throw new Error("Invalid release list");
-  const draft = releases.map(debugDraft).find((candidate) => candidate !== null);
-  if (!draft) {
+  const drafts = releases.map(debugDraft).filter((candidate) => candidate !== null);
+  if (!drafts.length) {
     log("No complete personal debug draft yet; current install preserved.");
     return;
   }
-  const { revision, tag } = draft;
-  const ci = object(
-    await api(
-      `actions/workflows/ci.yml/runs?head_sha=${revision}&branch=main&event=push&status=success&per_page=1`,
-    ),
-  );
-  if (!Array.isArray(ci.workflow_runs) || !ci.workflow_runs.length) {
-    log("Debug build is waiting for successful CI; current install preserved.");
+  const installedPath = join(root, "installed.json");
+  const installed = (await exists(installedPath)) ? buildInfo(await json(installedPath)) : null;
+  const onMain: Array<(typeof drafts)[number] & { distance: number }> = [];
+  for (const candidate of drafts) {
+    if (installed && installed.revision !== candidate.revision) {
+      const comparison = object(await api(`compare/${installed.revision}...${candidate.revision}`));
+      if (comparison.status !== "ahead") continue;
+    }
+    const ancestry = object(await api(`compare/${candidate.revision}...main`));
+    if (!new Set(["ahead", "identical"]).has(String(ancestry.status))) continue;
+    if (typeof ancestry.ahead_by !== "number") throw new Error("Invalid comparison response");
+    onMain.push({ ...candidate, distance: ancestry.ahead_by });
+  }
+  onMain.sort((a, b) => a.distance - b.distance);
+  let draft: (typeof drafts)[number] | null = null;
+  for (const candidate of onMain) {
+    const ci = object(
+      await api(
+        `actions/workflows/ci.yml/runs?head_sha=${candidate.revision}&branch=main&event=push&status=success&per_page=1`,
+      ),
+    );
+    if (Array.isArray(ci.workflow_runs) && ci.workflow_runs.length) {
+      draft = candidate;
+      break;
+    }
+  }
+  if (!draft) {
+    log("No newer debug build with successful CI is ready; current install preserved.");
     return;
   }
-  const ancestry = object(await api(`compare/${revision}...main`));
-  if (!new Set(["ahead", "identical"]).has(String(ancestry.status)))
-    throw new Error("Debug build is not on main");
-  const installedPath = join(root, "installed.json");
-  if (await exists(installedPath)) {
-    const installed = buildInfo(await json(installedPath));
-    if (installed.revision === revision) {
-      await writeFile(checkFile, revision);
-      return;
-    }
-    const comparison = object(await api(`compare/${installed.revision}...${revision}`));
-    if (comparison.status !== "ahead")
-      throw new Error("Refusing a debug downgrade or divergent history");
+  const { revision, tag } = draft;
+  if (installed?.revision === revision) {
+    await writeFile(checkFile, revision);
+    return;
   }
   const dir = join(builds, revision);
   if (!(await exists(dir))) {

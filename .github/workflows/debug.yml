@@ -78,6 +78,10 @@ jobs:
           tar -czf Carrier-debug-linux.tar.gz -C src-tauri/target/debug carrier
           cp scripts/debug/{update,policy}.ts .
           bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Carrier-debug-linux.tar.gz update.ts policy.ts
+      - name: Test the debug installer end to end
+        env:
+          CARRIER_TEST_BINARY: src-tauri/target/debug/carrier
+        run: bun test scripts/debug/install.test.ts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: carrier-debug-linux-x86_64

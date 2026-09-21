@@ -516,12 +516,12 @@ pub(crate) async fn open_manual_update() -> Result<(), String> {
         return Err("This Carrier installation supports built-in updates.".into());
     };
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         open::that_detached(manual_url).map_err(|error| error.to_string())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = manual_url;
         Err("No manual update page is configured for this platform.".into())

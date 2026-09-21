@@ -1180,8 +1180,6 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     var stored = JSON.parse(localStorage.getItem('__carrier_settings') || 'null');
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) {{
       var merged = Object.assign({{}}, baked, stored);
-      // The persisted native setting wins immediately, including before IPC.
-      merged.hold_failures = baked.hold_failures;
       if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations') {{
         merged.badge_mode = baked.badge_mode;
       }}

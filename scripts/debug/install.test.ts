@@ -48,13 +48,24 @@ test.skipIf(!executable || process.platform !== "linux")(
           .update(await readFile(join(artifacts, file)))
           .digest("hex");
       await writeFile(join(artifacts, "build.json"), JSON.stringify({ ...info, files: hashes }));
+      const olderRevision = "0".repeat(40);
       const stub = `#!${process.execPath}
 import { copyFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 const a = process.argv.slice(2);
 if (a[0] === "api") {
   const path = a[1];
-  console.log(JSON.stringify(path.includes("releases?") ? [{draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"}] : path.includes("compare/") ? {status:"ahead"} : {workflow_runs:[{id:1,head_sha:${JSON.stringify(info.revision)}}]}));
+  let response;
+  if (path.includes("releases?")) response = [
+    {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${olderRevision}"},
+    {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"},
+  ];
+  else if (path === "compare/${olderRevision}...main") response = {status:"ahead",ahead_by:2};
+  else if (path === "compare/${info.revision}...main") response = {status:"ahead",ahead_by:1};
+  else if (path === "compare/${info.revision}...${olderRevision}") response = {status:"behind"};
+  else if (path.includes("compare/")) response = {status:"ahead",ahead_by:1};
+  else response = {workflow_runs:[{id:1,head_sha:${JSON.stringify(info.revision)}}]};
+  console.log(JSON.stringify(response));
 } else {
   const dir = a[a.indexOf("--dir")+1];
   for (const name of await readdir(${JSON.stringify(artifacts)})) await copyFile(join(${JSON.stringify(artifacts)},name),join(dir,name === "build.json" ? "build-linux-x86_64.json" : name));
