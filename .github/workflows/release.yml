@@ -31,9 +31,6 @@ concurrency:
 permissions:
   contents: write
   actions: read
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -95,6 +92,12 @@ jobs:
   # Exercise the same signing/notarization inputs without creating release
   # assets. This makes nested-extension acceptance testable before a version tag.
   debug_builds:
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     if: github.event_name != 'workflow_dispatch' || !inputs.notarization_smoke
     uses: ./.github/workflows/debug.yml
     with:

@@ -18,9 +18,6 @@ on:
 permissions:
   contents: write
   actions: read
-  id-token: write
-  attestations: write
-  artifact-metadata: write
 
 concurrency:
   group: debug-${{ inputs.source_ref || github.sha }}
@@ -45,6 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           revision=$(git rev-parse HEAD)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$revision" != "$GITHUB_SHA" ]; then
+            echo "source_ref must resolve to the workflow dispatch commit ($GITHUB_SHA)." >&2
+            exit 1
+          fi
           version=$(node -p 'require("./package.json").version')
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
@@ -53,6 +54,12 @@ jobs:
 
   linux:
     needs: source
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
     runs-on: ubuntu-22.04

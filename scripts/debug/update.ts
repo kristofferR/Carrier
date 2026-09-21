@@ -77,6 +77,15 @@ async function atomicJson(path: string, value: unknown) {
   await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
   await rename(temp, path);
 }
+async function removeStagedBestEffort(path: string) {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    console.error(
+      `Failed to remove staged install: ${error instanceof Error ? error.message : error}`,
+    );
+  }
+}
 async function running() {
   const { out, status } = await command(
     ["pgrep", "-u", String(userInfo().uid), "-x", "carrier"],
@@ -241,7 +250,7 @@ async function install(dir: string, info: BuildInfo) {
   } catch (error) {
     if (await exists(target)) await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
-    await rm(staged, { recursive: true, force: true });
+    await removeStagedBestEffort(staged);
     throw error;
   }
   try {
@@ -273,7 +282,7 @@ async function install(dir: string, info: BuildInfo) {
   } catch (error) {
     await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
-    await rm(staged, { recursive: true, force: true });
+    await removeStagedBestEffort(staged);
     throw error;
   }
   await rm(join(root, "pending.json"), { force: true });
