@@ -12,6 +12,7 @@
  * (or none at all) before the first settings push lands.
  */
 interface CarrierSettings {
+  hold_failures?: boolean;
   always_on_top?: boolean;
   show_tray?: boolean;
   /** macOS/Linux tray artwork: the full-color icon or a monochrome glyph. */
@@ -168,6 +169,7 @@ interface Window {
   /** Respond to the native renderer watchdog without exposing page content. */
   __carrierHeartbeat?: (expectedId: number) => void;
   __carrierRateLimitRetry?: (expectedId: number, expires: number) => void;
+  __carrierCaptureRecovery?: () => Promise<void>;
 }
 
 interface XMLHttpRequest {

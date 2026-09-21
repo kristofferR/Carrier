@@ -976,9 +976,27 @@
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
-    const maybeReload = () => {
+    const captureRecovery = async () => {
+      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+      await Promise.race([
+        invoke("plugin:event|emit", {
+          event: "carrier:diag",
+          payload: { key: "recovery.snapshot", msg: snapshot }
+        })?.catch?.(() => {
+        }),
+        new Promise((resolve) => nativeSetTimeout3(resolve, 500))
+      ]);
+    };
+    window.__carrierCaptureRecovery = captureRecovery;
+    let capturingRecovery = false;
+    const maybeReload = async () => {
       timer = void 0;
-      if (!pending) return;
+      if (!pending || capturingRecovery) return;
+      if (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual") {
+        diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+        clearPending();
+        return;
+      }
       if (systemSleeping || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
         clearPending();
         return;
@@ -1012,6 +1030,20 @@
           sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()));
         } catch (_) {
         }
+      }
+      const capturedReason = pendingReason;
+      capturingRecovery = true;
+      try {
+        await captureRecovery();
+      } catch (_) {
+        diag("recovery.snapshot-failed", "could not capture page state before recovery");
+      } finally {
+        capturingRecovery = false;
+      }
+      if (!pending || capturedReason !== pendingReason) return;
+      if (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" || heartbeatProtection() || systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
+        clearPending();
+        return;
       }
       pending = false;
       if (reloadRequestedAt === void 0) {

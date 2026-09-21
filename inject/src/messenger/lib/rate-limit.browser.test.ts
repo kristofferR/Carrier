@@ -307,6 +307,17 @@ async function runFixtures(
     tick();
     runTimer(1000);
     assert("new cooldown invalidates the previous grant", probeRequests.length === 2);
+    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    const probesBeforeHold = probeRequests.length;
+    report("graphql-1675004", 1000);
+    now += 1001;
+    tick();
+    runTimer(1000);
+    assert(
+      "hold failures prevents automatic retry coordination",
+      probeRequests.length === probesBeforeHold,
+    );
+    window.__CARRIER_SETTINGS__ = { hold_failures: false };
     report("graphql-1675004");
     const firstAccount = localStorage.getItem("carrier-rate-limit:123");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.

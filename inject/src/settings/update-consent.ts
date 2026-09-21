@@ -19,6 +19,7 @@ type StateListener = (state: UpdateUiState) => void;
 
 type UpdateInstallMode =
   | { kind: "built-in" }
+  | { kind: "debug"; buttonLabel: string; instructions: string }
   | { kind: "manual"; buttonLabel: string; instructions: string };
 
 function parseInstallMode(value: unknown): UpdateInstallMode {
@@ -27,7 +28,7 @@ function parseInstallMode(value: unknown): UpdateInstallMode {
   }
   if (value.kind === "built-in") return { kind: "built-in" };
   if (
-    value.kind === "manual" &&
+    (value.kind === "manual" || value.kind === "debug") &&
     "buttonLabel" in value &&
     typeof value.buttonLabel === "string" &&
     value.buttonLabel &&
@@ -36,7 +37,7 @@ function parseInstallMode(value: unknown): UpdateInstallMode {
     value.instructions
   ) {
     return {
-      kind: "manual",
+      kind: value.kind,
       buttonLabel: value.buttonLabel,
       instructions: value.instructions,
     };
@@ -96,6 +97,14 @@ export class UpdateConsentController {
       this.invoke("discovered_update"),
     ]);
     this.installMode = parseInstallMode(rawInstallMode);
+    if (this.installMode.kind === "debug") {
+      return this.publish({
+        phase: "idle",
+        buttonLabel: this.installMode.buttonLabel,
+        status: this.installMode.instructions,
+        busy: false,
+      });
+    }
     if (typeof discovered === "string" && discovered) {
       this.version = discovered;
       return this.publish(availableState(discovered, this.installMode));
@@ -110,6 +119,15 @@ export class UpdateConsentController {
 
   async activate(): Promise<UpdateUiState> {
     if (!this.installMode) throw new Error("update controller was not initialized");
+    if (this.installMode.kind === "debug") {
+      await this.invoke("open_manual_update");
+      return this.publish({
+        phase: "idle",
+        buttonLabel: this.installMode.buttonLabel,
+        status: this.installMode.instructions,
+        busy: false,
+      });
+    }
     if (!this.version) {
       this.publish({
         phase: "checking",

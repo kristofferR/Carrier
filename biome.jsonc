@@ -9,7 +9,7 @@
     // path it is given, and a project-local worktree checks out this very file,
     // which it then rejects as a second root configuration. Narrowing the
     // argument keeps that walk inside the only tree we lint.
-    "includes": ["inject/**"]
+    "includes": ["inject/**", "scripts/debug/**"]
   },
   "formatter": {
     "enabled": true,

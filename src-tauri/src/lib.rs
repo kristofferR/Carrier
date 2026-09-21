@@ -22,6 +22,7 @@ mod actions;
 mod cli;
 mod commands;
 mod custom_css;
+mod debug_install;
 mod diag;
 mod download;
 mod hotkey;
@@ -986,7 +987,16 @@ fn is_isolated_mcp_socket(path: Option<&std::path::Path>) -> bool {
     path.is_some_and(|path| path != std::path::Path::new(DEFAULT_MCP_SOCKET))
 }
 
+// On macOS this macro emits a linker-global Info.plist symbol, so production
+// and capability tests must share one expansion.
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
 pub fn run() {
+    if !debug_install::startup() {
+        return;
+    }
     #[cfg(target_os = "linux")]
     linux_startup::configure();
 
@@ -1959,7 +1969,7 @@ pub fn run() {
 
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("error while building Carrier")
         .run(|app, event| {
             // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
@@ -2135,7 +2145,7 @@ mod tests {
     #[cfg(all(feature = "mcp", debug_assertions))]
     #[test]
     fn debug_console_forwarding_is_allowed_only_by_the_scoped_dev_capability() {
-        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let mut context = super::app_context();
         let authority = context.runtime_authority_mut();
         let messenger = tauri::ipc::Origin::Remote {
             url: url::Url::parse("https://www.facebook.com/messages").unwrap(),

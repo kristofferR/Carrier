@@ -114,6 +114,8 @@ pub(crate) struct Settings {
     /// Where downloads go: "downloads" saves automatically to the system
     /// Downloads folder, while "ask" opens a native save dialog first.
     pub(crate) download_behavior: String,
+    /// Keep broken webviews intact for live inspection. Manual reload still works.
+    pub(crate) hold_failures: bool,
 }
 
 /// Valid page-zoom range in percent (matches the keyboard zoom in
@@ -200,6 +202,7 @@ impl Default for Settings {
             strip_link_tracking: true,
             send_with_accelerator: false,
             download_behavior: "downloads".into(),
+            hold_failures: false,
         }
     }
 }

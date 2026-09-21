@@ -100,6 +100,7 @@ pub(crate) struct UpdateInstallMode {
 enum UpdateInstallKind {
     BuiltIn,
     Manual,
+    Debug,
 }
 
 impl UpdateInstallMode {
@@ -154,7 +155,7 @@ impl UpdateInstallMode {
     }
 
     fn is_manual(&self) -> bool {
-        self.kind == UpdateInstallKind::Manual
+        self.kind == UpdateInstallKind::Manual || self.kind == UpdateInstallKind::Debug
     }
 }
 
@@ -270,6 +271,16 @@ fn linux_update_install_mode(
 }
 
 fn current_update_install_mode() -> UpdateInstallMode {
+    if cfg!(debug_assertions) {
+        return UpdateInstallMode {
+            kind: UpdateInstallKind::Debug,
+            button_label: Some("Debug build instructions".into()),
+            instructions: Some(crate::debug_install::UPDATE_INSTRUCTIONS.into()),
+            manual_url: Some(
+                "https://github.com/kristofferR/Carrier/blob/main/docs/debug-installs.md",
+            ),
+        };
+    }
     #[cfg(target_os = "linux")]
     {
         linux_update_install_mode(
@@ -316,6 +327,7 @@ pub(crate) struct RuntimeCapabilities {
     autostart: bool,
     automatic_update_checks: bool,
     multi_instance: bool,
+    debug: bool,
 }
 
 /// Tell the trusted Settings page which host-owned features the package can
@@ -326,8 +338,9 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
     RuntimeCapabilities {
         snap,
         autostart: !snap,
-        automatic_update_checks: !snap,
+        automatic_update_checks: !snap && !cfg!(debug_assertions),
         multi_instance: !snap,
+        debug: cfg!(debug_assertions),
     }
 }
 
@@ -428,6 +441,7 @@ pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, St
 async fn available_update_unlocked(
     app: &tauri::AppHandle,
 ) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    crate::debug_install::release_updates_allowed()?;
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
     updater.check().await.map_err(|e| e.to_string())
@@ -594,6 +608,9 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
 /// Enabling the preference wakes the task immediately rather than waiting for
 /// the next periodic tick.
 pub(crate) fn spawn_automatic_update_checks(app: tauri::AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         loop {
             let enabled = app
@@ -690,6 +707,7 @@ pub(crate) async fn install_update(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    crate::debug_install::release_updates_allowed()?;
     if let Some(instructions) = current_update_install_mode_off_main().await?.instructions {
         return Err(instructions);
     }

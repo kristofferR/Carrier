@@ -10,13 +10,27 @@ the WKWebView/title-bar trouble.
 
 ---
 
+## Kris's machines: always install diagnostics builds
+
+On Kris's MacBook and Omarchy, install **only** debug builds with the `diagnostics`
+Cargo feature (`--debug --features diagnostics`). This is a permanent build policy,
+not a version pin. Never install public release artifacts, Homebrew casks, or AUR
+packages on these machines. Public packaging remains for other users.
+
+Use the managed `carrier-debug-update` path in [docs/debug-installs.md](docs/debug-installs.md).
+It follows CI-built debug drafts made before public builds (or manually from main),
+stages updates while Carrier runs, and installs
+only while quit. Preserve a live failure until Kris authorizes restarting it.
+Do not overwrite the app manually or drop matching symbols. MCP/DevTools, native
+logging, backtraces, and instrumentation must be enabled for every personal build.
+
 ## Build / run / install
 
 ```bash
 # from repo root
 bun install
 bun run tauri build               # release-ish bundle (debug symbols unless --release config)
-bun run tauri build --debug --bundles app   # fast debug .app only
+bun run tauri build --debug --features diagnostics --bundles app   # fast debug .app only
 
 # signed macOS release (Developer ID) — for the real install:
 export APPLE_SIGNING_IDENTITY="Developer ID Application: Kristoffer Risanger (S5Q742QZEL)"
@@ -65,7 +79,7 @@ click/type, etc. Plugin: [P3GLEG/tauri-plugin-mcp](https://github.com/P3GLEG/tau
 On `main` (committed `d8a25a6`).
 
 - Gated behind the Cargo **`mcp` feature** → **release builds never compile it**.
-- Build with it: `bun run tauri build --debug --features mcp --bundles app`. Debug
+- Build with it: `bun run tauri build --debug --features diagnostics --bundles app`. Debug
   builds are marked — the window title reads **"Carrier (debug)"**.
 - `.mcp.json` registers the `tauri-mcp` server — **approve the project MCP server
   when a new session prompts for it.**

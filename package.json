@@ -11,10 +11,12 @@
     "tauri": "tauri",
     "icon": "tauri icon",
     "build:inject": "bun inject/build.ts",
-    "lint": "biome check inject",
-    "format": "biome check --write inject",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
-    "check": "bun run lint && bun run typecheck && bun test && bun run build:inject"
+    "lint": "biome check inject scripts/debug",
+    "format": "biome check --write inject scripts/debug",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.tools.json",
+    "check": "bun run lint && bun run typecheck && bun test && bun run build:inject",
+    "build:debug": "tauri build --debug --features diagnostics",
+    "debug:update": "bun scripts/debug/update.ts --check"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

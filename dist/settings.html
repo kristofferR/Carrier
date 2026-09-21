@@ -109,6 +109,7 @@
         ["hide_on_focus_loss", "Hide When Focus Is Lost", "Move Carrier into the tray whenever another app gets focus."],
         ["hide_taskbar_icon", "Hide Taskbar Icon", "Keep Carrier out of the taskbar and reopen it from the tray."],
         ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Carrier asks before installing or opening package-manager instructions."],
+        ["hold_failures", "Hold Failures for Investigation", "Keep a broken Messenger view intact. Diagnostics continue, but automatic reloads and rebuilds pause. Manual reload still works."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs from links you copy or open in your browser."],
@@ -163,7 +164,7 @@
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
                    "unread_badge", "ignore_muted_conversations", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["automatic_update_checks", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
+          fields: ["automatic_update_checks", "hold_failures", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -337,6 +338,8 @@
         } else if (runtimeUnavailable) {
           if (!runtimeCapabilities) {
             hint = "Unavailable because Carrier could not verify this runtime capability.";
+          } else if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
+            hint = "Debug drafts are managed by carrier-debug-update. Release updates are blocked.";
           } else if (key === "multi_instance") {
             hint = "The Snap package supports one Carrier process at a time.";
           } else if (runtimeCapabilities.snap) {
