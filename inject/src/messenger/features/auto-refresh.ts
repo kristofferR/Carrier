@@ -193,9 +193,28 @@ export function initAutoRefresh() {
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("carrier:protection-change", emitProtectionChange);
   emitHeartbeat();
-  const maybeReload = () => {
+  const captureRecovery = async () => {
+    // Counts and booleans only: never serialize DOM, URLs, names, or drafts.
+    const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+    await Promise.race([
+      invoke("plugin:event|emit", {
+        event: "carrier:diag",
+        payload: { key: "recovery.snapshot", msg: snapshot },
+      })?.catch?.(() => {}),
+      new Promise<void>((resolve) => nativeSetTimeout(resolve, 500)),
+    ]);
+  };
+  window.__carrierCaptureRecovery = captureRecovery;
+  let capturingRecovery = false;
+  const recoveryHeld = () =>
+    window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
+  const maybeReload = async () => {
     timer = undefined;
-    if (!pending) return;
+    if (!pending || capturingRecovery) return;
+    if (recoveryHeld()) {
+      diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+      return;
+    }
     if (systemSleeping || (rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual")) {
       clearPending();
       return;
@@ -234,6 +253,30 @@ export function initAutoRefresh() {
         sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()));
       } catch (_) {}
     }
+    const capturedReason = pendingReason;
+    capturingRecovery = true;
+    try {
+      await captureRecovery();
+    } catch (_) {
+      diag("recovery.snapshot-failed", "could not capture page state before recovery");
+    } finally {
+      capturingRecovery = false;
+    }
+    if (!pending || capturedReason !== pendingReason) return;
+    // Settings or a draft/call may have changed while IPC was pending.
+    if (recoveryHeld()) {
+      diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+      return;
+    }
+    if (
+      heartbeatProtection() ||
+      systemSleeping ||
+      !navigator.onLine ||
+      (rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual")
+    ) {
+      clearPending();
+      return;
+    }
     pending = false;
     // A reload request is not proof of a replacement document. This timeout
     // disappears on real navigation; surviving it exposes cancelled/stuck loads.
@@ -250,6 +293,11 @@ export function initAutoRefresh() {
     }
     location.reload();
   };
+  window.addEventListener("carrier:settings", () => {
+    if (pending && timer === undefined && !recoveryHeld()) {
+      timer = setTimeout(maybeReload, 0);
+    }
+  });
   window.__carrierRateLimitRetry = (expectedId, expires) => {
     if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
     if (!pending || pendingReason !== "rate-limit") return;
@@ -372,7 +420,7 @@ export function initAutoRefresh() {
       emitHeartbeat();
       return;
     }
-    if (waitingForRateLimit) {
+    if (waitingForRateLimit && !window.__CARRIER_SETTINGS__?.hold_failures) {
       waitingForRateLimit = false;
       window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
       diag(

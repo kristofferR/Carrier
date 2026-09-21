@@ -20,6 +20,8 @@ tauri-build = { version = "2", features = [] }
 # Dev-only AI/DOM inspection over a local socket. Enable with `--features mcp`
 # (e.g. `cargo tauri dev --features mcp`); never enabled for release builds.
 mcp = ["dep:tauri-plugin-mcp"]
+# Personal installs always use this feature together with --debug.
+diagnostics = ["mcp", "tauri-plugin-mcp/devtools"]
 
 [dependencies]
 tauri = { version = "2", features = ["image-png"] }

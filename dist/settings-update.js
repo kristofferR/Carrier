@@ -34,9 +34,9 @@ var CarrierSettingsUpdate = (() => {
       throw new Error("missing update install mode");
     }
     if (value.kind === "built-in") return { kind: "built-in" };
-    if (value.kind === "manual" && "buttonLabel" in value && typeof value.buttonLabel === "string" && value.buttonLabel && "instructions" in value && typeof value.instructions === "string" && value.instructions) {
+    if ((value.kind === "manual" || value.kind === "debug") && "buttonLabel" in value && typeof value.buttonLabel === "string" && value.buttonLabel && "instructions" in value && typeof value.instructions === "string" && value.instructions) {
       return {
-        kind: "manual",
+        kind: value.kind,
         buttonLabel: value.buttonLabel,
         instructions: value.instructions
       };
@@ -77,6 +77,14 @@ var CarrierSettingsUpdate = (() => {
         this.invoke("discovered_update")
       ]);
       this.installMode = parseInstallMode(rawInstallMode);
+      if (this.installMode.kind === "debug") {
+        return this.publish({
+          phase: "idle",
+          buttonLabel: this.installMode.buttonLabel,
+          status: this.installMode.instructions,
+          busy: false
+        });
+      }
       if (typeof discovered === "string" && discovered) {
         this.version = discovered;
         return this.publish(availableState(discovered, this.installMode));
@@ -90,6 +98,15 @@ var CarrierSettingsUpdate = (() => {
     }
     async activate() {
       if (!this.installMode) throw new Error("update controller was not initialized");
+      if (this.installMode.kind === "debug") {
+        await this.invoke("open_manual_update");
+        return this.publish({
+          phase: "idle",
+          buttonLabel: this.installMode.buttonLabel,
+          status: this.installMode.instructions,
+          busy: false
+        });
+      }
       if (!this.version) {
         this.publish({
           phase: "checking",

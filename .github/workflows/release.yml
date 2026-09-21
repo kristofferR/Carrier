@@ -30,6 +30,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -90,6 +91,19 @@ jobs:
 
   # Exercise the same signing/notarization inputs without creating release
   # assets. This makes nested-extension acceptance testable before a version tag.
+  debug_builds:
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    if: github.event_name != 'workflow_dispatch' || !inputs.notarization_smoke
+    uses: ./.github/workflows/debug.yml
+    with:
+      source_ref: ${{ github.sha }}
+    secrets: inherit
+
   notarization_smoke:
     if: github.event_name == 'workflow_dispatch' && inputs.notarization_smoke
     runs-on: macos-latest
@@ -146,7 +160,8 @@ jobs:
           set -euo pipefail
           build_args=()
           if [ "$DEBUG_BUILD" = "true" ]; then
-            build_args+=(--debug --features mcp,tauri-plugin-mcp/devtools)
+            build_args+=(--debug --features diagnostics)
+            export CARRIER_BUILD_REVISION="$(git rev-parse HEAD)"
           fi
           bun run tauri build --bundles app --ci "${build_args[@]}" \
             --config src-tauri/tauri.conf.release.json \
@@ -298,7 +313,7 @@ jobs:
           echo "Using curated draft release: $name"
 
   build:
-    needs: [check, prepare_release]
+    needs: [check, prepare_release, debug_builds]
     strategy:
       fail-fast: false
       # Run targets one at a time: tauri-action's updater step reads the

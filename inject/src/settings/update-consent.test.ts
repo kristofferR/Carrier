@@ -153,3 +153,22 @@ describe("UpdateConsentController", () => {
     });
   });
 });
+
+test("debug installs never query or install public releases", async () => {
+  const calls: string[] = [];
+  const controller = new UpdateConsentController(async (command) => {
+    calls.push(command);
+    if (command === "update_install_mode")
+      return {
+        kind: "debug",
+        buttonLabel: "Debug build instructions",
+        instructions: "Follows main",
+      };
+    if (command === "discovered_update") return "9.0.0";
+    if (command === "open_manual_update") return;
+    throw new Error(`Release updater reached: ${command}`);
+  });
+  expect((await controller.initialize()).status).toBe("Follows main");
+  await controller.activate();
+  expect(calls).toEqual(["update_install_mode", "discovered_update", "open_manual_update"]);
+});

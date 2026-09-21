@@ -307,6 +307,20 @@ async function runFixtures(
     tick();
     runTimer(1000);
     assert("new cooldown invalidates the previous grant", probeRequests.length === 2);
+    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    const probesBeforeHold = probeRequests.length;
+    report("graphql-1675004", 1000);
+    now += 1001;
+    tick();
+    assert(
+      "hold failures keeps automatic retry queued without coordinating it",
+      probeRequests.length === probesBeforeHold &&
+        ![...timers.values()].some((t) => t.delay === 1000),
+    );
+    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    tick();
+    runTimer(1000);
+    assert("releasing hold resumes queued retry", probeRequests.length === probesBeforeHold + 1);
     report("graphql-1675004");
     const firstAccount = localStorage.getItem("carrier-rate-limit:123");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.
@@ -323,6 +337,25 @@ async function runFixtures(
     document.cookie = "c_user=123; path=/";
     init();
     assert("returning to an account restores its own cooldown", remaining() > 0);
+    now += remaining() + 1;
+    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    window.dispatchEvent(
+      new CustomEvent("carrier:power-state", { detail: { sleeping: true, resume_generation: 2 } }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("carrier:power-state", { detail: { sleeping: false, resume_generation: 3 } }),
+    );
+    runTimer(1000);
+    assert(
+      "failure hold parks a due resume recovery",
+      ![...timers.values()].some((timer) => timer.delay === 0 || timer.delay === 1000),
+    );
+    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.dispatchEvent(new Event("carrier:settings"));
+    assert(
+      "releasing failure hold re-arms the due resume recovery",
+      [...timers.values()].some((timer) => timer.delay === 0),
+    );
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

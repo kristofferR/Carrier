@@ -976,9 +976,27 @@
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
-    const maybeReload = () => {
+    const captureRecovery = async () => {
+      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+      await Promise.race([
+        invoke("plugin:event|emit", {
+          event: "carrier:diag",
+          payload: { key: "recovery.snapshot", msg: snapshot }
+        })?.catch?.(() => {
+        }),
+        new Promise((resolve) => nativeSetTimeout3(resolve, 500))
+      ]);
+    };
+    window.__carrierCaptureRecovery = captureRecovery;
+    let capturingRecovery = false;
+    const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
+    const maybeReload = async () => {
       timer = void 0;
-      if (!pending) return;
+      if (!pending || capturingRecovery) return;
+      if (recoveryHeld()) {
+        diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+        return;
+      }
       if (systemSleeping || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
         clearPending();
         return;
@@ -1013,6 +1031,24 @@
         } catch (_) {
         }
       }
+      const capturedReason = pendingReason;
+      capturingRecovery = true;
+      try {
+        await captureRecovery();
+      } catch (_) {
+        diag("recovery.snapshot-failed", "could not capture page state before recovery");
+      } finally {
+        capturingRecovery = false;
+      }
+      if (!pending || capturedReason !== pendingReason) return;
+      if (recoveryHeld()) {
+        diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+        return;
+      }
+      if (heartbeatProtection() || systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
+        clearPending();
+        return;
+      }
       pending = false;
       if (reloadRequestedAt === void 0) {
         reloadRequestedAt = nativeNow();
@@ -1027,6 +1063,11 @@
       }
       location.reload();
     };
+    window.addEventListener("carrier:settings", () => {
+      if (pending && timer === void 0 && !recoveryHeld()) {
+        timer = setTimeout(maybeReload, 0);
+      }
+    });
     window.__carrierRateLimitRetry = (expectedId, expires) => {
       if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
       if (!pending || pendingReason !== "rate-limit") return;
@@ -1127,7 +1168,7 @@
         emitHeartbeat();
         return;
       }
-      if (waitingForRateLimit) {
+      if (waitingForRateLimit && !window.__CARRIER_SETTINGS__?.hold_failures) {
         waitingForRateLimit = false;
         window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
         diag(

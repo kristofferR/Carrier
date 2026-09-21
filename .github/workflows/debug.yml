@@ -1,0 +1,298 @@
+name: Debug builds
+
+# Reused by the public release workflow as a mandatory first build stage.
+# Manual runs prepare unreleased main commits for personal installs.
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source commit or ref for the personal debug draft
+        type: string
+        default: main
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: debug-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    outputs:
+      revision: ${{ steps.identity.outputs.revision }}
+      version: ${{ steps.identity.outputs.version }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - id: identity
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$revision" != "$GITHUB_SHA" ]; then
+            echo "source_ref must resolve to the workflow dispatch commit ($GITHUB_SHA)." >&2
+            exit 1
+          fi
+          version=$(node -p 'require("./package.json").version')
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=debug-v${version}-${revision:0:12}" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: source
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.revision }}
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          key: diagnostics
+      - run: bun install --frozen-lockfile
+      - name: Test diagnostics build
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --features diagnostics
+      - name: Build with all diagnostics and embedded debug symbols
+        run: |
+          bun run tauri build --debug --features diagnostics --no-bundle --ci
+          readelf -S src-tauri/target/debug/carrier | grep -q .debug_info
+          tar -czf Carrier-debug-linux.tar.gz -C src-tauri/target/debug carrier
+          cp scripts/debug/{update,policy}.ts .
+          bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Carrier-debug-linux.tar.gz update.ts policy.ts
+      - name: Attest Linux debug artifacts
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            Carrier-debug-linux.tar.gz
+            build.json
+      - name: Test the debug installer end to end
+        env:
+          CARRIER_TEST_BINARY: src-tauri/target/debug/carrier
+        run: bun test scripts/debug/install.test.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carrier-debug-linux-x86_64
+          path: |
+            Carrier-debug-linux.tar.gz
+            build.json
+            update.ts
+            policy.ts
+          if-no-files-found: error
+          retention-days: 3
+
+  macos:
+    needs: source
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.source.outputs.revision }}
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The share-extension hook runs before Tauri imports APPLE_CERTIFICATE
+      # for outer-app signing, so make the identity available to codesign now.
+      - name: Import the Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/carrier-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          CERTIFICATE_PATH="$RUNNER_TEMP/carrier-signing.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Test diagnostics build
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --features diagnostics
+
+      - name: Build, sign, and notarize the macOS app
+        env:
+          CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          bun run tauri build --debug --features diagnostics --bundles app --ci \
+            --config src-tauri/tauri.conf.release.json \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Verify Gatekeeper and the stapled nested bundle
+        run: |
+          set -euo pipefail
+          profile=debug
+          APP=""
+          for candidate in src-tauri/target/"$profile"/bundle/macos/*.app; do
+            if [ -d "$candidate" ]; then
+              APP="$candidate"
+              break
+            fi
+          done
+          if [ -z "$APP" ]; then
+            echo "No notarized macOS app bundle found." >&2
+            exit 1
+          fi
+          PLIST="$APP/Contents/Info.plist"
+          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
+            echo "The Carrier Share extension is missing from $APP." >&2
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign --verify --strict --verbose=2 "$APPEX"
+          sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
+            | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
+          if [ "$sandbox" != "true" ]; then
+            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            exit 1
+          fi
+          app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          appex_version=$(/usr/libexec/PlistBuddy \
+            -c 'Print :CFBundleShortVersionString' "$APPEX/Contents/Info.plist")
+          if [ "$appex_version" != "$app_version" ]; then
+            echo "Share extension version $appex_version does not match app $app_version." >&2
+            exit 1
+          fi
+          spctl --assess --type execute --verbose=2 "$APP"
+          xcrun stapler validate "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Carrier-debug-macos.zip
+          symbols=src-tauri/target/debug/carrier.dSYM
+          app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
+          symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
+          if [ -z "$app_uuid" ] || [ "$app_uuid" != "$symbols_uuid" ]; then
+            echo "Debug symbols do not match the signed app." >&2
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$symbols" Carrier-debug-symbols.zip
+
+      - name: Record debug identity and checksums
+        run: |
+          cp scripts/debug/{update,policy}.ts .
+          bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Carrier.app/Contents/MacOS/carrier Carrier-debug-macos.zip Carrier-debug-symbols.zip update.ts policy.ts
+
+      - name: Attest macOS debug manifest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: build.json
+
+      - name: Upload notarized debug app
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carrier-debug-macos-aarch64
+          path: |
+            Carrier-debug-macos.zip
+            Carrier-debug-symbols.zip
+            build.json
+            update.ts
+            policy.ts
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove the temporary signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/carrier-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/carrier-signing.p12"
+
+
+  draft:
+    needs: [source, linux, macos]
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      DEBUG_TAG: ${{ needs.source.outputs.tag }}
+      DEBUG_VERSION: ${{ needs.source.outputs.version }}
+      DEBUG_REVISION: ${{ needs.source.outputs.revision }}
+    steps:
+      - name: Download Linux debug build
+        run: gh run download "$GITHUB_RUN_ID" --name carrier-debug-linux-x86_64 --dir linux
+      - name: Download macOS debug build
+        run: gh run download "$GITHUB_RUN_ID" --name carrier-debug-macos-aarch64 --dir macos
+      - name: Prepare the personal draft and attach verified builds
+        run: |
+          set -euo pipefail
+          # Names outside v* can never trigger the public release workflow.
+          [[ "$DEBUG_TAG" == debug-v* ]]
+          if gh release view "$DEBUG_TAG" --json isDraft,body > existing.json 2>/dev/null; then
+            test "$(jq -r .isDraft existing.json)" = true
+            if jq -e --arg commit "$DEBUG_REVISION" '.body == ("Carrier debug ready\nCommit: " + $commit)' existing.json >/dev/null; then
+              echo "This commit already has a complete debug draft."
+              exit 0
+            fi
+          else
+            printf 'Preparing personal debug builds.\nCommit: %s\n' "$DEBUG_REVISION" > notes.txt
+            gh release create "$DEBUG_TAG" --draft --prerelease --target "$DEBUG_REVISION" \
+              --title "Carrier $DEBUG_VERSION debug (${DEBUG_REVISION:0:12})" --notes-file notes.txt
+          fi
+          mv linux/build.json linux/build-linux-x86_64.json
+          mv macos/build.json macos/build-macos-aarch64.json
+          cmp linux/update.ts macos/update.ts
+          cmp linux/policy.ts macos/policy.ts
+          gh release upload "$DEBUG_TAG" --clobber \
+            linux/Carrier-debug-linux.tar.gz linux/build-linux-x86_64.json \
+            macos/Carrier-debug-macos.zip macos/Carrier-debug-symbols.zip macos/build-macos-aarch64.json \
+            linux/update.ts linux/policy.ts
+          # Readiness is committed only after both platforms and symbols exist.
+          # Keep this a draft forever; never use --draft=false here.
+          printf 'Carrier debug ready\nCommit: %s' "$DEBUG_REVISION" > notes.txt
+          gh release edit "$DEBUG_TAG" --draft --notes-file notes.txt

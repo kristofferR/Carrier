@@ -21,6 +21,16 @@ use crate::url_rules::{is_messenger_content_url, is_messenger_web_url};
 use crate::MESSENGER_DNS_TIMEOUT;
 
 const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
+
+fn hold_failures(window: &WebviewWindow) -> bool {
+    window
+        .app_handle()
+        .state::<crate::settings::AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .hold_failures
+}
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const PING_RESPONSE_GRACE: Duration = Duration::from_millis(250);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -571,6 +581,7 @@ impl WebviewWatchdog {
             if payload.rate_limit_retry == Some(true)
                 && payload.rate_limit_ms == Some(0)
                 && !payload.protected
+                && !hold_failures(&listener_window)
             {
                 let permit = recovery_coordinator()
                     .lock()
@@ -619,6 +630,7 @@ impl WebviewWatchdog {
         let label = window.label().to_string();
         tauri::async_runtime::spawn(async move {
             let mut next_recovery_attempt = Duration::ZERO;
+            let mut held_reported = false;
             #[cfg(target_os = "macos")]
             let mut resume_generation = crate::macos::power::resume_generation();
             loop {
@@ -670,7 +682,9 @@ impl WebviewWatchdog {
                     state.action(started_at.elapsed())
                 };
                 match action {
-                    WatchdogAction::None | WatchdogAction::Protected => {}
+                    WatchdogAction::None | WatchdogAction::Protected => {
+                        held_reported = false;
+                    }
                     WatchdogAction::RenderExhausted => {
                         state.lock().unwrap().render.exhausted();
                         log::warn!("Messenger webview {label} frames still stalled after rebuilding; automatic frame recovery stopped until frames stay healthy for a minute");
@@ -687,6 +701,24 @@ impl WebviewWatchdog {
                         if now < next_recovery_attempt {
                             continue;
                         }
+                        if hold_failures(&watchdog_window) {
+                            if !held_reported {
+                                log::warn!(
+                                    "webview {label} recovery {action:?} held for investigation"
+                                );
+                                let snapshot = state.lock().unwrap();
+                                log::warn!("held recovery snapshot: heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
+                                    snapshot.last_heartbeat_at.map(|last| started_at.elapsed().saturating_sub(last).as_millis()),
+                                    snapshot.protected, snapshot.missing_content_since.is_some(),
+                                    snapshot.realtime_bad_since.is_some(), snapshot.render);
+                                drop(snapshot);
+                                let _ =
+                                    watchdog_window.eval("window.__carrierCaptureRecovery?.();");
+                                held_reported = true;
+                            }
+                            continue;
+                        }
+                        held_reported = false;
                         let account = state.lock().unwrap().rate_limit_account.clone();
                         if recovery_coordinator()
                             .lock()
@@ -735,6 +767,30 @@ impl WebviewWatchdog {
                         }
                         if !reachable {
                             next_recovery_attempt = now + REACHABILITY_RETRY;
+                            continue;
+                        }
+
+                        {
+                            let snapshot = state.lock().unwrap();
+                            log::warn!("recovery snapshot: webview={label} action={action:?} uptime_ms={} heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
+                                started_at.elapsed().as_millis(),
+                                snapshot.last_heartbeat_at.map(|last| started_at.elapsed().saturating_sub(last).as_millis()),
+                                snapshot.protected, snapshot.missing_content_since.is_some(),
+                                snapshot.realtime_bad_since.is_some(), snapshot.render);
+                        }
+                        #[cfg(target_os = "linux")]
+                        crate::linux::log_messenger_webview_state(&watchdog_window);
+                        // Give a responsive renderer a bounded chance to persist
+                        // its content-free snapshot before destroying evidence.
+                        let _ = watchdog_window.eval("window.__carrierCaptureRecovery?.();");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        #[cfg(target_os = "macos")]
+                        if crate::macos::power::is_system_sleeping()
+                            || crate::macos::power::resume_generation() != resume_generation
+                        {
+                            continue;
+                        }
+                        if hold_failures(&watchdog_window) || !alive.load(Ordering::Acquire) {
                             continue;
                         }
 
