@@ -366,16 +366,11 @@ mod windows {
         };
 
         if res != HitTestResult::NoWhere {
-          let points = POINTS {
-            x: cx as i16,
-            y: cy as i16,
-          };
-
           let _ = PostMessageW(
             Some(parent),
             WM_NCLBUTTONDOWN,
             WPARAM(res.to_win32() as _),
-            LPARAM(&points as *const _ as _),
+            lparam,
           );
         }
 
@@ -461,16 +456,16 @@ mod windows {
       SendMessageW(
         hwnd,
         WM_UPDATE_UNDECORATED_SHADOWS,
+        Some(WPARAM(has_undecorated_shadows as _)),
         None,
-        Some(LPARAM(has_undecorated_shadows as _)),
       )
     };
     unsafe {
       SendMessageW(
         child,
         WM_UPDATE_UNDECORATED_SHADOWS,
+        Some(WPARAM(has_undecorated_shadows as _)),
         None,
-        Some(LPARAM(has_undecorated_shadows as _)),
       )
     };
   }
