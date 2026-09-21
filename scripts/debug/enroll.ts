@@ -77,6 +77,8 @@ const path = [
   join(home, ".bun/bin"),
   "/opt/homebrew/bin",
   "/usr/local/bin",
+  "/usr/sbin",
+  "/sbin",
   "/usr/bin",
   "/bin",
 ].join(":");
@@ -131,7 +133,7 @@ if (mac) {
   );
   const { settings } = await loadSettings();
   if ("autostart" in settings && settings.autostart === true) {
-    const autostart = join(home, ".config/autostart");
+    const autostart = join(config, "autostart");
     await mkdir(autostart, { recursive: true });
     await writeFile(
       join(autostart, "Carrier.desktop"),

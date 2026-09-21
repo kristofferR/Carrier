@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -50,6 +51,7 @@ test.skipIf(!executable || process.platform !== "linux")(
       await writeFile(join(artifacts, "build.json"), JSON.stringify({ ...info, files: hashes }));
       const olderRevision = "0".repeat(40);
       const attestationLog = join(directory, "attestations");
+      const withdrawn = join(directory, "withdrawn");
       const stub = `#!${process.execPath}
 import { appendFile, copyFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -57,10 +59,10 @@ const a = process.argv.slice(2);
 if (a[0] === "api") {
   const path = a[1];
   let response;
-  if (path.includes("releases?")) response = [
-    {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${olderRevision}"},
-    {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"},
-  ];
+  if (path.includes("releases?")) response = await Bun.file(${JSON.stringify(withdrawn)}).exists() ? [] : [
+      {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${olderRevision}"},
+      {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"},
+    ];
   else if (path.endsWith("compare/${olderRevision}...main")) response = {status:"ahead",ahead_by:2};
   else if (path.endsWith("compare/${info.revision}...main")) response = {status:"ahead",ahead_by:1};
   else if (path.endsWith("compare/${info.revision}...${olderRevision}")) response = {status:"behind"};
@@ -76,8 +78,15 @@ if (a[0] === "api") {
 `;
       await writeFile(join(commands, "gh"), stub);
       await chmod(join(commands, "gh"), 0o755);
-      const running = async (active: boolean) => {
-        await writeFile(join(commands, "pgrep"), `#!/bin/sh\n${active ? "echo 1" : "exit 1"}\n`);
+      const processChecks = join(directory, "process-checks");
+      const running = async (active: boolean, activateAt?: number) => {
+        await rm(processChecks, { force: true });
+        const result = active
+          ? "echo 1"
+          : activateAt
+            ? `count=$(cat '${processChecks}' 2>/dev/null || echo 0)\ncount=$((count + 1))\necho "$count" > '${processChecks}'\nif [ "$count" -ge ${activateAt} ]; then echo 1; else exit 1; fi`
+            : "exit 1";
+        await writeFile(join(commands, "pgrep"), `#!/bin/sh\n${result}\n`);
         await chmod(join(commands, "pgrep"), 0o755);
       };
       const root = join(home, ".local/share/carrier-debug");
@@ -108,10 +117,27 @@ if (a[0] === "api") {
       expect(attestations).toContain(
         "--signer-workflow\tkristofferR/Carrier/.github/workflows/debug.yml",
       );
-      // Final verification fails after swapping. The original file must return.
+      // A withdrawn draft must not be installed from the cached pending manifest.
+      await writeFile(withdrawn, "");
       await running(false);
+      const rejected = await run();
+      expect(rejected.code, rejected.output).toBe(0);
+      expect(rejected.output).toContain("no longer eligible");
+      expect(await Bun.file(join(root, "pending.json")).exists()).toBe(false);
+      expect(await Bun.file(target).exists()).toBe(false);
+      await rm(withdrawn);
+      // Hide the old executable, then recheck for a launch before replacing it.
       await mkdir(join(home, ".local/bin"), { recursive: true });
       await writeFile(target, "previous-install");
+      await running(false, 4);
+      const raced = await run();
+      expect(raced.code, raced.output).toBe(0);
+      expect(raced.output).toContain("launched during preparation");
+      expect(await readFile(target, "utf8")).toBe("previous-install");
+      expect(await Bun.file(join(root, "installed.json")).exists()).toBe(false);
+      expect(await Bun.file(join(root, "pending.json")).exists()).toBe(true);
+      // Final verification fails after swapping. The original file must return.
+      await running(false);
       const readelf = Bun.which("readelf")!;
       await writeFile(
         join(commands, "readelf"),
@@ -130,6 +156,26 @@ if (a[0] === "api") {
       const installed = await run();
       expect(installed.code, installed.output).toBe(0);
       expect(buildInfo(await Bun.file(join(root, "installed.json")).json())).toEqual(info);
+      // Recovery runs before the installed hash check and restores the rollback copy.
+      const interruptedRevision = "b".repeat(40);
+      const interruptedBackup = `1-${interruptedRevision}`;
+      const previous = join(root, "backups", interruptedBackup, "carrier");
+      await mkdir(join(previous, ".."), { recursive: true });
+      await rename(target, previous);
+      await writeFile(target, "interrupted-new-install");
+      await writeFile(
+        join(root, "swap.json"),
+        JSON.stringify({
+          revision: interruptedRevision,
+          backup: interruptedBackup,
+          hadPrevious: true,
+        }),
+      );
+      const recovered = await run();
+      expect(recovered.code, recovered.output).toBe(0);
+      expect(recovered.output).toContain("Recovered the previous Carrier installation");
+      expect(await Bun.file(join(root, "swap.json")).exists()).toBe(false);
+      expect(await Bun.file(join(root, "backups", interruptedBackup)).exists()).toBe(false);
       const repeated = await run();
       expect(repeated.code, repeated.output).toBe(0);
       // A release/manual overwrite must never be executed even for its CLI probe.

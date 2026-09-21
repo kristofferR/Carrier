@@ -44,6 +44,7 @@ const apply = args.includes("--apply");
 const automatic = args.includes("--automatic");
 const forceCheck = args.includes("--check");
 const log = (message: string) => console.log(`${new Date().toISOString()} ${message}`);
+const swapFile = join(root, "swap.json");
 
 async function command(argv: string[], allowed = [0]) {
   const p = Bun.spawn(argv, {
@@ -77,12 +78,12 @@ async function atomicJson(path: string, value: unknown) {
   await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
   await rename(temp, path);
 }
-async function removeStagedBestEffort(path: string) {
+async function removeBestEffort(path: string, description: string) {
   try {
     await rm(path, { recursive: true, force: true });
   } catch (error) {
     console.error(
-      `Failed to remove staged install: ${error instanceof Error ? error.message : error}`,
+      `Failed to remove ${description}: ${error instanceof Error ? error.message : error}`,
     );
   }
 }
@@ -107,6 +108,95 @@ function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid response object");
   return value as Record<string, unknown>;
+}
+interface SwapTransaction {
+  revision: string;
+  backup: string;
+  hadPrevious: boolean;
+}
+function swapTransaction(value: unknown): SwapTransaction {
+  const transaction = object(value);
+  if (
+    typeof transaction.revision !== "string" ||
+    !revisionPattern.test(transaction.revision) ||
+    typeof transaction.backup !== "string" ||
+    !new RegExp(`^\\d+-${transaction.revision}$`).test(transaction.backup) ||
+    typeof transaction.hadPrevious !== "boolean"
+  )
+    throw new Error("Invalid interrupted install transaction");
+  return {
+    revision: transaction.revision,
+    backup: transaction.backup,
+    hadPrevious: transaction.hadPrevious,
+  };
+}
+async function completedSwap(revision: string) {
+  try {
+    const installed = object(await json(join(root, "installed.json")));
+    if (
+      buildInfo(installed).revision !== revision ||
+      typeof installed.binarySha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(installed.binarySha256)
+    )
+      return false;
+    const digest = createHash("sha256")
+      .update(await readFile(binary(target)))
+      .digest("hex");
+    return digest === installed.binarySha256;
+  } catch {
+    return false;
+  }
+}
+async function removeMatchingPending(revision: string) {
+  const pending = join(root, "pending.json");
+  try {
+    if (buildInfo(await json(pending)).revision === revision) await rm(pending, { force: true });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
+async function recoverInterruptedSwap() {
+  if (!(await exists(swapFile))) return true;
+  const transaction = swapTransaction(await json(swapFile));
+  if (await completedSwap(transaction.revision)) {
+    await removeMatchingPending(transaction.revision);
+    await rm(swapFile, { force: true });
+    return true;
+  }
+  if (await running()) {
+    log("Carrier is running; interrupted install recovery deferred.");
+    return false;
+  }
+  const backup = join(root, "backups", transaction.backup);
+  const previous = join(backup, mac ? "Carrier.app" : "carrier");
+  const discarded = join(backup, mac ? "interrupted-new.app" : "interrupted-new");
+  const previousExists = await exists(previous);
+  if (transaction.hadPrevious && !previousExists && !(await exists(target))) {
+    throw new Error("Interrupted install has neither the current app nor its rollback copy");
+  }
+  if (previousExists) {
+    if (await exists(target)) {
+      await removeBestEffort(discarded, "interrupted replacement");
+      await rename(target, discarded);
+      if (await running()) {
+        await rename(discarded, target);
+        log("Carrier launched during interrupted install recovery; recovery deferred.");
+        return false;
+      }
+    }
+    await rename(previous, target);
+  } else if (!transaction.hadPrevious && (await exists(target))) {
+    await rename(target, discarded);
+    if (await running()) {
+      await rename(discarded, target);
+      log("Carrier launched during interrupted install recovery; recovery deferred.");
+      return false;
+    }
+  }
+  await removeBestEffort(backup, "interrupted install directory");
+  await rm(swapFile, { force: true });
+  log("Recovered the previous Carrier installation after an interrupted swap.");
+  return true;
 }
 async function manifest(dir: string, revision: string) {
   await verifyProvenance(dir, revision);
@@ -236,24 +326,30 @@ async function install(dir: string, info: BuildInfo) {
     await chmod(staged, 0o755);
   }
   await verify(staged, info);
-  const previous = join(
-    root,
-    "backups",
-    `${Date.now()}-${info.revision}`,
-    mac ? "Carrier.app" : "carrier",
-  );
+  const backupName = `${Date.now()}-${info.revision}`;
+  const previous = join(root, "backups", backupName, mac ? "Carrier.app" : "carrier");
   const backup = dirname(previous);
   await mkdir(backup, { recursive: true });
   const hadPrevious = await exists(target);
+  await atomicJson(swapFile, { revision: info.revision, backup: backupName, hadPrevious });
   if (hadPrevious) await rename(target, previous);
+  if (hadPrevious && (await running())) {
+    await rename(previous, target);
+    await removeBestEffort(staged, "staged install");
+    await removeBestEffort(backup, "rollback directory");
+    await removeBestEffort(swapFile, "install transaction");
+    log("Carrier launched during preparation; update deferred.");
+    return;
+  }
   try {
     await rename(staged, target);
     await verify(target, info);
   } catch (error) {
     if (await exists(target)) await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
-    await removeStagedBestEffort(staged);
-    await rm(backup, { recursive: true, force: true });
+    await removeBestEffort(staged, "staged install");
+    await removeBestEffort(backup, "rollback directory");
+    await removeBestEffort(swapFile, "install transaction");
     throw error;
   }
   try {
@@ -285,10 +381,12 @@ async function install(dir: string, info: BuildInfo) {
   } catch (error) {
     await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
-    await removeStagedBestEffort(staged);
-    await rm(backup, { recursive: true, force: true });
+    await removeBestEffort(staged, "staged install");
+    await removeBestEffort(backup, "rollback directory");
+    await removeBestEffort(swapFile, "install transaction");
     throw error;
   }
+  await rm(swapFile, { force: true });
   await rm(join(root, "pending.json"), { force: true });
   await prune(info.revision);
   log(
@@ -332,13 +430,56 @@ async function update() {
     await install(dir, await manifest(dir, revision));
     return;
   }
+  const installedPath = join(root, "installed.json");
+  let installed = (await exists(installedPath)) ? buildInfo(await json(installedPath)) : null;
+  let drafts: Array<NonNullable<ReturnType<typeof debugDraft>>> | null = null;
+  const loadDrafts = async () => {
+    if (drafts) return drafts;
+    const releases = await api("releases?per_page=100");
+    if (!Array.isArray(releases)) throw new Error("Invalid release list");
+    drafts = releases.map(debugDraft).filter((candidate) => candidate !== null);
+    return drafts;
+  };
+  const eligible = async (
+    candidate: NonNullable<ReturnType<typeof debugDraft>>,
+    current: BuildInfo | null,
+  ) => {
+    if (current && current.revision !== candidate.revision) {
+      const comparison = object(await api(`compare/${current.revision}...${candidate.revision}`));
+      if (comparison.status !== "ahead") return null;
+    }
+    const ancestry = object(await api(`compare/${candidate.revision}...main`));
+    if (!new Set(["ahead", "identical"]).has(String(ancestry.status))) return null;
+    if (typeof ancestry.ahead_by !== "number") throw new Error("Invalid comparison response");
+    const ci = object(
+      await api(
+        `actions/workflows/ci.yml/runs?head_sha=${candidate.revision}&branch=main&event=push&status=success&per_page=1`,
+      ),
+    );
+    return Array.isArray(ci.workflow_runs) && ci.workflow_runs.length ? ancestry.ahead_by : null;
+  };
   const pending = join(root, "pending.json");
   if (await exists(pending)) {
     const info = buildInfo(await json(pending));
-    await install(
-      join(builds, info.revision),
-      await manifest(join(builds, info.revision), info.revision),
-    );
+    if (installed?.revision === info.revision) {
+      await rm(pending, { force: true });
+    } else {
+      const candidate = (await loadDrafts()).find(
+        (draft) =>
+          draft.revision === info.revision &&
+          draft.tag === `debug-v${info.version}-${info.revision.slice(0, 12)}`,
+      );
+      if (!candidate || (await eligible(candidate, installed)) === null) {
+        await rm(pending, { force: true });
+        log("Pending debug build is no longer eligible; current install preserved.");
+      } else {
+        await install(
+          join(builds, info.revision),
+          await manifest(join(builds, info.revision), info.revision),
+        );
+        installed = (await exists(installedPath)) ? buildInfo(await json(installedPath)) : null;
+      }
+    }
   }
   const checkFile = join(root, "last-check");
   if (
@@ -348,39 +489,18 @@ async function update() {
     Date.now() - (await stat(checkFile)).mtimeMs < 60 * 60 * 1000
   )
     return;
-  const releases = await api("releases?per_page=100");
-  if (!Array.isArray(releases)) throw new Error("Invalid release list");
-  const drafts = releases.map(debugDraft).filter((candidate) => candidate !== null);
-  if (!drafts.length) {
+  const availableDrafts = await loadDrafts();
+  if (!availableDrafts.length) {
     log("No complete personal debug draft yet; current install preserved.");
     return;
   }
-  const installedPath = join(root, "installed.json");
-  const installed = (await exists(installedPath)) ? buildInfo(await json(installedPath)) : null;
-  const onMain: Array<(typeof drafts)[number] & { distance: number }> = [];
-  for (const candidate of drafts) {
-    if (installed && installed.revision !== candidate.revision) {
-      const comparison = object(await api(`compare/${installed.revision}...${candidate.revision}`));
-      if (comparison.status !== "ahead") continue;
-    }
-    const ancestry = object(await api(`compare/${candidate.revision}...main`));
-    if (!new Set(["ahead", "identical"]).has(String(ancestry.status))) continue;
-    if (typeof ancestry.ahead_by !== "number") throw new Error("Invalid comparison response");
-    onMain.push({ ...candidate, distance: ancestry.ahead_by });
+  const onMain: Array<(typeof availableDrafts)[number] & { distance: number }> = [];
+  for (const candidate of availableDrafts) {
+    const distance = await eligible(candidate, installed);
+    if (distance !== null) onMain.push({ ...candidate, distance });
   }
   onMain.sort((a, b) => a.distance - b.distance);
-  let draft: (typeof drafts)[number] | null = null;
-  for (const candidate of onMain) {
-    const ci = object(
-      await api(
-        `actions/workflows/ci.yml/runs?head_sha=${candidate.revision}&branch=main&event=push&status=success&per_page=1`,
-      ),
-    );
-    if (Array.isArray(ci.workflow_runs) && ci.workflow_runs.length) {
-      draft = candidate;
-      break;
-    }
-  }
+  const draft = onMain[0] ?? null;
   if (!draft) {
     log("No newer debug build with successful CI is ready; current install preserved.");
     return;
@@ -430,7 +550,10 @@ async function update() {
 // The installed diagnostic binary provides an OS-owned scheduler lock. It is
 // released on crashes too. Bootstrap is a single manual run before enrollment.
 try {
-  if (!apply && !args.includes("--locked") && (await exists(join(root, "installed.json")))) {
+  const recoveryReady = apply || (await recoverInterruptedSwap());
+  if (!recoveryReady) {
+    // Leave both the journal and rollback copy for the next scheduled run.
+  } else if (!apply && !args.includes("--locked") && (await exists(join(root, "installed.json")))) {
     const installed = object(await json(join(root, "installed.json")));
     const digest = createHash("sha256")
       .update(await readFile(binary(target)))
