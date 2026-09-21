@@ -512,7 +512,7 @@ jobs:
           xcrun stapler staple "${SRC}"
           DEST="Carrier_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.dmg"
           cp "${SRC}" "${DEST}"
-          bun run tauri signer sign "${DEST}"
+          bun run tauri signer sign --app-version "${GITHUB_REF_NAME#v}" "${DEST}"
           DMG_SIGNATURE=$(cat "${DEST}.sig")
           # Use the built-in $GITHUB_REF_NAME env var, not a GitHub Actions
           # template expansion: a crafted tag name could otherwise inject shell

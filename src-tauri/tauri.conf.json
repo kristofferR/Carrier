@@ -70,6 +70,7 @@
   },
   "plugins": {
     "updater": {
+      "requireSignedVersion": true,
       "endpoints": [
         "https://github.com/kristofferR/carrier/releases/latest/download/latest.json"
       ],

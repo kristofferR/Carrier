@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli": "^2.11.5",
     "@types/bun": "^1.4.2",
     "esbuild": "^0.28.2",
     "tauri-plugin-mcp-server": "0.3.1",
