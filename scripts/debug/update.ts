@@ -73,6 +73,11 @@ async function exists(path: string) {
     () => false,
   );
 }
+async function sha256(path: string) {
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
+}
 async function atomicJson(path: string, value: unknown) {
   const temp = `${path}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
@@ -154,6 +159,65 @@ async function removeMatchingPending(revision: string) {
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
+}
+async function updateLockBinary() {
+  const installedPath = join(root, "installed.json");
+  let expectedHash: string | null = null;
+  if (await exists(installedPath)) {
+    const installed = object(await json(installedPath));
+    buildInfo(installed);
+    if (
+      typeof installed.binarySha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(installed.binarySha256)
+    )
+      throw new Error("Invalid installed Carrier identity");
+    expectedHash = installed.binarySha256;
+  }
+
+  const candidates = [binary(target)];
+  const backupRoot = join(root, "backups");
+  if (await exists(backupRoot)) {
+    for (const entry of await readdir(backupRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const directory = join(backupRoot, entry.name);
+      candidates.push(
+        binary(join(directory, mac ? "Carrier.app" : "carrier")),
+        binary(join(directory, mac ? "interrupted-new.app" : "interrupted-new")),
+      );
+    }
+  }
+  if (expectedHash) {
+    for (const candidate of candidates) {
+      try {
+        if ((await sha256(candidate)) === expectedHash) return candidate;
+      } catch {}
+    }
+    throw new Error(
+      "Installed Carrier was replaced outside the debug updater. Refusing to execute it; restore the verified debug backup.",
+    );
+  }
+
+  // A first install has no installed.json yet. Its already-verified extracted
+  // binary is still available even if the canonical path is between renames.
+  if (await exists(builds)) {
+    for (const entry of await readdir(builds, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !revisionPattern.test(entry.name)) continue;
+      const candidate = binary(
+        join(builds, entry.name, "extracted", mac ? "Carrier.app" : "carrier"),
+      );
+      try {
+        const identity = object(await json(join(builds, entry.name, "extracted.json")));
+        if (
+          identity.revision === entry.name &&
+          typeof identity.binarySha256 === "string" &&
+          /^[0-9a-f]{64}$/.test(identity.binarySha256) &&
+          (await sha256(candidate)) === identity.binarySha256
+        )
+          return candidate;
+      } catch {}
+    }
+  }
+  return null;
 }
 async function recoverInterruptedSwap() {
   if (!(await exists(swapFile))) return true;
@@ -284,7 +348,12 @@ async function extract(dir: string, info: BuildInfo) {
     await chmod(join(extracted, "carrier"), 0o755);
     await verify(join(extracted, "carrier"), info);
   }
-  return join(extracted, mac ? "Carrier.app" : "carrier");
+  const source = join(extracted, mac ? "Carrier.app" : "carrier");
+  await atomicJson(join(dir, "extracted.json"), {
+    revision: info.revision,
+    binarySha256: await sha256(binary(source)),
+  });
+  return source;
 }
 async function install(dir: string, info: BuildInfo) {
   if (await running()) {
@@ -550,32 +619,33 @@ async function update() {
 // The installed diagnostic binary provides an OS-owned scheduler lock. It is
 // released on crashes too. Bootstrap is a single manual run before enrollment.
 try {
-  const recoveryReady = apply || (await recoverInterruptedSwap());
-  if (!recoveryReady) {
-    // Leave both the journal and rollback copy for the next scheduled run.
-  } else if (!apply && !args.includes("--locked") && (await exists(join(root, "installed.json")))) {
-    const installed = object(await json(join(root, "installed.json")));
-    const digest = createHash("sha256")
-      .update(await readFile(binary(target)))
-      .digest("hex");
-    if (digest !== installed.binarySha256)
-      throw new Error(
-        "Installed Carrier was replaced outside the debug updater. Refusing to execute it; restore the verified debug backup.",
+  if (!apply && !args.includes("--locked")) {
+    const lockBinary = await updateLockBinary();
+    if (!lockBinary) {
+      if (await exists(swapFile))
+        throw new Error("Interrupted install recovery has no verified Carrier lock binary");
+      await update();
+    } else {
+      const result = await command(
+        [
+          lockBinary,
+          "--debug-update-lock",
+          process.execPath,
+          import.meta.path,
+          ...args,
+          "--locked",
+        ],
+        [0, 75],
       );
-    const result = await command(
-      [
-        binary(target),
-        "--debug-update-lock",
-        process.execPath,
-        import.meta.path,
-        ...args,
-        "--locked",
-      ],
-      [0, 75],
-    );
-    if (result.out.trim()) console.log(result.out.trim());
+      if (result.out.trim()) console.log(result.out.trim());
+    }
   } else {
-    await update();
+    const recoveryReady = apply || (await recoverInterruptedSwap());
+    if (!recoveryReady) {
+      // Leave both the journal and rollback copy for the next scheduled run.
+    } else {
+      await update();
+    }
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

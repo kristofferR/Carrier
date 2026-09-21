@@ -206,12 +206,13 @@ export function initAutoRefresh() {
   };
   window.__carrierCaptureRecovery = captureRecovery;
   let capturingRecovery = false;
+  const recoveryHeld = () =>
+    window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
   const maybeReload = async () => {
     timer = undefined;
     if (!pending || capturingRecovery) return;
-    if (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual") {
+    if (recoveryHeld()) {
       diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
-      clearPending();
       return;
     }
     if (systemSleeping || (rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual")) {
@@ -263,8 +264,11 @@ export function initAutoRefresh() {
     }
     if (!pending || capturedReason !== pendingReason) return;
     // Settings or a draft/call may have changed while IPC was pending.
+    if (recoveryHeld()) {
+      diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+      return;
+    }
     if (
-      (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual") ||
       heartbeatProtection() ||
       systemSleeping ||
       !navigator.onLine ||
@@ -289,6 +293,11 @@ export function initAutoRefresh() {
     }
     location.reload();
   };
+  window.addEventListener("carrier:settings", () => {
+    if (pending && timer === undefined && !recoveryHeld()) {
+      timer = setTimeout(maybeReload, 0);
+    }
+  });
   window.__carrierRateLimitRetry = (expectedId, expires) => {
     if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
     if (!pending || pendingReason !== "rate-limit") return;

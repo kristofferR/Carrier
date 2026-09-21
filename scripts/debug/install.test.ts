@@ -179,7 +179,40 @@ if (a[0] === "api") {
       const installed = await run();
       expect(installed.code, installed.output).toBe(0);
       expect(buildInfo(await Bun.file(join(root, "installed.json")).json())).toEqual(info);
-      // Recovery runs before the installed hash check and restores the rollback copy.
+      // Recovery must wait behind the same update lock as scheduled checks.
+      const updateLockReady = join(directory, "update-lock-ready");
+      const updateLockHolder = Bun.spawn(
+        [
+          target,
+          "--debug-update-lock",
+          process.execPath,
+          "-e",
+          `await Bun.write(${JSON.stringify(updateLockReady)}, ""); await Bun.sleep(3000);`,
+        ],
+        { env, stdout: "pipe", stderr: "pipe" },
+      );
+      for (
+        let attempts = 0;
+        attempts < 500 && !(await Bun.file(updateLockReady).exists());
+        attempts++
+      )
+        await Bun.sleep(10);
+      expect(await Bun.file(updateLockReady).exists()).toBe(true);
+      const heldRevision = "a".repeat(40);
+      const heldBackup = `1-${heldRevision}`;
+      await mkdir(join(root, "backups", heldBackup), { recursive: true });
+      await writeFile(
+        join(root, "swap.json"),
+        JSON.stringify({ revision: heldRevision, backup: heldBackup, hadPrevious: false }),
+      );
+      const lockCollision = await run();
+      expect(lockCollision.code, lockCollision.output).toBe(0);
+      expect(await Bun.file(join(root, "swap.json")).exists()).toBe(true);
+      expect(await Bun.file(target).exists()).toBe(true);
+      expect(await updateLockHolder.exited).toBe(0);
+      await rm(join(root, "swap.json"));
+      await rm(join(root, "backups", heldBackup), { recursive: true });
+      // Recovery finds the verified rollback binary when the canonical path is mid-swap.
       const interruptedRevision = "b".repeat(40);
       const interruptedBackup = `1-${interruptedRevision}`;
       const previous = join(root, "backups", interruptedBackup, "carrier");

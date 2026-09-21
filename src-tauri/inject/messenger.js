@@ -989,12 +989,12 @@
     };
     window.__carrierCaptureRecovery = captureRecovery;
     let capturingRecovery = false;
+    const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
     const maybeReload = async () => {
       timer = void 0;
       if (!pending || capturingRecovery) return;
-      if (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual") {
+      if (recoveryHeld()) {
         diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
-        clearPending();
         return;
       }
       if (systemSleeping || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
@@ -1041,7 +1041,11 @@
         capturingRecovery = false;
       }
       if (!pending || capturedReason !== pendingReason) return;
-      if (window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" || heartbeatProtection() || systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
+      if (recoveryHeld()) {
+        diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
+        return;
+      }
+      if (heartbeatProtection() || systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual") {
         clearPending();
         return;
       }
@@ -1059,6 +1063,11 @@
       }
       location.reload();
     };
+    window.addEventListener("carrier:settings", () => {
+      if (pending && timer === void 0 && !recoveryHeld()) {
+        timer = setTimeout(maybeReload, 0);
+      }
+    });
     window.__carrierRateLimitRetry = (expectedId, expires) => {
       if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
       if (!pending || pendingReason !== "rate-limit") return;
