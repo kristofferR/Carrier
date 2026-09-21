@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 // Run after the first verified debug installation. Never changes package-manager state.
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -110,6 +110,21 @@ if (mac) {
   );
   await run(["launchctl", "bootstrap", `gui/${userInfo().uid}`, plist]);
 } else {
+  const data = process.env.XDG_DATA_HOME || join(home, ".local/share");
+  const applications = join(data, "applications");
+  const icons = join(data, "icons/hicolor/128x128/apps");
+  await mkdir(applications, { recursive: true });
+  await mkdir(icons, { recursive: true });
+  await copyFile(
+    join(import.meta.dir, "../../src-tauri/icons/128x128.png"),
+    join(icons, "io.github.kristofferr.carrier.png"),
+  );
+  const desktopQuote = (s: string) =>
+    `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("`", "\\`").replaceAll("$", "\\$")}"`;
+  await writeFile(
+    join(applications, "carrier.desktop"),
+    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Carrier\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
+  );
   const units = join(home, ".config/systemd/user");
   await mkdir(units, { recursive: true });
   const systemdQuote = (s: string) =>

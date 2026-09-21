@@ -312,12 +312,15 @@ async function runFixtures(
     report("graphql-1675004", 1000);
     now += 1001;
     tick();
-    runTimer(1000);
     assert(
-      "hold failures prevents automatic retry coordination",
-      probeRequests.length === probesBeforeHold,
+      "hold failures keeps automatic retry queued without coordinating it",
+      probeRequests.length === probesBeforeHold &&
+        ![...timers.values()].some((t) => t.delay === 1000),
     );
     window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    tick();
+    runTimer(1000);
+    assert("releasing hold resumes queued retry", probeRequests.length === probesBeforeHold + 1);
     report("graphql-1675004");
     const firstAccount = localStorage.getItem("carrier-rate-limit:123");
     // biome-ignore lint/suspicious/noDocumentCookie: exercise the existing c_user account boundary in this fixture.

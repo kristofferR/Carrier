@@ -18,6 +18,9 @@ on:
 permissions:
   contents: write
   actions: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: debug-${{ inputs.source_ref || github.sha }}
@@ -78,6 +81,12 @@ jobs:
           tar -czf Carrier-debug-linux.tar.gz -C src-tauri/target/debug carrier
           cp scripts/debug/{update,policy}.ts .
           bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Carrier-debug-linux.tar.gz update.ts policy.ts
+      - name: Attest Linux debug artifacts
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            Carrier-debug-linux.tar.gz
+            build.json
       - name: Test the debug installer end to end
         env:
           CARRIER_TEST_BINARY: src-tauri/target/debug/carrier

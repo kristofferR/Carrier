@@ -100,6 +100,7 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 async function manifest(dir: string, revision: string) {
+  if (!mac) await verifyLinuxProvenance(dir, revision);
   const raw = object(await json(join(dir, "build.json")));
   const info = buildInfo(raw);
   if (info.revision !== revision || info.platform !== platform || info.arch !== arch)
@@ -117,6 +118,22 @@ async function manifest(dir: string, revision: string) {
     if (hash !== files[name]) throw new Error(`Checksum mismatch: ${name}`);
   }
   return info;
+}
+async function verifyLinuxProvenance(dir: string, revision: string) {
+  for (const name of ["build.json", "Carrier-debug-linux.tar.gz"]) {
+    await command([
+      "gh",
+      "attestation",
+      "verify",
+      join(dir, name),
+      "--repo",
+      repo,
+      "--signer-workflow",
+      `${repo}/.github/workflows/debug.yml`,
+      "--source-digest",
+      revision,
+    ]);
+  }
 }
 async function verify(path: string, info: BuildInfo, symbols?: string) {
   if (mac) {
@@ -224,6 +241,7 @@ async function install(dir: string, info: BuildInfo) {
   } catch (error) {
     if (await exists(target)) await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
+    await rm(staged, { recursive: true, force: true });
     throw error;
   }
   try {
@@ -255,6 +273,7 @@ async function install(dir: string, info: BuildInfo) {
   } catch (error) {
     await rename(target, staged);
     if (hadPrevious) await rename(previous, target);
+    await rm(staged, { recursive: true, force: true });
     throw error;
   }
   await rm(join(root, "pending.json"), { force: true });

@@ -1159,7 +1159,7 @@
         emitHeartbeat();
         return;
       }
-      if (waitingForRateLimit) {
+      if (waitingForRateLimit && !window.__CARRIER_SETTINGS__?.hold_failures) {
         waitingForRateLimit = false;
         window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
         diag(

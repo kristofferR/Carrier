@@ -49,8 +49,9 @@ test.skipIf(!executable || process.platform !== "linux")(
           .digest("hex");
       await writeFile(join(artifacts, "build.json"), JSON.stringify({ ...info, files: hashes }));
       const olderRevision = "0".repeat(40);
+      const attestationLog = join(directory, "attestations");
       const stub = `#!${process.execPath}
-import { copyFile, readdir } from "node:fs/promises";
+import { appendFile, copyFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 const a = process.argv.slice(2);
 if (a[0] === "api") {
@@ -60,12 +61,14 @@ if (a[0] === "api") {
     {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${olderRevision}"},
     {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"},
   ];
-  else if (path === "compare/${olderRevision}...main") response = {status:"ahead",ahead_by:2};
-  else if (path === "compare/${info.revision}...main") response = {status:"ahead",ahead_by:1};
-  else if (path === "compare/${info.revision}...${olderRevision}") response = {status:"behind"};
+  else if (path.endsWith("compare/${olderRevision}...main")) response = {status:"ahead",ahead_by:2};
+  else if (path.endsWith("compare/${info.revision}...main")) response = {status:"ahead",ahead_by:1};
+  else if (path.endsWith("compare/${info.revision}...${olderRevision}")) response = {status:"behind"};
   else if (path.includes("compare/")) response = {status:"ahead",ahead_by:1};
   else response = {workflow_runs:[{id:1,head_sha:${JSON.stringify(info.revision)}}]};
   console.log(JSON.stringify(response));
+} else if (a[0] === "attestation" && a[1] === "verify") {
+  await appendFile(${JSON.stringify(attestationLog)}, a.slice(2).join("\\t") + "\\n");
 } else {
   const dir = a[a.indexOf("--dir")+1];
   for (const name of await readdir(${JSON.stringify(artifacts)})) await copyFile(join(${JSON.stringify(artifacts)},name),join(dir,name === "build.json" ? "build-linux-x86_64.json" : name));
@@ -98,6 +101,13 @@ if (a[0] === "api") {
       expect(staged.code, staged.output).toBe(0);
       expect(await Bun.file(join(root, "pending.json")).exists()).toBe(true);
       expect(await Bun.file(target).exists()).toBe(false);
+      const attestations = await readFile(attestationLog, "utf8");
+      expect(attestations).toContain("Carrier-debug-linux.tar.gz");
+      expect(attestations).toContain("build.json");
+      expect(attestations).toContain(`--source-digest\t${info.revision}`);
+      expect(attestations).toContain(
+        "--signer-workflow\tkristofferR/Carrier/.github/workflows/debug.yml",
+      );
       // Final verification fails after swapping. The original file must return.
       await running(false);
       await mkdir(join(home, ".local/bin"), { recursive: true });
@@ -112,6 +122,9 @@ if (a[0] === "api") {
       expect(failed.code).toBe(1);
       expect(await readFile(target, "utf8")).toBe("previous-install");
       expect(await Bun.file(join(root, "installed.json")).exists()).toBe(false);
+      expect(
+        (await readdir(join(home, ".local/bin"))).filter((name) => name.endsWith(".tmp")),
+      ).toEqual([]);
       await rm(join(commands, "readelf"));
       const installed = await run();
       expect(installed.code, installed.output).toBe(0);
