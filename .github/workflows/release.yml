@@ -146,7 +146,7 @@ jobs:
           set -euo pipefail
           build_args=()
           if [ "$DEBUG_BUILD" = "true" ]; then
-            build_args+=(--debug --features mcp)
+            build_args+=(--debug --features mcp,tauri-plugin-mcp/devtools)
           fi
           bun run tauri build --bundles app --ci "${build_args[@]}" \
             --config src-tauri/tauri.conf.release.json \
