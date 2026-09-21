@@ -20,7 +20,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: debug-${{ inputs.source_ref || github.sha }}
+  group: debug-${{ github.sha }}
   cancel-in-progress: false
 
 env:

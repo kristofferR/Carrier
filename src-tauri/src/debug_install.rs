@@ -67,7 +67,7 @@ pub(crate) fn startup() -> bool {
                 let operation = if exclusive {
                     libc::LOCK_EX | libc::LOCK_NB
                 } else {
-                    libc::LOCK_SH
+                    libc::LOCK_SH | libc::LOCK_NB
                 };
                 // The descriptor remains open for the whole app/installer lifetime.
                 if unsafe { libc::flock(file.as_raw_fd(), operation) } != 0 {

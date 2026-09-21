@@ -19,7 +19,7 @@ import { buildInfo } from "./policy";
 // discovery. Exercises the real archives, hashes, native locks, and file swaps.
 const executable = process.env.CARRIER_TEST_BINARY;
 test.skipIf(!executable || process.platform !== "linux")(
-  "debug installer stages while running, rolls back failed replacement, and rejects tampering",
+  "debug installer rejects launch collisions, stages while running, rolls back failures, and rejects tampering",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "carrier-debug-install-test-"));
     try {
@@ -92,6 +92,29 @@ if (a[0] === "api") {
       const root = join(home, ".local/share/carrier-debug");
       const target = join(home, ".local/bin/carrier");
       const env = { ...process.env, HOME: home, PATH: `${commands}:${process.env.PATH}` };
+      const lockReady = join(directory, "install-lock-ready");
+      const lockHolder = Bun.spawn(
+        [
+          executable!,
+          "--debug-install-lock",
+          process.execPath,
+          "-e",
+          `await Bun.write(${JSON.stringify(lockReady)}, ""); await Bun.sleep(3000);`,
+        ],
+        { env, stdout: "pipe", stderr: "pipe" },
+      );
+      for (let attempts = 0; attempts < 500 && !(await Bun.file(lockReady).exists()); attempts++)
+        await Bun.sleep(10);
+      expect(await Bun.file(lockReady).exists()).toBe(true);
+      const collided = Bun.spawnSync([executable!], {
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 1000,
+      });
+      expect(collided.exitCode).toBe(1);
+      expect(collided.stderr.toString()).toContain("Carrier debug install lock");
+      expect(await lockHolder.exited).toBe(0);
       const run = async () => {
         const p = Bun.spawn([process.execPath, join(import.meta.dir, "update.ts"), "--check"], {
           env,
