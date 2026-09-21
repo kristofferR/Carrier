@@ -111,6 +111,11 @@ jobs:
 
   macos:
     needs: source
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
     runs-on: macos-latest
@@ -223,6 +228,11 @@ jobs:
         run: |
           cp scripts/debug/{update,policy}.ts .
           bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Carrier.app/Contents/MacOS/carrier Carrier-debug-macos.zip Carrier-debug-symbols.zip update.ts policy.ts
+
+      - name: Attest macOS debug manifest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: build.json
 
       - name: Upload notarized debug app
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

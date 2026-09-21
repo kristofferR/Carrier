@@ -109,7 +109,7 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 async function manifest(dir: string, revision: string) {
-  if (!mac) await verifyLinuxProvenance(dir, revision);
+  await verifyProvenance(dir, revision);
   const raw = object(await json(join(dir, "build.json")));
   const info = buildInfo(raw);
   if (info.revision !== revision || info.platform !== platform || info.arch !== arch)
@@ -128,8 +128,9 @@ async function manifest(dir: string, revision: string) {
   }
   return info;
 }
-async function verifyLinuxProvenance(dir: string, revision: string) {
-  for (const name of ["build.json", "Carrier-debug-linux.tar.gz"]) {
+async function verifyProvenance(dir: string, revision: string) {
+  const names = mac ? ["build.json"] : ["build.json", "Carrier-debug-linux.tar.gz"];
+  for (const name of names) {
     await command([
       "gh",
       "attestation",

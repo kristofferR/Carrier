@@ -24,8 +24,9 @@ workflow cannot start its platform builds until this draft is complete. A manual
 `debug.yml` run builds an unreleased main commit without starting public builds.
 
 The personal updater downloads only completed debug drafts whose source commit
-also passed main CI and remains on main. It verifies artifact SHA-256
-checksums, the executable's compiled identity, and debug symbols. macOS also
+also passed main CI and remains on main. It verifies the manifest's GitHub
+artifact attestation, artifact SHA-256 checksums, the executable's compiled
+identity, and debug symbols. macOS also
 requires the expected signing identity, Gatekeeper acceptance, a stapled ticket,
 and matching app/dSYM UUIDs. Missing, incomplete, failed, divergent, or downgraded
 builds leave the current installation in place. It never falls back to a release.
