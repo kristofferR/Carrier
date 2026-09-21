@@ -1,6 +1,6 @@
 {
   "name": "carrier",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "description": "A tiny, distraction-free desktop client for Facebook Messenger, built with Tauri.",
   "license": "MIT",
   "type": "module",
