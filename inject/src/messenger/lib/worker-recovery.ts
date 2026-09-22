@@ -80,12 +80,18 @@ export class FacebookWorkerRecovery {
         return "unsupported";
       }
       if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
+      const initialId = currentId.call(state);
+      const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : undefined;
+      const bridge = method(setup, "waitForWorkerSetup");
+      const initialBridge = bridge?.call(setup);
       const status = record(await health.call(singleton));
       if (!allowed() || startingScope !== this.accountScope()) return "busy";
       // Never terminate a shared worker: it may serve another window's call.
       if (
         !status ||
         ![
+          "dedicated_not_exists",
+          "dedicated_exists",
           "shared_not_exists",
           "shared_exists_not_connected",
           "shared_exists_and_connected",
@@ -95,7 +101,42 @@ export class FacebookWorkerRecovery {
       }
       if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
       const id = currentId.call(state);
+      if (status.tag === "dedicated_exists") {
+        if (
+          id !== "dedicated" ||
+          initialId !== id ||
+          !initialBridge ||
+          typeof record(initialBridge)?.then !== "function" ||
+          bridge?.call(setup) !== initialBridge ||
+          !this.replay ||
+          this.scope !== startingScope
+        ) {
+          return "unsupported";
+        }
+        const terminate = method(setup, "terminateDedicatedWorker");
+        if (!terminate) return "unsupported";
+        // Messenger's bridge close calls Worker.terminate() for a dedicated
+        // worker. It then resets its own backend/portal/creation state.
+        const stopped = await terminate.call(setup, "bridgeRecovery");
+        if (stopped !== true) return "unsupported";
+        // Never replay vault material captured for a previous account.
+        if (startingScope !== this.accountScope()) return "busy";
+        if (
+          bridge?.call(setup) != null ||
+          inProgress.call(state) === true ||
+          settled.call(state) === true
+        ) {
+          return "busy";
+        }
+        try {
+          await this.replay();
+        } catch (error) {
+          reject.call(state, error);
+        }
+        return "started";
+      }
       if (typeof id === "string" && id.length > 0) {
+        if (status.tag === "dedicated_not_exists") return "unsupported";
         const recovery = this.load("MAWWorkerWatchdogRecovery");
         const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
         if (typeof callback !== "function") return "unsupported";
@@ -106,7 +147,7 @@ export class FacebookWorkerRecovery {
       }
       if (
         id != null ||
-        status.tag !== "shared_not_exists" ||
+        !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) ||
         !this.replay ||
         !this.scope ||
         this.scope !== this.accountScope()

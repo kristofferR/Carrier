@@ -14,8 +14,14 @@ function fixture() {
   let resets = 0;
   const rejected: unknown[] = [];
   const watchdogCalls: unknown[][] = [];
+  const terminationCalls: string[] = [];
   const setupCalls: { receiver: unknown; args: unknown[] }[] = [];
   let setupResult: unknown = Promise.resolve();
+  let bridgePromise: Promise<unknown> | null = Promise.resolve();
+  let termination: () => Promise<boolean> = async () => {
+    settled = false;
+    return true;
+  };
   const setup = {
     getOrSetupWorker(this: unknown, ...args: unknown[]) {
       setupCalls.push({ receiver: this, args });
@@ -33,6 +39,15 @@ function fixture() {
       rejectBackendSetup: (error: unknown) => rejected.push(error),
     },
     MAWWebWorkerSingleton: { getWorkerHealthStatus: async () => ({ tag: status }) },
+    MAWSetupWorker: {
+      waitForWorkerSetup: () => bridgePromise,
+      terminateDedicatedWorker: async (reason: string) => {
+        terminationCalls.push(reason);
+        const stopped = await termination();
+        if (stopped) bridgePromise = null;
+        return stopped;
+      },
+    },
     MAWWorkerWatchdogRecovery: {
       getWorkerRecoveryForWatchdog:
         () =>
@@ -53,6 +68,7 @@ function fixture() {
     modules,
     setupCalls,
     watchdogCalls,
+    terminationCalls,
     rejected,
     get resets() {
       return resets;
@@ -74,6 +90,12 @@ function fixture() {
     },
     set setupResult(value: unknown) {
       setupResult = value;
+    },
+    set termination(value: () => Promise<boolean>) {
+      termination = value;
+    },
+    set bridgePromise(value: Promise<unknown> | null) {
+      bridgePromise = value;
     },
   };
 }
@@ -139,6 +161,77 @@ describe("Messenger worker recovery", () => {
     expect(f.watchdogCalls).toEqual([["locks_based_recovery", "worker", "locks_based_recovery"]]);
     expect(f.resets).toBe(0);
     expect(f.setupCalls).toHaveLength(0);
+  });
+
+  test("stops and replays a dedicated worker without navigating", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(f.terminationCalls).toEqual(["bridgeRecovery"]);
+    expect(f.setupCalls).toHaveLength(2);
+    expect(f.setupCalls[1]?.args[4]).toBe("bridgeRecovery");
+    expect(f.setupCalls[1]?.args[0]).toBe(f.args[0]);
+    expect(f.watchdogCalls).toHaveLength(0);
+    // Messenger's dedicated termination resets backend setup itself.
+    expect(f.resets).toBe(0);
+  });
+
+  test("replays a failed dedicated bootstrap when no worker exists", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.status = "dedicated_not_exists";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(f.terminationCalls).toHaveLength(0);
+    expect(f.resets).toBe(1);
+    expect(f.setupCalls).toHaveLength(2);
+  });
+
+  test("does not race a dedicated termination or replay after an account switch", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    let complete: (stopped: boolean) => void = () => {};
+    f.termination = () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      });
+    const pending = f.recovery.recover();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await f.recovery.recover()).toBe("busy");
+    f.account = "account-b";
+    complete(true);
+    expect(await pending).toBe("busy");
+    expect(f.setupCalls).toHaveLength(1);
+  });
+
+  test("does not replay if a dedicated worker could not be stopped", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    f.termination = async () => false;
+    expect(await f.recovery.recover()).toBe("unsupported");
+    expect(f.setupCalls).toHaveLength(1);
+    expect(f.watchdogCalls).toHaveLength(0);
+  });
+
+  test("will not terminate a replacement dedicated worker after asynchronous inspection", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => {
+        f.bridgePromise = Promise.resolve();
+        return { tag: "dedicated_exists" };
+      },
+    };
+    expect(await f.recovery.recover()).toBe("unsupported");
+    expect(f.terminationCalls).toHaveLength(0);
+    expect(f.setupCalls).toHaveLength(1);
   });
 
   test("cannot replay another account's bootstrap or an unknown ABI", async () => {

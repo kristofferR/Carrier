@@ -485,9 +485,15 @@
           return "unsupported";
         }
         if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
+        const initialId = currentId.call(state2);
+        const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : void 0;
+        const bridge = method(setup, "waitForWorkerSetup");
+        const initialBridge = bridge?.call(setup);
         const status = record(await health.call(singleton));
         if (!allowed() || startingScope !== this.accountScope()) return "busy";
         if (!status || ![
+          "dedicated_not_exists",
+          "dedicated_exists",
           "shared_not_exists",
           "shared_exists_not_connected",
           "shared_exists_and_connected"
@@ -496,14 +502,34 @@
         }
         if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
+        if (status.tag === "dedicated_exists") {
+          if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !this.replay || this.scope !== startingScope) {
+            return "unsupported";
+          }
+          const terminate = method(setup, "terminateDedicatedWorker");
+          if (!terminate) return "unsupported";
+          const stopped = await terminate.call(setup, "bridgeRecovery");
+          if (stopped !== true) return "unsupported";
+          if (startingScope !== this.accountScope()) return "busy";
+          if (bridge?.call(setup) != null || inProgress.call(state2) === true || settled.call(state2) === true) {
+            return "busy";
+          }
+          try {
+            await this.replay();
+          } catch (error) {
+            reject.call(state2, error);
+          }
+          return "started";
+        }
         if (typeof id === "string" && id.length > 0) {
+          if (status.tag === "dedicated_not_exists") return "unsupported";
           const recovery = this.load("MAWWorkerWatchdogRecovery");
           const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
           if (typeof callback !== "function") return "unsupported";
           Reflect.apply(callback, void 0, ["locks_based_recovery", id, "locks_based_recovery"]);
           return "started";
         }
-        if (id != null || status.tag !== "shared_not_exists" || !this.replay || !this.scope || this.scope !== this.accountScope()) {
+        if (id != null || !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) || !this.replay || !this.scope || this.scope !== this.accountScope()) {
           return "unsupported";
         }
         try {

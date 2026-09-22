@@ -24,6 +24,13 @@ Carrier uses Messenger's existing worker lifecycle:
   the original setup call. The document-start module interceptor retains its
   original arguments and callbacks in memory, scoped to the current account.
   No key material, message contents, or callback arguments are logged or stored.
+- If Messenger selected a **dedicated** worker, use its own
+  `terminateDedicatedWorker` path to close the bridge and terminate that page's
+  `Worker`, then replay the captured setup. This requires the same worker bridge
+  promise before and after asynchronous inspection, a settled backend, the
+  exact `dedicated` ID, and successful termination. A failed dedicated startup
+  with no worker can also replay setup without termination. Calls, drafts, and
+  account changes retain the same protections as shared-worker recovery.
 - Unknown module signatures, unsupported worker kinds, and account changes fail
   open. Messenger's ongoing initialization is never reset underneath it.
 
@@ -172,8 +179,8 @@ This proves a control-flow limitation, not that closed browser ports normally
 throw or that it caused the original outage. Neither the notification nor lock
 release alone is a safe restart barrier. A replacement must not race a surviving
 worker or interrupt another client's call. Carrier therefore keeps the current
-non-terminating bridge recovery while investigating a supported socket-level
-restart with reliable cancellation and ownership checks.
+non-terminating **shared-worker** bridge recovery while investigating a supported
+socket-level restart with reliable cancellation and ownership checks.
 
 ## Validation and remaining limits
 
@@ -205,6 +212,12 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   pending transactions produce the corresponding counters; a database-readiness
   promise that never settles remains unobserved, as expected from the coverage
   boundary above.
+- Run the extracted `WorkerMessagePort` module against a synthetic dedicated
+  worker. Its bridge `close()` calls `terminate()` once, and the synced bridge
+  inherits that implementation. Focused recovery tests cover replay order,
+  changing worker bridges, account changes, failed termination, and a missing
+  dedicated worker. The installed Messenger session uses a **shared** worker,
+  so dedicated-worker restart has not been verified against a live account.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it
