@@ -12,7 +12,7 @@ function method(value: unknown, key: string): Method | undefined {
   return typeof candidate === "function" ? (candidate as Method) : undefined;
 }
 
-export type WorkerRecoveryResult = "started" | "busy" | "unsupported";
+export type WorkerRecoveryResult = "started" | "busy" | "unsupported" | "failed";
 
 /** Retain Messenger's own setup closure, never copy or serialize its key material. */
 export class FacebookWorkerRecovery {
@@ -66,7 +66,12 @@ export class FacebookWorkerRecovery {
     this.recovering = true;
     try {
       if (!allowed()) return "busy";
-      const startingScope = this.accountScope();
+      let startingScope: string | undefined;
+      try {
+        startingScope = this.accountScope();
+      } catch (_) {
+        return "unsupported";
+      }
       if (!startingScope) return "unsupported";
       const state = this.load("MAWWaitForBackendSetup");
       const settled = method(state, "isBackendSetupSettled");
@@ -189,7 +194,9 @@ export class FacebookWorkerRecovery {
       }
       return "started";
     } catch (_) {
-      return "unsupported";
+      // Known missing or changed APIs return unsupported above. An operation
+      // that exists but throws may recover on a later bounded attempt.
+      return "failed";
     } finally {
       this.recovering = false;
     }
@@ -217,8 +224,8 @@ export class SilentRecoveryBudget {
 
   observe(healthy: boolean, now: number): void {
     if (healthy) {
+      if (this.activeUntil !== undefined) this.finish(now);
       this.healthySince ??= now;
-      this.activeUntil = undefined;
       if (now - this.healthySince >= HEALTHY_RESET_MS) this.reset();
     } else {
       this.healthySince = undefined;

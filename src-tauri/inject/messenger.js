@@ -471,7 +471,12 @@
       this.recovering = true;
       try {
         if (!allowed()) return "busy";
-        const startingScope = this.accountScope();
+        let startingScope;
+        try {
+          startingScope = this.accountScope();
+        } catch (_) {
+          return "unsupported";
+        }
         if (!startingScope) return "unsupported";
         const state2 = this.load("MAWWaitForBackendSetup");
         const settled = method(state2, "isBackendSetupSettled");
@@ -549,7 +554,7 @@
         }
         return "started";
       } catch (_) {
-        return "unsupported";
+        return "failed";
       } finally {
         this.recovering = false;
       }
@@ -574,8 +579,8 @@
     }
     observe(healthy, now) {
       if (healthy) {
+        if (this.activeUntil !== void 0) this.finish(now);
         this.healthySince ?? (this.healthySince = now);
-        this.activeUntil = void 0;
         if (now - this.healthySince >= HEALTHY_RESET_MS) this.reset();
       } else {
         this.healthySince = void 0;
@@ -979,17 +984,21 @@
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
     const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
-    const connectionKey = accountKey();
-    let connectionRemembered = false;
-    try {
-      connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
-    } catch (_) {
-    }
-    const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+    const rememberedConnection = (key) => {
+      try {
+        return !!key && localStorage.getItem(key) === "1";
+      } catch (_) {
+        return false;
+      }
+    };
+    let connectionKey = accountKey();
+    let connectionRemembered = rememberedConnection(connectionKey);
+    let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
     let verified;
     let stateRouteUnavailableFor;
+    let probeIdentity;
     const now = performance.now.bind(performance);
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
@@ -1010,6 +1019,12 @@
       const state2 = workerConnectionState();
       const account = accountKey();
       const id = workerId();
+      if (!probeIdentity || probeIdentity.account !== account || probeIdentity.id !== id || probeIdentity.state !== state2) {
+        probeIdentity = { account, id, state: state2 };
+        workerFailures.succeeded();
+        verified = void 0;
+        stateRouteUnavailableFor = void 0;
+      }
       const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
       const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
@@ -1044,8 +1059,8 @@
         if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
-        if (connected === void 0) callbacks.onUnknown("worker");
-        else callbacks.onHealthy("worker");
+        if (connected === true) callbacks.onHealthy("worker");
+        else callbacks.onUnknown("worker");
       }).catch(() => {
         verified = void 0;
         if (!stillCurrent()) callbacks.onUnknown("worker");
@@ -1058,6 +1073,15 @@
       });
     };
     const check = () => {
+      const currentKey = accountKey();
+      if (currentKey !== connectionKey) {
+        connectionKey = currentKey;
+        connectionRemembered = rememberedConnection(connectionKey);
+        workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+        workerDisconnected = false;
+        verified = void 0;
+        callbacks.onUnknown("worker-connection");
+      }
       const connected = workerIsConnected();
       if (connected === true && connectionKey && !connectionRemembered) {
         try {
@@ -1136,10 +1160,14 @@
     const nativeClearTimeout2 = window.clearTimeout.bind(window);
     const now = performance.now.bind(performance);
     let running = false;
+    let runningTimedOut = false;
     let failed = false;
     let manualRequested = false;
     let unhealthySince;
     let busySince;
+    const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
+    let scope = accountScope();
+    let scopeEpoch = 0;
     let offlineObserved = !navigator.onLine;
     let networkRestoredAt;
     window.addEventListener("offline", () => {
@@ -1159,6 +1187,17 @@
       window.dispatchEvent(new CustomEvent(SILENT_RECOVERY_EVENT, { detail: value }));
     };
     const tick = () => {
+      const currentScope = accountScope();
+      if (currentScope !== scope) {
+        scope = currentScope;
+        scopeEpoch++;
+        budget.reset();
+        manualRequested = false;
+        unhealthySince = void 0;
+        busySince = void 0;
+        networkRestoredAt = void 0;
+        showFailure(false);
+      }
       const needed = options.needsRecovery();
       const healthy = options.isHealthy();
       budget.observe(healthy, now());
@@ -1183,12 +1222,20 @@
       }
       unhealthySince ?? (unhealthySince = now());
       if (now() - unhealthySince < REALTIME_UNOBSERVED_SETTLE_MS) return;
+      if (running && runningTimedOut) showFailure(true);
       if (budget.exhausted) showFailure(true);
       if (running || options.blocked(manualRequested) || !budget.start(now())) return;
       const manual = manualRequested;
+      const launchEpoch = scopeEpoch;
       manualRequested = false;
       running = true;
+      runningTimedOut = false;
       const timeout = nativeSetTimeout3(() => {
+        runningTimedOut = true;
+        if (launchEpoch !== scopeEpoch) {
+          if (options.needsRecovery()) showFailure(true);
+          return;
+        }
         if (options.isHealthy()) return;
         budget.giveUp();
         showFailure(true);
@@ -1197,6 +1244,11 @@
       void workerRecovery.recover(() => !options.blocked(manual) && options.needsRecovery()).then((result) => {
         nativeClearTimeout2(timeout);
         running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) {
+          options.check();
+          return;
+        }
         if (result === "busy") {
           budget.cancel();
           busySince ?? (busySince = now());
@@ -1216,10 +1268,18 @@
             "no compatible worker recovery; preserving the page"
           );
         }
+        if (result === "failed") {
+          diag(
+            "sync.worker-recovery-failed",
+            "worker recovery attempt failed; retrying with backoff"
+          );
+        }
         options.check();
       }).catch(() => {
         nativeClearTimeout2(timeout);
         running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) return;
         budget.giveUp();
         showFailure(true);
         diag("sync.worker-recovery-failed", "worker recovery failed; preserving the page");
@@ -1232,7 +1292,13 @@
       showFailure(false);
       tick();
     });
-    return { tick };
+    return {
+      tick,
+      resetSettle: () => {
+        unhealthySince = void 0;
+        busySince = void 0;
+      }
+    };
   }
 
   // inject/src/messenger/lib/sync-processing.ts
@@ -1626,8 +1692,13 @@
       const resumed = powerState.update(snapshot);
       systemSleeping = snapshot.sleeping;
       sampleSyncProcessing(processingActive());
-      if (systemSleeping) clearPending();
-      else if (resumed) noteLifecycle();
+      if (systemSleeping) {
+        silentRecovery.resetSettle();
+        clearPending();
+      } else if (resumed) {
+        silentRecovery.resetSettle();
+        noteLifecycle();
+      }
     });
     window.__carrierOnNotification = noteLifecycle;
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual"));

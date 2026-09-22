@@ -328,6 +328,18 @@ describe("Messenger worker recovery", () => {
     expect(f.resets).toBe(0);
   });
 
+  test("transient worker inspection failures keep the bounded retry episode", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => {
+        throw new Error("temporary lock failure");
+      },
+    };
+    expect(await f.recovery.recover()).toBe("failed");
+    expect(f.resets).toBe(0);
+  });
+
   test("serializes recovery and preserves backend rejection if a retry fails", async () => {
     const f = fixture();
     f.setup.getOrSetupWorker(...f.args);
@@ -385,6 +397,15 @@ describe("silent recovery budget", () => {
     b.observe(true, 120_000);
     expect(b.exhausted).toBe(false);
     expect(b.start(120_001)).toBe(true);
+  });
+
+  test("a brief healthy sample ends observation but preserves retry backoff", () => {
+    const b = new SilentRecoveryBudget();
+    expect(b.start(0)).toBe(true);
+    b.observe(true, 5_000);
+    b.observe(false, 10_000);
+    expect(b.start(19_999)).toBe(false);
+    expect(b.start(20_000)).toBe(true);
   });
 
   test("a network restoration grants one extra attempt until health is sustained", () => {

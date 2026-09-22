@@ -1,5 +1,6 @@
 import { diag } from "../bridge";
 import { REALTIME_UNOBSERVED_SETTLE_MS } from "../lib/realtime-health";
+import { accountScopedStorageKey } from "../lib/threads";
 import {
   SILENT_RECOVERY_EVENT,
   SILENT_RECOVERY_RETRY_EVENT,
@@ -22,10 +23,14 @@ export function createSilentRecovery(options: {
   const nativeClearTimeout = window.clearTimeout.bind(window);
   const now = performance.now.bind(performance);
   let running = false;
+  let runningTimedOut = false;
   let failed = false;
   let manualRequested = false;
   let unhealthySince: number | undefined;
   let busySince: number | undefined;
+  const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
+  let scope = accountScope();
+  let scopeEpoch = 0;
   let offlineObserved = !navigator.onLine;
   let networkRestoredAt: number | undefined;
   window.addEventListener("offline", () => {
@@ -45,6 +50,17 @@ export function createSilentRecovery(options: {
     window.dispatchEvent(new CustomEvent(SILENT_RECOVERY_EVENT, { detail: value }));
   };
   const tick = () => {
+    const currentScope = accountScope();
+    if (currentScope !== scope) {
+      scope = currentScope;
+      scopeEpoch++;
+      budget.reset();
+      manualRequested = false;
+      unhealthySince = undefined;
+      busySince = undefined;
+      networkRestoredAt = undefined;
+      showFailure(false);
+    }
     const needed = options.needsRecovery();
     const healthy = options.isHealthy();
     budget.observe(healthy, now());
@@ -73,14 +89,22 @@ export function createSilentRecovery(options: {
     // in flight. Give that probe its full deadline before touching the worker.
     unhealthySince ??= now();
     if (now() - unhealthySince < REALTIME_UNOBSERVED_SETTLE_MS) return;
+    if (running && runningTimedOut) showFailure(true);
     if (budget.exhausted) showFailure(true);
     if (running || options.blocked(manualRequested) || !budget.start(now())) return;
     const manual = manualRequested;
+    const launchEpoch = scopeEpoch;
     manualRequested = false;
     running = true;
+    runningTimedOut = false;
     // A timeout cannot cancel Messenger's initialization. Keep running latched
     // until the actual promise settles, so no second bootstrap can race it.
     const timeout = nativeSetTimeout(() => {
+      runningTimedOut = true;
+      if (launchEpoch !== scopeEpoch) {
+        if (options.needsRecovery()) showFailure(true);
+        return;
+      }
       if (options.isHealthy()) return;
       budget.giveUp();
       showFailure(true);
@@ -91,6 +115,11 @@ export function createSilentRecovery(options: {
       .then((result) => {
         nativeClearTimeout(timeout);
         running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) {
+          options.check();
+          return;
+        }
         if (result === "busy") {
           // Waiting for Messenger or a protection change is not a repair
           // attempt. Keep checking readiness, but expose a stuck startup.
@@ -112,6 +141,12 @@ export function createSilentRecovery(options: {
             "no compatible worker recovery; preserving the page",
           );
         }
+        if (result === "failed") {
+          diag(
+            "sync.worker-recovery-failed",
+            "worker recovery attempt failed; retrying with backoff",
+          );
+        }
         // A started callback is not proof of sync. The regular probes must
         // establish health; otherwise this attempt expires and backs off.
         options.check();
@@ -119,6 +154,8 @@ export function createSilentRecovery(options: {
       .catch(() => {
         nativeClearTimeout(timeout);
         running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) return;
         budget.giveUp();
         showFailure(true);
         diag("sync.worker-recovery-failed", "worker recovery failed; preserving the page");
@@ -131,5 +168,11 @@ export function createSilentRecovery(options: {
     showFailure(false);
     tick();
   });
-  return { tick };
+  return {
+    tick,
+    resetSettle: () => {
+      unhealthySince = undefined;
+      busySince = undefined;
+    },
+  };
 }

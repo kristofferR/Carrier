@@ -108,16 +108,23 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
   const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
-  const connectionKey = accountKey();
-  let connectionRemembered = false;
-  try {
-    connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
-  } catch (_) {}
-  const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+  const rememberedConnection = (key: string | null) => {
+    try {
+      return !!key && localStorage.getItem(key) === "1";
+    } catch (_) {
+      return false;
+    }
+  };
+  let connectionKey = accountKey();
+  let connectionRemembered = rememberedConnection(connectionKey);
+  let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
   let verified: { at: number; stillCurrent: () => boolean } | undefined;
   let stateRouteUnavailableFor: (() => boolean) | undefined;
+  let probeIdentity:
+    | { account: string | null; id: unknown; state: WorkerConnectionState | undefined }
+    | undefined;
   const now = performance.now.bind(performance);
 
   const checkSockets = () => {
@@ -142,6 +149,17 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     const state = workerConnectionState();
     const account = accountKey();
     const id = workerId();
+    if (
+      !probeIdentity ||
+      probeIdentity.account !== account ||
+      probeIdentity.id !== id ||
+      probeIdentity.state !== state
+    ) {
+      probeIdentity = { account, id, state };
+      workerFailures.succeeded();
+      verified = undefined;
+      stateRouteUnavailableFor = undefined;
+    }
     const stillCurrent = () =>
       account === accountKey() && state === workerConnectionState() && id === workerId();
     const observation = stateRouteUnavailableFor?.()
@@ -197,8 +215,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         }
         // An older worker may answer the fallback heartbeat without exposing
         // encrypted state. That proves RPC reachability, not transport health.
-        if (connected === undefined) callbacks.onUnknown("worker");
-        else callbacks.onHealthy("worker");
+        if (connected === true) callbacks.onHealthy("worker");
+        else callbacks.onUnknown("worker");
       })
       .catch(() => {
         verified = undefined;
@@ -213,6 +231,15 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       });
   };
   const check = () => {
+    const currentKey = accountKey();
+    if (currentKey !== connectionKey) {
+      connectionKey = currentKey;
+      connectionRemembered = rememberedConnection(connectionKey);
+      workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+      workerDisconnected = false;
+      verified = undefined;
+      callbacks.onUnknown("worker-connection");
+    }
     const connected = workerIsConnected();
     // Survive reloads and native webview recreation, without letting another
     // account's connection history arm a worker that has never initialized.

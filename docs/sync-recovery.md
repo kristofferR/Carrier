@@ -39,6 +39,11 @@ Carrier uses Messenger's existing worker lifecycle:
 
 There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
+Transient worker-status or callback failures spend one attempt and retain the
+remaining retries; missing or incompatible APIs stop automatic mutation.
+Even a brief verified-health sample that ends an observation window preserves
+the next-attempt backoff if connectivity drops again. Account switches start a
+new budget and connection history, without racing an old in-flight setup.
 Only 60 seconds of verified health replenishes the budget: successful backend
 setup and a connected state delivered from the worker less than 15 seconds ago.
 The current probe requests
@@ -58,14 +63,18 @@ synthetic online event without a preceding offline observation do not grant a
 retry. Draft, call, rate-limit, sleep, and Hold Failures guards still apply.
 
 A missing subscription API or an explicit missing-route error falls back to
-the ordinary heartbeat, which proves responsiveness only. A successful RPC
+the ordinary heartbeat, which proves responsiveness only. A freshly delivered
+disconnected state also does not claim transport health. Probe-failure streaks
+reset when the account, worker ID, or state manager changes. A successful RPC
 with no state delivery instead times out after eight seconds. Listeners are
 removed on success, failure, and timeout; late replies cannot launch fallback
 requests or certify a replaced worker. Page MQTT or an unavailable
 connection-state API cannot claim encrypted transport health or refund attempts.
 A hung initialization
 keeps the single-flight guard even after its timeout; a second setup must not
-race it. Successful invocation alone is not proof of a working connection.
+race it. If health briefly returns at that timeout and later fails again, the
+manual failure controls appear while the old setup is still pending. Successful
+invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks
 continue; a prolonged busy state offers manual recovery while awaiting setup.
 
@@ -73,7 +82,8 @@ Calls, drafts, offline state, sleep, rate limiting, and **Hold Failures** preven
 automatic worker mutation. Exhausted or unsupported recovery leaves the page
 in place and offers **Reconnect** and **Reload**. Reload preserves the existing
 draft/call and rate-limit protections. Server rate-limit recovery still follows
-its separately coordinated cooldown.
+its separately coordinated cooldown. Sleep and wake reset the 15-second stale
+settle timer before any new mutation.
 
 The native watchdog receives `managed` while a responsive page owns transport
 recovery. This pauses native transport reloads without claiming health or

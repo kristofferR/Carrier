@@ -346,8 +346,13 @@ export function initAutoRefresh() {
     const resumed = powerState.update(snapshot);
     systemSleeping = snapshot.sleeping;
     sampleSyncProcessing(processingActive());
-    if (systemSleeping) clearPending();
-    else if (resumed) noteLifecycle();
+    if (systemSleeping) {
+      silentRecovery.resetSettle();
+      clearPending();
+    } else if (resumed) {
+      silentRecovery.resetSettle();
+      noteLifecycle();
+    }
   });
 
   window.__carrierOnNotification = noteLifecycle;
