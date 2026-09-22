@@ -3,9 +3,13 @@ import {
   createFacebookModuleDefineInterceptor,
   type FacebookModuleDefine,
 } from "./facebook-modules";
-import { FacebookWorkerRecovery, SilentRecoveryBudget } from "./worker-recovery";
+import {
+  FacebookWorkerRecovery,
+  hasSoleMessengerWindow,
+  SilentRecoveryBudget,
+} from "./worker-recovery";
 
-function fixture() {
+function fixture(canRestartSharedWorker: () => Promise<boolean> = async () => true) {
   let account: string | undefined = "account-a";
   let currentId: string | null = null;
   let inProgress = false;
@@ -15,6 +19,7 @@ function fixture() {
   const rejected: unknown[] = [];
   const watchdogCalls: unknown[][] = [];
   const terminationCalls: string[] = [];
+  const sharedShutdownCalls: unknown[][] = [];
   const setupCalls: { receiver: unknown; args: unknown[] }[] = [];
   let setupResult: unknown = Promise.resolve();
   let bridgePromise: Promise<unknown> | null = Promise.resolve();
@@ -47,6 +52,9 @@ function fixture() {
         if (stopped) bridgePromise = null;
         return stopped;
       },
+      killSharedWorker: async (...args: unknown[]) => {
+        sharedShutdownCalls.push(args);
+      },
     },
     MAWWorkerWatchdogRecovery: {
       getWorkerRecoveryForWatchdog:
@@ -58,6 +66,7 @@ function fixture() {
   const recovery = new FacebookWorkerRecovery(
     (name) => modules[name],
     () => account,
+    canRestartSharedWorker,
   );
   recovery.observeSetupExports(setup);
   const args = [{ opaque: true }, () => {}, () => {}, () => {}, "mawInit", () => {}, undefined];
@@ -69,6 +78,7 @@ function fixture() {
     setupCalls,
     watchdogCalls,
     terminationCalls,
+    sharedShutdownCalls,
     rejected,
     get resets() {
       return resets;
@@ -101,6 +111,16 @@ function fixture() {
 }
 
 describe("Messenger worker recovery", () => {
+  test("requires an unambiguous sole Messenger window for shared shutdown", () => {
+    expect(hasSoleMessengerWindow(["main"])).toBe(true);
+    expect(hasSoleMessengerWindow(["main", "settings"])).toBe(true);
+    expect(hasSoleMessengerWindow(["win-2", "settings"])).toBe(true);
+    expect(hasSoleMessengerWindow(["main", "win-2"])).toBe(false);
+    expect(hasSoleMessengerWindow(["main", "unknown"])).toBe(false);
+    expect(hasSoleMessengerWindow(["settings"])).toBe(false);
+    expect(hasSoleMessengerWindow(undefined)).toBe(false);
+  });
+
   test("intercepts the real factory ABI without inspecting dependency exports", () => {
     let factory: ((...args: unknown[]) => unknown) | undefined;
     const define: FacebookModuleDefine = (_name, _deps, value) => {
@@ -161,6 +181,128 @@ describe("Messenger worker recovery", () => {
     expect(f.watchdogCalls).toEqual([["locks_based_recovery", "worker", "locks_based_recovery"]]);
     expect(f.resets).toBe(0);
     expect(f.setupCalls).toHaveLength(0);
+  });
+
+  test("escalates one failed bridge repair through Messenger's own shared-worker lifecycle", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.watchdogCalls).toHaveLength(1);
+    expect(f.sharedShutdownCalls).toEqual([[false, "carrier-sync-recovery"]]);
+    expect(f.setupCalls).toHaveLength(1);
+    expect(f.resets).toBe(0);
+    // A shutdown request is not proof that the worker died. Do not broadcast
+    // again in the same unhealthy episode, even if its identity has not moved.
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+    f.recovery.clearEscalation();
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(2);
+  });
+
+  test("never shuts down a shared worker without a prior repair or the current account", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+    f.account = "account-b";
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("leaves a shared worker alive when another Messenger window exists", async () => {
+    const f = fixture(async () => false);
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.watchdogCalls).toHaveLength(2);
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("rechecks protection and worker identity after the native window query", async () => {
+    const f = fixture(async () => {
+      f.bridgePromise = Promise.resolve();
+      return true;
+    });
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("does not shut down if recovery times out while querying native windows", async () => {
+    let allowed = true;
+    const f = fixture(async () => {
+      allowed = false;
+      return true;
+    });
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    expect(await f.recovery.recover(() => allowed, true)).toBe("busy");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("does not shut down when a shared bridge changes during asynchronous inspection", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => {
+        f.bridgePromise = Promise.resolve();
+        return { tag: "shared_exists_and_connected" };
+      },
+    };
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("does not shut down a replacement shared worker after asynchronous inspection", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => {
+        f.currentId = "replacement";
+        return { tag: "shared_exists_and_connected" };
+      },
+    };
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+  });
+
+  test("a failed shared-worker shutdown is not broadcast again in the same episode", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    let calls = 0;
+    Object.assign(f.modules.MAWSetupWorker as object, {
+      killSharedWorker: async () => {
+        calls++;
+        throw new Error("shutdown request failed");
+      },
+    });
+    expect(await f.recovery.recover(() => true, true)).toBe("failed");
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(calls).toBe(1);
   });
 
   test("stops and replays a dedicated worker without navigating", async () => {

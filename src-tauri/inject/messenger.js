@@ -430,14 +430,22 @@
     const candidate = record(value)?.[key];
     return typeof candidate === "function" ? candidate : void 0;
   }
+  function hasSoleMessengerWindow(value) {
+    if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
+    const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
+    return messenger.length === 1 && value.every((label) => label === "settings" || messenger.includes(label));
+  }
   var FacebookWorkerRecovery = class {
-    constructor(load, accountScope) {
+    constructor(load, accountScope, canRestartSharedWorker = async () => false) {
       __publicField(this, "load", load);
       __publicField(this, "accountScope", accountScope);
+      __publicField(this, "canRestartSharedWorker", canRestartSharedWorker);
       __publicField(this, "replay");
       __publicField(this, "scope");
       __publicField(this, "recovering", false);
       __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "sharedBridgeRepair");
+      __publicField(this, "sharedRestartUsedScope");
     }
     observeSetupExports(value) {
       const exports = record(value);
@@ -466,7 +474,12 @@
       } catch (_) {
       }
     }
-    async recover(allowed = () => true) {
+    /** A sustained verified connection starts a fresh escalation episode. */
+    clearEscalation() {
+      this.sharedBridgeRepair = void 0;
+      this.sharedRestartUsedScope = void 0;
+    }
+    async recover(allowed = () => true, restartShared = false) {
       if (this.recovering) return "busy";
       this.recovering = true;
       try {
@@ -478,6 +491,8 @@
           return "unsupported";
         }
         if (!startingScope) return "unsupported";
+        if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = void 0;
+        if (this.sharedRestartUsedScope !== startingScope) this.sharedRestartUsedScope = void 0;
         const state2 = this.load("MAWWaitForBackendSetup");
         const settled = method(state2, "isBackendSetupSettled");
         const inProgress = method(state2, "isBackendSetupInProgress");
@@ -491,7 +506,7 @@
         }
         if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const initialId = currentId.call(state2);
-        const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : void 0;
+        const setup = initialId ? this.load("MAWSetupWorker") : void 0;
         const bridge = method(setup, "waitForWorkerSetup");
         const initialBridge = bridge?.call(setup);
         const replay = this.replay;
@@ -534,10 +549,28 @@
         }
         if (typeof id === "string" && id.length > 0) {
           if (status.tag === "dedicated_not_exists") return "unsupported";
+          if (restartShared && status.tag === "shared_exists_and_connected" && initialId === id && this.sharedBridgeRepair?.scope === startingScope && this.sharedBridgeRepair.id === id && this.sharedRestartUsedScope !== startingScope && replay && replayScope === startingScope && initialBridge && typeof record(initialBridge)?.then === "function" && bridge?.call(setup) === initialBridge) {
+            const shutdown = method(setup, "killSharedWorker");
+            if (!shutdown) return "unsupported";
+            let soleWindow = false;
+            try {
+              soleWindow = await this.canRestartSharedWorker();
+            } catch (_) {
+            }
+            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || inProgress.call(state2) === true || settled.call(state2) !== true) {
+              return "busy";
+            }
+            if (soleWindow) {
+              this.sharedRestartUsedScope = startingScope;
+              await shutdown.call(setup, false, "carrier-sync-recovery");
+              return "started";
+            }
+          }
           const recovery = this.load("MAWWorkerWatchdogRecovery");
           const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
           if (typeof callback !== "function") return "unsupported";
           Reflect.apply(callback, void 0, ["locks_based_recovery", id, "locks_based_recovery"]);
+          this.sharedBridgeRepair = { scope: startingScope, id };
           return "started";
         }
         if (id != null || !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) || !replay || !replayScope || replayScope !== this.accountScope()) {
@@ -576,6 +609,9 @@
     }
     get exhausted() {
       return this.attempts >= RETRY_DELAYS_MS.length && this.activeUntil === void 0;
+    }
+    get attemptCount() {
+      return this.attempts;
     }
     observe(healthy, now) {
       if (healthy) {
@@ -1149,7 +1185,17 @@
       const page = window;
       return page.require?.(name);
     },
-    () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0
+    () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
+    async () => {
+      if (window.__CARRIER_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
+        return false;
+      }
+      try {
+        return hasSoleMessengerWindow(await invoke("plugin:window|get_all_windows"));
+      } catch (_) {
+        return false;
+      }
+    }
   );
 
   // inject/src/messenger/features/silent-recovery.ts
@@ -1192,6 +1238,7 @@
         scope = currentScope;
         scopeEpoch++;
         budget.reset();
+        workerRecovery.clearEscalation();
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
@@ -1201,6 +1248,7 @@
       const needed = options.needsRecovery();
       const healthy = options.isHealthy();
       budget.observe(healthy, now());
+      if (healthy && budget.attemptCount === 0) workerRecovery.clearEscalation();
       if (networkRestoredAt !== void 0) {
         if (healthy) networkRestoredAt = void 0;
         else if (now() - networkRestoredAt >= NETWORK_RESTORATION_GRACE_MS) {
@@ -1241,7 +1289,10 @@
         showFailure(true);
         diag("sync.worker-recovery-timeout", "worker recovery did not settle; preserving the page");
       }, SILENT_RECOVERY_TIMEOUT_MS);
-      void workerRecovery.recover(() => !options.blocked(manual) && options.needsRecovery()).then((result) => {
+      void workerRecovery.recover(
+        () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
+        budget.attemptCount >= 2 && window.__CARRIER_SETTINGS__?.multi_instance === false
+      ).then((result) => {
         nativeClearTimeout2(timeout);
         running = false;
         runningTimedOut = false;

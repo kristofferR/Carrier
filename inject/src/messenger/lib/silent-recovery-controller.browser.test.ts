@@ -67,7 +67,7 @@ async function runFixtures(
     isHealthy: () => boolean;
     check: () => void;
   }) => { tick: () => void; resetSettle: () => void },
-  adapter: { recover: (allowed?: () => boolean) => Promise<string> },
+  adapter: { recover: (allowed?: () => boolean, restartShared?: boolean) => Promise<string> },
   failureEvent: string,
 ) {
   const result = document.getElementById("result")!;
@@ -171,6 +171,43 @@ async function runFixtures(
     retryRecovery.tick();
     await flush();
     assert("transient failure permits another attempt", calls === 5);
+
+    const restartFlags: boolean[] = [];
+    window.__CARRIER_SETTINGS__ = { multi_instance: false };
+    adapter.recover = async (_allowed, restartShared) => {
+      restartFlags.push(restartShared === true);
+      return "started";
+    };
+    const sharedState = { needed: true, healthy: false };
+    const sharedRecovery = make(sharedState);
+    sharedRecovery.tick();
+    await advance(15_000);
+    sharedRecovery.tick();
+    await flush();
+    await advance(30_000);
+    sharedRecovery.tick();
+    await advance(15_000);
+    sharedRecovery.tick();
+    await flush();
+    assert(
+      "second bounded attempt permits a shared-worker restart",
+      restartFlags.join() === "false,true",
+    );
+    sharedState.needed = false;
+    sharedState.healthy = true;
+    sharedRecovery.tick();
+    await advance(60_000);
+    sharedRecovery.tick();
+    sharedState.needed = true;
+    sharedState.healthy = false;
+    sharedRecovery.tick();
+    await advance(15_000);
+    sharedRecovery.tick();
+    await flush();
+    assert(
+      "sustained health starts with bridge repair again",
+      restartFlags.join() === "false,true,false",
+    );
 
     adapter.recover = () => {
       calls++;

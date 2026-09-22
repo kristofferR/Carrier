@@ -17,6 +17,7 @@
   },
   "permissions": [
     "core:event:allow-emit",
+    "core:window:allow-get-all-windows",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-badge-label",
     "notification:allow-is-permission-granted",

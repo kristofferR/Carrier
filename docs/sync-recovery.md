@@ -18,8 +18,14 @@ Recovery waits another 15 seconds for fresh probes, including after wake.
 Carrier uses Messenger's existing worker lifecycle:
 
 - If the page has a worker ID, invoke its registered watchdog recovery callback
-  with that exact ID. This closes and reattaches the page's bridge without
-  terminating the shared worker, which may serve another window.
+  with that exact ID. This closes and reattaches the page's bridge. If encrypted
+  health remains unverified through the first observation window, a later
+  attempt can ask Messenger to restart the shared worker. This escalation
+  requires BroadcastChannel, a fresh native inventory showing exactly one
+  Messenger window, multi-instance mode off, an unchanged account, worker ID,
+  setup promise and replay closure, and a settled backend. It is used at most
+  once per unhealthy episode. Messenger's own close listener rebuilds the
+  backend in the same document; Carrier does not race it with a second setup call.
 - If startup failed before assigning an ID and no shared worker exists, replay
   the original setup call. The document-start module interceptor retains its
   original arguments and callbacks in memory, scoped to the current account.
@@ -186,7 +192,7 @@ not automatic retry triggers: a legitimate restore can run slowly, and batch
 replay has not been proven safe. Coverage excludes waiting for database readiness
 before the transaction logger starts and newer shim handlers that bypass it.
 
-## Why worker shutdown is not automated
+## Shared-worker shutdown boundary
 
 The inspected shared-worker shutdown path releases its status lock, broadcasts
 a shutdown notification to its connected ports, then calls `close()`. Its
@@ -199,10 +205,18 @@ never reached `close()`.
 
 This proves a control-flow limitation, not that closed browser ports normally
 throw or that it caused the original outage. Neither the notification nor lock
-release alone is a safe restart barrier. A replacement must not race a surviving
-worker or interrupt another client's call. Carrier therefore keeps the current
-non-terminating **shared-worker** bridge recovery while investigating a supported
-socket-level restart with reliable cancellation and ownership checks.
+release alone is a safe restart barrier. Carrier therefore never treats the
+shutdown request as proof of recovery or starts a competing setup itself.
+Messenger's existing close listener owns the replacement, and Carrier requires
+fresh encrypted state from the resulting worker before crediting health.
+
+The automatic escalation is restricted to a fresh native inventory with one
+Messenger window, and is skipped if multi-instance mode is on or the inventory
+cannot be read. It also requires the synchronous BroadcastChannel request path;
+other windows continue using page-local bridge repair. A native
+window query is a point-in-time guard, so a window opened at the exact moment of
+shutdown remains a theoretical race. Active calls and drafts in this page block
+recovery; multi-window calls are protected by the one-window requirement.
 
 ## Validation and remaining limits
 
@@ -240,6 +254,12 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   changing worker bridges, account changes, failed termination, and a missing
   dedicated worker. The installed Messenger session uses a **shared** worker,
   so dedicated-worker restart has not been verified against a live account.
+- With one healthy signed-in diagnostics window, call Messenger's own shared
+  shutdown route once under the normal no-draft/no-call guards. Five seconds
+  later the worker ID had changed, backend setup and encrypted connection were
+  healthy, and the document epoch had not changed. This proves the route can
+  rebuild that live session in place; it is not a forced handshake-blackhole
+  test or proof of safe multi-window shutdown.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it

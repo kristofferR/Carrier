@@ -14,16 +14,29 @@ function method(value: unknown, key: string): Method | undefined {
 
 export type WorkerRecoveryResult = "started" | "busy" | "unsupported" | "failed";
 
+/** Treat unknown native windows as possible Messenger clients. */
+export function hasSoleMessengerWindow(value: unknown): boolean {
+  if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
+  const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
+  return (
+    messenger.length === 1 &&
+    value.every((label) => label === "settings" || messenger.includes(label))
+  );
+}
+
 /** Retain Messenger's own setup closure, never copy or serialize its key material. */
 export class FacebookWorkerRecovery {
   private replay: (() => unknown) | undefined;
   private scope: string | undefined;
   private recovering = false;
   private readonly wrapped = new WeakSet<object>();
+  private sharedBridgeRepair: { scope: string; id: string } | undefined;
+  private sharedRestartUsedScope: string | undefined;
 
   constructor(
     private readonly load: ModuleLoader,
     private readonly accountScope: () => string | undefined,
+    private readonly canRestartSharedWorker: () => Promise<boolean> = async () => false,
   ) {}
 
   observeSetupExports(value: unknown): void {
@@ -61,7 +74,16 @@ export class FacebookWorkerRecovery {
     }
   }
 
-  async recover(allowed: () => boolean = () => true): Promise<WorkerRecoveryResult> {
+  /** A sustained verified connection starts a fresh escalation episode. */
+  clearEscalation(): void {
+    this.sharedBridgeRepair = undefined;
+    this.sharedRestartUsedScope = undefined;
+  }
+
+  async recover(
+    allowed: () => boolean = () => true,
+    restartShared = false,
+  ): Promise<WorkerRecoveryResult> {
     if (this.recovering) return "busy";
     this.recovering = true;
     try {
@@ -73,6 +95,8 @@ export class FacebookWorkerRecovery {
         return "unsupported";
       }
       if (!startingScope) return "unsupported";
+      if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = undefined;
+      if (this.sharedRestartUsedScope !== startingScope) this.sharedRestartUsedScope = undefined;
       const state = this.load("MAWWaitForBackendSetup");
       const settled = method(state, "isBackendSetupSettled");
       const inProgress = method(state, "isBackendSetupInProgress");
@@ -86,7 +110,7 @@ export class FacebookWorkerRecovery {
       }
       if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
       const initialId = currentId.call(state);
-      const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : undefined;
+      const setup = initialId ? this.load("MAWSetupWorker") : undefined;
       const bridge = method(setup, "waitForWorkerSetup");
       const initialBridge = bridge?.call(setup);
       // Messenger may start a new setup for the same account while status or
@@ -159,12 +183,55 @@ export class FacebookWorkerRecovery {
       }
       if (typeof id === "string" && id.length > 0) {
         if (status.tag === "dedicated_not_exists") return "unsupported";
+        if (
+          restartShared &&
+          status.tag === "shared_exists_and_connected" &&
+          initialId === id &&
+          this.sharedBridgeRepair?.scope === startingScope &&
+          this.sharedBridgeRepair.id === id &&
+          this.sharedRestartUsedScope !== startingScope &&
+          replay &&
+          replayScope === startingScope &&
+          initialBridge &&
+          typeof record(initialBridge)?.then === "function" &&
+          bridge?.call(setup) === initialBridge
+        ) {
+          const shutdown = method(setup, "killSharedWorker");
+          if (!shutdown) return "unsupported";
+          let soleWindow = false;
+          try {
+            soleWindow = await this.canRestartSharedWorker();
+          } catch (_) {
+            // An unavailable native window inventory cannot prove ownership.
+          }
+          if (
+            !allowed() ||
+            startingScope !== this.accountScope() ||
+            currentId.call(state) !== id ||
+            this.replay !== replay ||
+            this.scope !== replayScope ||
+            bridge?.call(setup) !== initialBridge ||
+            inProgress.call(state) === true ||
+            settled.call(state) !== true
+          ) {
+            return "busy";
+          }
+          if (soleWindow) {
+            // Messenger's own close listener resets and reinitializes the page.
+            // Do not replay setup: shutdown is broadcast and its promise does
+            // not certify that the old worker has exited.
+            this.sharedRestartUsedScope = startingScope;
+            await shutdown.call(setup, false, "carrier-sync-recovery");
+            return "started";
+          }
+        }
         const recovery = this.load("MAWWorkerWatchdogRecovery");
         const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
         if (typeof callback !== "function") return "unsupported";
         // Reattach this page's bridge using Messenger's existing callback.
         // Status locks prove worker existence, not that its port still works.
         Reflect.apply(callback, undefined, ["locks_based_recovery", id, "locks_based_recovery"]);
+        this.sharedBridgeRepair = { scope: startingScope, id };
         return "started";
       }
       if (
@@ -220,6 +287,10 @@ export class SilentRecoveryBudget {
 
   get exhausted(): boolean {
     return this.attempts >= RETRY_DELAYS_MS.length && this.activeUntil === undefined;
+  }
+
+  get attemptCount(): number {
+    return this.attempts;
   }
 
   observe(healthy: boolean, now: number): void {

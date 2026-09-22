@@ -55,6 +55,7 @@ export function createSilentRecovery(options: {
       scope = currentScope;
       scopeEpoch++;
       budget.reset();
+      workerRecovery.clearEscalation();
       manualRequested = false;
       unhealthySince = undefined;
       busySince = undefined;
@@ -64,6 +65,7 @@ export function createSilentRecovery(options: {
     const needed = options.needsRecovery();
     const healthy = options.isHealthy();
     budget.observe(healthy, now());
+    if (healthy && budget.attemptCount === 0) workerRecovery.clearEscalation();
     if (networkRestoredAt !== undefined) {
       if (healthy) networkRestoredAt = undefined;
       else if (now() - networkRestoredAt >= NETWORK_RESTORATION_GRACE_MS) {
@@ -111,7 +113,10 @@ export function createSilentRecovery(options: {
       diag("sync.worker-recovery-timeout", "worker recovery did not settle; preserving the page");
     }, SILENT_RECOVERY_TIMEOUT_MS);
     void workerRecovery
-      .recover(() => !options.blocked(manual) && options.needsRecovery())
+      .recover(
+        () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
+        budget.attemptCount >= 2 && window.__CARRIER_SETTINGS__?.multi_instance === false,
+      )
       .then((result) => {
         nativeClearTimeout(timeout);
         running = false;
