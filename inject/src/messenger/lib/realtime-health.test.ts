@@ -266,16 +266,16 @@ describe("realtime recovery signals", () => {
     expect(tracker.status(REALTIME_UNOBSERVED_MS * 10)).toBe("never");
   });
 
-  test("a withdrawn source vouches only as long as its last healthy report", () => {
+  test("page traffic cannot vouch for an encrypted worker that stopped answering", () => {
     const tracker = new RealtimeRecoveryTracker(0);
     tracker.healthy("socket", 0);
     // The page loses sight of its socket, then the worker probe starts failing.
     tracker.withdraw("socket");
     tracker.stale("worker");
 
-    // The socket was proven live moments ago, so hold off briefly...
-    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS)).toBe(false);
-    // ...but an unobservable source cannot vouch indefinitely.
+    expect(tracker.needsRecovery(0)).toBe(true);
+    tracker.healthy("socket", REALTIME_CORROBORATION_MS);
+    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS)).toBe(true);
     expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(true);
   });
 

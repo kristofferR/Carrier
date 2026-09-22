@@ -40,8 +40,8 @@ const MISSING_CONTENT_TIMEOUT: Duration = Duration::from_secs(60);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(60);
 const REACHABILITY_RETRY: Duration = Duration::from_secs(10);
 /// How long the page must continuously report a bad realtime transport before
-/// the native side intervenes. The page's own 60s reload loop handles the
-/// transient cases first; this only fires when the page cannot help itself.
+/// the native side intervenes for older injections. Current responsive pages
+/// report Managed and own their non-navigating transport recovery.
 const REALTIME_BAD_TIMEOUT: Duration = Duration::from_secs(120);
 /// Native reloads per bad-transport episode before escalating to a rebuild.
 const REALTIME_RELOAD_LIMIT: u32 = 2;
@@ -225,6 +225,9 @@ impl RenderDiagnostics {
 enum RealtimeSignal {
     Ok,
     Pending,
+    /// Responsive page owns worker recovery and any user-requested reload.
+    /// This is not proof of health and must not refund recovery budgets.
+    Managed,
     Stale,
     Never,
     Error,
@@ -309,7 +312,8 @@ impl WatchdogState {
             }
             // "pending" pauses the timer without refunding the reload budget —
             // a reload into a still-broken page must not reset escalation.
-            Some(RealtimeSignal::Pending | RealtimeSignal::Unknown) | None => {
+            Some(RealtimeSignal::Pending | RealtimeSignal::Managed | RealtimeSignal::Unknown)
+            | None => {
                 self.realtime_bad_since = None;
             }
         }
@@ -1539,6 +1543,22 @@ mod tests {
             state.heartbeat(Duration::from_secs(t), false, Some(true), Some(signal));
             t += 5;
         }
+    }
+
+    #[test]
+    fn page_managed_transport_recovery_preserves_document_and_native_failure_detection() {
+        let mut state = WatchdogState::default();
+        state.realtime_reload_started(Duration::ZERO);
+        feed_realtime(&mut state, 0, 300, RealtimeSignal::Managed);
+        assert_eq!(state.action(Duration::from_secs(300)), WatchdogAction::None);
+        assert_eq!(state.realtime_reloads, 1);
+        // Managed is neither health nor an exemption from renderer supervision.
+        assert_eq!(
+            state.action(Duration::from_secs(330)),
+            WatchdogAction::Reload
+        );
+        feed_realtime(&mut state, 335, 350, RealtimeSignal::Error);
+        assert_ne!(state.action(Duration::from_secs(350)), WatchdogAction::None);
     }
 
     #[test]

@@ -27,6 +27,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   let connected: unknown = true;
   let probes = 0;
   let moduleAvailable = true;
+  let setupFailed = false;
   const storage = new Map<string, string>();
   const createMonitor = (account = "123") => {
     const tracker = new RealtimeRecoveryTracker(now);
@@ -34,6 +35,12 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     const window = {
       WebSocket: Socket,
       require(name: string) {
+        if (name === "MAWWaitForBackendSetup") {
+          return {
+            isBackendSetupSettled: () => setupFailed,
+            isBackendSetupSuccessful: () => !setupFailed,
+          };
+        }
         if (name === "WACommsConnectionState") {
           if (!moduleAvailable) throw new Error("module unavailable");
           return { WACommsConnectionState: { isConnected: () => connected } };
@@ -135,4 +142,9 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   now += REALTIME_NEVER_CONNECTED_MS;
   await check();
   expect(tracker.status(now)).toBe("ok");
+  // An explicit failed bootstrap is authoritative even without connection
+  // history; unrelated MQTT traffic must not hide this first-start failure.
+  setupFailed = true;
+  await check();
+  expect(tracker.status(now)).toBe("stale");
 });

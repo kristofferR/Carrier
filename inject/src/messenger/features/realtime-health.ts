@@ -54,6 +54,20 @@ const workerIsConnected = (): boolean | undefined => {
   }
 };
 
+const workerSetupFailed = (): boolean => {
+  try {
+    const page = window as unknown as { require?: (name: string) => unknown };
+    const state = page.require?.("MAWWaitForBackendSetup") as
+      | { isBackendSetupSettled?: () => unknown; isBackendSetupSuccessful?: () => unknown }
+      | undefined;
+    return (
+      state?.isBackendSetupSettled?.() === true && state.isBackendSetupSuccessful?.() === false
+    );
+  } catch (_) {
+    return false;
+  }
+};
+
 /**
  * Observe Messenger's live MQTT transport without reading or modifying any
  * payloads. Current Messenger keeps sync in a worker, so prefer its own
@@ -86,7 +100,10 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const checkWorker = () => {
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();
-    if (!bridge?.sendAndReceive) return;
+    if (!bridge?.sendAndReceive) {
+      callbacks.onUnknown("worker");
+      return;
+    }
     const sendAndReceive = bridge.sendAndReceive.bind(bridge);
 
     workerProbePending = true;
@@ -129,7 +146,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         connectionRemembered = true;
       } catch (_) {}
     }
-    const disconnected = workerConnection.observe(connected, Date.now());
+    const connectionStale = workerConnection.observe(connected, Date.now());
+    const disconnected = workerSetupFailed() || connectionStale;
     if (disconnected !== workerDisconnected) {
       workerDisconnected = disconnected;
       if (disconnected) {

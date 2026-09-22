@@ -63,9 +63,9 @@ describe("rate-limit recovery", () => {
   });
 
   test("ordinary recovery triggers cannot postpone a scheduled rate-limit retry", () => {
-    for (const reason of ["background", "foreground", "resume", "realtime", "online"] as const) {
-      expect(canReplacePendingRefresh("rate-limit", reason)).toBe(false);
-      expect(canReplacePendingRefresh(reason, "rate-limit")).toBe(true);
+    for (const reason of ["manual"] as const) {
+      expect(canReplacePendingRefresh("rate-limit", reason)).toBe(true);
+      expect(canReplacePendingRefresh(reason, "rate-limit")).toBe(false);
       expect(canReplacePendingRefresh("rate-limit-manual", reason)).toBe(false);
     }
     expect(canReplacePendingRefresh("rate-limit-manual", "rate-limit-manual")).toBe(false);

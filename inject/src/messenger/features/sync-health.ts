@@ -23,6 +23,11 @@ import {
 } from "../lib/sync-health";
 import { isMessengerContentPath } from "../lib/threads";
 import {
+  SILENT_RECOVERY_EVENT,
+  SILENT_RECOVERY_RELOAD_EVENT,
+  SILENT_RECOVERY_RETRY_EVENT,
+} from "../lib/worker-recovery";
+import {
   clearRateLimitOnRecovery,
   RATE_LIMIT_EVENT,
   RATE_LIMIT_RETRY_STATE_EVENT,
@@ -47,6 +52,7 @@ export function initSyncHealth() {
       () => {},
     );
   let sawRateLimit = false;
+  let recoveryFailed = false;
   let recoveryObservedAt: number | null = null;
   const observeResponse = (
     id: number,
@@ -260,10 +266,12 @@ export function initSyncHealth() {
         ? rateLimitRemainingMs() > 0
           ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 60_000))} min. Chats may be out of date.`
           : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish."
-        : "⚠ Messenger sync is broken — chats may be out of date";
+        : recoveryFailed
+          ? "Messenger could not reconnect. Chats may be out of date."
+          : "⚠ Messenger sync is broken — chats may be out of date";
       if (label.textContent !== message) label.textContent = message;
       let retry = banner.querySelector("button");
-      if (limited && !retry) {
+      if ((limited || recoveryFailed) && !retry) {
         retry = document.createElement("button");
         retry.type = "button";
         retry.textContent = "Try again";
@@ -280,14 +288,42 @@ export function initSyncHealth() {
         });
         retry.addEventListener("click", (event) => {
           if (!event.isTrusted || manualRetryPending) return;
-          retryRateLimitNow();
+          if (sawRateLimit) retryRateLimitNow();
+          else window.dispatchEvent(new Event(SILENT_RECOVERY_RETRY_EVENT));
         });
         banner.appendChild(retry);
       }
+      const protectedNow =
+        !!window.__carrierInCall ||
+        [...document.querySelectorAll('[contenteditable="true"]')].some(
+          (element) => !!element.textContent?.trim(),
+        );
       if (retry) {
-        retry.hidden = !limited;
-        retry.disabled = manualRetryPending || rateLimitRemainingMs() <= 0;
-        retry.textContent = retry.disabled ? "Retry pending…" : "Try again";
+        retry.hidden = !limited && !recoveryFailed;
+        retry.disabled = limited
+          ? manualRetryPending || rateLimitRemainingMs() <= 0
+          : protectedNow || !navigator.onLine;
+        retry.textContent = limited
+          ? retry.disabled
+            ? "Retry pending…"
+            : "Try again"
+          : "Reconnect";
+      }
+      let reload = banner.querySelector<HTMLButtonElement>("[data-carrier-reload]");
+      if (recoveryFailed && !reload) {
+        reload = document.createElement("button");
+        reload.type = "button";
+        reload.dataset.carrierReload = "";
+        reload.textContent = "Reload";
+        if (retry) reload.style.cssText = retry.style.cssText;
+        reload.addEventListener("click", (event) => {
+          if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
+        });
+        banner.appendChild(reload);
+      }
+      if (reload) {
+        reload.hidden = limited || !recoveryFailed;
+        reload.disabled = protectedNow || !navigator.onLine;
       }
       if (existing) return;
       Object.assign(banner.style, {
@@ -324,6 +360,12 @@ export function initSyncHealth() {
       document.getElementById(SYNC_BANNER_ID)?.remove();
     } catch (_) {}
   };
+  window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
+    recoveryFailed = (event as CustomEvent<unknown>).detail === true;
+    if (sawRateLimit) showSyncBanner(true);
+    else if (recoveryFailed || degraded) showSyncBanner();
+    else hideSyncBanner();
+  });
 
   // Requests caught in flight by an offline transition must not be swept as
   // hung "failures" on the first tick after connectivity returns.
@@ -387,7 +429,7 @@ export function initSyncHealth() {
       emitSyncAlert("recovered");
     }
     if (sawRateLimit) showSyncBanner(true);
-    else if (degraded) showSyncBanner();
+    else if (degraded || recoveryFailed) showSyncBanner();
     else hideSyncBanner();
   }, SYNC_CHECK_INTERVAL_MS);
 }

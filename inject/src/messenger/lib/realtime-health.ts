@@ -17,19 +17,15 @@ export const REALTIME_CORROBORATION_MS = 30_000;
  * "ok" forever and disarm both page-side and native recovery while the inbox
  * quietly froze.
  *
- * Tuned for fast recovery. Note the trade: a source that can still see the
- * transport refreshes this every heartbeat, so a healthy worker keeps it from
- * ever tripping — but if nothing can observe the transport at all, reloads
- * settle into a cadence of roughly this interval (floored by the recovery gap
- * in realtimeRecoveryDelay). Raise it if that churn is ever worse than the
- * staleness it is trying to clear.
+ * A healthy worker refreshes this every heartbeat. Losing all observations
+ * starts bounded in-place recovery, never a periodic reload loop.
  */
 export const REALTIME_UNOBSERVED_MS = 60_000;
 /**
- * Minimum delay before an unobserved-transport reload. A view resuming from
+ * Minimum delay before unobserved-transport recovery. A view resuming from
  * suspension trips the unobserved check synchronously, while the worker probe
  * that would clear it is asynchronous and allowed to take its full timeout —
- * so recovery has to wait out that probe or it would reload a page whose
+ * so recovery has to wait out that probe or it would disrupt a page whose
  * transport was about to report healthy.
  */
 export const REALTIME_UNOBSERVED_SETTLE_MS = 15_000;
@@ -135,16 +131,15 @@ export class RealtimeRecoveryTracker {
   }
 
   /**
-   * General transport failures can be corroborated by either observer, since
-   * Messenger may move its page socket into a worker. An explicitly observed
-   * encrypted-connection failure is independent of that fallback.
+   * A healthy encrypted worker can replace page-owned sockets. Page MQTT
+   * cannot replace the encrypted worker or vouch for its failed bridge.
    */
   needsRecovery(now = Date.now()): boolean {
     // Page MQTT and encrypted-message sync are separate connections. Neither
     // page traffic nor a responsive worker can vouch for an observed loss of
     // the encrypted connection. This source only reports a sustained fault;
     // clearing it withdraws the veto, without claiming transport health.
-    if (this.staleSources.has("worker-connection")) return true;
+    if (this.staleSources.has("worker-connection") || this.staleSources.has("worker")) return true;
     // A backwards wall-clock adjustment would otherwise leave reports dated in
     // the future: elapsed() clamps those to zero, so they would vouch for a
     // stale source forever and the unobserved window could not elapse until
