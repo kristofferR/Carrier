@@ -24,6 +24,7 @@ import {
 } from "./rate-limit";
 import { monitorRealtimeHealth } from "./realtime-health";
 import { createSilentRecovery } from "./silent-recovery";
+import { sampleSyncProcessing } from "./sync-processing";
 
 export function initAutoRefresh() {
   // Capture these at document start, before Facebook wraps the scheduling APIs.
@@ -183,9 +184,16 @@ export function initAutoRefresh() {
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("carrier:protection-change", emitProtectionChange);
   emitHeartbeat();
+  const processingActive = () =>
+    !systemSleeping &&
+    !document.hidden &&
+    navigator.onLine &&
+    rateLimitRemainingMs() <= 0 &&
+    isMessengerContentPath(location.pathname);
   const captureRecovery = async () => {
     // Counts and booleans only: never serialize DOM, URLs, names, or drafts.
-    const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+    const processing = sampleSyncProcessing(processingActive());
+    const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
     await Promise.race([
       invoke("plugin:event|emit", {
         event: "carrier:diag",
@@ -317,12 +325,14 @@ export function initAutoRefresh() {
   });
   // These events are reasons to check sync, not evidence that it is broken.
   const noteLifecycle = () => {
+    sampleSyncProcessing(processingActive());
     if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
   };
   window.addEventListener("focus", noteLifecycle);
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
   window.addEventListener("online", noteLifecycle);
+  window.addEventListener("offline", noteLifecycle);
   const powerState = new PowerStateTracker(performance.timeOrigin);
   window.addEventListener("carrier:power-state", (event) => {
     const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
@@ -335,6 +345,7 @@ export function initAutoRefresh() {
     }
     const resumed = powerState.update(snapshot);
     systemSleeping = snapshot.sleeping;
+    sampleSyncProcessing(processingActive());
     if (systemSleeping) clearPending();
     else if (resumed) noteLifecycle();
   });
@@ -368,6 +379,7 @@ export function initAutoRefresh() {
   // transport for disconnects, stuck reconnects, and half-open silence — before
   // the heartbeat, so the emitted realtime status reflects this tick.
   setInterval(() => {
+    sampleSyncProcessing(processingActive());
     if (systemSleeping || rateLimitRemainingMs() > 0) {
       emitHeartbeat();
       return;
