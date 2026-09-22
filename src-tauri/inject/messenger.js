@@ -1044,7 +1044,8 @@
         if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
-        callbacks.onHealthy("worker");
+        if (connected === void 0) callbacks.onUnknown("worker");
+        else callbacks.onHealthy("worker");
       }).catch(() => {
         verified = void 0;
         if (!stillCurrent()) callbacks.onUnknown("worker");

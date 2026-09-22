@@ -195,7 +195,10 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         ) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
-        callbacks.onHealthy("worker");
+        // An older worker may answer the fallback heartbeat without exposing
+        // encrypted state. That proves RPC reachability, not transport health.
+        if (connected === undefined) callbacks.onUnknown("worker");
+        else callbacks.onHealthy("worker");
       })
       .catch(() => {
         verified = undefined;

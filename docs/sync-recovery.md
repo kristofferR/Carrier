@@ -62,7 +62,8 @@ the ordinary heartbeat, which proves responsiveness only. A successful RPC
 with no state delivery instead times out after eight seconds. Listeners are
 removed on success, failure, and timeout; late replies cannot launch fallback
 requests or certify a replaced worker. Page MQTT or an unavailable
-connection-state API cannot refund attempts. A hung initialization
+connection-state API cannot claim encrypted transport health or refund attempts.
+A hung initialization
 keeps the single-flight guard even after its timeout; a second setup must not
 race it. Successful invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks

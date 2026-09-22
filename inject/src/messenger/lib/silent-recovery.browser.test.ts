@@ -259,6 +259,20 @@ async function runFixtures(
     for (let i = 0; i < 4; i++) await tick();
     assert("one extra worker repair follows real network restoration", recoveries === 3);
     assert("restoration keeps the same document", performance.timeOrigin === origin);
+    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    modules.MAWBridgeSendAndReceive = {
+      sendAndReceive: async (_namespace: string, route: string) => {
+        if (route === "resendWorkerStateManagerValuesToMainThread") {
+          throw new Error("resendWorkerStateManagerValuesToMainThread is not defined for backend");
+        }
+      },
+    };
+    for (let i = 0; i < 20; i++) await tick();
+    assert(
+      "heartbeat-only fallback does not certify encrypted transport",
+      reports.at(-1) === "managed",
+    );
+    assert("hold prevents mutation while transport proof is unavailable", recoveries === 3);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;
