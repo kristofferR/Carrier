@@ -222,13 +222,16 @@
       __publicField(this, "everConnected", false);
       __publicField(this, "disconnectedAt", null);
     }
-    observe(connected, now) {
+    observe(connected, now, backendReady = false) {
       if (connected !== false) {
         this.everConnected || (this.everConnected = connected === true);
         this.disconnectedAt = null;
         return false;
       }
-      if (!this.everConnected && !this.previouslyConnected) return false;
+      if (!this.everConnected && !this.previouslyConnected && !backendReady) {
+        this.disconnectedAt = null;
+        return false;
+      }
       this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
       const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
       return elapsed(now, this.disconnectedAt) >= grace;
@@ -843,13 +846,15 @@
       return void 0;
     }
   };
-  var workerSetupFailed = () => {
+  var workerSetupState = () => {
     try {
       const page = window;
       const state2 = page.require?.("MAWWaitForBackendSetup");
-      return state2?.isBackendSetupSettled?.() === true && state2.isBackendSetupSuccessful?.() === false;
+      if (state2?.isBackendSetupSettled?.() !== true) return "unknown";
+      const successful = state2.isBackendSetupSuccessful?.();
+      return successful === true ? "ready" : successful === false ? "failed" : "unknown";
     } catch (_) {
-      return false;
+      return "unknown";
     }
   };
   function monitorRealtimeHealth(callbacks) {
@@ -864,6 +869,8 @@
     const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
+    let lastWorkerHeartbeatAt;
+    const now = performance.now.bind(performance);
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
       if (health === "healthy") callbacks.onHealthy("socket");
@@ -875,6 +882,7 @@
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
       if (!bridge?.sendAndReceive) {
+        lastWorkerHeartbeatAt = void 0;
         callbacks.onUnknown("worker");
         return;
       }
@@ -897,8 +905,10 @@
         ])
       ).then(() => {
         workerFailures.succeeded();
+        lastWorkerHeartbeatAt = now();
         callbacks.onHealthy("worker");
       }).catch(() => {
+        lastWorkerHeartbeatAt = void 0;
         if (workerFailures.failed()) callbacks.onStale("worker");
       }).finally(() => {
         clearTimeout(timeout);
@@ -914,8 +924,9 @@
         } catch (_) {
         }
       }
-      const connectionStale = workerConnection.observe(connected, Date.now());
-      const disconnected = workerSetupFailed() || connectionStale;
+      const setup = workerSetupState();
+      const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
+      const disconnected = setup === "failed" || connectionStale;
       if (disconnected !== workerDisconnected) {
         workerDisconnected = disconnected;
         if (disconnected) {
@@ -960,7 +971,10 @@
     } catch (_) {
       diag("sync.monitor", "could not observe Messenger realtime WebSockets");
     }
-    return { check };
+    return {
+      check,
+      isVerifiedHealthy: () => lastWorkerHeartbeatAt !== void 0 && now() - lastWorkerHeartbeatAt < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready"
+    };
   }
 
   // inject/src/messenger/features/worker-recovery.ts
@@ -1291,7 +1305,7 @@
     const silentRecovery = createSilentRecovery({
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
-      isHealthy: () => realtimeStatus() === "ok",
+      isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
       check: () => realtime.check()
     });
     const noteLifecycle = () => {

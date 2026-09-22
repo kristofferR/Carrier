@@ -28,6 +28,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   let probes = 0;
   let moduleAvailable = true;
   let setupFailed = false;
+  let setupReady = false;
   const storage = new Map<string, string>();
   const createMonitor = (account = "123") => {
     const tracker = new RealtimeRecoveryTracker(now);
@@ -37,7 +38,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
       require(name: string) {
         if (name === "MAWWaitForBackendSetup") {
           return {
-            isBackendSetupSettled: () => setupFailed,
+            isBackendSetupSettled: () => setupFailed || setupReady,
             isBackendSetupSuccessful: () => !setupFailed,
           };
         }
@@ -67,6 +68,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
       location: { href: "https://www.facebook.com/messages/" },
       URL,
       Date: { now: () => now },
+      performance: { now: () => now },
       setTimeout,
       clearTimeout,
       globalThis: context,
@@ -82,6 +84,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     socket.dispatchEvent(new Event("open"));
     return {
       tracker,
+      isVerifiedHealthy: monitor.isVerifiedHealthy,
       check: async () => {
         socket.dispatchEvent(new Event("message"));
         monitor.check();
@@ -147,4 +150,29 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   setupFailed = true;
   await check();
   expect(tracker.status(now)).toBe("stale");
+  // A successful first bootstrap is not proof its encrypted socket opened.
+  setupFailed = false;
+  setupReady = true;
+  const fresh = createMonitor("789");
+  await fresh.check();
+  expect(fresh.isVerifiedHealthy()).toBe(false);
+  now += REALTIME_NEVER_CONNECTED_MS;
+  await fresh.check();
+  expect(fresh.tracker.status(now)).toBe("stale");
+  connected = true;
+  await fresh.check();
+  expect(fresh.isVerifiedHealthy()).toBe(true);
+  now += REALTIME_CONNECT_GRACE_MS;
+  expect(fresh.isVerifiedHealthy()).toBe(false);
+  await fresh.check();
+  expect(fresh.isVerifiedHealthy()).toBe(true);
+  // A missing private API can fall back for observation, but must not refill
+  // a recovery budget as if the encrypted connection had been verified.
+  moduleAvailable = false;
+  await fresh.check();
+  expect(fresh.isVerifiedHealthy()).toBe(false);
+  moduleAvailable = true;
+  connected = false;
+  await fresh.check();
+  expect(fresh.isVerifiedHealthy()).toBe(false);
 });

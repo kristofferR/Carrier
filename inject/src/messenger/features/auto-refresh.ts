@@ -312,7 +312,7 @@ export function initAutoRefresh() {
       !isMessengerContentPath(location.pathname) ||
       onFacebookErrorPage(),
     needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
-    isHealthy: () => realtimeStatus() === "ok",
+    isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
     check: () => realtime.check(),
   });
   // These events are reasons to check sync, not evidence that it is broken.

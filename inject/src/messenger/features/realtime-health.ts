@@ -2,6 +2,7 @@ import { diag } from "../bridge";
 import {
   ConsecutiveFailureThreshold,
   isMessengerRealtimeUrl,
+  REALTIME_CONNECT_GRACE_MS,
   type RealtimeHealthSource,
   RealtimeHealthWatchdog,
   WorkerConnectionWatchdog,
@@ -17,6 +18,8 @@ type RealtimeHealthCallbacks = {
 
 export type RealtimeHealthMonitor = {
   check: () => void;
+  /** Fresh worker responsiveness plus an explicitly connected encrypted transport. */
+  isVerifiedHealthy: () => boolean;
 };
 
 const WORKER_HEARTBEAT_TIMEOUT_MS = 8_000;
@@ -54,17 +57,17 @@ const workerIsConnected = (): boolean | undefined => {
   }
 };
 
-const workerSetupFailed = (): boolean => {
+const workerSetupState = (): "ready" | "failed" | "unknown" => {
   try {
     const page = window as unknown as { require?: (name: string) => unknown };
     const state = page.require?.("MAWWaitForBackendSetup") as
       | { isBackendSetupSettled?: () => unknown; isBackendSetupSuccessful?: () => unknown }
       | undefined;
-    return (
-      state?.isBackendSetupSettled?.() === true && state.isBackendSetupSuccessful?.() === false
-    );
+    if (state?.isBackendSetupSettled?.() !== true) return "unknown";
+    const successful = state.isBackendSetupSuccessful?.();
+    return successful === true ? "ready" : successful === false ? "failed" : "unknown";
   } catch (_) {
-    return false;
+    return "unknown";
   }
 };
 
@@ -86,6 +89,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
+  let lastWorkerHeartbeatAt: number | undefined;
+  const now = performance.now.bind(performance);
 
   const checkSockets = () => {
     const health = watchdog.health(Date.now());
@@ -101,6 +106,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();
     if (!bridge?.sendAndReceive) {
+      lastWorkerHeartbeatAt = undefined;
       callbacks.onUnknown("worker");
       return;
     }
@@ -126,9 +132,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       )
       .then(() => {
         workerFailures.succeeded();
+        lastWorkerHeartbeatAt = now();
         callbacks.onHealthy("worker");
       })
       .catch(() => {
+        lastWorkerHeartbeatAt = undefined;
         if (workerFailures.failed()) callbacks.onStale("worker");
       })
       .finally(() => {
@@ -146,8 +154,9 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         connectionRemembered = true;
       } catch (_) {}
     }
-    const connectionStale = workerConnection.observe(connected, Date.now());
-    const disconnected = workerSetupFailed() || connectionStale;
+    const setup = workerSetupState();
+    const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
+    const disconnected = setup === "failed" || connectionStale;
     if (disconnected !== workerDisconnected) {
       workerDisconnected = disconnected;
       if (disconnected) {
@@ -195,5 +204,12 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     diag("sync.monitor", "could not observe Messenger realtime WebSockets");
   }
 
-  return { check };
+  return {
+    check,
+    isVerifiedHealthy: () =>
+      lastWorkerHeartbeatAt !== undefined &&
+      now() - lastWorkerHeartbeatAt < REALTIME_CONNECT_GRACE_MS &&
+      workerIsConnected() === true &&
+      workerSetupState() === "ready",
+  };
 }

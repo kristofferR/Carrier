@@ -129,6 +129,15 @@ describe("RealtimeHealthWatchdog", () => {
 });
 
 describe("WorkerConnectionWatchdog", () => {
+  test("a ready backend that never opens its first connection gets a startup deadline", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    watchdog.observe(false, 0);
+    expect(watchdog.observe(false, 100_000, true)).toBe(false);
+    expect(watchdog.observe(false, 100_000 + REALTIME_NEVER_CONNECTED_MS - 1, true)).toBe(false);
+    expect(watchdog.observe(false, 100_000 + REALTIME_NEVER_CONNECTED_MS, true)).toBe(true);
+    expect(watchdog.observe(undefined, 200_000, true)).toBe(false);
+  });
+
   test("a replacement document still detects a previously connected worker staying down", () => {
     const watchdog = new WorkerConnectionWatchdog(true);
     expect(watchdog.observe(false, 0)).toBe(false);

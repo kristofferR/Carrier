@@ -79,22 +79,25 @@ export class ConsecutiveFailureThreshold {
   }
 }
 
-/** The worker can answer heartbeats while its encrypted-message connection is
- * down. Arm only after observing a connection: an unused/uninitialized state
- * manager also starts at false and is not evidence of a failed connection. */
+/** The worker can answer heartbeats before its encrypted connection opens.
+ * A completed bootstrap also arms detection, including on a fresh install.
+ * An unused/uninitialized state manager alone is not evidence of failure. */
 export class WorkerConnectionWatchdog {
   private everConnected = false;
   private disconnectedAt: number | null = null;
 
   constructor(private readonly previouslyConnected = false) {}
 
-  observe(connected: boolean | undefined, now: number): boolean {
+  observe(connected: boolean | undefined, now: number, backendReady = false): boolean {
     if (connected !== false) {
       this.everConnected ||= connected === true;
       this.disconnectedAt = null;
       return false;
     }
-    if (!this.everConnected && !this.previouslyConnected) return false;
+    if (!this.everConnected && !this.previouslyConnected && !backendReady) {
+      this.disconnectedAt = null;
+      return false;
+    }
     this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
     // A fresh document needs time to initialize the worker, even when an
     // earlier document established that this account uses encrypted sync.
