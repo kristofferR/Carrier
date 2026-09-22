@@ -136,6 +136,45 @@ Only static application code, symbols, and sanitized state were inspected.
 Native binaries and extracted web modules remain in the private investigation
 archive, outside the repository; no proprietary code is incorporated into Carrier.
 
+## Message-processing diagnostics
+
+An encrypted connection and a responsive bridge do not prove that message batches
+committed to the page's database. Carrier observes the existing
+`MAWBridgeUIEventQueueQPLLogger` transaction boundaries without inspecting their
+payloads. Recovery snapshots include pending, completed, failed, and omitted
+counts plus the oldest pending batch's active time. A failed batch or one still
+pending after two minutes of observed foreground, online, awake time produces a
+diagnostic. Idle conversations, background time, and suspended timer gaps do not
+establish a processing stall. An unrelated completion cannot clear an older
+pending batch.
+
+Tracking retains at most 128 numeric logger instance keys in memory and never
+serializes them. Account changes reset the counters and diagnostic baselines.
+The shared diagnostic logger retains its per-key one-minute rate limit across
+accounts; snapshots still include every counted failure when a log is throttled.
+Changed or frozen logger exports remain untouched. These are diagnostic signals,
+not automatic retry triggers: a legitimate restore can run slowly, and batch
+replay has not been proven safe. Coverage excludes waiting for database readiness
+before the transaction logger starts and newer shim handlers that bypass it.
+
+## Why worker shutdown is not automated
+
+The inspected shared-worker shutdown path releases its status lock, broadcasts
+a shutdown notification to its connected ports, then calls `close()`. Its
+connected-port set does not establish exclusive ownership, and the handler does
+not check a caller-supplied worker generation. A private harness running the
+actual extracted handler with two synthetic clients confirmed that both clients
+are affected, even with a mismatched requested generation. A further synthetic
+test made the notification send throw twice: the lock was released but execution
+never reached `close()`.
+
+This proves a control-flow limitation, not that closed browser ports normally
+throw or that it caused the original outage. Neither the notification nor lock
+release alone is a safe restart barrier. A replacement must not race a surviving
+worker or interrupt another client's call. Carrier therefore keeps the current
+non-terminating bridge recovery while investigating a supported socket-level
+restart with reliable cancellation and ownership checks.
+
 ## Validation and remaining limits
 
 Live tests used a diagnostics build and a separate persistent signed-in profile:
@@ -153,6 +192,19 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   but the missing update invalidates verified health after the deadline. Restore
   delivery and verify the next probe succeeds in the same document. The temporary
   handler and WebSocket wrapper are restored after the test.
+- Run the current recovery adapter and state monitor in the installed diagnostics
+  page, close its MessagePort, and verify recovery in the same document and
+  conversation. Send one explicitly authorized, labelled test message through
+  the composer afterward: Messenger reports **Sent**, and the processing monitor
+  records three completed batches, zero failures, and zero pending batches.
+  No delivered/read receipt was observed. The separate send-report callback
+  probe received no event, so it supplies no additional acknowledgement proof.
+  All temporary hooks were restored and the composer was left empty.
+- Run the extracted transaction handler against Carrier's actual processing
+  collector with a synthetic database. Successful, rejected, and indefinitely
+  pending transactions produce the corresponding counters; a database-readiness
+  promise that never settles remains unobserved, as expected from the coverage
+  boundary above.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it
@@ -163,8 +215,9 @@ protection checks, single-flight behavior, finite retries, draft preservation,
 native `managed` reporting, and healthy lifecycle events. Rust tests verify that
 native renderer/error supervision remains active during page-managed recovery.
 
-These tests prove recovery of the worker failures above, not delivery of a newly
-sent message or an active call. No messages were sent during the investigation.
+These tests prove recovery of the worker failures above and a subsequent message
+reaching Messenger's **Sent** state. They do not establish recipient delivery,
+incoming-message catch-up after every outage, or uninterrupted active calls.
 Messenger's private APIs can change; unsupported shapes must keep the page usable
 and offer manual recovery. A browser-engine failure or server-side outage can
 still require a reload or restart. Private logs and the original matching binary

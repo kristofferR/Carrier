@@ -9,6 +9,7 @@ export class SyncProcessingProgress {
   private activeMs = 0;
   private lastSample: { at: number; active: boolean } | undefined;
   private scope: string | undefined;
+  private epoch = 0;
   private observed = false;
   private completed = 0;
   private failed = 0;
@@ -20,6 +21,7 @@ export class SyncProcessingProgress {
     const scope = this.accountScope();
     if (scope !== this.scope) {
       this.scope = scope;
+      this.epoch++;
       this.pending.clear();
       this.completed = this.failed = this.omitted = 0;
       this.observed = false;
@@ -93,6 +95,7 @@ export class SyncProcessingProgress {
       oldestActiveMs = Math.max(oldestActiveMs, this.activeMs - startedAt);
     }
     return {
+      epoch: this.epoch,
       observed: this.observed,
       pending: this.pending.size,
       completed: this.completed,

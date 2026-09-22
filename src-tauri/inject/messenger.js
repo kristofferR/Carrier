@@ -1162,6 +1162,135 @@
     return { tick };
   }
 
+  // inject/src/messenger/lib/sync-processing.ts
+  var STALL_MS = 12e4;
+  var MAX_SAMPLE_GAP_MS = 15e3;
+  var MAX_PENDING = 128;
+  var SyncProcessingProgress = class {
+    constructor(accountScope) {
+      __publicField(this, "accountScope", accountScope);
+      __publicField(this, "pending", /* @__PURE__ */ new Map());
+      __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "activeMs", 0);
+      __publicField(this, "lastSample");
+      __publicField(this, "scope");
+      __publicField(this, "epoch", 0);
+      __publicField(this, "observed", false);
+      __publicField(this, "completed", 0);
+      __publicField(this, "failed", 0);
+      __publicField(this, "omitted", 0);
+    }
+    syncScope() {
+      const scope = this.accountScope();
+      if (scope !== this.scope) {
+        this.scope = scope;
+        this.epoch++;
+        this.pending.clear();
+        this.completed = this.failed = this.omitted = 0;
+        this.observed = false;
+        this.lastSample = void 0;
+        this.activeMs = 0;
+      }
+      return scope !== void 0;
+    }
+    observeLogger(value) {
+      if (!value || typeof value !== "object") return;
+      const exports = value;
+      const keys = ["start", "endSuccess", "endFailure"];
+      if (!keys.every((key) => {
+        const descriptor = Object.getOwnPropertyDescriptor(exports, key);
+        return descriptor?.writable === true && typeof descriptor.value === "function";
+      })) {
+        return;
+      }
+      for (const key of keys) {
+        const original = exports[key];
+        if (typeof original !== "function" || this.wrapped.has(original)) continue;
+        const wrapper = new Proxy(original, {
+          apply: (target, receiver, args) => {
+            const result = Reflect.apply(target, receiver, args);
+            try {
+              if (this.syncScope()) this.record(key, args[0]);
+            } catch (_) {
+            }
+            return result;
+          }
+        });
+        try {
+          exports[key] = wrapper;
+          this.wrapped.add(wrapper);
+        } catch (_) {
+        }
+      }
+    }
+    record(kind, instance) {
+      if (typeof instance !== "number" || !Number.isSafeInteger(instance)) return;
+      this.observed = true;
+      if (kind === "start") {
+        if (this.pending.has(instance)) return;
+        if (this.pending.size >= MAX_PENDING) {
+          this.omitted++;
+          return;
+        }
+        this.pending.set(instance, this.activeMs);
+      } else if (this.pending.delete(instance)) {
+        if (kind === "endSuccess") this.completed++;
+        else this.failed++;
+      }
+    }
+    sample(at, active) {
+      this.syncScope();
+      const previous = this.lastSample;
+      const delta = previous ? at - previous.at : 0;
+      if (active && previous?.active && delta > 0 && delta <= MAX_SAMPLE_GAP_MS) {
+        this.activeMs += delta;
+      }
+      this.lastSample = { at, active };
+      let oldestActiveMs = 0;
+      for (const startedAt of this.pending.values()) {
+        oldestActiveMs = Math.max(oldestActiveMs, this.activeMs - startedAt);
+      }
+      return {
+        epoch: this.epoch,
+        observed: this.observed,
+        pending: this.pending.size,
+        completed: this.completed,
+        failed: this.failed,
+        omitted: this.omitted,
+        oldestActiveMs: Math.round(oldestActiveMs),
+        stalled: oldestActiveMs >= STALL_MS
+      };
+    }
+  };
+
+  // inject/src/messenger/features/sync-processing.ts
+  var syncProcessing = new SyncProcessingProgress(
+    () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? void 0
+  );
+  var stalled = false;
+  var failures = 0;
+  var epoch = 0;
+  function sampleSyncProcessing(active) {
+    const snapshot = syncProcessing.sample(performance.now(), active);
+    if (snapshot.epoch !== epoch) {
+      epoch = snapshot.epoch;
+      failures = 0;
+      stalled = false;
+    }
+    if (snapshot.failed > failures) {
+      diag("sync.processing-failed", `failed=${snapshot.failed} pending=${snapshot.pending}`);
+    }
+    failures = snapshot.failed;
+    if (snapshot.stalled !== stalled) {
+      stalled = snapshot.stalled;
+      diag(
+        stalled ? "sync.processing-stalled" : "sync.processing-cleared",
+        `pending=${snapshot.pending} active_ms=${snapshot.oldestActiveMs} omitted=${snapshot.omitted}`
+      );
+    }
+    return snapshot;
+  }
+
   // inject/src/messenger/features/auto-refresh.ts
   function initAutoRefresh() {
     const renderProbe = new RenderHealthProbe(
@@ -1293,8 +1422,10 @@
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
+    const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
-      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+      const processing = sampleSyncProcessing(processingActive());
+      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
       await Promise.race([
         invoke("plugin:event|emit", {
           event: "carrier:diag",
@@ -1405,12 +1536,14 @@
       check: () => realtime.check()
     });
     const noteLifecycle = () => {
+      sampleSyncProcessing(processingActive());
       if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
     };
     window.addEventListener("focus", noteLifecycle);
     window.addEventListener("blur", noteLifecycle);
     document.addEventListener("visibilitychange", noteLifecycle);
     window.addEventListener("online", noteLifecycle);
+    window.addEventListener("offline", noteLifecycle);
     const powerState = new PowerStateTracker(performance.timeOrigin);
     window.addEventListener("carrier:power-state", (event) => {
       const snapshot = event.detail;
@@ -1419,6 +1552,7 @@
       }
       const resumed = powerState.update(snapshot);
       systemSleeping = snapshot.sleeping;
+      sampleSyncProcessing(processingActive());
       if (systemSleeping) clearPending();
       else if (resumed) noteLifecycle();
     });
@@ -1442,6 +1576,7 @@
       emitHeartbeat();
     });
     setInterval(() => {
+      sampleSyncProcessing(processingActive());
       if (systemSleeping || rateLimitRemainingMs() > 0) {
         emitHeartbeat();
         return;
@@ -2694,15 +2829,16 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if (moduleName === "MAWSetupWorker") {
+      if (moduleName === "MAWSetupWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
+        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : onProcessingLogger;
         for (const candidate of [result, ...factoryArgs.slice(-2)]) {
           try {
-            onWorkerSetup(candidate);
+            observe(candidate);
             if (candidate && typeof candidate === "object") {
-              onWorkerSetup(candidate.exports);
+              observe(candidate.exports);
             }
           } catch (_) {
           }
@@ -2731,19 +2867,21 @@
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
   }, onWorkerSetup = () => {
+  }, onProcessingLogger = () => {
   }) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
             shouldBlockTelemetry,
             onFTSRestoreSync,
             onFacebookError,
-            onWorkerSetup
+            onWorkerSetup,
+            onProcessingLogger
           );
         }
         return Reflect.apply(target, thisArg, args);
@@ -2827,7 +2965,8 @@
         (error) => {
           if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
         },
-        (exports) => workerRecovery.observeSetupExports(exports)
+        (exports) => workerRecovery.observeSetupExports(exports),
+        (exports) => syncProcessing.observeLogger(exports)
       );
       wrappedDefines.add(wrapped);
       return wrapped;
@@ -3715,13 +3854,13 @@
     camera: '<rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/>',
     microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2M12 18v3m-3 0h6"/>'
   };
-  function showMediaPermissionCard(failures, dismiss, recovered) {
-    const devices = [...failures.keys()];
-    const permissionOnly = [...failures.values()].every((failure2) => failure2 === "denied");
-    const hasDenial = [...failures.values()].includes("denied");
-    const failure = hasDenial ? "denied" : failures.values().next().value ?? "other";
+  function showMediaPermissionCard(failures2, dismiss, recovered) {
+    const devices = [...failures2.keys()];
+    const permissionOnly = [...failures2.values()].every((failure2) => failure2 === "denied");
+    const hasDenial = [...failures2.values()].includes("denied");
+    const failure = hasDenial ? "denied" : failures2.values().next().value ?? "other";
     const failureGroups = /* @__PURE__ */ new Map();
-    for (const [device, reason] of failures)
+    for (const [device, reason] of failures2)
       failureGroups.set(reason, [...failureGroups.get(reason) ?? [], device]);
     const failureDescription = [...failureGroups].map(([reason, group]) => captureFailureMessage(reason, group)).join(" ");
     const platform = carrierMediaPlatform;
@@ -3827,8 +3966,8 @@
         status.textContent = state2 === "allowed" ? "Allowed by macOS" : state2 === "denied" ? "Blocked in macOS Settings" : state2 === "restricted" ? "Restricted by system policy" : state2 === "not-determined" ? "Not requested yet" : "Status unavailable";
         status.dataset.tone = state2 === "allowed" ? "good" : state2 === "denied" || state2 === "restricted" ? "warning" : "neutral";
         check.hidden = state2 !== "allowed";
-        const allow = state2 === "not-determined" && platform === "macos" && failures.get(device) === "denied" && devices.includes(device);
-        const settings = state2 === "denied" && failures.get(device) === "denied" || state2 === "unknown" && failures.get(device) === "denied" && devices.includes(device) && platform !== "linux";
+        const allow = state2 === "not-determined" && platform === "macos" && failures2.get(device) === "denied" && devices.includes(device);
+        const settings = state2 === "denied" && failures2.get(device) === "denied" || state2 === "unknown" && failures2.get(device) === "denied" && devices.includes(device) && platform !== "linux";
         button.hidden = !allow && !settings;
         button.textContent = allow ? "Allow access" : "Open Settings";
         button.setAttribute(
@@ -3898,7 +4037,7 @@
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
     let removeCard;
-    const failures = /* @__PURE__ */ new Map();
+    const failures2 = /* @__PURE__ */ new Map();
     let requestSerial = 0;
     let clearedThrough = 0;
     const remove = () => {
@@ -3907,7 +4046,7 @@
     };
     const hide = () => {
       remove();
-      failures.clear();
+      failures2.clear();
     };
     const dismissWarning = () => {
       clearedThrough = requestSerial;
@@ -3915,8 +4054,8 @@
     };
     const render = () => {
       remove();
-      if (failures.size)
-        removeCard = showMediaPermissionCard(new Map(failures), dismissWarning, hide);
+      if (failures2.size)
+        removeCard = showMediaPermissionCard(new Map(failures2), dismissWarning, hide);
     };
     const liveTracks = new LiveMediaTrackCounter((inCall) => {
       window.__carrierInCall = inCall;
@@ -3931,7 +4070,7 @@
       } catch (error) {
         if (devices.length && serial > clearedThrough) {
           try {
-            for (const device of devices) failures.set(device, captureFailure(error));
+            for (const device of devices) failures2.set(device, captureFailure(error));
             render();
           } catch {
             diag("media-recovery", "could not display call recovery guidance");
@@ -3940,7 +4079,7 @@
         throw error;
       }
       stream.getTracks().forEach((track) => liveTracks.add(track));
-      for (const device of devices) failures.delete(device);
+      for (const device of devices) failures2.delete(device);
       try {
         render();
       } catch {
@@ -7534,9 +7673,9 @@ ${text}`)) {
     Object.defineProperty(window, "__carrierShareMedia", {
       value: (payload) => {
         const entries = sanitizeSharedFiles(payload);
-        const { files, failures } = decodeSharedFiles(entries);
-        if (failures) {
-          diag("share.partial-decode", `${failures}`);
+        const { files, failures: failures2 } = decodeSharedFiles(entries);
+        if (failures2) {
+          diag("share.partial-decode", `${failures2}`);
         }
         if (!files.length) {
           diag("share.empty-payload", "0");

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
+import { build } from "esbuild";
+import type { sampleSyncProcessing } from "../features/sync-processing";
 import { createFacebookModuleDefineInterceptor } from "./facebook-modules";
 import { SyncProcessingProgress } from "./sync-processing";
 
@@ -16,6 +19,76 @@ function fixture() {
 }
 
 describe("sync processing diagnostics", () => {
+  test("account switches reset diagnostic baselines without claiming recovery", async () => {
+    const bundle = await build({
+      stdin: {
+        contents: `import { syncProcessing, sampleSyncProcessing } from "../features/sync-processing";
+          globalThis.progress = syncProcessing; globalThis.sample = sampleSyncProcessing;`,
+        resolveDir: import.meta.dir,
+      },
+      bundle: true,
+      write: false,
+    });
+    let now = 100_000;
+    const document = { cookie: "c_user=1" };
+    const reports: string[] = [];
+    const context: { progress?: SyncProcessingProgress; sample?: typeof sampleSyncProcessing } = {};
+    runInNewContext(bundle.outputFiles[0]!.text, {
+      globalThis: context,
+      document,
+      Date: { now: () => now },
+      performance: { now: () => now },
+      localStorage: {},
+      window: {
+        __TAURI_INTERNALS__: {
+          invoke: (_command: string, args: { payload: { key: string } }) => {
+            reports.push(args.payload.key);
+          },
+        },
+      },
+    });
+    const logger = {
+      start(_id: number) {},
+      endSuccess(_id: number) {},
+      endFailure(_id: number) {},
+    };
+    context.progress!.observeLogger(logger);
+    const fail = (id: number) => {
+      logger.start(id);
+      logger.endFailure(id);
+    };
+    for (let id = 0; id < 3; id++) fail(id);
+    context.sample!(true);
+    logger.start(4);
+    for (let tick = 0; tick < 24; tick++) {
+      now += 5_000;
+      context.sample!(true);
+    }
+    expect(reports).toEqual(["sync.processing-failed", "sync.processing-stalled"]);
+    document.cookie = "c_user=2";
+    fail(5);
+    context.sample!(true);
+    document.cookie = "c_user=3";
+    now += 5_000;
+    fail(6);
+    context.sample!(true);
+    // The shared logger still limits each diagnostic key to once per minute.
+    expect(reports).toEqual([
+      "sync.processing-failed",
+      "sync.processing-stalled",
+      "sync.processing-failed",
+    ]);
+    now += 65_000;
+    fail(7);
+    context.sample!(true);
+    expect(reports).toEqual([
+      "sync.processing-failed",
+      "sync.processing-stalled",
+      "sync.processing-failed",
+      "sync.processing-failed",
+    ]);
+  });
+
   test("an unrelated completion cannot hide an older pending transaction", () => {
     const { progress, logger } = fixture();
     logger.start(1);
@@ -60,6 +133,7 @@ describe("sync processing diagnostics", () => {
     logger.endFailure(1);
     logger.start("changed-abi", privatePayload);
     expect(progress.sample(0, true)).toEqual({
+      epoch: 1,
       observed: true,
       pending: 0,
       completed: 0,
