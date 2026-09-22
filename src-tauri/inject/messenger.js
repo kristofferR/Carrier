@@ -824,6 +824,62 @@
     }
   }
 
+  // inject/src/messenger/lib/worker-state.ts
+  var unsupportedSubscriptions = /* @__PURE__ */ new WeakSet();
+  function observeWorkerConnection(state2, now = () => performance.now()) {
+    if (!state2 || unsupportedSubscriptions.has(state2)) return;
+    let listening = false;
+    let disposed = false;
+    let receivedAt;
+    let resolve;
+    const value = new Promise((complete) => {
+      resolve = complete;
+    });
+    let unsubscribe;
+    try {
+      const subscribe = state2.onSet;
+      if (typeof subscribe !== "function") return;
+      unsubscribe = subscribe.call(state2, (next) => {
+        if (listening && receivedAt === void 0) {
+          receivedAt = now();
+          resolve?.(typeof next === "boolean" ? next : void 0);
+        }
+      });
+    } catch (_) {
+      unsupportedSubscriptions.add(state2);
+      return;
+    }
+    if (typeof unsubscribe !== "function") {
+      unsupportedSubscriptions.add(state2);
+      return;
+    }
+    const stop = unsubscribe;
+    return {
+      value,
+      get receivedAt() {
+        return receivedAt;
+      },
+      start: () => {
+        if (!disposed) listening = true;
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        listening = false;
+        resolve?.(void 0);
+        try {
+          stop();
+        } catch (_) {
+          unsupportedSubscriptions.add(state2);
+        }
+      }
+    };
+  }
+  function isMissingWorkerStateRoute(error) {
+    const message = error && typeof error === "object" && "message" in error ? error.message : error;
+    return typeof message === "string" && message.includes("resendWorkerStateManagerValuesToMainThread is not defined for backend");
+  }
+
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
   var WORKER_FAILURE_LIMIT = 3;
@@ -836,12 +892,29 @@
       return null;
     }
   };
-  var workerIsConnected = () => {
+  var workerConnectionState = () => {
     try {
       const facebookRequire = window.require;
       const module = facebookRequire?.("WACommsConnectionState");
-      const connected = module?.WACommsConnectionState?.isConnected?.();
+      const state2 = module?.WACommsConnectionState;
+      return state2 && typeof state2 === "object" ? state2 : void 0;
+    } catch (_) {
+      return void 0;
+    }
+  };
+  var workerIsConnected = () => {
+    try {
+      const connected = workerConnectionState()?.isConnected?.();
       return typeof connected === "boolean" ? connected : void 0;
+    } catch (_) {
+      return void 0;
+    }
+  };
+  var workerId = () => {
+    try {
+      const page = window;
+      const state2 = page.require?.("MAWWaitForBackendSetup");
+      return state2?.getCurrentWorkerID?.();
     } catch (_) {
       return void 0;
     }
@@ -860,7 +933,8 @@
   function monitorRealtimeHealth(callbacks) {
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-    const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
+    const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
+    const connectionKey = accountKey();
     let connectionRemembered = false;
     try {
       connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
@@ -869,7 +943,8 @@
     const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
-    let lastWorkerHeartbeatAt;
+    let verified;
+    let stateRouteUnavailable = false;
     const now = performance.now.bind(performance);
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
@@ -882,35 +957,56 @@
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
       if (!bridge?.sendAndReceive) {
-        lastWorkerHeartbeatAt = void 0;
+        verified = void 0;
         callbacks.onUnknown("worker");
         return;
       }
       const sendAndReceive = bridge.sendAndReceive.bind(bridge);
+      const state2 = workerConnectionState();
+      const account = accountKey();
+      const id = workerId();
+      const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
+      const observation = stateRouteUnavailable ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
+      let live = true;
       let timeout;
       const deadline = new Promise((_, reject) => {
         timeout = setTimeout(
-          () => reject(new Error("Messenger worker heartbeat timed out")),
+          () => reject(new Error("Messenger worker probe timed out")),
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
       });
-      Promise.resolve().then(
-        () => Promise.race([
-          sendAndReceive("backend", "getWorkerHeartbeat", void 0, {
-            isLoggingDisabled: true,
-            timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
-          }),
-          deadline
-        ])
-      ).then(() => {
+      const request = (route) => sendAndReceive("backend", route, void 0, {
+        isLoggingDisabled: true,
+        timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
+      });
+      Promise.resolve().then(() => {
+        observation?.start();
+        const probe = observation ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
+          if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
+          stateRouteUnavailable = true;
+          observation.dispose();
+          return request("getWorkerHeartbeat").then(() => void 0);
+        }) : request("getWorkerHeartbeat").then(() => void 0);
+        return Promise.race([probe, deadline]);
+      }).then((connected) => {
+        verified = void 0;
+        if (!stillCurrent()) {
+          callbacks.onUnknown("worker");
+          return;
+        }
         workerFailures.succeeded();
-        lastWorkerHeartbeatAt = now();
+        if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
+          verified = { at: observation.receivedAt, stillCurrent };
+        }
         callbacks.onHealthy("worker");
       }).catch(() => {
-        lastWorkerHeartbeatAt = void 0;
-        if (workerFailures.failed()) callbacks.onStale("worker");
+        verified = void 0;
+        if (!stillCurrent()) callbacks.onUnknown("worker");
+        else if (workerFailures.failed()) callbacks.onStale("worker");
       }).finally(() => {
+        live = false;
+        observation?.dispose();
         clearTimeout(timeout);
         workerProbePending = false;
       });
@@ -973,7 +1069,7 @@
     }
     return {
       check,
-      isVerifiedHealthy: () => lastWorkerHeartbeatAt !== void 0 && now() - lastWorkerHeartbeatAt < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready"
+      isVerifiedHealthy: () => verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready"
     };
   }
 

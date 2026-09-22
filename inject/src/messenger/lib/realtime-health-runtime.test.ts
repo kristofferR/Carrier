@@ -33,6 +33,14 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   const createMonitor = (account = "123") => {
     const tracker = new RealtimeRecoveryTracker(now);
     class Socket extends EventTarget {}
+    const listeners = new Set<(value: unknown) => void>();
+    const connection = {
+      isConnected: () => connected,
+      onSet: (listener: (value: unknown) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
     const window = {
       WebSocket: Socket,
       require(name: string) {
@@ -40,16 +48,20 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
           return {
             isBackendSetupSettled: () => setupFailed || setupReady,
             isBackendSetupSuccessful: () => !setupFailed,
+            getCurrentWorkerID: () => "worker",
           };
         }
         if (name === "WACommsConnectionState") {
           if (!moduleAvailable) throw new Error("module unavailable");
-          return { WACommsConnectionState: { isConnected: () => connected } };
+          return { WACommsConnectionState: connection };
         }
         if (name === "MAWBridgeSendAndReceive") {
           return {
-            sendAndReceive: async () => {
+            sendAndReceive: async (_namespace: string, route: string) => {
               probes += 1;
+              if (route === "resendWorkerStateManagerValuesToMainThread") {
+                for (const listener of listeners) listener(connected);
+              }
               return true;
             },
           };
@@ -175,4 +187,206 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   connected = false;
   await fresh.check();
   expect(fresh.isVerifiedHealthy()).toBe(false);
+});
+
+function stateProbeFixture() {
+  let now = 0;
+  let account = "123";
+  let id = "worker-1";
+  let cached: unknown = true;
+  let mode: "normal" | "drop" | "after-reply" | "missing" | "pending" = "normal";
+  let nextTimer = 0;
+  let complete: ((value?: unknown) => void) | undefined;
+  let reject: ((error: unknown) => void) | undefined;
+  const timers = new Map<number, { due: number; run: () => void }>();
+  const listeners = new Set<(value: unknown) => void>();
+  const requests: string[] = [];
+  const tracker = new RealtimeRecoveryTracker(now);
+  const schedule = (run: () => void, delay: number) => {
+    const timer = ++nextTimer;
+    timers.set(timer, { due: now + delay, run });
+    return timer;
+  };
+  const deliver = (value: unknown) => {
+    cached = value;
+    for (const listener of listeners) listener(value);
+  };
+  const connection = {
+    isConnected: () => cached,
+    onSet: (listener: (value: unknown) => void) => {
+      listener(cached);
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const modules: Record<string, unknown> = {
+    WACommsConnectionState: { WACommsConnectionState: connection },
+    MAWWaitForBackendSetup: {
+      isBackendSetupSettled: () => true,
+      isBackendSetupSuccessful: () => true,
+      getCurrentWorkerID: () => id,
+    },
+    MAWBridgeSendAndReceive: {
+      sendAndReceive: async (_namespace: string, route: string) => {
+        requests.push(route);
+        if (route === "getWorkerHeartbeat") return true;
+        if (mode === "normal") deliver(cached);
+        else if (mode === "after-reply") schedule(() => deliver(cached), 1);
+        else if (mode === "missing") {
+          throw new Error("resendWorkerStateManagerValuesToMainThread is not defined for backend");
+        } else if (mode === "pending") {
+          return new Promise((resolve, fail) => {
+            complete = resolve;
+            reject = fail;
+          });
+        }
+      },
+    },
+  };
+  const context: { monitor?: typeof monitorRealtimeHealth } = {};
+  runInNewContext(source, {
+    window: { WebSocket: class extends EventTarget {}, require: (name: string) => modules[name] },
+    document: {
+      get cookie() {
+        return `c_user=${account}`;
+      },
+    },
+    localStorage: { getItem: () => null, setItem: () => {} },
+    location: { href: "https://www.facebook.com/messages/" },
+    Date: { now: () => now },
+    performance: { now: () => now },
+    setTimeout: schedule,
+    clearTimeout: (timer: number) => timers.delete(timer),
+    URL,
+    globalThis: context,
+  });
+  const monitor = context.monitor!({
+    onHealthy: (source) => tracker.healthy(source, now),
+    onStale: (source) => tracker.stale(source),
+    onUnknown: (source) => tracker.withdraw(source),
+  });
+  const flush = async () => {
+    for (let i = 0; i < 24; i++) await Promise.resolve();
+  };
+  return {
+    requests,
+    listeners,
+    tracker,
+    monitor,
+    deliver,
+    flush,
+    setMode: (value: typeof mode) => {
+      mode = value;
+    },
+    changeAccount: () => {
+      account = "456";
+    },
+    changeWorker: () => {
+      id = "worker-2";
+    },
+    complete: () => complete?.(),
+    reject: (error: unknown) => reject?.(error),
+    probe: async () => {
+      tracker.healthy("socket", now);
+      monitor.check();
+      await flush();
+    },
+    advance: async (ms: number) => {
+      now += ms;
+      for (const [timer, task] of [...timers]) {
+        if (task.due <= now) {
+          timers.delete(timer);
+          task.run();
+        }
+      }
+      await flush();
+    },
+  };
+}
+
+test("RPC replies and a cached connected value cannot hide missing state delivery", async () => {
+  const fixture = stateProbeFixture();
+  fixture.setMode("drop");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await fixture.probe();
+    await fixture.probe();
+    expect(fixture.requests.length).toBe(attempt + 1);
+    expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+    await fixture.advance(8000);
+    expect(fixture.listeners.size).toBe(0);
+  }
+  expect(fixture.tracker.needsRecovery(24_000)).toBe(true);
+  fixture.setMode("normal");
+  await fixture.probe();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
+  expect(fixture.tracker.needsRecovery(24_000)).toBe(false);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+test("state delivery may arrive after the RPC response", async () => {
+  const fixture = stateProbeFixture();
+  fixture.setMode("after-reply");
+  await fixture.probe();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  expect(fixture.listeners.size).toBe(1);
+  await fixture.advance(1);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+test("a worker without the state route falls back without certifying encrypted health", async () => {
+  const fixture = stateProbeFixture();
+  fixture.setMode("missing");
+  await fixture.probe();
+  await fixture.probe();
+  expect(fixture.requests).toEqual([
+    "resendWorkerStateManagerValuesToMainThread",
+    "getWorkerHeartbeat",
+    "getWorkerHeartbeat",
+  ]);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  expect(fixture.tracker.needsRecovery(0)).toBe(false);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+for (const boundary of ["changeAccount", "changeWorker"] as const) {
+  test(`a reply cannot verify recovery after ${boundary}`, async () => {
+    const fixture = stateProbeFixture();
+    fixture.setMode("pending");
+    await fixture.probe();
+    fixture.deliver(true);
+    fixture[boundary]();
+    fixture.complete();
+    await fixture.flush();
+    expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+    expect(fixture.listeners.size).toBe(0);
+  });
+}
+
+test("a late missing-route error cannot launch another request after timeout", async () => {
+  const fixture = stateProbeFixture();
+  fixture.setMode("pending");
+  await fixture.probe();
+  await fixture.advance(8000);
+  fixture.reject(
+    new Error("resendWorkerStateManagerValuesToMainThread is not defined for backend"),
+  );
+  fixture.deliver(true);
+  await fixture.flush();
+  expect(fixture.requests).toHaveLength(1);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+test("a delayed RPC reply cannot extend the age of an earlier state notification", async () => {
+  const fixture = stateProbeFixture();
+  fixture.setMode("pending");
+  await fixture.probe();
+  fixture.deliver(true);
+  await fixture.advance(7000);
+  fixture.complete();
+  await fixture.flush();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
+  await fixture.advance(8000);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
 });

@@ -8,7 +8,7 @@ they are no longer reasons to periodically reload the page.
 
 The encrypted connection state and worker heartbeat are authoritative. A healthy
 page-owned Facebook socket cannot hide a failed encrypted-message bridge. Three
-failed heartbeat probes establish a worker failure. A settled, failed bootstrap
+failed worker probes establish a worker failure. A settled, failed bootstrap
 also counts, even if this account has never connected on this installation.
 Successful bootstrap arms a 90-second deadline for the first encrypted
 connection, so a worker that answers heartbeats but never connects cannot look
@@ -30,9 +30,21 @@ Carrier uses Messenger's existing worker lifecycle:
 There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
 Only 60 seconds of verified health replenishes the budget: successful backend
-setup, an explicitly connected encrypted transport, and a worker heartbeat less
-than 15 seconds old. Page MQTT or an unavailable connection-state API cannot
-refund attempts. A hung initialization
+setup and a connected state delivered from the worker less than 15 seconds ago.
+The current probe requests
+`backend/resendWorkerStateManagerValuesToMainThread` and waits for both its reply
+and a newly delivered connection-state notification. This tests worker
+responsiveness and state delivery together. The page's cached `isConnected()`
+value alone cannot certify recovery. Freshness is timed from state receipt,
+not a potentially delayed RPC reply. Account, worker ID, and state-manager
+identity must still match when the result is used.
+
+A missing subscription API or an explicit missing-route error falls back to
+the ordinary heartbeat, which proves responsiveness only. A successful RPC
+with no state delivery instead times out after eight seconds. Listeners are
+removed on success, failure, and timeout; late replies cannot launch fallback
+requests or certify a replaced worker. Page MQTT or an unavailable
+connection-state API cannot refund attempts. A hung initialization
 keeps the single-flight guard even after its timeout; a second setup must not
 race it. Successful invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks
@@ -136,6 +148,11 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   hook captures the failed setup. Three initial calls fail (`t2init`, `mawInit`,
   `backendSetupFailure`); Carrier's fourth call succeeds in the same document.
   Fault injection is confined to a local test binary and is not shipped.
+- Run the compiled state monitor in the live diagnostics page. Drop only the
+  connection-state delivery handler for one probe: the cached state remains true,
+  but the missing update invalidates verified health after the deadline. Restore
+  delivery and verify the next probe succeeds in the same document. The temporary
+  handler and WebSocket wrapper are restored after the test.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it

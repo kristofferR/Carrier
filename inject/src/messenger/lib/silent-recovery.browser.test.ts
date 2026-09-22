@@ -113,6 +113,7 @@ async function runFixtures(
   let recoveries = 0;
   let backendResets = 0;
   let supported = true;
+  const connectionListeners = new Set<(value: unknown) => void>();
   const reports: string[] = [];
   const setup = {
     getOrSetupWorker(..._args: unknown[]) {
@@ -123,12 +124,20 @@ async function runFixtures(
     },
   };
   const modules: Record<string, unknown> = {
-    WACommsConnectionState: { WACommsConnectionState: { isConnected: () => connected } },
+    WACommsConnectionState: {
+      WACommsConnectionState: {
+        isConnected: () => connected,
+        onSet: (listener: (value: unknown) => void) => {
+          connectionListeners.add(listener);
+          return () => connectionListeners.delete(listener);
+        },
+      },
+    },
     MAWWaitForBackendSetup: {
       isBackendSetupSettled: () => true,
       isBackendSetupSuccessful: () => successful,
       isBackendSetupInProgress: () => inProgress,
-      getCurrentWorkerID: () => null,
+      getCurrentWorkerID: () => (successful ? "worker" : null),
       resetBackendSetup: () => {
         backendResets++;
       },
@@ -138,8 +147,11 @@ async function runFixtures(
       getWorkerHealthStatus: async () => ({ tag: supported ? "shared_not_exists" : "unknown" }),
     },
     MAWBridgeSendAndReceive: {
-      sendAndReceive: async () => {
+      sendAndReceive: async (_namespace: string, route: string) => {
         if (!successful) throw new Error("backend failed");
+        if (route === "resendWorkerStateManagerValuesToMainThread") {
+          for (const listener of connectionListeners) listener(connected);
+        }
       },
     },
   };

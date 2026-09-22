@@ -8,6 +8,11 @@ import {
   WorkerConnectionWatchdog,
 } from "../lib/realtime-health";
 import { accountScopedStorageKey } from "../lib/threads";
+import {
+  isMissingWorkerStateRoute,
+  observeWorkerConnection,
+  type WorkerConnectionState,
+} from "../lib/worker-state";
 
 type RealtimeHealthCallbacks = {
   onHealthy: (source: RealtimeHealthSource) => void;
@@ -18,7 +23,7 @@ type RealtimeHealthCallbacks = {
 
 export type RealtimeHealthMonitor = {
   check: () => void;
-  /** Fresh worker responsiveness plus an explicitly connected encrypted transport. */
+  /** Fresh state delivered from the worker, rather than a cached page boolean. */
   isVerifiedHealthy: () => boolean;
 };
 
@@ -44,14 +49,35 @@ const facebookBridgeModule = (): FacebookBridgeModule | null => {
   }
 };
 
-const workerIsConnected = (): boolean | undefined => {
+const workerConnectionState = (): WorkerConnectionState | undefined => {
   try {
     const facebookRequire = (window as unknown as { require?: (name: string) => unknown }).require;
     const module = facebookRequire?.("WACommsConnectionState") as
-      | { WACommsConnectionState?: { isConnected?: () => unknown } }
+      | { WACommsConnectionState?: WorkerConnectionState }
       | undefined;
-    const connected = module?.WACommsConnectionState?.isConnected?.();
+    const state = module?.WACommsConnectionState;
+    return state && typeof state === "object" ? state : undefined;
+  } catch (_) {
+    return undefined;
+  }
+};
+
+const workerIsConnected = (): boolean | undefined => {
+  try {
+    const connected = workerConnectionState()?.isConnected?.();
     return typeof connected === "boolean" ? connected : undefined;
+  } catch (_) {
+    return undefined;
+  }
+};
+
+const workerId = (): unknown => {
+  try {
+    const page = window as unknown as { require?: (name: string) => unknown };
+    const state = page.require?.("MAWWaitForBackendSetup") as
+      | { getCurrentWorkerID?: () => unknown }
+      | undefined;
+    return state?.getCurrentWorkerID?.();
   } catch (_) {
     return undefined;
   }
@@ -72,16 +98,17 @@ const workerSetupState = (): "ready" | "failed" | "unknown" => {
 };
 
 /**
- * Observe Messenger's live MQTT transport without reading or modifying any
- * payloads. Current Messenger keeps sync in a worker, so prefer its own
- * content-free heartbeat bridge plus its encrypted-connection state. A worker
- * heartbeat alone proves only responsiveness. The WebSocket proxy covers
+ * Observe Messenger's live MQTT transport without reading message contents.
+ * Current Messenger keeps sync in a worker, so request its connection-state
+ * snapshot and verify that the page receives it. A worker heartbeat alone
+ * proves only responsiveness. The WebSocket proxy covers
  * page-owned and fallback transports while preserving the native constructor.
  */
 export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): RealtimeHealthMonitor {
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-  const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
+  const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
+  const connectionKey = accountKey();
   let connectionRemembered = false;
   try {
     connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
@@ -89,7 +116,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
-  let lastWorkerHeartbeatAt: number | undefined;
+  let verified: { at: number; stillCurrent: () => boolean } | undefined;
+  let stateRouteUnavailable = false;
   const now = performance.now.bind(performance);
 
   const checkSockets = () => {
@@ -106,40 +134,75 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();
     if (!bridge?.sendAndReceive) {
-      lastWorkerHeartbeatAt = undefined;
+      verified = undefined;
       callbacks.onUnknown("worker");
       return;
     }
     const sendAndReceive = bridge.sendAndReceive.bind(bridge);
+    const state = workerConnectionState();
+    const account = accountKey();
+    const id = workerId();
+    const stillCurrent = () =>
+      account === accountKey() && state === workerConnectionState() && id === workerId();
+    const observation = stateRouteUnavailable ? undefined : observeWorkerConnection(state, now);
 
     workerProbePending = true;
+    let live = true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(
-        () => reject(new Error("Messenger worker heartbeat timed out")),
+        () => reject(new Error("Messenger worker probe timed out")),
         WORKER_HEARTBEAT_TIMEOUT_MS,
       );
     });
+    const request = (route: string) =>
+      sendAndReceive("backend", route, undefined, {
+        isLoggingDisabled: true,
+        timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS,
+      });
     Promise.resolve()
-      .then(() =>
-        Promise.race([
-          sendAndReceive("backend", "getWorkerHeartbeat", undefined, {
-            isLoggingDisabled: true,
-            timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS,
-          }),
-          deadline,
-        ]),
-      )
       .then(() => {
+        observation?.start();
+        const probe = observation
+          ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value])
+              .then(([, connected]) => connected)
+              .catch((error: unknown) => {
+                if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
+                stateRouteUnavailable = true;
+                observation.dispose();
+                // An older worker can still prove responsiveness, but cannot
+                // certify fresh encrypted state or replenish repair attempts.
+                return request("getWorkerHeartbeat").then(() => undefined);
+              })
+          : request("getWorkerHeartbeat").then(() => undefined);
+        return Promise.race([probe, deadline]);
+      })
+      .then((connected) => {
+        verified = undefined;
+        if (!stillCurrent()) {
+          callbacks.onUnknown("worker");
+          return;
+        }
         workerFailures.succeeded();
-        lastWorkerHeartbeatAt = now();
+        if (
+          connected === true &&
+          account &&
+          typeof id === "string" &&
+          id.length > 0 &&
+          observation?.receivedAt !== undefined
+        ) {
+          verified = { at: observation.receivedAt, stillCurrent };
+        }
         callbacks.onHealthy("worker");
       })
       .catch(() => {
-        lastWorkerHeartbeatAt = undefined;
-        if (workerFailures.failed()) callbacks.onStale("worker");
+        verified = undefined;
+        if (!stillCurrent()) callbacks.onUnknown("worker");
+        else if (workerFailures.failed()) callbacks.onStale("worker");
       })
       .finally(() => {
+        live = false;
+        observation?.dispose();
         clearTimeout(timeout);
         workerProbePending = false;
       });
@@ -207,8 +270,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   return {
     check,
     isVerifiedHealthy: () =>
-      lastWorkerHeartbeatAt !== undefined &&
-      now() - lastWorkerHeartbeatAt < REALTIME_CONNECT_GRACE_MS &&
+      verified?.stillCurrent() === true &&
+      now() - verified.at < REALTIME_CONNECT_GRACE_MS &&
       workerIsConnected() === true &&
       workerSetupState() === "ready",
   };
