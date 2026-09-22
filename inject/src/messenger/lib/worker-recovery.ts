@@ -84,8 +84,19 @@ export class FacebookWorkerRecovery {
       const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : undefined;
       const bridge = method(setup, "waitForWorkerSetup");
       const initialBridge = bridge?.call(setup);
+      // Messenger may start a new setup for the same account while status or
+      // termination is pending. Never replay callbacks from another attempt.
+      const replay = this.replay;
+      const replayScope = this.scope;
       const status = record(await health.call(singleton));
-      if (!allowed() || startingScope !== this.accountScope()) return "busy";
+      if (
+        !allowed() ||
+        startingScope !== this.accountScope() ||
+        this.replay !== replay ||
+        this.scope !== replayScope
+      ) {
+        return "busy";
+      }
       // Never terminate a shared worker: it may serve another window's call.
       if (
         !status ||
@@ -108,8 +119,8 @@ export class FacebookWorkerRecovery {
           !initialBridge ||
           typeof record(initialBridge)?.then !== "function" ||
           bridge?.call(setup) !== initialBridge ||
-          !this.replay ||
-          this.scope !== startingScope
+          !replay ||
+          replayScope !== startingScope
         ) {
           return "unsupported";
         }
@@ -120,7 +131,13 @@ export class FacebookWorkerRecovery {
         const stopped = await terminate.call(setup, "bridgeRecovery");
         if (stopped !== true) return "unsupported";
         // Never replay vault material captured for a previous account.
-        if (startingScope !== this.accountScope()) return "busy";
+        if (
+          startingScope !== this.accountScope() ||
+          this.replay !== replay ||
+          this.scope !== replayScope
+        ) {
+          return "busy";
+        }
         if (
           bridge?.call(setup) != null ||
           inProgress.call(state) === true ||
@@ -129,7 +146,7 @@ export class FacebookWorkerRecovery {
           return "busy";
         }
         try {
-          await this.replay();
+          await replay();
         } catch (error) {
           reject.call(state, error);
         }
@@ -148,15 +165,23 @@ export class FacebookWorkerRecovery {
       if (
         id != null ||
         !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) ||
-        !this.replay ||
-        !this.scope ||
-        this.scope !== this.accountScope()
+        !replay ||
+        !replayScope ||
+        replayScope !== this.accountScope()
       ) {
         return "unsupported";
       }
       try {
         reset.call(state);
-        await this.replay();
+        if (
+          this.replay !== replay ||
+          this.scope !== replayScope ||
+          inProgress.call(state) === true ||
+          currentId.call(state) != null
+        ) {
+          return "busy";
+        }
+        await replay();
       } catch (error) {
         // The normal caller does this after a failed setup. Preserve that
         // contract so queued bridge operations reject instead of hanging.

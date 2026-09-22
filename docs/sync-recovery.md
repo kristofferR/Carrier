@@ -31,6 +31,9 @@ Carrier uses Messenger's existing worker lifecycle:
   exact `dedicated` ID, and successful termination. A failed dedicated startup
   with no worker can also replay setup without termination. Calls, drafts, and
   account changes retain the same protections as shared-worker recovery.
+- A setup call that replaces the captured replay closure while an asynchronous
+  worker-status check or dedicated termination is pending wins the race; Carrier
+  will not replay either the old or new closure on that attempt.
 - Unknown module signatures, unsupported worker kinds, and account changes fail
   open. Messenger's ongoing initialization is never reset underneath it.
 

@@ -234,6 +234,45 @@ describe("Messenger worker recovery", () => {
     expect(f.setupCalls).toHaveLength(1);
   });
 
+  test("does not replay a new same-account setup seen during worker inspection", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => {
+        f.setup.getOrSetupWorker(...f.args);
+        return { tag: "shared_not_exists" };
+      },
+    };
+    expect(await f.recovery.recover()).toBe("busy");
+    expect(f.resets).toBe(0);
+    expect(f.setupCalls).toHaveLength(2);
+  });
+
+  test("does not replay if backend reset itself starts another setup", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    Object.assign(f.modules.MAWWaitForBackendSetup as object, {
+      resetBackendSetup: () => f.setup.getOrSetupWorker(...f.args),
+    });
+    expect(await f.recovery.recover()).toBe("busy");
+    expect(f.setupCalls).toHaveLength(2);
+  });
+
+  test("does not replay a new same-account setup after dedicated termination", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    f.termination = async () => {
+      f.setup.getOrSetupWorker(...f.args);
+      f.settled = false;
+      return true;
+    };
+    expect(await f.recovery.recover()).toBe("busy");
+    expect(f.terminationCalls).toEqual(["bridgeRecovery"]);
+    expect(f.setupCalls).toHaveLength(2);
+  });
+
   test("cannot replay another account's bootstrap or an unknown ABI", async () => {
     const f = fixture();
     f.setup.getOrSetupWorker(...f.args);

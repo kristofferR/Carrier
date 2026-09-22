@@ -489,8 +489,12 @@
         const setup = initialId === "dedicated" ? this.load("MAWSetupWorker") : void 0;
         const bridge = method(setup, "waitForWorkerSetup");
         const initialBridge = bridge?.call(setup);
+        const replay = this.replay;
+        const replayScope = this.scope;
         const status = record(await health.call(singleton));
-        if (!allowed() || startingScope !== this.accountScope()) return "busy";
+        if (!allowed() || startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
+          return "busy";
+        }
         if (!status || ![
           "dedicated_not_exists",
           "dedicated_exists",
@@ -503,19 +507,21 @@
         if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
         if (status.tag === "dedicated_exists") {
-          if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !this.replay || this.scope !== startingScope) {
+          if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
             return "unsupported";
           }
           const terminate = method(setup, "terminateDedicatedWorker");
           if (!terminate) return "unsupported";
           const stopped = await terminate.call(setup, "bridgeRecovery");
           if (stopped !== true) return "unsupported";
-          if (startingScope !== this.accountScope()) return "busy";
+          if (startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
+            return "busy";
+          }
           if (bridge?.call(setup) != null || inProgress.call(state2) === true || settled.call(state2) === true) {
             return "busy";
           }
           try {
-            await this.replay();
+            await replay();
           } catch (error) {
             reject.call(state2, error);
           }
@@ -529,12 +535,15 @@
           Reflect.apply(callback, void 0, ["locks_based_recovery", id, "locks_based_recovery"]);
           return "started";
         }
-        if (id != null || !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) || !this.replay || !this.scope || this.scope !== this.accountScope()) {
+        if (id != null || !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) || !replay || !replayScope || replayScope !== this.accountScope()) {
           return "unsupported";
         }
         try {
           reset.call(state2);
-          await this.replay();
+          if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state2) === true || currentId.call(state2) != null) {
+            return "busy";
+          }
+          await replay();
         } catch (error) {
           reject.call(state2, error);
         }
