@@ -558,6 +558,7 @@
       __publicField(this, "nextAt", 0);
       __publicField(this, "healthySince");
       __publicField(this, "activeUntil");
+      __publicField(this, "networkRestorationUsed", false);
     }
     get exhausted() {
       return this.attempts >= RETRY_DELAYS_MS.length && this.activeUntil === void 0;
@@ -592,11 +593,20 @@
       this.attempts = RETRY_DELAYS_MS.length;
       this.activeUntil = void 0;
     }
+    /** A real offline-to-online transition earns one more try per unhealthy episode. */
+    grantNetworkRestoration(now) {
+      if (!this.exhausted || this.networkRestorationUsed) return false;
+      this.networkRestorationUsed = true;
+      this.attempts = RETRY_DELAYS_MS.length - 1;
+      this.nextAt = now;
+      return true;
+    }
     reset() {
       this.attempts = 0;
       this.nextAt = 0;
       this.activeUntil = void 0;
       this.healthySince = void 0;
+      this.networkRestorationUsed = false;
     }
   };
 
@@ -1109,6 +1119,7 @@
   );
 
   // inject/src/messenger/features/silent-recovery.ts
+  var NETWORK_RESTORATION_GRACE_MS = 15e3;
   function createSilentRecovery(options) {
     const budget = new SilentRecoveryBudget();
     const nativeSetTimeout3 = window.setTimeout.bind(window);
@@ -1119,6 +1130,19 @@
     let manualRequested = false;
     let unhealthySince;
     let busySince;
+    let offlineObserved = !navigator.onLine;
+    let networkRestoredAt;
+    window.addEventListener("offline", () => {
+      if (!navigator.onLine) {
+        offlineObserved = true;
+        networkRestoredAt = void 0;
+      }
+    });
+    window.addEventListener("online", () => {
+      if (!navigator.onLine || !offlineObserved) return;
+      offlineObserved = false;
+      networkRestoredAt = now();
+    });
     const showFailure = (value) => {
       if (failed === value) return;
       failed = value;
@@ -1126,12 +1150,25 @@
     };
     const tick = () => {
       const needed = options.needsRecovery();
-      budget.observe(options.isHealthy(), now());
+      const healthy = options.isHealthy();
+      budget.observe(healthy, now());
+      if (networkRestoredAt !== void 0) {
+        if (healthy) networkRestoredAt = void 0;
+        else if (now() - networkRestoredAt >= NETWORK_RESTORATION_GRACE_MS) {
+          networkRestoredAt = void 0;
+          if (budget.grantNetworkRestoration(now())) {
+            diag("sync.network-restored", "network restored; allowing one more worker repair");
+          }
+        }
+      }
       if (!needed) {
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
         showFailure(false);
+        return;
+      }
+      if (networkRestoredAt !== void 0) {
         return;
       }
       unhealthySince ?? (unhealthySince = now());

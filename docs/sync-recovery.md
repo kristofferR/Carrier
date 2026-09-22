@@ -46,6 +46,14 @@ value alone cannot certify recovery. Freshness is timed from state receipt,
 not a potentially delayed RPC reply. Account, worker ID, and state-manager
 identity must still match when the result is used.
 
+A real browser offline-to-online transition gives Messenger's own reconnect
+loop 15 seconds before Carrier considers another worker repair. If the normal
+episode is exhausted and encrypted health is still unverified, that transition
+grants **one** additional attempt. Further network flaps cannot add attempts
+until 60 seconds of verified health resets the episode. Focus, wake, and a
+synthetic online event without a preceding offline observation do not grant a
+retry. Draft, call, rate-limit, sleep, and Hold Failures guards still apply.
+
 A missing subscription API or an explicit missing-route error falls back to
 the ordinary heartbeat, which proves responsiveness only. A successful RPC
 with no state delivery instead times out after eight seconds. Listeners are
@@ -225,7 +233,8 @@ cannot establish reliable recovery of the copied encrypted-device identity.
 
 Unit and browser fixtures cover account boundaries, ABI changes, asynchronous
 protection checks, single-flight behavior, finite retries, draft preservation,
-native `managed` reporting, and healthy lifecycle events. Rust tests verify that
+one bounded repair after network restoration, native `managed` reporting, and
+healthy lifecycle events. Rust tests verify that
 native renderer/error supervision remains active during page-managed recovery.
 
 These tests prove recovery of the worker failures above and a subsequent message

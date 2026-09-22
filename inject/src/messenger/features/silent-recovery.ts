@@ -8,6 +8,8 @@ import {
 } from "../lib/worker-recovery";
 import { workerRecovery } from "./worker-recovery";
 
+const NETWORK_RESTORATION_GRACE_MS = 15_000;
+
 /** A responsive document owns transport recovery; it never reloads itself. */
 export function createSilentRecovery(options: {
   blocked: (manual: boolean) => boolean;
@@ -24,6 +26,19 @@ export function createSilentRecovery(options: {
   let manualRequested = false;
   let unhealthySince: number | undefined;
   let busySince: number | undefined;
+  let offlineObserved = !navigator.onLine;
+  let networkRestoredAt: number | undefined;
+  window.addEventListener("offline", () => {
+    if (!navigator.onLine) {
+      offlineObserved = true;
+      networkRestoredAt = undefined;
+    }
+  });
+  window.addEventListener("online", () => {
+    if (!navigator.onLine || !offlineObserved) return;
+    offlineObserved = false;
+    networkRestoredAt = now();
+  });
   const showFailure = (value: boolean) => {
     if (failed === value) return;
     failed = value;
@@ -31,12 +46,27 @@ export function createSilentRecovery(options: {
   };
   const tick = () => {
     const needed = options.needsRecovery();
-    budget.observe(options.isHealthy(), now());
+    const healthy = options.isHealthy();
+    budget.observe(healthy, now());
+    if (networkRestoredAt !== undefined) {
+      if (healthy) networkRestoredAt = undefined;
+      else if (now() - networkRestoredAt >= NETWORK_RESTORATION_GRACE_MS) {
+        networkRestoredAt = undefined;
+        if (budget.grantNetworkRestoration(now())) {
+          diag("sync.network-restored", "network restored; allowing one more worker repair");
+        }
+      }
+    }
     if (!needed) {
       manualRequested = false;
       unhealthySince = undefined;
       busySince = undefined;
       showFailure(false);
+      return;
+    }
+    if (networkRestoredAt !== undefined) {
+      // Messenger has its own socket retry loop. Let it observe the restored
+      // network before touching the worker; flapping cannot mint retries.
       return;
     }
     // On wake the old health sample is stale while a fresh heartbeat is still

@@ -113,6 +113,8 @@ async function runFixtures(
   let recoveries = 0;
   let backendResets = 0;
   let supported = true;
+  let online = true;
+  Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
   const connectionListeners = new Set<(value: unknown) => void>();
   const reports: string[] = [];
   const setup = {
@@ -241,6 +243,22 @@ async function runFixtures(
     for (let i = 0; i < 5; i++) await tick();
     assert("explicit reconnect works while automatic recovery is held", recoveries === 2);
     assert("explicit reconnect verifies health", connected && reports.at(-1) === "ok");
+    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    connected = successful = false;
+    supported = false;
+    for (let i = 0; i < 12; i++) await tick();
+    assert("unsupported recovery exhausts this episode", recoveries === 2);
+    online = false;
+    window.dispatchEvent(new Event("offline"));
+    supported = true;
+    await tick();
+    online = true;
+    window.dispatchEvent(new Event("online"));
+    for (let i = 0; i < 2; i++) await tick();
+    assert("restored network gives Messenger time to reconnect", recoveries === 2);
+    for (let i = 0; i < 4; i++) await tick();
+    assert("one extra worker repair follows real network restoration", recoveries === 3);
+    assert("restoration keeps the same document", performance.timeOrigin === origin);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

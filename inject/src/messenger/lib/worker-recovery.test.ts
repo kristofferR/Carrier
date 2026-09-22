@@ -347,4 +347,22 @@ describe("silent recovery budget", () => {
     expect(b.exhausted).toBe(false);
     expect(b.start(120_001)).toBe(true);
   });
+
+  test("a network restoration grants one extra attempt until health is sustained", () => {
+    const b = new SilentRecoveryBudget();
+    expect(b.grantNetworkRestoration(0)).toBe(false);
+    b.giveUp();
+    expect(b.grantNetworkRestoration(15_000)).toBe(true);
+    expect(b.start(15_000)).toBe(true);
+    b.observe(false, 45_000);
+    expect(b.exhausted).toBe(true);
+    expect(b.grantNetworkRestoration(60_000)).toBe(false);
+    b.observe(true, 60_000);
+    b.observe(false, 119_999);
+    expect(b.grantNetworkRestoration(120_000)).toBe(false);
+    b.observe(true, 120_000);
+    b.observe(true, 180_000);
+    b.giveUp();
+    expect(b.grantNetworkRestoration(195_000)).toBe(true);
+  });
 });

@@ -184,6 +184,7 @@ export class SilentRecoveryBudget {
   private nextAt = 0;
   private healthySince: number | undefined;
   private activeUntil: number | undefined;
+  private networkRestorationUsed = false;
 
   get exhausted(): boolean {
     return this.attempts >= RETRY_DELAYS_MS.length && this.activeUntil === undefined;
@@ -224,10 +225,20 @@ export class SilentRecoveryBudget {
     this.activeUntil = undefined;
   }
 
+  /** A real offline-to-online transition earns one more try per unhealthy episode. */
+  grantNetworkRestoration(now: number): boolean {
+    if (!this.exhausted || this.networkRestorationUsed) return false;
+    this.networkRestorationUsed = true;
+    this.attempts = RETRY_DELAYS_MS.length - 1;
+    this.nextAt = now;
+    return true;
+  }
+
   reset(): void {
     this.attempts = 0;
     this.nextAt = 0;
     this.activeUntil = undefined;
     this.healthySince = undefined;
+    this.networkRestorationUsed = false;
   }
 }
