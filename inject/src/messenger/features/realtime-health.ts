@@ -117,7 +117,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   let workerProbePending = false;
   let workerDisconnected = false;
   let verified: { at: number; stillCurrent: () => boolean } | undefined;
-  let stateRouteUnavailable = false;
+  let stateRouteUnavailableFor: (() => boolean) | undefined;
   const now = performance.now.bind(performance);
 
   const checkSockets = () => {
@@ -133,7 +133,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const checkWorker = () => {
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();
-    if (!bridge?.sendAndReceive) {
+    if (typeof bridge?.sendAndReceive !== "function") {
       verified = undefined;
       callbacks.onUnknown("worker");
       return;
@@ -144,7 +144,9 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     const id = workerId();
     const stillCurrent = () =>
       account === accountKey() && state === workerConnectionState() && id === workerId();
-    const observation = stateRouteUnavailable ? undefined : observeWorkerConnection(state, now);
+    const observation = stateRouteUnavailableFor?.()
+      ? undefined
+      : observeWorkerConnection(state, now);
 
     workerProbePending = true;
     let live = true;
@@ -168,7 +170,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
               .then(([, connected]) => connected)
               .catch((error: unknown) => {
                 if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
-                stateRouteUnavailable = true;
+                stateRouteUnavailableFor = stillCurrent;
                 observation.dispose();
                 // An older worker can still prove responsiveness, but cannot
                 // certify fresh encrypted state or replenish repair attempts.

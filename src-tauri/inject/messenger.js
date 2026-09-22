@@ -944,7 +944,7 @@
     let workerProbePending = false;
     let workerDisconnected = false;
     let verified;
-    let stateRouteUnavailable = false;
+    let stateRouteUnavailableFor;
     const now = performance.now.bind(performance);
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
@@ -956,7 +956,7 @@
     const checkWorker = () => {
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
-      if (!bridge?.sendAndReceive) {
+      if (typeof bridge?.sendAndReceive !== "function") {
         verified = void 0;
         callbacks.onUnknown("worker");
         return;
@@ -966,7 +966,7 @@
       const account = accountKey();
       const id = workerId();
       const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
-      const observation = stateRouteUnavailable ? void 0 : observeWorkerConnection(state2, now);
+      const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
       let live = true;
       let timeout;
@@ -984,7 +984,7 @@
         observation?.start();
         const probe = observation ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
           if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
-          stateRouteUnavailable = true;
+          stateRouteUnavailableFor = stillCurrent;
           observation.dispose();
           return request("getWorkerHeartbeat").then(() => void 0);
         }) : request("getWorkerHeartbeat").then(() => void 0);

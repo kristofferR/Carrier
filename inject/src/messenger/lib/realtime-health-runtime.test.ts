@@ -347,6 +347,12 @@ test("a worker without the state route falls back without certifying encrypted h
   expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
   expect(fixture.tracker.needsRecovery(0)).toBe(false);
   expect(fixture.listeners.size).toBe(0);
+  // A replacement worker may implement a route missing from the old version.
+  fixture.changeWorker();
+  fixture.setMode("normal");
+  await fixture.probe();
+  expect(fixture.requests.at(-1)).toBe("resendWorkerStateManagerValuesToMainThread");
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
 });
 
 for (const boundary of ["changeAccount", "changeWorker"] as const) {
