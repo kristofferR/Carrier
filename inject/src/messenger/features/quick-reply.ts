@@ -22,6 +22,13 @@ const MAX_REPLY_CHARS = 2_000;
 const COMPOSER_SELECTOR =
   '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
 const insertedReplies = new Map<number, { path: string; text: string }>();
+interface ReplyAttempt {
+  attempt: number;
+  cancelled: boolean;
+  clicked: boolean;
+  sent: boolean;
+}
+const replyAttempts = new Map<number, ReplyAttempt>();
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 
@@ -44,7 +51,12 @@ const validRequest = (path: string, text: string, id: number, attempt: number) =
   Number.isSafeInteger(attempt) &&
   attempt > 0;
 
-async function deliver(path: string, text: string, id: number): Promise<boolean> {
+async function deliver(
+  path: string,
+  text: string,
+  id: number,
+  state: ReplyAttempt,
+): Promise<boolean> {
   const wantedThread = threadPathId(path);
   if (
     !wantedThread ||
@@ -84,6 +96,7 @@ async function deliver(path: string, text: string, id: number): Promise<boolean>
   document.addEventListener("click", onClick, true);
   try {
     while (true) {
+      if (state.cancelled) return false;
       const box = composer();
       if (box && hasComposerMedia(box)) return false;
       const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
@@ -114,6 +127,8 @@ async function deliver(path: string, text: string, id: number): Promise<boolean>
           break;
         }
         case "send":
+          if (state.cancelled) return false;
+          state.clicked = true;
           button?.click();
           await pause();
           break;
@@ -191,7 +206,16 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void withComposerDelivery(() => deliver(path, text, id))
+    const previous = replyAttempts.get(id);
+    if (previous && previous.attempt >= attempt) return;
+    const state: ReplyAttempt = { attempt, cancelled: false, clicked: false, sent: false };
+    replyAttempts.set(id, state);
+    if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value!);
+    void withComposerDelivery(async () => {
+      const ok = await deliver(path, text, id, state);
+      state.sent = ok;
+      return ok;
+    })
       .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
@@ -211,7 +235,21 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text, id))
+    let state = replyAttempts.get(id);
+    if (state && state.attempt > attempt) return;
+    if (!state || state.attempt < attempt) {
+      if (state) {
+        state.cancelled = true;
+        state.attempt = attempt;
+      } else {
+        state = { attempt, cancelled: true, clicked: false, sent: false };
+        replyAttempts.set(id, state);
+        if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value!);
+      }
+    }
+    void withComposerDeliveryWhenAvailable(() =>
+      state?.clicked || state?.sent ? Promise.resolve(true) : preserveDraft(path, text, id),
+    )
       .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");

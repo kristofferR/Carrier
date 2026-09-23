@@ -32,51 +32,39 @@ const thread = () => {
   const id = threadIdFromHref(location.pathname);
   return id ? `/t/${id}/` : null;
 };
+const loadedThread = thread();
+let routeChanged = false;
+const pushState = history.pushState.bind(history);
+history.pushState = (...args: Parameters<History["pushState"]>) => {
+  const previous = thread();
+  pushState(...args);
+  if (thread() !== previous) routeChanged = true;
+};
+const replaceState = history.replaceState.bind(history);
+history.replaceState = (...args: Parameters<History["replaceState"]>) => {
+  const previous = thread();
+  replaceState(...args);
+  if (thread() !== previous) routeChanged = true;
+};
+window.addEventListener("popstate", () => {
+  routeChanged = true;
+});
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 100));
 const ready = () =>
   scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
 const activeTextInput = () =>
   document.hasFocus() &&
   document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
-const paneLabel = () =>
-  document
-    .querySelector('[role="main"] [role="log"][aria-label]')
-    ?.getAttribute("aria-label")
-    ?.replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase() ?? "";
-const normalizedTitle = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-const linkTitle = (link: HTMLAnchorElement) =>
-  [...link.querySelectorAll("span")]
-    .filter((span) => !span.querySelector("span"))
-    .map((span) => normalizedTitle(span.textContent ?? ""))
-    .find(Boolean) ?? null;
-const paneTitle = (target: string) => {
-  const link = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].find(
-    (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target),
-  );
-  if (!link) return null;
-  const title = linkTitle(link);
-  if (!title) return null;
-  // A pane label cannot distinguish two visible rows with the same title.
-  const duplicates = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
-    (other) =>
-      other !== link &&
-      threadIdFromHref(other.getAttribute("href")) !== threadIdFromHref(target) &&
-      linkTitle(other) === title,
-  );
-  return duplicates ? null : title;
+const paneThread = () => {
+  const pane = document.querySelector('[role="main"] [role="log"]');
+  if (!pane) return null;
+  // A title or SPA route can belong to a different, still-mounted conversation.
+  const paneId = pane.getAttribute("data-thread-id");
+  if (paneId && /^\d+$/.test(paneId)) return `/t/${paneId}/`;
+  // A fresh document requested this thread directly. Once the SPA has changed
+  // routes, the poller reloads before claiming so this proof is never reused.
+  return !routeChanged && loadedThread === thread() ? loadedThread : null;
 };
-const paneMatches = (title: string) => {
-  const label = paneLabel();
-  const prefix = label.slice(0, -title.length);
-  return label.endsWith(title) && !!prefix && /[^\p{L}\p{N}]$/u.test(prefix);
-};
-let pendingPane: {
-  thread: string;
-  label: string;
-  title: string;
-} | null = null;
 
 /** A native claim has already been persisted. Only "defer" may be retried, and
  * only when we can prove we never clicked Send or left inserted text behind. */
@@ -100,9 +88,6 @@ export async function deliverScheduledMessage(
       (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread),
     );
     if (!link) return "defer";
-    const title = paneTitle(message.thread);
-    if (!title) return "defer";
-    pendingPane = { thread: message.thread, label: paneLabel(), title };
     link.click();
     // The URL can change before Messenger replaces the conversation pane.
     return "defer";
@@ -133,13 +118,7 @@ export async function deliverScheduledMessage(
         await pause();
         continue;
       }
-      const title = paneTitle(message.thread);
-      if (!title || !paneMatches(title)) return "defer";
-      if (pendingPane?.thread === message.thread) {
-        const label = paneLabel();
-        if (label === pendingPane.label || !paneMatches(pendingPane.title)) return "defer";
-        pendingPane = null;
-      }
+      if (paneThread() !== message.thread) return "defer";
       if (!inserted) {
         if (composerText(current).trim()) return "defer";
         box = current;
@@ -333,13 +312,43 @@ export function initScheduledSend() {
       return;
     }
     try {
-      const result = await request({
-        op: "save",
-        ...(editingItem ? { id: editingItem.id } : {}),
-        thread: editingItem?.thread ?? expectedThread ?? undefined,
-        text,
-        due,
-      });
+      let result: ScheduleResponse;
+      try {
+        result = await request({
+          op: "save",
+          ...(editingItem ? { id: editingItem.id } : {}),
+          thread: editingItem?.thread ?? expectedThread ?? undefined,
+          text,
+          due,
+        });
+      } catch (error) {
+        if (!editingItem || recoveredDraft) throw error;
+        let saved: ScheduledMessage | undefined;
+        try {
+          saved = (await request({ op: "list" })).items.find((row) => row.id === editingItem.id);
+        } catch {
+          // A second lost reply leaves the durable outcome unknown.
+        }
+        if (
+          saved?.status !== "scheduled" ||
+          saved.account !== current ||
+          saved.thread !== editingItem.thread ||
+          saved.text !== text ||
+          saved.due !== due
+        ) {
+          if (saved && (saved.due !== due || saved.status !== "scheduled")) throw error;
+          throw new Error(
+            "Scheduling could not be confirmed. Check Schedule send before retrying.",
+          );
+        }
+        result = {
+          items: rows,
+          saved: saved.id,
+          claimed: null,
+          error: null,
+          can_deliver: canDeliver,
+        };
+      }
       if (!result.saved) throw new Error("Message was not saved.");
       if (!editingItem || recoveredDraft) {
         // Never clear a changed draft; cancel the persisted schedule instead.
@@ -660,14 +669,10 @@ export function initScheduledSend() {
             !panel?.contains(document.activeElement)
           )
             return false;
-          // Missing virtualized row requires a reload, even on the current
-          // route: pane verification needs that row's title.
-          if (
-            ![...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
-              (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread),
-            )
-          ) {
-            window.__carrierOpenThread?.(due.thread);
+          // A fresh document ties the mounted pane to the requested thread.
+          // SPA route changes can leave a previous conversation's composer up.
+          if (routeChanged || loadedThread !== due.thread) {
+            location.href = `https://www.facebook.com/messages${due.thread}`;
             return false;
           }
           const claimed = await request({ op: "claim", id: due.id });

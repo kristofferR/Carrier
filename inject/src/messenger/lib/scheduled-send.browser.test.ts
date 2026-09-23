@@ -37,7 +37,7 @@ test.skipIf(!chromium)(
       await writeFile(
         file,
         `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><a href="/messages/t/456/"><span>Original person</span></a><main role="main"><div role="log" aria-label="Conversation with Original person"></div><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
-      var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[]; var loseArmReply=false;
+      var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[]; var loseArmReply=false; var loseSaveReply=false;
       window.__CARRIER_SCHEDULED_SEND_AVAILABLE__=true;
       window.__carrierToast=(message)=>warnings.push(message);
       window.__TAURI_INTERNALS__={invoke:async()=>{}};
@@ -51,6 +51,7 @@ test.skipIf(!chromium)(
           } else {
             scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
           }
+          if(loseSaveReply) throw new Error('reply lost after save');
         }
         if(request.op==='arm') {
           if(document.querySelector('#composer').innerText.trim()) throw new Error('armed before clearing composer');
@@ -113,6 +114,8 @@ async function fixtures(
 ) {
   const result = document.querySelector("#result")!;
   const box = document.querySelector<HTMLElement>("#composer")!;
+  const log = document.querySelector<HTMLElement>('[role="log"]')!;
+  log.dataset.threadId = "456";
   const region = document.querySelector<HTMLElement>("#region")!;
   const page = window as unknown as {
     scheduleItems: ScheduledMessage[];
@@ -121,6 +124,7 @@ async function fixtures(
     scheduleOps: string[];
     carrierScheduledSend: (request: ScheduleRequest) => Promise<ScheduleResponse>;
     loseArmReply: boolean;
+    loseSaveReply: boolean;
   };
   const settle = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (name: string, condition: boolean) => {
@@ -165,6 +169,15 @@ async function fixtures(
     // biome-ignore lint/suspicious/noDocumentCookie: Mimic Messenger's account cookie in an isolated fixture.
     document.cookie = "c_user=123; path=/";
     init();
+    await settle();
+    delete log.dataset.threadId;
+    assert(
+      "a fresh document can send on its original thread without a pane ID",
+      (await deliver(message(), () => true)) === "sent" && clicks === 1,
+    );
+    clicks = 0;
+    clear();
+    log.dataset.threadId = "456";
     await settle();
     const icon = () => document.querySelector<HTMLButtonElement>("[data-carrier-schedule]");
     assert("empty composer has no clock", !icon());
@@ -339,6 +352,35 @@ async function fixtures(
       page.replyResults.at(-1)?.ok === true && clicks === 2 && !box.innerText.trim(),
     );
     clear();
+    delay = 600;
+    window.__carrierQuickReply?.("/t/456/", "Already submitted", 3, 3);
+    while (clicks === 2) await settle(10);
+    window.__carrierQuickReplyDraft?.("/t/456/", "Already submitted", 3, 4);
+    await settle(500);
+    assert(
+      "timed-out fallback cannot restore a reply after Send was clicked",
+      clicks === 3 && !box.innerText.trim() && page.replyResults.at(-1)?.ok === true,
+    );
+    clear();
+    delay = 1200;
+    window.__carrierQuickReply?.("/t/456/", "Cancelled auto reply", 4, 5);
+    await settle(300);
+    window.__carrierQuickReplyDraft?.("/t/456/", "Cancelled auto reply", 4, 6);
+    await settle(1600);
+    assert(
+      "fallback cancels an unfinished automatic send and keeps one draft",
+      clicks === 3 && box.innerText === "Cancelled auto reply",
+    );
+    clear();
+    window.__carrierQuickReplyDraft?.("/t/456/", "Fallback first", 5, 8);
+    await settle();
+    window.__carrierQuickReply?.("/t/456/", "Fallback first", 5, 7);
+    await settle();
+    assert(
+      "a delayed original dispatch cannot send after its fallback",
+      clicks === 3 && box.innerText === "Fallback first",
+    );
+    clear();
     box.textContent = "yesterday";
     window.__carrierQuickReplyDraft?.("/t/456/", "yes", 2, 2);
     await settle();
@@ -422,10 +464,27 @@ async function fixtures(
     await settle();
     assert(
       "rescheduling arms on save without touching the current draft",
-      page.scheduleOps.slice(opsBeforeReschedule).join(",") === "save" &&
+      page.scheduleOps[opsBeforeReschedule] === "save" &&
+        !page.scheduleOps.slice(opsBeforeReschedule).includes("arm") &&
         page.scheduleItems[0]?.status === "scheduled" &&
         box.innerText === "Another draft",
     );
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    page.loseSaveReply = true;
+    const warningsBeforeSave = page.warnings.length;
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    await settle();
+    assert(
+      "lost reschedule reply is reconciled before reporting failure",
+      page.scheduleItems[0]?.status === "scheduled" &&
+        page.warnings
+          .slice(warningsBeforeSave)
+          .some((warning) => warning.includes("Message scheduled for")) &&
+        page.scheduleOps.at(-1) === "list",
+    );
+    page.loseSaveReply = false;
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     page.scheduleItems = [
       { ...message(), id: "recovered", status: "draft", text: "Recovered draft" },
@@ -489,16 +548,16 @@ async function fixtures(
     );
     page.scheduleItems = [];
     clear();
-    const log = document.querySelector<HTMLElement>('[role="log"]')!;
     const shortLink = document.createElement("a");
     shortLink.href = "/messages/t/777/";
     shortLink.innerHTML = "<span>李</span>";
     document.body.append(shortLink);
     history.replaceState(null, "", shortLink.href);
     log.setAttribute("aria-label", "Conversation with 李");
+    log.dataset.threadId = "777";
     const beforeShort = clicks;
     assert(
-      "single-character title can identify the pane",
+      "pane thread link identifies a short-titled conversation",
       (await deliver({ ...message(), thread: "/t/777/" }, () => true)) === "sent" &&
         clicks === beforeShort + 1,
     );
@@ -511,13 +570,20 @@ async function fixtures(
     history.replaceState(null, "", ann.href);
     log.setAttribute("aria-label", "Conversation with Anna");
     assert(
-      "an Anna pane cannot send an Ann schedule",
+      "a stale pane cannot send through a similarly named route",
+      (await deliver({ ...message(), thread: "/t/778/" }, () => true)) === "defer" &&
+        clicks === beforeShort + 1,
+    );
+    log.setAttribute("aria-label", "Conversation with Ann");
+    assert(
+      "an unmounted same-name thread cannot impersonate the target pane",
       (await deliver({ ...message(), thread: "/t/778/" }, () => true)) === "defer" &&
         clicks === beforeShort + 1,
     );
     ann.remove();
     history.replaceState(null, "", "/messages/t/456/");
     log.setAttribute("aria-label", "Conversation with Original person");
+    log.dataset.threadId = "456";
     const reused = document.createElement("a");
     reused.href = "/messages/t/779/";
     reused.innerHTML = "<span>Reused composer</span>";
@@ -531,6 +597,7 @@ async function fixtures(
       (await deliver({ ...message(), thread: "/t/779/" }, () => true)) === "defer",
     );
     log.setAttribute("aria-label", "Conversation with Reused composer");
+    log.dataset.threadId = "779";
     assert(
       "verified pane switch sends with a reused composer node",
       (await deliver({ ...message(), thread: "/t/779/" }, () => true)) === "sent" &&
@@ -539,6 +606,7 @@ async function fixtures(
     reused.remove();
     history.replaceState(null, "", "/messages/t/456/");
     log.setAttribute("aria-label", "Conversation with Original person");
+    log.dataset.threadId = "456";
     page.loseArmReply = true;
     box.textContent = "Lost acknowledgement draft";
     await settle();

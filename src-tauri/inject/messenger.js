@@ -5581,11 +5581,11 @@
     return { length: value.length, full: hashText(value), prefixes };
   };
   var opaqueNotificationIdentity = (title, body) => {
-    const normalizedTitle2 = normalizeNotificationText(title);
+    const normalizedTitle = normalizeNotificationText(title);
     const normalizedBody = normalizeNotificationText(body);
     const group = splitGroupSender(normalizedBody);
     return {
-      title: opaqueTextIdentity(normalizedTitle2, TITLE_PREFIX_LIMIT),
+      title: opaqueTextIdentity(normalizedTitle, TITLE_PREFIX_LIMIT),
       body: opaqueTextIdentity(normalizedBody, BODY_PREFIX_LIMIT),
       sender: group.sender === null ? null : hashText(group.sender),
       message: opaqueTextIdentity(group.message, BODY_PREFIX_LIMIT)
@@ -7221,8 +7221,8 @@
       const thread2 = threadPathId(threadPath || "");
       const title = thread2 ? rowTitles.get(thread2) : void 0;
       const otherTitles = [...rowTitles].filter(([key]) => key !== thread2).map(([, value]) => value);
-      const paneMatches2 = title && thread2 === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
-      const log = paneMatches2 ? document.querySelector('[role="main"] [role="log"]') : null;
+      const paneMatches = title && thread2 === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
+      const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
       return log ? notificationLinkCards(log) : [];
     };
     const richMessageBody = (body, threadPath) => notificationLinkBody(body, messageLinkCards(body, threadPath));
@@ -8089,6 +8089,7 @@ ${button.innerHTML}`)
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
+  var replyAttempts = /* @__PURE__ */ new Map();
   var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
@@ -8098,7 +8099,7 @@ ${button.innerHTML}`)
     );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
-  async function deliver(path, text, id) {
+  async function deliver(path, text, id, state2) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
@@ -8121,6 +8122,7 @@ ${button.innerHTML}`)
     document.addEventListener("click", onClick, true);
     try {
       while (true) {
+        if (state2.cancelled) return false;
         const box = composer();
         if (box && hasComposerMedia(box)) return false;
         const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
@@ -8150,6 +8152,8 @@ ${button.innerHTML}`)
             break;
           }
           case "send":
+            if (state2.cancelled) return false;
+            state2.clicked = true;
             button?.click();
             await pause();
             break;
@@ -8218,7 +8222,16 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void withComposerDelivery(() => deliver(path, text, id)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
+      const previous = replyAttempts.get(id);
+      if (previous && previous.attempt >= attempt) return;
+      const state2 = { attempt, cancelled: false, clicked: false, sent: false };
+      replyAttempts.set(id, state2);
+      if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value);
+      void withComposerDelivery(async () => {
+        const ok = await deliver(path, text, id, state2);
+        state2.sent = ok;
+        return ok;
+      }).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8229,7 +8242,21 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text, id)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
+      let state2 = replyAttempts.get(id);
+      if (state2 && state2.attempt > attempt) return;
+      if (!state2 || state2.attempt < attempt) {
+        if (state2) {
+          state2.cancelled = true;
+          state2.attempt = attempt;
+        } else {
+          state2 = { attempt, cancelled: true, clicked: false, sent: false };
+          replyAttempts.set(id, state2);
+          if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value);
+        }
+      }
+      void withComposerDeliveryWhenAvailable(
+        () => state2?.clicked || state2?.sent ? Promise.resolve(true) : preserveDraft(path, text, id)
+      ).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8315,30 +8342,33 @@ ${text}`)) {
     const id = threadIdFromHref(location.pathname);
     return id ? `/t/${id}/` : null;
   };
+  var loadedThread = thread();
+  var routeChanged = false;
+  var pushState = history.pushState.bind(history);
+  history.pushState = (...args) => {
+    const previous = thread();
+    pushState(...args);
+    if (thread() !== previous) routeChanged = true;
+  };
+  var replaceState = history.replaceState.bind(history);
+  history.replaceState = (...args) => {
+    const previous = thread();
+    replaceState(...args);
+    if (thread() !== previous) routeChanged = true;
+  };
+  window.addEventListener("popstate", () => {
+    routeChanged = true;
+  });
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
-  var paneLabel = () => document.querySelector('[role="main"] [role="log"][aria-label]')?.getAttribute("aria-label")?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
-  var normalizedTitle = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
-  var linkTitle = (link) => [...link.querySelectorAll("span")].filter((span) => !span.querySelector("span")).map((span) => normalizedTitle(span.textContent ?? "")).find(Boolean) ?? null;
-  var paneTitle = (target) => {
-    const link = [...document.querySelectorAll('a[href*="/t/"]')].find(
-      (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target)
-    );
-    if (!link) return null;
-    const title = linkTitle(link);
-    if (!title) return null;
-    const duplicates = [...document.querySelectorAll('a[href*="/t/"]')].some(
-      (other) => other !== link && threadIdFromHref(other.getAttribute("href")) !== threadIdFromHref(target) && linkTitle(other) === title
-    );
-    return duplicates ? null : title;
+  var paneThread = () => {
+    const pane = document.querySelector('[role="main"] [role="log"]');
+    if (!pane) return null;
+    const paneId = pane.getAttribute("data-thread-id");
+    if (paneId && /^\d+$/.test(paneId)) return `/t/${paneId}/`;
+    return !routeChanged && loadedThread === thread() ? loadedThread : null;
   };
-  var paneMatches = (title) => {
-    const label = paneLabel();
-    const prefix = label.slice(0, -title.length);
-    return label.endsWith(title) && !!prefix && /[^\p{L}\p{N}]$/u.test(prefix);
-  };
-  var pendingPane = null;
   async function deliverScheduledMessage(message, connectionReady = ready) {
     if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
       return "defer";
@@ -8350,9 +8380,6 @@ ${text}`)) {
         (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread)
       );
       if (!link) return "defer";
-      const title = paneTitle(message.thread);
-      if (!title) return "defer";
-      pendingPane = { thread: message.thread, label: paneLabel(), title };
       link.click();
       return "defer";
     }
@@ -8382,13 +8409,7 @@ ${text}`)) {
           await pause2();
           continue;
         }
-        const title = paneTitle(message.thread);
-        if (!title || !paneMatches(title)) return "defer";
-        if (pendingPane?.thread === message.thread) {
-          const label = paneLabel();
-          if (label === pendingPane.label || !paneMatches(pendingPane.title)) return "defer";
-          pendingPane = null;
-        }
+        if (paneThread() !== message.thread) return "defer";
         if (!inserted) {
           if (composerText(current).trim()) return "defer";
           box = current;
@@ -8544,13 +8565,36 @@ ${text}`)) {
         return;
       }
       try {
-        const result = await request({
-          op: "save",
-          ...editingItem ? { id: editingItem.id } : {},
-          thread: editingItem?.thread ?? expectedThread ?? void 0,
-          text,
-          due
-        });
+        let result;
+        try {
+          result = await request({
+            op: "save",
+            ...editingItem ? { id: editingItem.id } : {},
+            thread: editingItem?.thread ?? expectedThread ?? void 0,
+            text,
+            due
+          });
+        } catch (error) {
+          if (!editingItem || recoveredDraft) throw error;
+          let saved;
+          try {
+            saved = (await request({ op: "list" })).items.find((row) => row.id === editingItem.id);
+          } catch {
+          }
+          if (saved?.status !== "scheduled" || saved.account !== current || saved.thread !== editingItem.thread || saved.text !== text || saved.due !== due) {
+            if (saved && (saved.due !== due || saved.status !== "scheduled")) throw error;
+            throw new Error(
+              "Scheduling could not be confirmed. Check Schedule send before retrying."
+            );
+          }
+          result = {
+            items: rows,
+            saved: saved.id,
+            claimed: null,
+            error: null,
+            can_deliver: canDeliver
+          };
+        }
         if (!result.saved) throw new Error("Message was not saved.");
         if (!editingItem || recoveredDraft) {
           const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
@@ -8821,10 +8865,8 @@ ${text}`)) {
             if (box && (composerText(box).trim() || hasComposerMedia(box))) return false;
             if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
               return false;
-            if (![...document.querySelectorAll('a[href*="/t/"]')].some(
-              (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
-            )) {
-              window.__carrierOpenThread?.(due.thread);
+            if (routeChanged || loadedThread !== due.thread) {
+              location.href = `https://www.facebook.com/messages${due.thread}`;
               return false;
             }
             const claimed = await request({ op: "claim", id: due.id });
