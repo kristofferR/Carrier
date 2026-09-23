@@ -17,6 +17,9 @@ An explicitly started backend setup also has a 90-second deadline to settle,
 independent of page MQTT traffic or availability of the encrypted bridge/state
 APIs. A setup that has not settled remains protected from competing initialization;
 the guarded worker lifecycles below can rescue a stalled encrypted opening.
+After startup is observed, temporarily unavailable setup APIs or unknown samples
+cannot erase its deadline. Definitive completion/failure or a new account/worker
+boundary clears that observation.
 Recovery waits another 15 seconds for fresh probes, including after wake.
 
 Carrier uses Messenger's existing worker lifecycle:

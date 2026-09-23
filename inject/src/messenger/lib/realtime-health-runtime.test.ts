@@ -30,6 +30,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   let setupFailed = false;
   let setupReady = false;
   let setupInProgress = false;
+  let setupModuleAvailable = true;
   let bridgeAvailable = true;
   const storage = new Map<string, string>();
   const createMonitor = (account = "123") => {
@@ -47,6 +48,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
       WebSocket: Socket,
       require(name: string) {
         if (name === "MAWWaitForBackendSetup") {
+          if (!setupModuleAvailable) return undefined;
           return {
             isBackendSetupSettled: () => setupFailed || setupReady,
             isBackendSetupSuccessful: () => !setupFailed,
@@ -207,6 +209,29 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     await starting.check();
     expect(starting.tracker.status(now)).toBe("stale");
     expect(starting.isVerifiedHealthy()).toBe(false);
+  }
+  for (const missingSetupModule of [false, true]) {
+    setupReady = false;
+    setupInProgress = setupModuleAvailable = true;
+    const starting = createMonitor(missingSetupModule ? "1003" : "1002");
+    await starting.check();
+    now += 45_000;
+    setupModuleAvailable = !missingSetupModule;
+    setupInProgress = false;
+    await starting.check();
+    now += 44_999;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("ok");
+    now += 1;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("stale");
+    setupModuleAvailable = setupInProgress = true;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("stale");
+    setupReady = true;
+    setupInProgress = false;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("ok");
   }
 });
 

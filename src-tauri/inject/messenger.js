@@ -1253,7 +1253,7 @@
       }
       const setup = workerSetupState();
       if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
-      else setupStartedAt = void 0;
+      else if (setup === "ready" || setup === "failed") setupStartedAt = void 0;
       const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
       const freshConnected = connected === true && verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS;
       if (freshConnected) verificationStartedAt = void 0;

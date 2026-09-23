@@ -280,7 +280,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     // A confirmed setup attempt must settle even if page MQTT is healthy or
     // the encrypted state/bridge APIs have not become available yet.
     if (setup === "starting") setupStartedAt ??= now();
-    else setupStartedAt = undefined;
+    else if (setup === "ready" || setup === "failed") setupStartedAt = undefined;
     const setupStale =
       setupStartedAt !== undefined && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
     const freshConnected =
