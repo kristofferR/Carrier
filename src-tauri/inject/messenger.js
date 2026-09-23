@@ -7222,6 +7222,14 @@
           dedupeKey: match.dedupeKey
         };
       }
+      const candidates = currentPageRouteCandidates();
+      const matching = new Map(
+        candidates.filter((row) => notificationTextMatches(title, body, row.title, row.body)).map((row) => [row.key, row])
+      );
+      const draft = matching.size === 1 ? [...matching.values()][0] : void 0;
+      if (draft?.draft) {
+        return { threadPath: draft.threadPath, threadMuted: draft.muted };
+      }
       return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
@@ -7572,9 +7580,10 @@
         muted
       };
     };
-    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter(
-      (conversation) => conversation !== null && conversation.body.length > 0 && !conversation.draft
-    ).map(({ key, title, body }) => ({ key, title, body }));
+    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter((conversation) => conversation !== null).map((conversation) => ({
+      ...conversation,
+      body: conversation.draft ? "" : conversation.body
+    }));
     function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
       const pageSignal = notificationCorrelations.consumePageForRow(
         conversation,
@@ -7862,6 +7871,10 @@
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
         const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
+        const pageRouteCandidates = observed.map((conversation) => ({
+          ...conversation,
+          body: conversation.draft ? "" : conversation.body
+        }));
         const hydratedReadKeys = new Set(
           listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
@@ -7945,6 +7958,21 @@
           observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
           detectedAt
         );
+        for (const conversation of pageRouteCandidates) {
+          if (!conversation.draft) continue;
+          const signal = notificationCorrelations.consumePageForRow(
+            conversation,
+            detectedAt,
+            PAGE_NOTIFICATION_RECOVERY_MS,
+            pageRouteCandidates
+          );
+          if (!signal) continue;
+          signal.threadPath = conversation.threadPath;
+          signal.threadMuted = conversation.muted;
+          if (signal.emitted && signal.nativeId !== void 0) {
+            updateNotificationRoute(signal.nativeId, conversation.threadPath);
+          }
+        }
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
         const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
           hydrated,

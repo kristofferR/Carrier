@@ -946,6 +946,24 @@ describe("PageNotificationQueue", () => {
     expect(queue.consumeMatching(row, 1_100, 2_000, [row, row])).not.toBeNull();
   });
 
+  test("routes a page notification through a unique draft without matching draft text", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft])).toBe(signal);
+    expect(signal.matched).toBe(true);
+  });
+
+  test("does not route by draft title when another conversation also matches", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "Incoming message" };
+
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft, other])).toBeNull();
+  });
+
   test("refuses a signal whose only candidate is a different conversation", () => {
     const queue = new PageNotificationQueue();
     queue.add({ at: 1_000, title: "Jane", body: "Same" });

@@ -30,6 +30,7 @@ import {
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
   notificationPresentation,
+  notificationTextMatches,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   PendingPageNotificationStore,
@@ -328,8 +329,14 @@ export function initNotificationBridge() {
     deliverable: boolean;
   }
   const notificationCorrelations = new NotificationCorrelationQueue<PendingFallback>();
-  let currentPageRouteCandidates: () => Array<{ key: string; title: string; body: string }> =
-    () => [];
+  let currentPageRouteCandidates: () => Array<{
+    key: string;
+    title: string;
+    body: string;
+    threadPath: string;
+    muted: boolean;
+    draft: boolean;
+  }> = () => [];
 
   const waitForPageMatchWhileFiltering = (signal: PageNotificationSignal) => {
     const cancel = new AbortController();
@@ -404,6 +411,19 @@ export function initNotificationBridge() {
         },
         dedupeKey: match.dedupeKey,
       };
+    }
+    // A draft hides the real preview, but the page Notification still names
+    // the thread. Use a unique title match only to recover its route and mute
+    // state; never treat the draft text as a delivered message fingerprint.
+    const candidates = currentPageRouteCandidates();
+    const matching = new Map(
+      candidates
+        .filter((row) => notificationTextMatches(title, body, row.title, row.body))
+        .map((row) => [row.key, row] as const),
+    );
+    const draft = matching.size === 1 ? [...matching.values()][0] : undefined;
+    if (draft?.draft) {
+      return { threadPath: draft.threadPath, threadMuted: draft.muted };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
@@ -965,11 +985,11 @@ export function initNotificationBridge() {
   currentPageRouteCandidates = () =>
     chatRows()
       .map(conversationFromLink)
-      .filter(
-        (conversation): conversation is Conversation =>
-          conversation !== null && conversation.body.length > 0 && !conversation.draft,
-      )
-      .map(({ key, title, body }) => ({ key, title, body }));
+      .filter((conversation): conversation is Conversation => conversation !== null)
+      .map((conversation) => ({
+        ...conversation,
+        body: conversation.draft ? "" : conversation.body,
+      }));
 
   function pairPendingPageNotification(
     conversation: Conversation,
@@ -1377,6 +1397,10 @@ export function initNotificationBridge() {
       // observation primes silently instead.
       const hydrated = conversations.filter(({ body }) => body.length > 0);
       const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
+      const pageRouteCandidates = observed.map((conversation) => ({
+        ...conversation,
+        body: conversation.draft ? "" : conversation.body,
+      }));
       // Confirm read state before the signature tracker runs: a thread turning
       // unread again is only a new message if this document had established it
       // was read, and the tracker needs that verdict for the very scan the
@@ -1493,6 +1517,21 @@ export function initNotificationBridge() {
         observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
         detectedAt,
       );
+      for (const conversation of pageRouteCandidates) {
+        if (!conversation.draft) continue;
+        const signal = notificationCorrelations.consumePageForRow(
+          conversation,
+          detectedAt,
+          PAGE_NOTIFICATION_RECOVERY_MS,
+          pageRouteCandidates,
+        );
+        if (!signal) continue;
+        signal.threadPath = conversation.threadPath;
+        signal.threadMuted = conversation.muted;
+        if (signal.emitted && signal.nativeId !== undefined) {
+          updateNotificationRoute(signal.nativeId, conversation.threadPath);
+        }
+      }
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
       const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
         hydrated,
