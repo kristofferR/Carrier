@@ -84,9 +84,9 @@ one previous file per session; the latest five completed sessions and all live s
 Carrier's existing bounded application log remains available in **Open Log
 Folder**. Native output may contain third-party diagnostics; keep it private.
 
-**Hold Failures** pauses both native watchdog recovery and injected automatic
-reloads, while heartbeats and diagnostics continue. Manual reload and navigation
-remain available. Before automatic recovery (when enabled), Carrier records
+**Hold Failures** pauses native watchdog recovery, silent worker repair, and
+injected automatic reloads, while heartbeats and diagnostics continue. Manual reload and navigation
+remain available. Before automatic reload or window recreation (when enabled), Carrier records
 native watchdog state and requests a content-free page snapshot with DOM counts,
 visibility, document age, and transport health. Unresponsive renderers cannot
 supply a page snapshot; the native evidence is still recorded. No message text,

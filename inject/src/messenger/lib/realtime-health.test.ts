@@ -129,6 +129,15 @@ describe("RealtimeHealthWatchdog", () => {
 });
 
 describe("WorkerConnectionWatchdog", () => {
+  test("a ready backend that never opens its first connection gets a startup deadline", () => {
+    const watchdog = new WorkerConnectionWatchdog();
+    watchdog.observe(false, 0);
+    expect(watchdog.observe(false, 100_000, true)).toBe(false);
+    expect(watchdog.observe(false, 100_000 + REALTIME_NEVER_CONNECTED_MS - 1, true)).toBe(false);
+    expect(watchdog.observe(false, 100_000 + REALTIME_NEVER_CONNECTED_MS, true)).toBe(true);
+    expect(watchdog.observe(undefined, 200_000, true)).toBe(true);
+  });
+
   test("a replacement document still detects a previously connected worker staying down", () => {
     const watchdog = new WorkerConnectionWatchdog(true);
     expect(watchdog.observe(false, 0)).toBe(false);
@@ -152,13 +161,14 @@ describe("WorkerConnectionWatchdog", () => {
     expect(watchdog.observe(false, 102 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
   });
 
-  test("withdraws an unavailable connection signal and restarts its grace", () => {
+  test("missing observations preserve a confirmed disconnect until verified recovery", () => {
     const watchdog = new WorkerConnectionWatchdog();
     watchdog.observe(true, 0);
     watchdog.observe(false, 100);
     expect(watchdog.observe(false, 100 + REALTIME_CONNECT_GRACE_MS)).toBe(true);
-    expect(watchdog.observe(undefined, 101 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
-    expect(watchdog.observe(false, 102 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
+    expect(watchdog.observe(undefined, 101 + REALTIME_CONNECT_GRACE_MS)).toBe(true);
+    expect(watchdog.observe(false, 102 + REALTIME_CONNECT_GRACE_MS)).toBe(true);
+    expect(watchdog.observe(true, 103 + REALTIME_CONNECT_GRACE_MS)).toBe(false);
   });
 
   test("rebases disconnect timing after a backwards clock correction", () => {
@@ -266,16 +276,16 @@ describe("realtime recovery signals", () => {
     expect(tracker.status(REALTIME_UNOBSERVED_MS * 10)).toBe("never");
   });
 
-  test("a withdrawn source vouches only as long as its last healthy report", () => {
+  test("page traffic cannot vouch for an encrypted worker that stopped answering", () => {
     const tracker = new RealtimeRecoveryTracker(0);
     tracker.healthy("socket", 0);
     // The page loses sight of its socket, then the worker probe starts failing.
     tracker.withdraw("socket");
     tracker.stale("worker");
 
-    // The socket was proven live moments ago, so hold off briefly...
-    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS)).toBe(false);
-    // ...but an unobservable source cannot vouch indefinitely.
+    expect(tracker.needsRecovery(0)).toBe(true);
+    tracker.healthy("socket", REALTIME_CORROBORATION_MS);
+    expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS)).toBe(true);
     expect(tracker.needsRecovery(REALTIME_CORROBORATION_MS + 1)).toBe(true);
   });
 

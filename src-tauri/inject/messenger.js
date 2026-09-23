@@ -176,9 +176,6 @@
   };
 
   // inject/src/messenger/lib/auto-refresh.ts
-  var PERIODIC_REFRESH_MS = 15 * 60 * 1e3;
-  var NOTIFICATION_REFRESH_GAP_MS = 5 * 60 * 1e3;
-  var RESUME_GAP_MS = 2e4;
   var PowerStateTracker = class {
     constructor(documentCreatedAt) {
       __publicField(this, "documentCreatedAt", documentCreatedAt);
@@ -191,47 +188,8 @@
     }
   };
   var canReplacePendingRefresh = (pending, next) => {
-    if (next === "rate-limit-manual") return pending !== "rate-limit-manual";
     if (pending === "rate-limit-manual") return false;
-    if (pending === "rate-limit") return next === "rate-limit";
-    if (next === "rate-limit") return true;
-    return pending !== "resume" || next === "resume";
-  };
-  var elapsed = (now, since) => Math.max(0, now - since);
-  var AutoRefreshWatchdog = class {
-    constructor(now, active, detectResumeFromClockGap = true) {
-      __publicField(this, "detectResumeFromClockGap", detectResumeFromClockGap);
-      __publicField(this, "inactiveSince");
-      __publicField(this, "lastHeartbeatAt");
-      __publicField(this, "lastFreshAt");
-      this.lastFreshAt = now;
-      this.lastHeartbeatAt = now;
-      this.inactiveSince = active ? null : now;
-    }
-    setActive(active, now) {
-      if (!active) {
-        this.inactiveSince ?? (this.inactiveSince = now);
-        return null;
-      }
-      const inactiveFor = this.inactiveSince === null ? 0 : elapsed(now, this.inactiveSince);
-      this.inactiveSince = null;
-      this.lastFreshAt = Math.max(this.lastFreshAt, now);
-      return inactiveFor >= PERIODIC_REFRESH_MS ? "foreground" : null;
-    }
-    heartbeat(active, now) {
-      const heartbeatGap = elapsed(now, this.lastHeartbeatAt);
-      this.lastHeartbeatAt = Math.max(this.lastHeartbeatAt, now);
-      const transition = this.setActive(active, now);
-      if (this.detectResumeFromClockGap && heartbeatGap >= RESUME_GAP_MS) return "resume";
-      if (transition) return transition;
-      if (!active && this.inactiveSince !== null && elapsed(now, this.inactiveSince) >= PERIODIC_REFRESH_MS) {
-        return "background";
-      }
-      return null;
-    }
-    canRefreshFromNotification(now) {
-      return elapsed(now, this.lastFreshAt) >= NOTIFICATION_REFRESH_GAP_MS;
-    }
+    return next === "rate-limit-manual" || pending !== "manual" || next === "manual";
   };
 
   // inject/src/messenger/lib/realtime-health.ts
@@ -244,7 +202,7 @@
   function looksLikeFacebookErrorPage(doc) {
     return doc.hasBackLink && doc.hasIconImage && doc.elementCount < 100;
   }
-  var elapsed2 = (now, since) => Math.max(0, now - since);
+  var elapsed = (now, since) => Math.max(0, now - since);
   var ConsecutiveFailureThreshold = class {
     constructor(limit) {
       __publicField(this, "limit", limit);
@@ -264,16 +222,24 @@
       __publicField(this, "everConnected", false);
       __publicField(this, "disconnectedAt", null);
     }
-    observe(connected, now) {
-      if (connected !== false) {
-        this.everConnected || (this.everConnected = connected === true);
+    observe(connected, now, backendReady = false) {
+      if (connected === true) {
+        this.everConnected = true;
         this.disconnectedAt = null;
         return false;
       }
-      if (!this.everConnected && !this.previouslyConnected) return false;
-      this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
       const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
-      return elapsed2(now, this.disconnectedAt) >= grace;
+      if (connected === void 0) {
+        if (this.disconnectedAt === null) return false;
+        this.disconnectedAt = Math.min(this.disconnectedAt, now);
+        return elapsed(now, this.disconnectedAt) >= grace;
+      }
+      if (!this.everConnected && !this.previouslyConnected && !backendReady) {
+        this.disconnectedAt = null;
+        return false;
+      }
+      this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
+      return elapsed(now, this.disconnectedAt) >= grace;
     }
   };
   var RealtimeRecoveryTracker = class {
@@ -301,19 +267,18 @@
       this.staleSources.delete(source);
     }
     /**
-     * General transport failures can be corroborated by either observer, since
-     * Messenger may move its page socket into a worker. An explicitly observed
-     * encrypted-connection failure is independent of that fallback.
+     * A healthy encrypted worker can replace page-owned sockets. Page MQTT
+     * cannot replace the encrypted worker or vouch for its failed bridge.
      */
     needsRecovery(now = Date.now()) {
-      if (this.staleSources.has("worker-connection")) return true;
+      if (this.staleSources.has("worker-connection") || this.staleSources.has("worker")) return true;
       for (const [source, at] of this.lastHealthyAt) {
         if (at > now) this.lastHealthyAt.set(source, now);
       }
       if (this.staleSources.size === 0) return this.unobserved(now);
       for (const [source, at] of this.lastHealthyAt) {
         if (this.staleSources.has(source)) continue;
-        if (elapsed2(now, at) <= REALTIME_CORROBORATION_MS) return false;
+        if (elapsed(now, at) <= REALTIME_CORROBORATION_MS) return false;
       }
       return true;
     }
@@ -332,7 +297,7 @@
         if (lastConfirmedAt === null || at > lastConfirmedAt) lastConfirmedAt = at;
       }
       if (lastConfirmedAt === null) return false;
-      return elapsed2(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
+      return elapsed(now, lastConfirmedAt) >= REALTIME_UNOBSERVED_MS;
     }
     // "pending" (fresh page, transport still unproven) deliberately differs from
     // "ok": the native side pauses its bad-transport timer on both, but only a
@@ -340,7 +305,7 @@
     status(now) {
       if (this.needsRecovery(now)) return "stale";
       if (this.everHealthy) return "ok";
-      return elapsed2(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
+      return elapsed(now, this.startedAt) >= REALTIME_NEVER_CONNECTED_MS ? "never" : "pending";
     }
   };
   function isMessengerRealtimeUrl(raw, base) {
@@ -387,11 +352,11 @@
       const open = states.filter((state2) => state2.state === "open");
       if (open.length) {
         const freshestInbound = Math.max(...open.map((state2) => state2.lastInboundAt));
-        return elapsed2(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
+        return elapsed(now, freshestInbound) >= REALTIME_SILENCE_MS ? "stale" : "healthy";
       }
       const connecting = states.filter((state2) => state2.state === "connecting");
       if (!this.everOpened) return "starting";
-      if (this.recoveryStartedAt !== null && elapsed2(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
+      if (this.recoveryStartedAt !== null && elapsed(now, this.recoveryStartedAt) < REALTIME_CONNECT_GRACE_MS) {
         return "recovering";
       }
       if (connecting.length) return "stale";
@@ -461,6 +426,380 @@
     return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
   }
   var SEPARATOR_RE = /^[·•.,\s]+$/;
+
+  // inject/src/messenger/lib/worker-recovery.ts
+  function record(value) {
+    return value !== null && typeof value === "object" ? value : void 0;
+  }
+  function method(value, key) {
+    const candidate = record(value)?.[key];
+    return typeof candidate === "function" ? candidate : void 0;
+  }
+  var INSPECTION_TIMEOUT_MS = 8e3;
+  var nativeSetTimeout = setTimeout.bind(globalThis);
+  var nativeClearTimeout = clearTimeout.bind(globalThis);
+  var nativeNow = performance.now.bind(performance);
+  var InspectionTimeout = class extends Error {
+  };
+  async function inspect(read) {
+    const startedAt = nativeNow();
+    let timer;
+    try {
+      const result = await Promise.race([
+        read(),
+        new Promise((_, reject) => {
+          timer = nativeSetTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
+        })
+      ]);
+      if (nativeNow() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
+      return result;
+    } finally {
+      nativeClearTimeout(timer);
+    }
+  }
+  function hasSoleMessengerWindow(value) {
+    if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
+    const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
+    return messenger.length === 1 && value.every((label) => label === "settings" || messenger.includes(label));
+  }
+  var FacebookWorkerRecovery = class {
+    constructor(load, accountScope, canRestartSharedWorker = async () => false) {
+      __publicField(this, "load", load);
+      __publicField(this, "accountScope", accountScope);
+      __publicField(this, "canRestartSharedWorker", canRestartSharedWorker);
+      __publicField(this, "replay");
+      __publicField(this, "scope");
+      __publicField(this, "setupStartedAt");
+      __publicField(this, "recovering", false);
+      __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "sharedBridgeRepair");
+      __publicField(this, "lifecycleRestartUsedScope");
+      __publicField(this, "lifecycle");
+      __publicField(this, "pausedDedicatedSetup");
+      __publicField(this, "currentPhase", "idle");
+    }
+    get phase() {
+      return this.currentPhase;
+    }
+    observeLifecycleExports(value) {
+      const exports = record(value);
+      const register = method(exports, "setOnCloseForWorkerInstance");
+      if (!exports || !register || this.wrapped.has(register)) return;
+      const owner = this;
+      const wrapped = new Proxy(register, {
+        apply(target, receiver, args) {
+          const result = Reflect.apply(target, receiver, args);
+          try {
+            const callback = args[0];
+            owner.pausedDedicatedSetup = void 0;
+            owner.lifecycle = result === void 0 && args.length === 1 && typeof callback === "function" && callback.length === 3 ? { callback, scope: owner.accountScope() } : void 0;
+            owner.setupStartedAt = nativeNow();
+          } catch (_) {
+            owner.lifecycle = void 0;
+          }
+          return result;
+        }
+      });
+      try {
+        exports.setOnCloseForWorkerInstance = wrapped;
+        this.wrapped.add(wrapped);
+      } catch (_) {
+      }
+    }
+    observeSetupExports(value) {
+      const exports = record(value);
+      const setup = method(exports, "getOrSetupWorker");
+      if (!exports || !setup || this.wrapped.has(setup)) return;
+      const owner = this;
+      const wrapped = new Proxy(setup, {
+        apply(target, receiver, args) {
+          owner.replay = void 0;
+          owner.scope = void 0;
+          owner.setupStartedAt = void 0;
+          owner.pausedDedicatedSetup = void 0;
+          if (record(args[0]) && [1, 2, 3, 5].every((index) => typeof args[index] === "function") && typeof args[4] === "string") {
+            try {
+              const retryArgs = [...args];
+              retryArgs[4] = "bridgeRecovery";
+              owner.scope = owner.accountScope();
+              owner.setupStartedAt = nativeNow();
+              owner.replay = () => Reflect.apply(target, receiver, retryArgs);
+            } catch (_) {
+              owner.scope = void 0;
+              owner.setupStartedAt = void 0;
+              owner.replay = void 0;
+            }
+          }
+          return Reflect.apply(target, receiver, args);
+        }
+      });
+      try {
+        exports.getOrSetupWorker = wrapped;
+        this.wrapped.add(wrapped);
+      } catch (_) {
+      }
+    }
+    /** A sustained verified connection starts a fresh escalation episode. */
+    clearEscalation() {
+      this.sharedBridgeRepair = void 0;
+      this.lifecycleRestartUsedScope = void 0;
+    }
+    async recover(allowed = () => true, escalate = false) {
+      if (this.recovering) return "busy";
+      this.recovering = true;
+      try {
+        if (!allowed()) return "busy";
+        let startingScope;
+        try {
+          startingScope = this.accountScope();
+        } catch (_) {
+          return "unsupported";
+        }
+        if (!startingScope) return "unsupported";
+        if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = void 0;
+        if (this.lifecycleRestartUsedScope !== startingScope)
+          this.lifecycleRestartUsedScope = void 0;
+        const state2 = this.load("MAWWaitForBackendSetup");
+        const settled = method(state2, "isBackendSetupSettled");
+        const inProgress = method(state2, "isBackendSetupInProgress");
+        const currentId = method(state2, "getCurrentWorkerID");
+        const reset = method(state2, "resetBackendSetup");
+        const reject = method(state2, "rejectBackendSetup");
+        const singleton = this.load("MAWWebWorkerSingleton");
+        const health = method(singleton, "getWorkerHealthStatus");
+        if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
+          return "unsupported";
+        }
+        const pendingSetup = inProgress.call(state2) === true || settled.call(state2) !== true;
+        const paused = this.pausedDedicatedSetup;
+        const canResumeDedicated = () => {
+          if (!paused || this.pausedDedicatedSetup !== paused) return false;
+          const setup2 = this.load("MAWSetupWorker");
+          return paused.scope === startingScope && this.scope === startingScope && paused.replay === this.replay && paused.state === state2 && paused.setup === setup2 && currentId.call(state2) === "dedicated" && inProgress.call(state2) === false && settled.call(state2) === false && method(setup2, "waitForWorkerSetup")?.call(setup2) === null;
+        };
+        const resumingDedicated = canResumeDedicated();
+        if (pendingSetup && !resumingDedicated && !escalate) return "busy";
+        const currentConnectionState = () => record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
+        const connectionState = pendingSetup && !resumingDedicated ? currentConnectionState() : void 0;
+        const connected = method(connectionState, "isConnected");
+        const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
+        const stalledSetup = pendingSetup && !resumingDedicated && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
+        if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
+        const initialId = currentId.call(state2);
+        if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
+          return "busy";
+        }
+        const setup = initialId ? this.load("MAWSetupWorker") : void 0;
+        const bridge = method(setup, "waitForWorkerSetup");
+        const initialBridge = bridge?.call(setup);
+        const replay = this.replay;
+        const replayScope = this.scope;
+        this.currentPhase = "worker-status";
+        const status = record(await inspect(() => health.call(singleton)));
+        if (!allowed() || startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
+          return "busy";
+        }
+        if (!status || ![
+          "dedicated_not_exists",
+          "dedicated_exists",
+          "shared_not_exists",
+          "shared_exists_not_connected",
+          "shared_exists_and_connected"
+        ].includes(String(status.tag))) {
+          return "unsupported";
+        }
+        if (resumingDedicated && paused) {
+          if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
+          this.pausedDedicatedSetup = void 0;
+          this.currentPhase = "setup";
+          try {
+            await paused.replay();
+          } catch (error) {
+            reject.call(state2, error);
+          }
+          return "started";
+        }
+        if (stalledSetup) {
+          if (!["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) || !stillPendingAndDisconnected()) {
+            return "busy";
+          }
+        } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
+        const id = currentId.call(state2);
+        if (status.tag === "dedicated_exists") {
+          if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
+            return "unsupported";
+          }
+          if (stalledSetup) {
+            const lifecycle = this.lifecycle;
+            if (!lifecycle || lifecycle.scope !== startingScope || this.lifecycleRestartUsedScope === startingScope)
+              return "busy";
+            this.currentPhase = "bridge-readiness";
+            const readyBridge = await inspect(() => initialBridge);
+            if (!method(readyBridge, "close")) return "unsupported";
+            if (!allowed() || startingScope !== this.accountScope() || this.lifecycle !== lifecycle || this.replay !== replay || this.scope !== replayScope || currentId.call(state2) !== id || bridge?.call(setup) !== initialBridge || !stillPendingAndDisconnected())
+              return "busy";
+            this.lifecycleRestartUsedScope = startingScope;
+            this.currentPhase = "dedicated-termination";
+            Reflect.apply(lifecycle.callback, void 0, [
+              "carrier-sync-recovery",
+              id,
+              "carrier_recovery"
+            ]);
+            return "started";
+          }
+          const terminate = method(setup, "terminateDedicatedWorker");
+          if (!terminate) return "unsupported";
+          this.currentPhase = "dedicated-termination";
+          const stopped = await terminate.call(setup, "bridgeRecovery");
+          if (stopped !== true) return "unsupported";
+          if (startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
+            return "busy";
+          }
+          if (bridge?.call(setup) != null || inProgress.call(state2) === true || settled.call(state2) === true) {
+            return "busy";
+          }
+          if (!allowed()) {
+            this.pausedDedicatedSetup = { scope: startingScope, replay, state: state2, setup };
+            return "busy";
+          }
+          try {
+            this.currentPhase = "setup";
+            await replay();
+          } catch (error) {
+            reject.call(state2, error);
+          }
+          return "started";
+        }
+        if (typeof id === "string" && id.length > 0) {
+          if (status.tag === "dedicated_not_exists") return "unsupported";
+          if (escalate && status.tag === "shared_exists_and_connected" && initialId === id && (stalledSetup || this.sharedBridgeRepair?.scope === startingScope && this.sharedBridgeRepair.id === id) && this.lifecycleRestartUsedScope !== startingScope && replay && replayScope === startingScope && initialBridge && typeof record(initialBridge)?.then === "function" && bridge?.call(setup) === initialBridge) {
+            if (stalledSetup) {
+              this.currentPhase = "bridge-readiness";
+              const readyBridge = await inspect(() => initialBridge);
+              if (!method(readyBridge, "close")) return "unsupported";
+            }
+            let soleWindow = false;
+            try {
+              this.currentPhase = "window-inventory";
+              soleWindow = await inspect(() => this.canRestartSharedWorker()) === true;
+            } catch (error) {
+              if (error instanceof InspectionTimeout) throw error;
+            }
+            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || (stalledSetup ? !stillPendingAndDisconnected() : inProgress.call(state2) === true || settled.call(state2) !== true)) {
+              return "busy";
+            }
+            if (soleWindow) {
+              const shutdown = method(setup, "killSharedWorker");
+              if (!shutdown) return "unsupported";
+              this.lifecycleRestartUsedScope = startingScope;
+              this.currentPhase = "shared-shutdown";
+              await shutdown.call(setup, false, "carrier-sync-recovery");
+              return "started";
+            }
+          }
+          if (stalledSetup) return "busy";
+          const recovery = this.load("MAWWorkerWatchdogRecovery");
+          const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
+          if (typeof callback !== "function") return "unsupported";
+          this.currentPhase = "bridge-repair";
+          Reflect.apply(callback, void 0, ["locks_based_recovery", id, "locks_based_recovery"]);
+          this.sharedBridgeRepair = { scope: startingScope, id };
+          return "started";
+        }
+        if (id != null || !["shared_not_exists", "dedicated_not_exists"].includes(String(status.tag)) || !replay || !replayScope || replayScope !== this.accountScope()) {
+          return "unsupported";
+        }
+        try {
+          reset.call(state2);
+          if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state2) === true || currentId.call(state2) != null) {
+            return "busy";
+          }
+          this.currentPhase = "setup";
+          await replay();
+        } catch (error) {
+          reject.call(state2, error);
+        }
+        return "started";
+      } catch (error) {
+        if (error instanceof InspectionTimeout) return "inspection-timeout";
+        return "failed";
+      } finally {
+        this.currentPhase = "idle";
+        this.recovering = false;
+      }
+    }
+  };
+  var SILENT_RECOVERY_EVENT = "carrier:sync-recovery";
+  var SILENT_RECOVERY_RETRY_EVENT = "carrier:sync-recovery-retry";
+  var SILENT_RECOVERY_RELOAD_EVENT = "carrier:sync-recovery-reload";
+  var SILENT_RECOVERY_TIMEOUT_MS = 3e4;
+  var RETRY_DELAYS_MS = [0, 15e3, 6e4];
+  var HEALTHY_RESET_MS = 6e4;
+  var SilentRecoveryBudget = class {
+    constructor() {
+      __publicField(this, "attempts", 0);
+      __publicField(this, "nextAt", 0);
+      __publicField(this, "healthySince");
+      __publicField(this, "activeUntil");
+      __publicField(this, "networkRestorationUsed", false);
+    }
+    get exhausted() {
+      return this.attempts >= RETRY_DELAYS_MS.length && this.activeUntil === void 0;
+    }
+    get attemptCount() {
+      return this.attempts;
+    }
+    /** Resume with fresh observations, without refunding any attempted repair. */
+    restartObservation(now) {
+      this.healthySince = void 0;
+      if (this.activeUntil !== void 0) this.activeUntil = now + SILENT_RECOVERY_TIMEOUT_MS;
+    }
+    observe(healthy, now) {
+      if (healthy) {
+        if (this.activeUntil !== void 0) this.finish(now);
+        this.healthySince ?? (this.healthySince = now);
+        if (now - this.healthySince >= HEALTHY_RESET_MS) this.reset();
+      } else {
+        this.healthySince = void 0;
+        if (this.activeUntil !== void 0 && now >= this.activeUntil) this.finish(now);
+      }
+    }
+    start(now) {
+      if (this.activeUntil !== void 0 || this.exhausted || now < this.nextAt) return false;
+      this.attempts++;
+      this.activeUntil = now + SILENT_RECOVERY_TIMEOUT_MS;
+      return true;
+    }
+    finish(now) {
+      if (this.activeUntil === void 0) return;
+      this.activeUntil = void 0;
+      this.nextAt = now + (RETRY_DELAYS_MS[this.attempts] ?? 0);
+    }
+    cancel() {
+      if (this.activeUntil === void 0) return;
+      this.activeUntil = void 0;
+      this.attempts--;
+    }
+    giveUp() {
+      this.attempts = RETRY_DELAYS_MS.length;
+      this.activeUntil = void 0;
+    }
+    /** A real offline-to-online transition earns one more try per unhealthy episode. */
+    grantNetworkRestoration(now) {
+      if (!this.exhausted || this.networkRestorationUsed) return false;
+      this.networkRestorationUsed = true;
+      this.attempts = RETRY_DELAYS_MS.length - 1;
+      this.nextAt = now;
+      return true;
+    }
+    reset() {
+      this.attempts = 0;
+      this.nextAt = 0;
+      this.activeUntil = void 0;
+      this.healthySince = void 0;
+      this.networkRestorationUsed = false;
+    }
+  };
 
   // inject/src/messenger/lib/sync-health.ts
   var SYNC_REQUEST_TIMEOUT_MS = 3e4;
@@ -712,6 +1051,62 @@
     }
   }
 
+  // inject/src/messenger/lib/worker-state.ts
+  var unsupportedSubscriptions = /* @__PURE__ */ new WeakSet();
+  function observeWorkerConnection(state2, now = () => performance.now()) {
+    if (!state2 || unsupportedSubscriptions.has(state2)) return;
+    let listening = false;
+    let disposed = false;
+    let receivedAt;
+    let resolve;
+    const value = new Promise((complete) => {
+      resolve = complete;
+    });
+    let unsubscribe;
+    try {
+      const subscribe = state2.onSet;
+      if (typeof subscribe !== "function") return;
+      unsubscribe = subscribe.call(state2, (next) => {
+        if (listening && receivedAt === void 0) {
+          receivedAt = now();
+          resolve?.(typeof next === "boolean" ? next : void 0);
+        }
+      });
+    } catch (_) {
+      unsupportedSubscriptions.add(state2);
+      return;
+    }
+    if (typeof unsubscribe !== "function") {
+      unsupportedSubscriptions.add(state2);
+      return;
+    }
+    const stop = unsubscribe;
+    return {
+      value,
+      get receivedAt() {
+        return receivedAt;
+      },
+      start: () => {
+        if (!disposed) listening = true;
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        listening = false;
+        resolve?.(void 0);
+        try {
+          stop();
+        } catch (_) {
+          unsupportedSubscriptions.add(state2);
+        }
+      }
+    };
+  }
+  function isMissingWorkerStateRoute(error) {
+    const message = error && typeof error === "object" && "message" in error ? error.message : error;
+    return typeof message === "string" && message.includes("resendWorkerStateManagerValuesToMainThread is not defined for backend");
+  }
+
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
   var WORKER_FAILURE_LIMIT = 3;
@@ -724,28 +1119,72 @@
       return null;
     }
   };
-  var workerIsConnected = () => {
+  var workerConnectionState = () => {
     try {
       const facebookRequire = window.require;
       const module = facebookRequire?.("WACommsConnectionState");
-      const connected = module?.WACommsConnectionState?.isConnected?.();
+      const state2 = module?.WACommsConnectionState;
+      return state2 && typeof state2 === "object" ? state2 : void 0;
+    } catch (_) {
+      return void 0;
+    }
+  };
+  var workerIsConnected = () => {
+    try {
+      const connected = workerConnectionState()?.isConnected?.();
       return typeof connected === "boolean" ? connected : void 0;
     } catch (_) {
       return void 0;
     }
   };
+  var workerId = () => {
+    try {
+      const page = window;
+      const state2 = page.require?.("MAWWaitForBackendSetup");
+      return state2?.getCurrentWorkerID?.();
+    } catch (_) {
+      return void 0;
+    }
+  };
+  var workerSetupState = () => {
+    try {
+      const page = window;
+      const state2 = page.require?.("MAWWaitForBackendSetup");
+      if (state2?.isBackendSetupSettled?.() !== true) {
+        return state2?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
+      }
+      const successful = state2.isBackendSetupSuccessful?.();
+      return successful === true ? "ready" : successful === false ? "failed" : "unknown";
+    } catch (_) {
+      return "unknown";
+    }
+  };
   function monitorRealtimeHealth(callbacks) {
+    const nativeSetTimeout4 = setTimeout.bind(globalThis);
+    const nativeClearTimeout3 = clearTimeout.bind(globalThis);
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-    const connectionKey = accountScopedStorageKey("carrier-worker-connected", document.cookie);
-    let connectionRemembered = false;
-    try {
-      connectionRemembered = !!connectionKey && localStorage.getItem(connectionKey) === "1";
-    } catch (_) {
-    }
-    const workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+    const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
+    const rememberedConnection = (key) => {
+      try {
+        return !!key && localStorage.getItem(key) === "1";
+      } catch (_) {
+        return false;
+      }
+    };
+    let connectionKey = accountKey();
+    let connectionWorkerId = workerId();
+    let connectionState = workerConnectionState();
+    let connectionRemembered = rememberedConnection(connectionKey);
+    let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
+    let setupStartedAt;
+    let verificationStartedAt;
+    let verified;
+    let stateRouteUnavailableFor;
+    let probeIdentity;
+    const now = performance.now.bind(performance);
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
       if (health === "healthy") callbacks.onHealthy("socket");
@@ -754,37 +1193,93 @@
       return health;
     };
     const checkWorker = () => {
+      const state2 = workerConnectionState();
+      const account = accountKey();
+      const id = workerId();
+      if (!probeIdentity || probeIdentity.account !== account || probeIdentity.id !== id || probeIdentity.state !== state2) {
+        const replaced = probeIdentity !== void 0;
+        probeIdentity = { account, id, state: state2 };
+        workerFailures.succeeded();
+        verified = void 0;
+        stateRouteUnavailableFor = void 0;
+        callbacks.onUnknown("worker");
+        if (replaced) callbacks.onWorkerChanged?.();
+      }
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
-      if (!bridge?.sendAndReceive) return;
+      if (typeof bridge?.sendAndReceive !== "function") {
+        verified = void 0;
+        callbacks.onUnknown("worker");
+        return;
+      }
       const sendAndReceive = bridge.sendAndReceive.bind(bridge);
+      const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
+      const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
+      let live = true;
       let timeout;
       const deadline = new Promise((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("Messenger worker heartbeat timed out")),
+        timeout = nativeSetTimeout4(
+          () => reject(new Error("Messenger worker probe timed out")),
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
       });
-      Promise.resolve().then(
-        () => Promise.race([
-          sendAndReceive("backend", "getWorkerHeartbeat", void 0, {
-            isLoggingDisabled: true,
-            timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
-          }),
-          deadline
-        ])
-      ).then(() => {
+      const request = (route) => sendAndReceive("backend", route, void 0, {
+        isLoggingDisabled: true,
+        timeoutMs: WORKER_HEARTBEAT_TIMEOUT_MS
+      });
+      Promise.resolve().then(() => {
+        observation?.start();
+        const probe = observation ? Promise.all([request("resendWorkerStateManagerValuesToMainThread"), observation.value]).then(([, connected]) => connected).catch((error) => {
+          if (!live || !stillCurrent() || !isMissingWorkerStateRoute(error)) throw error;
+          stateRouteUnavailableFor = stillCurrent;
+          observation.dispose();
+          return request("getWorkerHeartbeat").then(() => void 0);
+        }) : request("getWorkerHeartbeat").then(() => void 0);
+        return Promise.race([probe, deadline]);
+      }).then((connected) => {
+        verified = void 0;
+        if (!stillCurrent()) {
+          callbacks.onUnknown("worker");
+          return;
+        }
         workerFailures.succeeded();
-        callbacks.onHealthy("worker");
+        if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
+          verified = { at: observation.receivedAt, stillCurrent };
+        }
+        if (connected === true) {
+          callbacks.onHealthy("worker");
+          checkConnection();
+        } else callbacks.onUnknown("worker");
       }).catch(() => {
-        if (workerFailures.failed()) callbacks.onStale("worker");
+        verified = void 0;
+        if (!stillCurrent()) callbacks.onUnknown("worker");
+        else if (workerFailures.failed()) callbacks.onStale("worker");
       }).finally(() => {
-        clearTimeout(timeout);
+        live = false;
+        observation?.dispose();
+        nativeClearTimeout3(timeout);
         workerProbePending = false;
       });
     };
-    const check = () => {
+    const checkConnection = () => {
+      const currentKey = accountKey();
+      const currentWorkerId = workerId();
+      const currentState = workerConnectionState();
+      const stateChanged = currentState !== void 0 && currentState !== connectionState;
+      const workerChanged = typeof currentWorkerId === "string" && currentWorkerId.length > 0 && currentWorkerId !== connectionWorkerId;
+      if (currentKey !== connectionKey || workerChanged || stateChanged) {
+        connectionKey = currentKey;
+        connectionWorkerId = currentWorkerId;
+        connectionState = currentState;
+        connectionRemembered = rememberedConnection(connectionKey);
+        workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
+        workerDisconnected = false;
+        setupStartedAt = void 0;
+        verificationStartedAt = void 0;
+        verified = void 0;
+        callbacks.onUnknown("worker-connection");
+      }
       const connected = workerIsConnected();
       if (connected === true && connectionKey && !connectionRemembered) {
         try {
@@ -793,15 +1288,34 @@
         } catch (_) {
         }
       }
-      const disconnected = workerConnection.observe(connected, Date.now());
+      const setup = workerSetupState();
+      if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
+      else if (setup === "ready" || setup === "failed") setupStartedAt = void 0;
+      const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
+      const freshConnected = connected === true && verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS;
+      if (freshConnected) verificationStartedAt = void 0;
+      else if (setup === "ready" || connectionRemembered) verificationStartedAt ?? (verificationStartedAt = now());
+      const verificationStale = verificationStartedAt !== void 0 && now() - verificationStartedAt >= REALTIME_NEVER_CONNECTED_MS;
+      const connectionStale = workerConnection.observe(
+        connected === true && !freshConnected ? void 0 : connected,
+        Date.now(),
+        setup === "ready"
+      );
+      const disconnected = setup === "failed" || setupStale || connectionStale || verificationStale;
       if (disconnected !== workerDisconnected) {
         workerDisconnected = disconnected;
         if (disconnected) {
-          diag("sync.worker-disconnected", "encrypted-message connection stayed disconnected");
+          diag(
+            "sync.worker-disconnected",
+            setup === "failed" ? "encrypted backend setup failed" : setupStale ? "encrypted backend setup did not settle" : verificationStale ? "encrypted connection could not be verified" : "encrypted-message connection stayed disconnected"
+          );
         }
       }
       if (disconnected) callbacks.onStale("worker-connection");
       else callbacks.onUnknown("worker-connection");
+    };
+    const check = () => {
+      checkConnection();
       checkSockets();
       checkWorker();
     };
@@ -821,7 +1335,7 @@
             watchdog.received(socket, Date.now());
             callbacks.onHealthy("socket");
           });
-          const failed = () => setTimeout(checkSockets, 1e3);
+          const failed = () => nativeSetTimeout4(checkSockets, 1e3);
           socket.addEventListener("error", failed);
           socket.addEventListener("close", () => {
             watchdog.closed(socket, Date.now());
@@ -838,7 +1352,356 @@
     } catch (_) {
       diag("sync.monitor", "could not observe Messenger realtime WebSockets");
     }
-    return { check };
+    return {
+      check,
+      isVerifiedHealthy: () => verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready"
+    };
+  }
+
+  // inject/src/messenger/features/worker-recovery.ts
+  var workerRecovery = new FacebookWorkerRecovery(
+    (name) => {
+      const page = window;
+      return page.require?.(name);
+    },
+    () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
+    async () => {
+      if (window.__CARRIER_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
+        return false;
+      }
+      try {
+        const windows = await invoke("plugin:window|get_all_windows");
+        return window.__CARRIER_SETTINGS__?.multi_instance === false && typeof window.BroadcastChannel === "function" && hasSoleMessengerWindow(windows);
+      } catch (_) {
+        return false;
+      }
+    }
+  );
+
+  // inject/src/messenger/features/silent-recovery.ts
+  var NETWORK_RESTORATION_GRACE_MS = 15e3;
+  function createSilentRecovery(options) {
+    const budget = new SilentRecoveryBudget();
+    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeClearTimeout3 = window.clearTimeout.bind(window);
+    const now = performance.now.bind(performance);
+    const wallNow = Date.now.bind(Date);
+    let lastTickAt = wallNow();
+    let restartRunningDeadline;
+    let running = false;
+    let runningTimedOut = false;
+    let failed = false;
+    let manualRequested = false;
+    let unhealthySince;
+    let busySince;
+    let unverifiedSince;
+    let outageRequests = 0;
+    const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
+    let scope = accountScope();
+    let scopeEpoch = 0;
+    let offlineObserved = !navigator.onLine;
+    let networkRestoredAt;
+    window.addEventListener("offline", () => {
+      if (!navigator.onLine) {
+        offlineObserved = true;
+        networkRestoredAt = void 0;
+      }
+    });
+    window.addEventListener("online", () => {
+      if (!navigator.onLine || !offlineObserved) return;
+      offlineObserved = false;
+      networkRestoredAt = now();
+    });
+    const showFailure = (value) => {
+      if (failed === value) return;
+      failed = value;
+      window.dispatchEvent(new CustomEvent(SILENT_RECOVERY_EVENT, { detail: value }));
+    };
+    const resetSettle = () => {
+      unhealthySince = void 0;
+      busySince = void 0;
+      budget.restartObservation(now());
+      if (running && !runningTimedOut) restartRunningDeadline?.();
+    };
+    const tick = () => {
+      lastTickAt = wallNow();
+      const currentScope = accountScope();
+      if (currentScope !== scope) {
+        scope = currentScope;
+        scopeEpoch++;
+        budget.reset();
+        workerRecovery.clearEscalation();
+        manualRequested = false;
+        unhealthySince = void 0;
+        busySince = void 0;
+        unverifiedSince = void 0;
+        outageRequests = 0;
+        networkRestoredAt = void 0;
+        showFailure(false);
+      }
+      const needed = options.needsRecovery();
+      const healthy = options.isHealthy();
+      if (needed) unverifiedSince ?? (unverifiedSince = now());
+      if (healthy && !needed && unverifiedSince !== void 0) {
+        diag(
+          "sync.worker-recovered",
+          `verified transport restored elapsed_ms=${Math.round(now() - unverifiedSince)} recovery_requests=${outageRequests}`
+        );
+        unverifiedSince = void 0;
+        outageRequests = 0;
+      }
+      budget.observe(healthy, now());
+      if (healthy && budget.attemptCount === 0) workerRecovery.clearEscalation();
+      if (networkRestoredAt !== void 0) {
+        if (healthy) networkRestoredAt = void 0;
+        else if (now() - networkRestoredAt >= NETWORK_RESTORATION_GRACE_MS) {
+          networkRestoredAt = void 0;
+          if (budget.grantNetworkRestoration(now())) {
+            diag("sync.network-restored", "network restored; allowing one more worker repair");
+          }
+        }
+      }
+      if (!needed) {
+        manualRequested = false;
+        unhealthySince = void 0;
+        busySince = void 0;
+        showFailure(false);
+        return;
+      }
+      if (networkRestoredAt !== void 0) {
+        return;
+      }
+      unhealthySince ?? (unhealthySince = now());
+      if (now() - unhealthySince < REALTIME_UNOBSERVED_SETTLE_MS) return;
+      if (running && runningTimedOut) showFailure(true);
+      if (budget.exhausted) showFailure(true);
+      if (running || options.blocked(manualRequested) || !budget.start(now())) return;
+      const manual = manualRequested;
+      const launchEpoch = scopeEpoch;
+      manualRequested = false;
+      running = true;
+      outageRequests++;
+      runningTimedOut = false;
+      let timeout;
+      const expire = () => {
+        const gap = wallNow() - lastTickAt;
+        if (gap > REALTIME_UNOBSERVED_SETTLE_MS || gap < 0) {
+          resetSettle();
+          return;
+        }
+        runningTimedOut = true;
+        if (launchEpoch !== scopeEpoch) {
+          if (options.needsRecovery()) showFailure(true);
+          return;
+        }
+        if (options.isHealthy()) return;
+        budget.giveUp();
+        showFailure(true);
+        diag(
+          "sync.worker-recovery-timeout",
+          `worker recovery did not settle phase=${workerRecovery.phase}; preserving the page`
+        );
+      };
+      restartRunningDeadline = () => {
+        nativeClearTimeout3(timeout);
+        timeout = nativeSetTimeout4(expire, SILENT_RECOVERY_TIMEOUT_MS);
+      };
+      restartRunningDeadline();
+      void workerRecovery.recover(
+        () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
+        budget.attemptCount >= 2 || busySince !== void 0 && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS
+      ).then((result) => {
+        nativeClearTimeout3(timeout);
+        restartRunningDeadline = void 0;
+        running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) {
+          options.check();
+          return;
+        }
+        if (result === "busy") {
+          budget.cancel();
+          busySince ?? (busySince = now());
+          if (now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS) showFailure(true);
+        } else {
+          busySince = void 0;
+          if (result === "started") {
+            showFailure(false);
+            diag("sync.worker-recovery", "started Messenger worker recovery without navigation");
+          }
+        }
+        if (result === "unsupported" && !options.isHealthy()) {
+          budget.giveUp();
+          showFailure(true);
+          diag(
+            "sync.worker-recovery-unavailable",
+            "no compatible worker recovery; preserving the page"
+          );
+        }
+        if (result === "failed") {
+          diag(
+            "sync.worker-recovery-failed",
+            "worker recovery attempt failed; retrying with backoff"
+          );
+        }
+        if (result === "inspection-timeout") {
+          diag(
+            "sync.worker-inspection-timeout",
+            "worker inspection timed out before mutation; retrying with backoff"
+          );
+        }
+        options.check();
+      }).catch(() => {
+        nativeClearTimeout3(timeout);
+        restartRunningDeadline = void 0;
+        running = false;
+        runningTimedOut = false;
+        if (launchEpoch !== scopeEpoch) return;
+        budget.giveUp();
+        showFailure(true);
+        diag("sync.worker-recovery-failed", "worker recovery failed; preserving the page");
+      });
+    };
+    window.addEventListener(SILENT_RECOVERY_RETRY_EVENT, () => {
+      if (running || options.blocked(true)) return;
+      budget.reset();
+      manualRequested = true;
+      showFailure(false);
+      tick();
+    });
+    return {
+      tick,
+      resetSettle
+    };
+  }
+
+  // inject/src/messenger/lib/sync-processing.ts
+  var STALL_MS = 12e4;
+  var MAX_SAMPLE_GAP_MS = 15e3;
+  var MAX_PENDING = 128;
+  var SyncProcessingProgress = class {
+    constructor(accountScope) {
+      __publicField(this, "accountScope", accountScope);
+      __publicField(this, "pending", /* @__PURE__ */ new Map());
+      __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "activeMs", 0);
+      __publicField(this, "lastSample");
+      __publicField(this, "scope");
+      __publicField(this, "epoch", 0);
+      __publicField(this, "observed", false);
+      __publicField(this, "completed", 0);
+      __publicField(this, "failed", 0);
+      __publicField(this, "omitted", 0);
+    }
+    syncScope() {
+      const scope = this.accountScope();
+      if (scope !== this.scope) {
+        this.scope = scope;
+        this.epoch++;
+        this.pending.clear();
+        this.completed = this.failed = this.omitted = 0;
+        this.observed = false;
+        this.lastSample = void 0;
+        this.activeMs = 0;
+      }
+      return scope !== void 0;
+    }
+    observeLogger(value) {
+      if (!value || typeof value !== "object") return;
+      const exports = value;
+      const keys = ["start", "endSuccess", "endFailure"];
+      if (!keys.every((key) => {
+        const descriptor = Object.getOwnPropertyDescriptor(exports, key);
+        return descriptor?.writable === true && typeof descriptor.value === "function";
+      })) {
+        return;
+      }
+      for (const key of keys) {
+        const original = exports[key];
+        if (typeof original !== "function" || this.wrapped.has(original)) continue;
+        const wrapper = new Proxy(original, {
+          apply: (target, receiver, args) => {
+            const result = Reflect.apply(target, receiver, args);
+            try {
+              if (this.syncScope()) this.record(key, args[0]);
+            } catch (_) {
+            }
+            return result;
+          }
+        });
+        try {
+          exports[key] = wrapper;
+          this.wrapped.add(wrapper);
+        } catch (_) {
+        }
+      }
+    }
+    record(kind, instance) {
+      if (typeof instance !== "number" || !Number.isSafeInteger(instance)) return;
+      this.observed = true;
+      if (kind === "start") {
+        if (this.pending.has(instance)) return;
+        if (this.pending.size >= MAX_PENDING) {
+          this.omitted++;
+          return;
+        }
+        this.pending.set(instance, this.activeMs);
+      } else if (this.pending.delete(instance)) {
+        if (kind === "endSuccess") this.completed++;
+        else this.failed++;
+      }
+    }
+    sample(at, active) {
+      this.syncScope();
+      const previous = this.lastSample;
+      const delta = previous ? at - previous.at : 0;
+      if (active && previous?.active && delta > 0 && delta <= MAX_SAMPLE_GAP_MS) {
+        this.activeMs += delta;
+      }
+      this.lastSample = { at, active };
+      let oldestActiveMs = 0;
+      for (const startedAt of this.pending.values()) {
+        oldestActiveMs = Math.max(oldestActiveMs, this.activeMs - startedAt);
+      }
+      return {
+        epoch: this.epoch,
+        observed: this.observed,
+        pending: this.pending.size,
+        completed: this.completed,
+        failed: this.failed,
+        omitted: this.omitted,
+        oldestActiveMs: Math.round(oldestActiveMs),
+        stalled: oldestActiveMs >= STALL_MS
+      };
+    }
+  };
+
+  // inject/src/messenger/features/sync-processing.ts
+  var syncProcessing = new SyncProcessingProgress(
+    () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? void 0
+  );
+  var syncProcessingStalled = false;
+  var failures = 0;
+  var epoch = 0;
+  function sampleSyncProcessing(active) {
+    const snapshot = syncProcessing.sample(performance.now(), active);
+    if (snapshot.epoch !== epoch) {
+      epoch = snapshot.epoch;
+      failures = 0;
+      syncProcessingStalled = false;
+    }
+    if (snapshot.failed > failures) {
+      diag("sync.processing-failed", `failed=${snapshot.failed} pending=${snapshot.pending}`);
+    }
+    failures = snapshot.failed;
+    if (snapshot.stalled !== syncProcessingStalled) {
+      syncProcessingStalled = snapshot.stalled;
+      diag(
+        syncProcessingStalled ? "sync.processing-stalled" : "sync.processing-cleared",
+        `pending=${snapshot.pending} active_ms=${snapshot.oldestActiveMs} omitted=${snapshot.omitted}`
+      );
+    }
+    return snapshot;
   }
 
   // inject/src/messenger/features/auto-refresh.ts
@@ -849,8 +1712,8 @@
       performance.now.bind(performance)
     );
     const documentEpochMs = Math.floor(performance.timeOrigin);
-    const nativeSetTimeout3 = window.setTimeout.bind(window);
-    const nativeNow = performance.now.bind(performance);
+    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeNow2 = performance.now.bind(performance);
     let reloadRequestedAt;
     let unloadObserved = false;
     window.addEventListener("beforeunload", () => {
@@ -858,22 +1721,16 @@
     });
     window.addEventListener("visibilitychange", () => renderProbe.reset());
     window.addEventListener("pagehide", () => renderProbe.reset());
-    const pageIsActive = () => !document.hidden && document.hasFocus();
     const isMac4 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
-    const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac4);
     let systemSleeping = isMac4;
     let pending = false;
-    let reloadWhileActive = false;
-    let pendingReason = "background";
+    let pendingReason = "rate-limit";
     let timer;
-    const RECOVERY_MIN_GAP_MS = 6e4;
-    const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
     const clearPending = () => {
       if (pending && pendingReason === "rate-limit-manual") {
         window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: false }));
       }
       pending = false;
-      reloadWhileActive = false;
       clearTimeout(timer);
       timer = void 0;
     };
@@ -954,12 +1811,14 @@
               visible && document.readyState === "complete" && contentPresent && isMessengerContentPath(location.pathname)
             ),
             document_epoch_ms: documentEpochMs,
-            document_age_ms: Math.round(nativeNow()),
+            document_age_ms: Math.round(nativeNow2()),
             visible,
             focused: document.hasFocus(),
             content_page: isMessengerContentPath(location.pathname)
           },
-          realtime: realtimeStatus(),
+          // Native supervision still owns unresponsive/blank/error pages. It
+          // must not race a responsive page's non-navigating worker recovery.
+          realtime: ["stale", "never"].includes(realtimeStatus()) ? "managed" : realtimeStatus(),
           rate_limit_ms: rateLimitRemainingMs(),
           rate_limit_account: rateLimitAccountScope(),
           rate_limit_retry: requestRateLimitRetry
@@ -976,20 +1835,22 @@
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
+    const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
-      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+      const processing = sampleSyncProcessing(processingActive());
+      const snapshot = `age=${Math.round(nativeNow2())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
       await Promise.race([
         invoke("plugin:event|emit", {
           event: "carrier:diag",
           payload: { key: "recovery.snapshot", msg: snapshot }
         })?.catch?.(() => {
         }),
-        new Promise((resolve) => nativeSetTimeout3(resolve, 500))
+        new Promise((resolve) => nativeSetTimeout4(resolve, 500))
       ]);
     };
     window.__carrierCaptureRecovery = captureRecovery;
     let capturingRecovery = false;
-    const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
+    const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" && pendingReason !== "manual";
     const maybeReload = async () => {
       timer = void 0;
       if (!pending || capturingRecovery) return;
@@ -1001,10 +1862,6 @@
         clearPending();
         return;
       }
-      if (pageIsActive() && !reloadWhileActive) {
-        clearPending();
-        return;
-      }
       if (composerHasText() || window.__carrierInCall) {
         timer = setTimeout(maybeReload, 8e3);
         return;
@@ -1013,24 +1870,12 @@
         timer = setTimeout(maybeReload, 8e3);
         return;
       }
-      if (pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
-        clearPending();
-        return;
-      }
       if (pendingReason === "rate-limit" && Date.now() >= rateLimitRetryGrantUntil) {
         timer = setTimeout(maybeReload, 8e3);
         emitHeartbeat(true);
         return;
       }
-      if (pendingReason !== "background") {
-        diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
-      }
-      if (pendingReason === "realtime") {
-        try {
-          sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()));
-        } catch (_) {
-        }
-      }
+      diag("sync.refresh", `reloading Messenger view after ${pendingReason}`);
       const capturedReason = pendingReason;
       capturingRecovery = true;
       try {
@@ -1051,12 +1896,12 @@
       }
       pending = false;
       if (reloadRequestedAt === void 0) {
-        reloadRequestedAt = nativeNow();
+        reloadRequestedAt = nativeNow2();
         unloadObserved = false;
-        nativeSetTimeout3(() => {
+        nativeSetTimeout4(() => {
           diag(
             "sync.reload-unfinished",
-            `same document alive ${Math.round(nativeNow() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
+            `same document alive ${Math.round(nativeNow2() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
           );
           reloadRequestedAt = void 0;
         }, 15e3);
@@ -1075,14 +1920,10 @@
       clearTimeout(timer);
       maybeReload();
     };
-    const schedule = (delay, reason, allowWhileActive = false) => {
+    const schedule = (delay, reason) => {
       if (systemSleeping || rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual") return;
       if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
-      if (pageIsActive() && !allowWhileActive) {
-        return;
-      }
       pending = true;
-      reloadWhileActive || (reloadWhileActive = allowWhileActive);
       pendingReason = reason;
       clearTimeout(timer);
       timer = setTimeout(maybeReload, delay);
@@ -1090,46 +1931,33 @@
         window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: true }));
       }
     };
-    const realtimeRecoveryDelay = () => {
-      try {
-        const lastRecoveryAt = Number(sessionStorage.getItem(RECOVERY_STORAGE_KEY)) || 0;
-        return Math.max(1e3, RECOVERY_MIN_GAP_MS - Math.max(0, Date.now() - lastRecoveryAt));
-      } catch (_) {
-        return 1e3;
-      }
-    };
-    const clearRealtimeRecoveryIfSettled = () => {
-      if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
-        clearPending();
-      }
-    };
     const realtime = monitorRealtimeHealth({
       onHealthy: (source) => {
         realtimeRecovery.healthy(source, Date.now());
-        clearRealtimeRecoveryIfSettled();
       },
       onStale: (source) => {
         realtimeRecovery.stale(source);
-        if (!realtimeRecovery.needsRecovery(Date.now())) return;
-        schedule(realtimeRecoveryDelay(), "realtime", true);
       },
       onUnknown: (source) => {
         realtimeRecovery.withdraw(source);
-        clearRealtimeRecoveryIfSettled();
-      }
+      },
+      onWorkerChanged: () => silentRecovery.resetSettle()
+    });
+    const silentRecovery = createSilentRecovery({
+      blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
+      needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
+      isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
+      check: () => realtime.check()
     });
     const noteLifecycle = () => {
-      const reason = watchdog.setActive(pageIsActive(), Date.now());
-      if (reason) {
-        schedule(1e3, reason, true);
-      } else if (pageIsActive() && !reloadWhileActive) {
-        clearPending();
-      }
+      sampleSyncProcessing(processingActive());
+      if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
     };
     window.addEventListener("focus", noteLifecycle);
     window.addEventListener("blur", noteLifecycle);
     document.addEventListener("visibilitychange", noteLifecycle);
-    window.addEventListener("online", () => schedule(1e3, "online", true));
+    window.addEventListener("online", noteLifecycle);
+    window.addEventListener("offline", noteLifecycle);
     const powerState = new PowerStateTracker(performance.timeOrigin);
     window.addEventListener("carrier:power-state", (event) => {
       const snapshot = event.detail;
@@ -1138,15 +1966,18 @@
       }
       const resumed = powerState.update(snapshot);
       systemSleeping = snapshot.sleeping;
-      if (systemSleeping) clearPending();
-      else if (resumed && isMessengerContentPath(location.pathname)) schedule(1e3, "resume", true);
-    });
-    window.__carrierOnNotification = () => {
-      if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
-        schedule(4e3, "background");
+      sampleSyncProcessing(processingActive());
+      if (systemSleeping) {
+        silentRecovery.resetSettle();
+        clearPending();
+      } else if (resumed) {
+        silentRecovery.resetSettle();
+        noteLifecycle();
       }
-    };
-    window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual", true));
+    });
+    window.__carrierOnNotification = noteLifecycle;
+    window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual"));
+    window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
     let waitingForRateLimit = rateLimitRemainingMs() > 0;
     window.addEventListener(RATE_LIMIT_EVENT, (event) => {
       if (!hasRateLimitEpisode()) {
@@ -1163,7 +1994,14 @@
       clearPending();
       emitHeartbeat();
     });
+    let lastHealthTickAt = Date.now();
     setInterval(() => {
+      const tickAt = Date.now();
+      if (!isMac4 && (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)) {
+        silentRecovery.resetSettle();
+      }
+      lastHealthTickAt = tickAt;
+      sampleSyncProcessing(processingActive());
       if (systemSleeping || rateLimitRemainingMs() > 0) {
         emitHeartbeat();
         return;
@@ -1175,17 +2013,11 @@
           "sync.rate-limit",
           "cooldown ended; scheduling one recovery attempt (access not yet confirmed)"
         );
-        schedule(1e3, "rate-limit", true);
+        schedule(1e3, "rate-limit");
       }
       realtime.check();
-      if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
-        schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
-      }
+      silentRecovery.tick();
       emitHeartbeat();
-      const reason = watchdog.heartbeat(pageIsActive(), Date.now());
-      if (reason) {
-        schedule(reason === "background" ? 2e3 : 1e3, reason, reason !== "background");
-      }
     }, 5e3);
   }
 
@@ -1247,8 +2079,8 @@
   var nativeReflectApply = Reflect.apply;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
-  var nativeSetTimeout = globalThis.setTimeout;
-  var nativeClearTimeout = globalThis.clearTimeout;
+  var nativeSetTimeout2 = globalThis.setTimeout;
+  var nativeClearTimeout2 = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -1266,7 +2098,7 @@
     return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        nativeReflectApply(nativeClearTimeout, globalThis, [timer]);
+        nativeReflectApply(nativeClearTimeout2, globalThis, [timer]);
         nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
@@ -1294,7 +2126,7 @@
         ]);
       };
       nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
-      timer = nativeReflectApply(nativeSetTimeout, globalThis, [
+      timer = nativeReflectApply(nativeSetTimeout2, globalThis, [
         () => {
           cleanup();
           reject(new Error("native download timed out"));
@@ -1347,7 +2179,7 @@
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout2 = window.setTimeout;
+  var nativeSetTimeout3 = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -1793,7 +2625,7 @@
         focusedIndex = 0;
         const firstItem = menuItems[0];
         if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout2, window, [
+        nativeReflectApply3(nativeSetTimeout3, window, [
           () => {
             nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
             nativeReflectApply3(nativeAddEventListener2, document, [
@@ -2202,8 +3034,8 @@
     window.addEventListener("resize", scheduleScan);
     new MutationObserver((records) => {
       if (pending.size === 0) return;
-      for (const record of records) {
-        for (const removed of record.removedNodes) {
+      for (const record2 of records) {
+        for (const removed of record2.removedNodes) {
           if (removed instanceof HTMLImageElement) {
             pending.delete(removed);
           } else if (removed instanceof Element) {
@@ -2266,10 +3098,10 @@
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
     if (!value || typeof value !== "object") return value;
-    const record = value;
-    if (typeof record.default === "function") {
+    const record2 = value;
+    if (typeof record2.default === "function") {
       try {
-        record.default = replacement;
+        record2.default = replacement;
       } catch (_) {
       }
     }
@@ -2280,22 +3112,22 @@
     for (let index = firstExportIndex; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
-      const record = candidate;
-      if (Object.prototype.hasOwnProperty.call(record, "exports")) {
+      const record2 = candidate;
+      if (Object.prototype.hasOwnProperty.call(record2, "exports")) {
         try {
-          record.exports = replaceFunctionExport(record.exports, replacement);
+          record2.exports = replaceFunctionExport(record2.exports, replacement);
         } catch (_) {
         }
       }
-      replaceFunctionExport(record, replacement);
+      replaceFunctionExport(record2, replacement);
     }
     return replaceFunctionExport(result, replacement);
   }
   function findFTSRestoreSync(value, seen) {
     if (!value || typeof value !== "object" || seen.has(value)) return void 0;
     seen.add(value);
-    const record = value;
-    const getter = record.getFTSRestoreSync;
+    const record2 = value;
+    const getter = record2.getFTSRestoreSync;
     if (typeof getter === "function") {
       try {
         const restore2 = Reflect.apply(getter, value, []);
@@ -2305,20 +3137,20 @@
       } catch (_) {
       }
     }
-    return findFTSRestoreSync(record.default, seen);
+    return findFTSRestoreSync(record2.default, seen);
   }
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
-    const inspect = (value) => {
+    const inspect2 = (value) => {
       const restore2 = findFTSRestoreSync(value, seen);
       if (restore2) onFTSRestoreSync(restore2);
     };
-    inspect(result);
+    inspect2(result);
     for (let index = 4; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
-      inspect(candidate);
+      inspect2(candidate);
       if (candidate && typeof candidate === "object") {
-        inspect(candidate.exports);
+        inspect2(candidate.exports);
       }
     }
   }
@@ -2361,8 +3193,8 @@
       }
     }
   };
-  function wrapTelemetryMethod(record, key, shouldBlockTelemetry) {
-    const original = record[key];
+  function wrapTelemetryMethod(record2, key, shouldBlockTelemetry) {
+    const original = record2[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
     const wrapped = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
@@ -2370,19 +3202,19 @@
     };
     wrappedTelemetryMethods.add(wrapped);
     try {
-      record[key] = wrapped;
+      record2[key] = wrapped;
     } catch (_) {
     }
   }
   function patchFalcoLogger(value, shouldBlockTelemetry) {
     if (!value || typeof value !== "object") return;
     const logger = value;
-    for (const method of FALCO_METHODS) {
-      wrapTelemetryMethod(logger, method, shouldBlockTelemetry);
+    for (const method2 of FALCO_METHODS) {
+      wrapTelemetryMethod(logger, method2, shouldBlockTelemetry);
     }
   }
-  function wrapFalcoFactory(record, shouldBlockTelemetry) {
-    const original = record.create;
+  function wrapFalcoFactory(record2, shouldBlockTelemetry) {
+    const original = record2.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
     const wrapped = function(...args) {
       const logger = Reflect.apply(original, this, args);
@@ -2391,21 +3223,21 @@
     };
     wrappedFalcoFactories.add(wrapped);
     try {
-      record.create = wrapped;
+      record2.create = wrapped;
     } catch (_) {
     }
   }
   function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
     if (!value || typeof value !== "object") return;
-    const record = value;
+    const record2 = value;
     if (moduleName === "FalcoLoggerInternal") {
-      wrapFalcoFactory(record, shouldBlockTelemetry);
+      wrapFalcoFactory(record2, shouldBlockTelemetry);
     } else {
       const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
-      for (const method of methods) wrapTelemetryMethod(record, method, shouldBlockTelemetry);
+      for (const method2 of methods) wrapTelemetryMethod(record2, method2, shouldBlockTelemetry);
     }
-    if (record.default && record.default !== value && typeof record.default === "object") {
-      patchTelemetryValue(moduleName, record.default, shouldBlockTelemetry);
+    if (record2.default && record2.default !== value && typeof record2.default === "object") {
+      patchTelemetryValue(moduleName, record2.default, shouldBlockTelemetry);
     }
   }
   function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
@@ -2422,9 +3254,22 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
+      if (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
+        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : moduleName === "MAWWebWorkerSingleton" ? onWorkerLifecycle : onProcessingLogger;
+        for (const candidate of [result, ...factoryArgs.slice(-2)]) {
+          try {
+            observe(candidate);
+            if (candidate && typeof candidate === "object") {
+              observe(candidate.exports);
+            }
+          } catch (_) {
+          }
+        }
+        return result;
+      }
       if (moduleName === "ErrorPubSub") {
         observeFacebookErrors(result, factoryArgs, onFacebookError);
         return result;
@@ -2446,18 +3291,24 @@
   }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
+  }, onWorkerSetup = () => {
+  }, onProcessingLogger = () => {
+  }, onWorkerLifecycle = () => {
   }) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
             shouldBlockTelemetry,
             onFTSRestoreSync,
-            onFacebookError
+            onFacebookError,
+            onWorkerSetup,
+            onProcessingLogger,
+            onWorkerLifecycle
           );
         }
         return Reflect.apply(target, thisArg, args);
@@ -2466,7 +3317,7 @@
   }
   var observedErrorStreams = /* @__PURE__ */ new WeakSet();
   function observeFacebookErrors(result, args, listener) {
-    const inspect = (value) => {
+    const inspect2 = (value) => {
       if (!value || typeof value !== "object" || observedErrorStreams.has(value)) return;
       try {
         const stream = value;
@@ -2485,13 +3336,13 @@
     };
     for (const value of [result, ...args.slice(-2)]) {
       try {
-        inspect(value);
+        inspect2(value);
         if (value && typeof value === "object") {
-          const record = value;
-          inspect(record.default);
-          inspect(record.exports);
-          if (record.exports && typeof record.exports === "object") {
-            inspect(record.exports.default);
+          const record2 = value;
+          inspect2(record2.default);
+          inspect2(record2.exports);
+          if (record2.exports && typeof record2.exports === "object") {
+            inspect2(record2.exports.default);
           }
         }
       } catch (_) {
@@ -2540,7 +3391,10 @@
         (restore2) => searchIndex.register(restore2),
         (error) => {
           if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
-        }
+        },
+        (exports) => workerRecovery.observeSetupExports(exports),
+        (exports) => syncProcessing.observeLogger(exports),
+        (exports) => workerRecovery.observeLifecycleExports(exports)
       );
       wrappedDefines.add(wrapped);
       return wrapped;
@@ -3428,13 +4282,13 @@
     camera: '<rect x="3" y="6" width="12" height="12" rx="3"/><path d="m15 10 6-3v10l-6-3"/>',
     microphone: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 10v2a6 6 0 0 0 12 0v-2M12 18v3m-3 0h6"/>'
   };
-  function showMediaPermissionCard(failures, dismiss, recovered) {
-    const devices = [...failures.keys()];
-    const permissionOnly = [...failures.values()].every((failure2) => failure2 === "denied");
-    const hasDenial = [...failures.values()].includes("denied");
-    const failure = hasDenial ? "denied" : failures.values().next().value ?? "other";
+  function showMediaPermissionCard(failures2, dismiss, recovered) {
+    const devices = [...failures2.keys()];
+    const permissionOnly = [...failures2.values()].every((failure2) => failure2 === "denied");
+    const hasDenial = [...failures2.values()].includes("denied");
+    const failure = hasDenial ? "denied" : failures2.values().next().value ?? "other";
     const failureGroups = /* @__PURE__ */ new Map();
-    for (const [device, reason] of failures)
+    for (const [device, reason] of failures2)
       failureGroups.set(reason, [...failureGroups.get(reason) ?? [], device]);
     const failureDescription = [...failureGroups].map(([reason, group]) => captureFailureMessage(reason, group)).join(" ");
     const platform = carrierMediaPlatform;
@@ -3540,8 +4394,8 @@
         status.textContent = state2 === "allowed" ? "Allowed by macOS" : state2 === "denied" ? "Blocked in macOS Settings" : state2 === "restricted" ? "Restricted by system policy" : state2 === "not-determined" ? "Not requested yet" : "Status unavailable";
         status.dataset.tone = state2 === "allowed" ? "good" : state2 === "denied" || state2 === "restricted" ? "warning" : "neutral";
         check.hidden = state2 !== "allowed";
-        const allow = state2 === "not-determined" && platform === "macos" && failures.get(device) === "denied" && devices.includes(device);
-        const settings = state2 === "denied" && failures.get(device) === "denied" || state2 === "unknown" && failures.get(device) === "denied" && devices.includes(device) && platform !== "linux";
+        const allow = state2 === "not-determined" && platform === "macos" && failures2.get(device) === "denied" && devices.includes(device);
+        const settings = state2 === "denied" && failures2.get(device) === "denied" || state2 === "unknown" && failures2.get(device) === "denied" && devices.includes(device) && platform !== "linux";
         button.hidden = !allow && !settings;
         button.textContent = allow ? "Allow access" : "Open Settings";
         button.setAttribute(
@@ -3611,7 +4465,7 @@
     if (!md?.getUserMedia) return;
     const original = md.getUserMedia.bind(md);
     let removeCard;
-    const failures = /* @__PURE__ */ new Map();
+    const failures2 = /* @__PURE__ */ new Map();
     let requestSerial = 0;
     let clearedThrough = 0;
     const remove = () => {
@@ -3620,7 +4474,7 @@
     };
     const hide = () => {
       remove();
-      failures.clear();
+      failures2.clear();
     };
     const dismissWarning = () => {
       clearedThrough = requestSerial;
@@ -3628,8 +4482,8 @@
     };
     const render = () => {
       remove();
-      if (failures.size)
-        removeCard = showMediaPermissionCard(new Map(failures), dismissWarning, hide);
+      if (failures2.size)
+        removeCard = showMediaPermissionCard(new Map(failures2), dismissWarning, hide);
     };
     const liveTracks = new LiveMediaTrackCounter((inCall) => {
       window.__carrierInCall = inCall;
@@ -3644,7 +4498,7 @@
       } catch (error) {
         if (devices.length && serial > clearedThrough) {
           try {
-            for (const device of devices) failures.set(device, captureFailure(error));
+            for (const device of devices) failures2.set(device, captureFailure(error));
             render();
           } catch {
             diag("media-recovery", "could not display call recovery guidance");
@@ -3653,7 +4507,7 @@
         throw error;
       }
       stream.getTracks().forEach((track) => liveTracks.add(track));
-      for (const device of devices) failures.delete(device);
+      for (const device of devices) failures2.delete(device);
       try {
         render();
       } catch {
@@ -4037,7 +4891,7 @@
       seen.add(text);
       labels.push(text);
     };
-    const inspect = (el) => {
+    const inspect2 = (el) => {
       for (const attr of LABEL_ATTRS) {
         const value = el.getAttribute(attr);
         if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
@@ -4056,9 +4910,9 @@
         }
       }
     };
-    if (root instanceof Element) inspect(root);
+    if (root instanceof Element) inspect2(root);
     for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
-      inspect(el);
+      inspect2(el);
     }
     for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
     return labels;
@@ -6442,15 +7296,15 @@
             continue;
           }
           candidate.observations += 1;
-          const elapsed3 = detectedAt - candidate.since;
-          if (elapsed3 >= READ_TRANSITION_CONFIRM_MS && candidate.observations >= READ_TRANSITION_MIN_OBSERVATIONS) {
+          const elapsed2 = detectedAt - candidate.since;
+          if (elapsed2 >= READ_TRANSITION_CONFIRM_MS && candidate.observations >= READ_TRANSITION_MIN_OBSERVATIONS) {
             readCandidates.delete(conversation.key);
             readObservedKeys.add(conversation.key);
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
           } else {
-            const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed3);
+            const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed2);
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
         }
@@ -6640,7 +7494,7 @@
     let scanScheduled = false;
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
-      const inspect = (node) => {
+      const inspect2 = (node) => {
         const element = node instanceof Element ? node : node.parentElement;
         if (!element) return;
         const links = /* @__PURE__ */ new Set();
@@ -6654,9 +7508,9 @@
           if (key) changedKeys.add(key);
         }
       };
-      for (const record of records) {
-        inspect(record.target);
-        for (const node of record.addedNodes) inspect(node);
+      for (const record2 of records) {
+        inspect2(record2.target);
+        for (const node of record2.addedNodes) inspect2(node);
       }
       unreadArrivals.markRowsChanged(changedKeys, Date.now());
       if (scanScheduled) return;
@@ -7247,9 +8101,9 @@ ${text}`)) {
     Object.defineProperty(window, "__carrierShareMedia", {
       value: (payload) => {
         const entries = sanitizeSharedFiles(payload);
-        const { files, failures } = decodeSharedFiles(entries);
-        if (failures) {
-          diag("share.partial-decode", `${failures}`);
+        const { files, failures: failures2 } = decodeSharedFiles(entries);
+        if (failures2) {
+          diag("share.partial-decode", `${failures2}`);
         }
         if (!files.length) {
           diag("share.empty-payload", "0");
@@ -7469,6 +8323,7 @@ ${text}`)) {
       }
     );
     let sawRateLimit = false;
+    let recoveryFailed = false;
     let recoveryObservedAt = null;
     const observeResponse = (id, status, retryHeader, syncOperation) => {
       const now = Date.now();
@@ -7616,34 +8471,55 @@ ${text}`)) {
           label.setAttribute("role", "alert");
           banner.appendChild(label);
         }
-        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : "⚠ Messenger sync is broken — chats may be out of date";
+        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : recoveryFailed ? "Messenger could not reconnect. Chats may be out of date." : syncProcessingStalled ? "Messenger is slow to update messages. Chats may be out of date." : "⚠ Messenger sync is broken — chats may be out of date";
         if (label.textContent !== message) label.textContent = message;
-        let retry = banner.querySelector("button");
-        if (limited && !retry) {
+        const buttonStyle = {
+          background: "#1c1e21",
+          color: "#fff",
+          border: "none",
+          borderRadius: "6px",
+          padding: "6px 10px",
+          font: "inherit",
+          flexShrink: "0",
+          cursor: "pointer",
+          pointerEvents: "auto"
+        };
+        let retry = banner.querySelector("button:not([data-carrier-reload])");
+        if ((limited || recoveryFailed) && !retry) {
           retry = document.createElement("button");
           retry.type = "button";
           retry.textContent = "Try again";
-          Object.assign(retry.style, {
-            background: "#1c1e21",
-            color: "#fff",
-            border: "none",
-            borderRadius: "6px",
-            padding: "6px 10px",
-            font: "inherit",
-            flexShrink: "0",
-            cursor: "pointer",
-            pointerEvents: "auto"
-          });
+          Object.assign(retry.style, buttonStyle);
           retry.addEventListener("click", (event) => {
             if (!event.isTrusted || manualRetryPending) return;
-            retryRateLimitNow();
+            if (sawRateLimit) retryRateLimitNow();
+            else window.dispatchEvent(new Event(SILENT_RECOVERY_RETRY_EVENT));
           });
           banner.appendChild(retry);
         }
+        const protectedNow = !!window.__carrierInCall || [...document.querySelectorAll('[contenteditable="true"]')].some(
+          (element) => !!element.textContent?.trim()
+        );
         if (retry) {
-          retry.hidden = !limited;
-          retry.disabled = manualRetryPending || rateLimitRemainingMs() <= 0;
-          retry.textContent = retry.disabled ? "Retry pending…" : "Try again";
+          retry.hidden = !limited && !recoveryFailed;
+          retry.disabled = limited ? manualRetryPending || rateLimitRemainingMs() <= 0 : protectedNow || !navigator.onLine;
+          retry.textContent = limited ? retry.disabled ? "Retry pending…" : "Try again" : "Reconnect";
+        }
+        let reload = banner.querySelector("[data-carrier-reload]");
+        if ((recoveryFailed || syncProcessingStalled) && !reload) {
+          reload = document.createElement("button");
+          reload.type = "button";
+          reload.dataset.carrierReload = "";
+          reload.textContent = "Reload";
+          Object.assign(reload.style, buttonStyle);
+          reload.addEventListener("click", (event) => {
+            if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
+          });
+          banner.appendChild(reload);
+        }
+        if (reload) {
+          reload.hidden = limited || !recoveryFailed && !syncProcessingStalled;
+          reload.disabled = protectedNow || !navigator.onLine;
         }
         if (existing) return;
         Object.assign(banner.style, {
@@ -7682,6 +8558,12 @@ ${text}`)) {
       } catch (_) {
       }
     };
+    window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
+      recoveryFailed = event.detail === true;
+      if (sawRateLimit) showSyncBanner(true);
+      else if (recoveryFailed || degraded || syncProcessingStalled) showSyncBanner();
+      else hideSyncBanner();
+    });
     window.addEventListener("offline", () => tracker.abandonOutstanding());
     let degraded = false;
     const showRateLimit = () => {
@@ -7718,10 +8600,10 @@ ${text}`)) {
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
         stuckLoading.observe(loadingSpinnerVisible());
       }
-      const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
+      const degradedNow = tracker.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
       if (degradedNow && !degraded) {
         degraded = true;
-        const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
         emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {
@@ -7730,7 +8612,7 @@ ${text}`)) {
         emitSyncAlert("recovered");
       }
       if (sawRateLimit) showSyncBanner(true);
-      else if (degraded) showSyncBanner();
+      else if (degraded || recoveryFailed) showSyncBanner();
       else hideSyncBanner();
     }, SYNC_CHECK_INTERVAL_MS);
   }
@@ -8409,7 +9291,7 @@ ${text}`)) {
     const affectsControls = (element) => !!element.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element.contains(control));
     new MutationObserver((records) => {
       if (records.some(
-        (record) => record.target instanceof Element && affectsControls(record.target) || record.type === "childList" && [...record.addedNodes, ...record.removedNodes].some(
+        (record2) => record2.target instanceof Element && affectsControls(record2.target) || record2.type === "childList" && [...record2.addedNodes, ...record2.removedNodes].some(
           (node) => node instanceof Element && (affectsControls(node) || node.querySelector(`${DIALOG2}, ${BANNER}`))
         )
       ))

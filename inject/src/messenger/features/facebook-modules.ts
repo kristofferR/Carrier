@@ -6,6 +6,8 @@ import {
 } from "../lib/facebook-modules";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { reportRateLimit } from "./rate-limit";
+import { syncProcessing } from "./sync-processing";
+import { workerRecovery } from "./worker-recovery";
 
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
 
@@ -62,6 +64,9 @@ export function initFacebookModuleInterception() {
       (error) => {
         if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
       },
+      (exports) => workerRecovery.observeSetupExports(exports),
+      (exports) => syncProcessing.observeLogger(exports),
+      (exports) => workerRecovery.observeLifecycleExports(exports),
     );
     wrappedDefines.add(wrapped);
     return wrapped;

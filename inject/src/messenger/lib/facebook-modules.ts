@@ -290,9 +290,33 @@ function wrapFactory(
   shouldBlockTelemetry: () => boolean,
   onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void,
   onFacebookError: (error: unknown) => void,
+  onWorkerSetup: (exports: unknown) => void,
+  onProcessingLogger: (exports: unknown) => void,
+  onWorkerLifecycle: (exports: unknown) => void,
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
+    if (
+      moduleName === "MAWSetupWorker" ||
+      moduleName === "MAWWebWorkerSingleton" ||
+      moduleName === "MAWBridgeUIEventQueueQPLLogger"
+    ) {
+      const observe =
+        moduleName === "MAWSetupWorker"
+          ? onWorkerSetup
+          : moduleName === "MAWWebWorkerSingleton"
+            ? onWorkerLifecycle
+            : onProcessingLogger;
+      for (const candidate of [result, ...factoryArgs.slice(-2)]) {
+        try {
+          observe(candidate);
+          if (candidate && typeof candidate === "object") {
+            observe((candidate as Record<string, unknown>).exports);
+          }
+        } catch (_) {}
+      }
+      return result;
+    }
     if (moduleName === "ErrorPubSub") {
       observeFacebookErrors(result, factoryArgs, onFacebookError);
       return result;
@@ -324,6 +348,9 @@ export function createFacebookModuleDefineInterceptor(
   shouldBlockTelemetry: () => boolean,
   onFTSRestoreSync: (restore: FacebookFTSRestoreSync) => void = () => {},
   onFacebookError: (error: unknown) => void = () => {},
+  onWorkerSetup: (exports: unknown) => void = () => {},
+  onProcessingLogger: (exports: unknown) => void = () => {},
+  onWorkerLifecycle: (exports: unknown) => void = () => {},
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -332,7 +359,10 @@ export function createFacebookModuleDefineInterceptor(
       if (
         typeof moduleName === "string" &&
         typeof factory === "function" &&
-        (moduleName === "ErrorPubSub" ||
+        (moduleName === "MAWSetupWorker" ||
+          moduleName === "MAWWebWorkerSingleton" ||
+          moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
+          moduleName === "ErrorPubSub" ||
           NULL_COMPONENT_MODULES.has(moduleName) ||
           TELEMETRY_MODULES.has(moduleName) ||
           BACKGROUND_SERVICE_MODULES.has(moduleName))
@@ -343,6 +373,9 @@ export function createFacebookModuleDefineInterceptor(
           shouldBlockTelemetry,
           onFTSRestoreSync,
           onFacebookError,
+          onWorkerSetup,
+          onProcessingLogger,
+          onWorkerLifecycle,
         );
       }
       return Reflect.apply(target, thisArg, args);

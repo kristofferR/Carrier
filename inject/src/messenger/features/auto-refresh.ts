@@ -1,11 +1,10 @@
 /* --------------------------- Sync recovery ---------------------------- */
 // Messenger's live sync can stall inside a system WebView. Native heartbeats
-// detect a suspended renderer, while page-side lifecycle and transport checks
-// catch stale connections. Every recovery defers around drafts and calls.
+// detect a suspended renderer. Responsive pages repair their worker in place;
+// only an explicit reload or the server rate-limit flow navigates this page.
 
 import { diag, invoke } from "../bridge";
 import {
-  AutoRefreshWatchdog,
   canReplacePendingRefresh,
   type PowerSnapshot,
   PowerStateTracker,
@@ -18,6 +17,7 @@ import {
 } from "../lib/realtime-health";
 import { RenderHealthProbe } from "../lib/render-health";
 import { isMessengerContentPath } from "../lib/threads";
+import { SILENT_RECOVERY_RELOAD_EVENT } from "../lib/worker-recovery";
 import {
   hasRateLimitEpisode,
   RATE_LIMIT_EVENT,
@@ -27,6 +27,8 @@ import {
   rateLimitRemainingMs,
 } from "./rate-limit";
 import { monitorRealtimeHealth } from "./realtime-health";
+import { createSilentRecovery } from "./silent-recovery";
+import { sampleSyncProcessing } from "./sync-processing";
 
 export function initAutoRefresh() {
   // Capture these at document start, before Facebook wraps the scheduling APIs.
@@ -45,30 +47,21 @@ export function initAutoRefresh() {
   });
   window.addEventListener("visibilitychange", () => renderProbe.reset());
   window.addEventListener("pagehide", () => renderProbe.reset());
-  // A full reload re-boots the whole Facebook SPA, so only do it after a
-  // lifecycle signal that makes its live connection suspect. Drafts and calls
-  // are always protected, even for a forced catch-up after sleep or refocus.
-  const pageIsActive = () => !document.hidden && document.hasFocus();
   const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
   // macOS has an exact AppKit sleep/display-wake signal. Its maintenance
   // dark-wakes create the same wall-clock gap as a real resume, so never infer
   // one from page timers there.
-  const watchdog = new AutoRefreshWatchdog(Date.now(), pageIsActive(), !isMac);
   // A document can start during a dark wake, after the sleep event was sent.
   // Wait for the native snapshot before allowing recovery on macOS.
   let systemSleeping = isMac;
   let pending = false;
-  let reloadWhileActive = false;
-  let pendingReason: ScheduledRefreshReason = "background";
+  let pendingReason: ScheduledRefreshReason = "rate-limit";
   let timer: number | undefined;
-  const RECOVERY_MIN_GAP_MS = 60_000;
-  const RECOVERY_STORAGE_KEY = "carrier-sync-recovery-at";
   const clearPending = () => {
     if (pending && pendingReason === "rate-limit-manual") {
       window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: false }));
     }
     pending = false;
-    reloadWhileActive = false;
     clearTimeout(timer);
     timer = undefined;
   };
@@ -177,7 +170,9 @@ export function initAutoRefresh() {
           focused: document.hasFocus(),
           content_page: isMessengerContentPath(location.pathname),
         },
-        realtime: realtimeStatus(),
+        // Native supervision still owns unresponsive/blank/error pages. It
+        // must not race a responsive page's non-navigating worker recovery.
+        realtime: ["stale", "never"].includes(realtimeStatus()) ? "managed" : realtimeStatus(),
         rate_limit_ms: rateLimitRemainingMs(),
         rate_limit_account: rateLimitAccountScope(),
         rate_limit_retry: requestRateLimitRetry,
@@ -193,9 +188,16 @@ export function initAutoRefresh() {
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("carrier:protection-change", emitProtectionChange);
   emitHeartbeat();
+  const processingActive = () =>
+    !systemSleeping &&
+    !document.hidden &&
+    navigator.onLine &&
+    rateLimitRemainingMs() <= 0 &&
+    isMessengerContentPath(location.pathname);
   const captureRecovery = async () => {
     // Counts and booleans only: never serialize DOM, URLs, names, or drafts.
-    const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()}`;
+    const processing = sampleSyncProcessing(processingActive());
+    const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
     await Promise.race([
       invoke("plugin:event|emit", {
         event: "carrier:diag",
@@ -207,7 +209,9 @@ export function initAutoRefresh() {
   window.__carrierCaptureRecovery = captureRecovery;
   let capturingRecovery = false;
   const recoveryHeld = () =>
-    window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual";
+    window.__CARRIER_SETTINGS__?.hold_failures &&
+    pendingReason !== "rate-limit-manual" &&
+    pendingReason !== "manual";
   const maybeReload = async () => {
     timer = undefined;
     if (!pending || capturingRecovery) return;
@@ -216,10 +220,6 @@ export function initAutoRefresh() {
       return;
     }
     if (systemSleeping || (rateLimitRemainingMs() > 0 && pendingReason !== "rate-limit-manual")) {
-      clearPending();
-      return;
-    }
-    if (pageIsActive() && !reloadWhileActive) {
       clearPending();
       return;
     }
@@ -232,27 +232,13 @@ export function initAutoRefresh() {
       timer = setTimeout(maybeReload, 8000);
       return;
     }
-    // The recovery gap is long enough for the transport to prove itself in the
-    // meantime. Re-check at the moment of truth so a page that has gone quiet
-    // for a reason that resolved itself is never reloaded out from under you.
-    if (pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
-      clearPending();
-      return;
-    }
     if (pendingReason === "rate-limit" && Date.now() >= rateLimitRetryGrantUntil) {
       // Native arbitration also covers fallback reloads in other windows.
       timer = setTimeout(maybeReload, 8000);
       emitHeartbeat(true);
       return;
     }
-    if (pendingReason !== "background") {
-      diag("sync.refresh", `reloading stale Messenger view after ${pendingReason}`);
-    }
-    if (pendingReason === "realtime") {
-      try {
-        sessionStorage.setItem(RECOVERY_STORAGE_KEY, String(Date.now()));
-      } catch (_) {}
-    }
+    diag("sync.refresh", `reloading Messenger view after ${pendingReason}`);
     const capturedReason = pendingReason;
     capturingRecovery = true;
     try {
@@ -305,14 +291,10 @@ export function initAutoRefresh() {
     clearTimeout(timer);
     maybeReload();
   };
-  const schedule = (delay: number, reason: ScheduledRefreshReason, allowWhileActive = false) => {
+  const schedule = (delay: number, reason: ScheduledRefreshReason) => {
     if (systemSleeping || (rateLimitRemainingMs() > 0 && reason !== "rate-limit-manual")) return;
     if (!canReplacePendingRefresh(pending ? pendingReason : null, reason)) return;
-    if (pageIsActive() && !allowWhileActive) {
-      return;
-    }
     pending = true;
-    reloadWhileActive ||= allowWhileActive;
     pendingReason = reason;
     clearTimeout(timer);
     timer = setTimeout(maybeReload, delay);
@@ -320,49 +302,42 @@ export function initAutoRefresh() {
       window.dispatchEvent(new CustomEvent(RATE_LIMIT_RETRY_STATE_EVENT, { detail: true }));
     }
   };
-  const realtimeRecoveryDelay = () => {
-    try {
-      const lastRecoveryAt = Number(sessionStorage.getItem(RECOVERY_STORAGE_KEY)) || 0;
-      return Math.max(1000, RECOVERY_MIN_GAP_MS - Math.max(0, Date.now() - lastRecoveryAt));
-    } catch (_) {
-      return 1000;
-    }
-  };
-  const clearRealtimeRecoveryIfSettled = () => {
-    if (pending && pendingReason === "realtime" && !realtimeRecovery.needsRecovery(Date.now())) {
-      clearPending();
-    }
-  };
   const realtime = monitorRealtimeHealth({
     onHealthy: (source) => {
       realtimeRecovery.healthy(source, Date.now());
-      clearRealtimeRecoveryIfSettled();
     },
     onStale: (source) => {
       realtimeRecovery.stale(source);
-      // Another source vouching for the transport means messages are still
-      // flowing; reloading the page would churn it for nothing.
-      if (!realtimeRecovery.needsRecovery(Date.now())) return;
-      schedule(realtimeRecoveryDelay(), "realtime", true);
     },
     onUnknown: (source) => {
       realtimeRecovery.withdraw(source);
-      clearRealtimeRecoveryIfSettled();
     },
+    onWorkerChanged: () => silentRecovery.resetSettle(),
   });
 
+  const silentRecovery = createSilentRecovery({
+    blocked: (manual) =>
+      (!manual && !!window.__CARRIER_SETTINGS__?.hold_failures) ||
+      systemSleeping ||
+      !navigator.onLine ||
+      heartbeatProtection() ||
+      rateLimitRemainingMs() > 0 ||
+      !isMessengerContentPath(location.pathname) ||
+      onFacebookErrorPage(),
+    needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
+    isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
+    check: () => realtime.check(),
+  });
+  // These events are reasons to check sync, not evidence that it is broken.
   const noteLifecycle = () => {
-    const reason = watchdog.setActive(pageIsActive(), Date.now());
-    if (reason) {
-      schedule(1000, reason, true);
-    } else if (pageIsActive() && !reloadWhileActive) {
-      clearPending();
-    }
+    sampleSyncProcessing(processingActive());
+    if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
   };
   window.addEventListener("focus", noteLifecycle);
   window.addEventListener("blur", noteLifecycle);
   document.addEventListener("visibilitychange", noteLifecycle);
-  window.addEventListener("online", () => schedule(1000, "online", true));
+  window.addEventListener("online", noteLifecycle);
+  window.addEventListener("offline", noteLifecycle);
   const powerState = new PowerStateTracker(performance.timeOrigin);
   window.addEventListener("carrier:power-state", (event) => {
     const snapshot = (event as CustomEvent<PowerSnapshot>).detail;
@@ -375,22 +350,20 @@ export function initAutoRefresh() {
     }
     const resumed = powerState.update(snapshot);
     systemSleeping = snapshot.sleeping;
-    if (systemSleeping) clearPending();
-    else if (resumed && isMessengerContentPath(location.pathname)) schedule(1000, "resume", true);
+    sampleSyncProcessing(processingActive());
+    if (systemSleeping) {
+      silentRecovery.resetSettle();
+      clearPending();
+    } else if (resumed) {
+      silentRecovery.resetSettle();
+      noteLifecycle();
+    }
   });
 
-  // Reload shortly after a new-message notification, but only while the window
-  // is unfocused — that's when Facebook's live sync throttles and the view
-  // goes stale. When you're actively reading, live sync works, so we leave the
-  // page alone. (Debounced to batch a burst of notifications into one reload;
-  // the gap floor keeps a chatty thread from reloading every few minutes.)
-  window.__carrierOnNotification = () => {
-    if (!pageIsActive() && watchdog.canRefreshFromNotification(Date.now())) {
-      schedule(4000, "background");
-    }
-  };
+  window.__carrierOnNotification = noteLifecycle;
 
-  window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual", true));
+  window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1000, "rate-limit-manual"));
+  window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
 
   let waitingForRateLimit = rateLimitRemainingMs() > 0;
   window.addEventListener(RATE_LIMIT_EVENT, (event) => {
@@ -411,11 +384,19 @@ export function initAutoRefresh() {
     emitHeartbeat();
   });
 
-  // Check often enough that an overdue callback recovers immediately when a
-  // suspended WebView resumes. The same tick checks Messenger's realtime MQTT
-  // transport for disconnects, stuck reconnects, and half-open silence — before
-  // the heartbeat, so the emitted realtime status reflects this tick.
+  // Windows/Linux do not emit AppKit power snapshots. A timer gap gives fresh
+  // probes time to run before mutation, even when performance.now pauses in sleep.
+  let lastHealthTickAt = Date.now();
   setInterval(() => {
+    const tickAt = Date.now();
+    if (
+      !isMac &&
+      (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)
+    ) {
+      silentRecovery.resetSettle();
+    }
+    lastHealthTickAt = tickAt;
+    sampleSyncProcessing(processingActive());
     if (systemSleeping || rateLimitRemainingMs() > 0) {
       emitHeartbeat();
       return;
@@ -427,30 +408,10 @@ export function initAutoRefresh() {
         "sync.rate-limit",
         "cooldown ended; scheduling one recovery attempt (access not yet confirmed)",
       );
-      schedule(1000, "rate-limit", true);
+      schedule(1000, "rate-limit");
     }
     realtime.check();
-    // No source reports stale when none can observe the transport at all (the
-    // worker bridge is gone and the page socket was never replaced), so that
-    // state has to arm recovery here or nothing ever would. Give the probe
-    // realtime.check() just started room to answer — a view resuming from
-    // suspension looks unobserved synchronously while its worker heartbeat is
-    // still in flight.
-    //
-    // Yield to any pending reload rather than replacing it. Re-arming each
-    // tick would keep pushing this deadline out of reach, and overwriting a
-    // lifecycle, online, or notification reload would be worse still: a
-    // worker probe that then succeeds clears the realtime request, and the
-    // catch-up reload it displaced would never run. Whatever is already
-    // pending reboots the page anyway, and a document that is still
-    // unobservable afterwards re-arms this on its own.
-    if (realtimeRecovery.needsRecovery(Date.now()) && !pending) {
-      schedule(Math.max(realtimeRecoveryDelay(), REALTIME_UNOBSERVED_SETTLE_MS), "realtime", true);
-    }
+    silentRecovery.tick();
     emitHeartbeat();
-    const reason = watchdog.heartbeat(pageIsActive(), Date.now());
-    if (reason) {
-      schedule(reason === "background" ? 2000 : 1000, reason, reason !== "background");
-    }
   }, 5_000);
 }

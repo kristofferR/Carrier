@@ -2,6 +2,10 @@
 
 use std::ffi::OsString;
 
+fn should_default_to_http1(force_http1: Option<OsString>, allow_http2: Option<OsString>) -> bool {
+    force_http1.is_none() && allow_http2.as_deref() != Some(std::ffi::OsStr::new("1"))
+}
+
 /// Keep decisions independent of the process environment so tests can cover
 /// desktop combinations without racing GTK or other tests' environment reads.
 fn environment_defaults(
@@ -47,6 +51,15 @@ fn environment_defaults(
 
 #[cfg(target_os = "linux")]
 pub(crate) fn configure() {
+    // libsoup 3.6.6's HTTP/2 pool stalled on Messenger with all six connections
+    // in CLOSE-WAIT, blocking worker startup too. HTTP/1.1 avoids that failure.
+    // Keep an opt-out for testing newer system libraries; see docs/sync-recovery.md.
+    if should_default_to_http1(
+        std::env::var_os("SOUP_FORCE_HTTP1"),
+        std::env::var_os("CARRIER_LINUX_HTTP2"),
+    ) {
+        std::env::set_var("SOUP_FORCE_HTTP1", "1");
+    }
     // Called first in run(), before Tauri, GTK, WebKit, or worker threads start.
     for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
         std::env::set_var(key, value);
@@ -56,6 +69,17 @@ pub(crate) fn configure() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http1_workaround_respects_explicit_environment_and_http2_opt_in() {
+        assert!(should_default_to_http1(None, None));
+        assert!(should_default_to_http1(None, Some("0".into())));
+        assert!(!should_default_to_http1(None, Some("1".into())));
+        // libsoup treats presence as enabled, including an empty value or "0".
+        for value in ["", "0", "1"] {
+            assert!(!should_default_to_http1(Some(value.into()), None));
+        }
+    }
 
     fn defaults(values: &[(&str, &str)]) -> Vec<(&'static str, &'static str)> {
         environment_defaults(|key| {

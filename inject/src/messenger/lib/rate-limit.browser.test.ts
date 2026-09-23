@@ -337,25 +337,6 @@ async function runFixtures(
     document.cookie = "c_user=123; path=/";
     init();
     assert("returning to an account restores its own cooldown", remaining() > 0);
-    now += remaining() + 1;
-    window.__CARRIER_SETTINGS__ = { hold_failures: true };
-    window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: true, resume_generation: 2 } }),
-    );
-    window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: false, resume_generation: 3 } }),
-    );
-    runTimer(1000);
-    assert(
-      "failure hold parks a due resume recovery",
-      ![...timers.values()].some((timer) => timer.delay === 0 || timer.delay === 1000),
-    );
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
-    window.dispatchEvent(new Event("carrier:settings"));
-    assert(
-      "releasing failure hold re-arms the due resume recovery",
-      [...timers.values()].some((timer) => timer.delay === 0),
-    );
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;
