@@ -93,7 +93,7 @@ export function patchNicknameSnippets(
     } catch (_) {}
     const draft = record.isDraftMessage === true;
     useEffect(() => {
-      if (!key || !snippet.includes(": ") || draft) return;
+      if (!key || !snippet.includes(": ") || draft || showNicknames(mode, true)) return;
       let cancelled = false;
       loadNames(key)
         .then((info) => {

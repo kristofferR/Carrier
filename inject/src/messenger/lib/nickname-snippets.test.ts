@@ -13,7 +13,8 @@ const info: ConversationNotificationNames = {
 
 test("vaulted sidebar prefixes follow scope without mutating messages or saved data", async () => {
   let mode: NicknameMode = "off",
-    state: unknown = null;
+    state: unknown = null,
+    loadCount = 0;
   let effect: () => (() => void) | undefined = () => undefined;
   const react = {
     createElement: (component: unknown, props: unknown) => ({ component, props }),
@@ -43,7 +44,10 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
     exports,
     (name) => modules[name],
     { getSnapshot: () => mode, subscribe: () => () => {} },
-    async () => info,
+    async () => {
+      loadCount++;
+      return info;
+    },
     prefixes,
   );
   const props = Object.freeze({
@@ -55,12 +59,21 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
   expect(render().props).toBe(props);
   effect();
   await Promise.resolve();
+  expect(loadCount).toBe(1);
   expect(render().props.snippetRaw).toBe("Alex: hello Captain 🙂");
   expect(prefixes.original("123", "Alex: hello Captain 🙂")).toBe("Captain: hello Captain 🙂");
   mode = "direct";
   expect(render().props.snippetRaw).toBe("Alex: hello Captain 🙂");
+  effect();
+  expect(loadCount).toBe(2);
+  await Promise.resolve();
   mode = "groups";
   expect(render().props).toBe(props);
+  effect();
+  mode = "all";
+  expect(render().props).toBe(props);
+  effect();
+  expect(loadCount).toBe(2);
   mode = "off";
   expect(render({ ...props, isDraftMessage: true }).props.snippetRaw).toBe(props.snippetRaw);
   expect(prefixes.original("123", "Alex: draft")).toBe("Alex: draft");

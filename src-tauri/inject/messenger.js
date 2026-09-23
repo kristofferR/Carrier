@@ -3583,7 +3583,7 @@
       }
       const draft = record2.isDraftMessage === true;
       useEffect(() => {
-        if (!key || !snippet.includes(": ") || draft) return;
+        if (!key || !snippet.includes(": ") || draft || showNicknames(mode, true)) return;
         let cancelled = false;
         loadNames(key).then((info2) => {
           if (!cancelled) setNames({ key, snippet, info: info2 });
