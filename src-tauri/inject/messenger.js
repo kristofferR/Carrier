@@ -8187,9 +8187,11 @@
       if (!isShown(media)) continue;
       const control = media.closest('button, [role="button"]');
       const bounds = control?.getBoundingClientRect();
-      const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
-      const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
-      if (media.tagName === "IMG" && control && bounds && bounds.width / scale <= 48 && bounds.height / scale <= 48 && !control.closest('[contenteditable="true"]'))
+      const zoom = Math.min(
+        2,
+        Math.max(0.3, (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100)
+      );
+      if (media.tagName === "IMG" && control && bounds && bounds.width / zoom <= 48 && bounds.height / zoom <= 48 && !control.closest('[contenteditable="true"]'))
         continue;
       return true;
     }
