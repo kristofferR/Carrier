@@ -3257,8 +3257,8 @@
   function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
-        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : moduleName === "MAWWebWorkerSingleton" ? onWorkerLifecycle : onProcessingLogger;
+      if (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
+        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : moduleName === "MAWWebWorkerSingleton" ? onWorkerLifecycle : moduleName === "shouldUseMAWSharedWorker" ? preferDedicatedWorkerExports : onProcessingLogger;
         for (const candidate of [result, ...factoryArgs.slice(-2)]) {
           try {
             observe(candidate);
@@ -3294,12 +3294,12 @@
   }, onWorkerSetup = () => {
   }, onProcessingLogger = () => {
   }, onWorkerLifecycle = () => {
-  }) {
+  }, preferDedicatedWorker = false) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
@@ -3314,6 +3314,21 @@
         return Reflect.apply(target, thisArg, args);
       }
     });
+  }
+  var dedicatedWorkerGates = /* @__PURE__ */ new WeakSet();
+  function preferDedicatedWorkerExports(value) {
+    if (!value || typeof value !== "object") return;
+    const exports = value;
+    const gate = exports.shouldUseMAWSharedWorker;
+    if (typeof gate !== "function" || gate.length !== 0 || dedicatedWorkerGates.has(gate)) return;
+    const wrapped = new Proxy(gate, {
+      apply(target, receiver, args) {
+        const result = Reflect.apply(target, receiver, args);
+        return typeof result === "boolean" ? false : result;
+      }
+    });
+    exports.shouldUseMAWSharedWorker = wrapped;
+    dedicatedWorkerGates.add(wrapped);
   }
   var observedErrorStreams = /* @__PURE__ */ new WeakSet();
   function observeFacebookErrors(result, args, listener) {
@@ -3394,7 +3409,8 @@
         },
         (exports) => workerRecovery.observeSetupExports(exports),
         (exports) => syncProcessing.observeLogger(exports),
-        (exports) => workerRecovery.observeLifecycleExports(exports)
+        (exports) => workerRecovery.observeLifecycleExports(exports),
+        /mac/i.test(navigator.platform)
       );
       wrappedDefines.add(wrapped);
       return wrapped;

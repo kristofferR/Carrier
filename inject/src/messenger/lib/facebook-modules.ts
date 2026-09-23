@@ -299,6 +299,7 @@ function wrapFactory(
     if (
       moduleName === "MAWSetupWorker" ||
       moduleName === "MAWWebWorkerSingleton" ||
+      moduleName === "shouldUseMAWSharedWorker" ||
       moduleName === "MAWBridgeUIEventQueueQPLLogger"
     ) {
       const observe =
@@ -306,7 +307,9 @@ function wrapFactory(
           ? onWorkerSetup
           : moduleName === "MAWWebWorkerSingleton"
             ? onWorkerLifecycle
-            : onProcessingLogger;
+            : moduleName === "shouldUseMAWSharedWorker"
+              ? preferDedicatedWorkerExports
+              : onProcessingLogger;
       for (const candidate of [result, ...factoryArgs.slice(-2)]) {
         try {
           observe(candidate);
@@ -351,6 +354,7 @@ export function createFacebookModuleDefineInterceptor(
   onWorkerSetup: (exports: unknown) => void = () => {},
   onProcessingLogger: (exports: unknown) => void = () => {},
   onWorkerLifecycle: (exports: unknown) => void = () => {},
+  preferDedicatedWorker = false,
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -360,6 +364,7 @@ export function createFacebookModuleDefineInterceptor(
         typeof moduleName === "string" &&
         typeof factory === "function" &&
         (moduleName === "MAWSetupWorker" ||
+          (preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker") ||
           moduleName === "MAWWebWorkerSingleton" ||
           moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
           moduleName === "ErrorPubSub" ||
@@ -381,6 +386,25 @@ export function createFacebookModuleDefineInterceptor(
       return Reflect.apply(target, thisArg, args);
     },
   });
+}
+
+const dedicatedWorkerGates = new WeakSet<object>();
+
+/** Keep Messenger's backend in the page's process on macOS, not an expendable shared-worker process. */
+function preferDedicatedWorkerExports(value: unknown) {
+  if (!value || typeof value !== "object") return;
+  const exports = value as Record<string, unknown>;
+  const gate = exports.shouldUseMAWSharedWorker;
+  if (typeof gate !== "function" || gate.length !== 0 || dedicatedWorkerGates.has(gate)) return;
+  const wrapped = new Proxy(gate, {
+    apply(target, receiver, args) {
+      const result: unknown = Reflect.apply(target, receiver, args);
+      // A changed export contract must retain Facebook's original behavior.
+      return typeof result === "boolean" ? false : result;
+    },
+  });
+  exports.shouldUseMAWSharedWorker = wrapped;
+  dedicatedWorkerGates.add(wrapped);
 }
 
 const observedErrorStreams = new WeakSet<object>();

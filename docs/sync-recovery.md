@@ -264,6 +264,31 @@ Only static application code, symbols, and sanitized state were inspected.
 Native binaries and extracted web modules remain in the private investigation
 archive, outside the repository; no proprietary code is incorporated into Carrier.
 
+## macOS worker process lifetime
+
+Carrier selects Messenger's existing dedicated-worker backend on macOS before
+Messenger reads its worker-selection gate. Other platforms retain Messenger's
+choice. This keeps the encrypted backend with the page's WebContent process
+instead of a separate shared-worker process that WebKit can discard under memory
+pressure. It does not disable memory-pressure handling or add periodic reloads.
+
+The September 23 macOS 27 incident preserved a responsive, loaded page and
+successful HTTP requests while native logs recorded 476 shared-worker process
+exits with `Suspended WebProcess is exiting due to memory pressure`. Messenger's
+own heartbeats failed; shared-worker recreation then remained pending with no
+worker ID. Initial successful setup and a cached connected value did not establish
+continued transport health. WebKit's [memory-pressure handler and process-cache
+classification](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/WebProcess/WebProcess.cpp)
+explain why page liveness alone cannot protect a separate worker process.
+
+The interception is limited to the known zero-argument boolean
+`shouldUseMAWSharedWorker` export. Frozen exports and changed contracts preserve
+Messenger's behavior. It chooses the backend at document startup, never switches
+a live account between worker types or overlaps two setup attempts. Existing
+dedicated-worker recovery and draft/call/offline protections still apply. This is
+a workaround for the observed process-lifetime failure, not a guarantee against
+all OS resource reclamation; validate it on the affected Mac after installation.
+
 ## Message-processing diagnostics
 
 An encrypted connection and a responsive bridge do not prove that message batches

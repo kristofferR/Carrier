@@ -67,6 +67,7 @@ export function initFacebookModuleInterception() {
       (exports) => workerRecovery.observeSetupExports(exports),
       (exports) => syncProcessing.observeLogger(exports),
       (exports) => workerRecovery.observeLifecycleExports(exports),
+      /mac/i.test(navigator.platform),
     );
     wrappedDefines.add(wrapped);
     return wrapped;

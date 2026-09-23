@@ -39,6 +39,81 @@ function defineDefaultExport(
 }
 
 describe("Facebook module interception", () => {
+  test("selects Messenger's dedicated worker before consumers read its gate on macOS", () => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(
+      define,
+      () => false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    const original = mock(function (this: unknown) {
+      return this !== undefined;
+    });
+    intercepted("shouldUseMAWSharedWorker", [], (...args: unknown[]) => {
+      (args[6] as Record<string, unknown>).shouldUseMAWSharedWorker = original;
+    });
+    const { exports } = execute(definitions.get("shouldUseMAWSharedWorker")!.factory);
+    const gate = exports.shouldUseMAWSharedWorker as () => boolean;
+    expect(gate.call(exports)).toBeFalse();
+    expect(original).toHaveBeenCalledTimes(1);
+    expect(original.mock.contexts[0]).toBe(exports);
+  });
+
+  test("preserves Facebook's worker choice on other platforms", () => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(define, () => true);
+    const gate = () => true;
+    const factory = (...args: unknown[]) => {
+      (args[6] as Record<string, unknown>).shouldUseMAWSharedWorker = gate;
+    };
+    intercepted("shouldUseMAWSharedWorker", [], factory);
+    expect(definitions.get("shouldUseMAWSharedWorker")!.factory).toBe(factory);
+    expect(execute(factory).exports.shouldUseMAWSharedWorker).toBe(gate);
+  });
+
+  test("leaves frozen or changed worker gate exports intact", () => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(
+      define,
+      () => false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    const changed = () => ({ shared: true });
+    intercepted("shouldUseMAWSharedWorker", [], () => ({ shouldUseMAWSharedWorker: changed }));
+    const result = execute(definitions.get("shouldUseMAWSharedWorker")!.factory).result as {
+      shouldUseMAWSharedWorker: typeof changed;
+    };
+    expect(result.shouldUseMAWSharedWorker()).toEqual({ shared: true });
+
+    const gate = () => true;
+    const frozen = Object.freeze({ shouldUseMAWSharedWorker: gate });
+    intercepted("shouldUseMAWSharedWorker", [], () => frozen);
+    expect(execute(definitions.get("shouldUseMAWSharedWorker")!.factory).result).toBe(frozen);
+    expect(frozen.shouldUseMAWSharedWorker()).toBeTrue();
+
+    const differentArity = (_options: unknown) => true;
+    intercepted("shouldUseMAWSharedWorker", [], () => ({
+      shouldUseMAWSharedWorker: differentArity,
+    }));
+    expect(
+      (
+        execute(definitions.get("shouldUseMAWSharedWorker")!.factory).result as {
+          shouldUseMAWSharedWorker: typeof differentArity;
+        }
+      ).shouldUseMAWSharedWorker,
+    ).toBe(differentArity);
+  });
+
   test("recognizes conversation search inputs without localized labels", () => {
     expect(
       isConversationSearchInput({
