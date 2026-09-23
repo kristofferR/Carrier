@@ -58,6 +58,21 @@ describe("notification nickname presentation", () => {
     }
   });
 
+  test("one-to-one only uses nicknames in private notifications and real names in groups", () => {
+    const mode = nicknameMode({ nickname_scope: "direct" });
+    expect(
+      notificationNames(
+        "Captain",
+        "hello",
+        { ...group, isGroup: false },
+        showNicknames(mode, false),
+      ),
+    ).toEqual({ title: "Captain", body: "hello" });
+    expect(
+      notificationNames("Weekend", "Captain: hello", group, showNicknames(mode, true), "group"),
+    ).toEqual({ title: "Weekend", body: "Alex: hello" });
+  });
+
   test("handles native page titles without changing message text or a member-named group", () => {
     expect(notificationNames("Captain", "Alex: is a label I typed", group, false)).toEqual({
       title: "Alex",
@@ -185,6 +200,15 @@ function databaseHarness(
 }
 
 describe("Messenger group-name reader", () => {
+  test("retains contact identities for reply attribution", async () => {
+    const h = databaseHarness([
+      [{ nickname: "Captain" }, { id: "42", name: "Alex Example", firstName: "Alex" }],
+    ]);
+    h.modules.I64 = { of_string: (value: string) => value, to_string: (value: unknown) => value };
+    expect((await readConversationNotificationNames("123", h.load))?.participants[0]?.id).toBe(
+      "42",
+    );
+  });
   test("reads only the requested group's bounded membership and its contact photos", async () => {
     const h = databaseHarness();
     expect(await readConversationNotificationNames("123", h.load)).toEqual(group);
