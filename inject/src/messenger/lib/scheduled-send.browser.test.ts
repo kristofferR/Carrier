@@ -37,7 +37,7 @@ test.skipIf(!chromium)(
       await writeFile(
         file,
         `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><a href="/messages/t/456/"><span>Original person</span></a><main role="main"><div role="log" aria-label="Conversation with Original person"></div><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
-      var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
+      var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[]; var loseArmReply=false;
       window.__CARRIER_SCHEDULED_SEND_AVAILABLE__=true;
       window.__carrierToast=(message)=>warnings.push(message);
       window.__TAURI_INTERNALS__={invoke:async()=>{}};
@@ -55,6 +55,7 @@ test.skipIf(!chromium)(
         if(request.op==='arm') {
           if(document.querySelector('#composer').innerText.trim()) throw new Error('armed before clearing composer');
           scheduleItems.forEach(item=>{if(item.id===request.id)item.status='scheduled';});
+          if(loseArmReply) throw new Error('reply lost after commit');
         }
         if(request.op==='list') return {items:scheduleItems,claimed:null,saved:null,error:null,can_deliver:false};
         if(request.op==='seen') {scheduleItems.forEach(item=>{if(item.id===request.id)item.toast_seen=true;});}
@@ -119,6 +120,7 @@ async function fixtures(
     warnings: string[];
     scheduleOps: string[];
     carrierScheduledSend: (request: ScheduleRequest) => Promise<ScheduleResponse>;
+    loseArmReply: boolean;
   };
   const settle = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (name: string, condition: boolean) => {
@@ -196,6 +198,12 @@ async function fixtures(
     );
     assert("clock has space before smiley", smileyRect.left - clockRect.right >= 8);
     assert("clock is not dimmed", getComputedStyle(icon()!).opacity === "1");
+    document
+      .querySelector("#emoji-wrapper [role=button]")
+      ?.setAttribute("aria-label", "Smiley wählen");
+    region.querySelector("button")?.setAttribute("aria-label", "Enviar reacción");
+    await settle();
+    assert("localized emoji and reaction controls keep the clock available", !!icon());
     for (const tag of ["img", "video"] as const) {
       const media = document.createElement(tag);
       region.append(media);
@@ -207,6 +215,8 @@ async function fixtures(
     }
     const preview = document.createElement("button");
     preview.setAttribute("aria-label", "Preview attachment");
+    preview.style.width = "100px";
+    preview.style.height = "70px";
     preview.append(document.createElement("img"));
     region.append(preview);
     await settle();
@@ -476,6 +486,71 @@ async function fixtures(
       "missed sends warn on return and acknowledge the toast",
       page.warnings.some((w) => w.includes("not sent")) &&
         page.scheduleItems[0]?.toast_seen === true,
+    );
+    page.scheduleItems = [];
+    clear();
+    const log = document.querySelector<HTMLElement>('[role="log"]')!;
+    const shortLink = document.createElement("a");
+    shortLink.href = "/messages/t/777/";
+    shortLink.innerHTML = "<span>李</span>";
+    document.body.append(shortLink);
+    history.replaceState(null, "", shortLink.href);
+    log.setAttribute("aria-label", "Conversation with 李");
+    const beforeShort = clicks;
+    assert(
+      "single-character title can identify the pane",
+      (await deliver({ ...message(), thread: "/t/777/" }, () => true)) === "sent" &&
+        clicks === beforeShort + 1,
+    );
+    shortLink.remove();
+    clear();
+    const ann = document.createElement("a");
+    ann.href = "/messages/t/778/";
+    ann.innerHTML = "<span>Ann</span>";
+    document.body.append(ann);
+    history.replaceState(null, "", ann.href);
+    log.setAttribute("aria-label", "Conversation with Anna");
+    assert(
+      "an Anna pane cannot send an Ann schedule",
+      (await deliver({ ...message(), thread: "/t/778/" }, () => true)) === "defer" &&
+        clicks === beforeShort + 1,
+    );
+    ann.remove();
+    history.replaceState(null, "", "/messages/t/456/");
+    log.setAttribute("aria-label", "Conversation with Original person");
+    const reused = document.createElement("a");
+    reused.href = "/messages/t/779/";
+    reused.innerHTML = "<span>Reused composer</span>";
+    reused.addEventListener("click", (event) => {
+      event.preventDefault();
+      history.pushState(null, "", reused.href);
+    });
+    document.body.append(reused);
+    assert(
+      "navigation defers until the pane changes",
+      (await deliver({ ...message(), thread: "/t/779/" }, () => true)) === "defer",
+    );
+    log.setAttribute("aria-label", "Conversation with Reused composer");
+    assert(
+      "verified pane switch sends with a reused composer node",
+      (await deliver({ ...message(), thread: "/t/779/" }, () => true)) === "sent" &&
+        clicks === beforeShort + 2,
+    );
+    reused.remove();
+    history.replaceState(null, "", "/messages/t/456/");
+    log.setAttribute("aria-label", "Conversation with Original person");
+    page.loseArmReply = true;
+    box.textContent = "Lost acknowledgement draft";
+    await settle();
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+    await settle();
+    assert(
+      "lost arm reply is reconciled against the durable schedule",
+      page.scheduleItems[0]?.status === "scheduled" &&
+        !box.innerText.trim() &&
+        page.warnings.some((warning) => warning.includes("Message scheduled for")),
     );
     clear();
     result.textContent = "PASS";

@@ -45,20 +45,35 @@ const paneLabel = () =>
     ?.replace(/\s+/g, " ")
     .trim()
     .toLowerCase() ?? "";
+const normalizedTitle = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+const linkTitle = (link: HTMLAnchorElement) =>
+  [...link.querySelectorAll("span")]
+    .filter((span) => !span.querySelector("span"))
+    .map((span) => normalizedTitle(span.textContent ?? ""))
+    .find(Boolean) ?? null;
 const paneTitle = (target: string) => {
   const link = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].find(
     (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target),
   );
   if (!link) return null;
-  return (
-    [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")]
-      .map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase())
-      .find((value) => value.length >= 3) ?? null
+  const title = linkTitle(link);
+  if (!title) return null;
+  // A pane label cannot distinguish two visible rows with the same title.
+  const duplicates = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
+    (other) =>
+      other !== link &&
+      threadIdFromHref(other.getAttribute("href")) !== threadIdFromHref(target) &&
+      linkTitle(other) === title,
   );
+  return duplicates ? null : title;
+};
+const paneMatches = (title: string) => {
+  const label = paneLabel();
+  const prefix = label.slice(0, -title.length);
+  return label.endsWith(title) && !!prefix && /[^\p{L}\p{N}]$/u.test(prefix);
 };
 let pendingPane: {
   thread: string;
-  previous: HTMLElement | null;
   label: string;
   title: string;
 } | null = null;
@@ -87,7 +102,7 @@ export async function deliverScheduledMessage(
     if (!link) return "defer";
     const title = paneTitle(message.thread);
     if (!title) return "defer";
-    pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
+    pendingPane = { thread: message.thread, label: paneLabel(), title };
     link.click();
     // The URL can change before Messenger replaces the conversation pane.
     return "defer";
@@ -119,16 +134,10 @@ export async function deliverScheduledMessage(
         continue;
       }
       const title = paneTitle(message.thread);
-      if (!title || !paneLabel().includes(title)) return "defer";
+      if (!title || !paneMatches(title)) return "defer";
       if (pendingPane?.thread === message.thread) {
         const label = paneLabel();
-        if (
-          current === pendingPane.previous ||
-          label === pendingPane.label ||
-          !label.includes(pendingPane.title) ||
-          pendingPane.label.includes(pendingPane.title)
-        )
-          return "defer";
+        if (label === pendingPane.label || !paneMatches(pendingPane.title)) return "defer";
         pendingPane = null;
       }
       if (!inserted) {
@@ -352,7 +361,27 @@ export function initScheduledSend() {
         }
       }
       // Recovered drafts also need the composer-clear handshake before arming.
-      if (!editingItem || recoveredDraft) await request({ op: "arm", id: result.saved });
+      if (!editingItem || recoveredDraft) {
+        try {
+          await request({ op: "arm", id: result.saved });
+        } catch (error) {
+          // The native store may have committed even if the signed reply was lost.
+          let status: ScheduledMessage["status"] | undefined;
+          try {
+            status = (await request({ op: "list" })).items.find(
+              (row) => row.id === result.saved,
+            )?.status;
+          } catch {
+            // A second lost reply leaves the durable outcome unknown.
+          }
+          if (status !== "scheduled") {
+            if (status === "draft" || status === "missed_draft") throw error;
+            throw new Error(
+              "Scheduling could not be confirmed. Check Schedule send before retrying.",
+            );
+          }
+        }
+      }
       close();
       toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
     } catch (error) {
@@ -564,7 +593,15 @@ export function initScheduledSend() {
     const nextEmoji =
       emoji?.isConnected && region.contains(emoji)
         ? emoji
-        : buttonByLabel(["choose an emoji", "emoji"], region);
+        : (buttonByLabel(["choose an emoji", "emoji"], region) ??
+          [
+            ...(box.parentElement?.querySelectorAll<HTMLElement>('button, [role="button"]') ?? []),
+          ].find(
+            (candidate) =>
+              (box.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+              isShown(candidate) &&
+              !!candidate.querySelector("svg"),
+          ));
     if (!nextEmoji) {
       button?.remove();
       return;
@@ -611,40 +648,44 @@ export function initScheduledSend() {
     try {
       await request({ op: "list" });
       await warning();
-      const due = nextDueMessage(rows, Date.now());
-      if (!due || !canDeliver || !ready()) return;
-      await withComposerDelivery(async () => {
-        const box = findComposer();
-        if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-        if (
-          thread() !== due.thread &&
-          activeTextInput() &&
-          !panel?.contains(document.activeElement)
-        )
-          return;
-        // Missing virtualized row requires a reload. Do it before claiming so
-        // the fresh page can still claim the same job within its original window.
-        if (
-          thread() !== due.thread &&
-          ![...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
-            (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread),
+      while (canDeliver && ready()) {
+        const due = nextDueMessage(rows, Date.now());
+        if (!due) break;
+        const finished = await withComposerDelivery(async () => {
+          const box = findComposer();
+          if (box && (composerText(box).trim() || hasComposerMedia(box))) return false;
+          if (
+            thread() !== due.thread &&
+            activeTextInput() &&
+            !panel?.contains(document.activeElement)
           )
-        ) {
-          window.__carrierOpenThread?.(due.thread);
-          return;
-        }
-        const claimed = await request({ op: "claim", id: due.id });
-        if (claimed.claimed !== due.id) return;
-        const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
-        if (!job) return;
-        if (panel) close();
-        let outcome: "sent" | "missed" | "uncertain" | "defer" = "uncertain";
-        try {
-          outcome = await deliverScheduledMessage(job);
-        } finally {
-          if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
-        }
-      });
+            return false;
+          // Missing virtualized row requires a reload. Do it before claiming so
+          // the fresh page can still claim the same job within its original window.
+          if (
+            thread() !== due.thread &&
+            ![...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
+              (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread),
+            )
+          ) {
+            window.__carrierOpenThread?.(due.thread);
+            return false;
+          }
+          const claimed = await request({ op: "claim", id: due.id });
+          if (claimed.claimed !== due.id) return false;
+          const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
+          if (!job) return false;
+          if (panel) close();
+          let outcome: "sent" | "missed" | "uncertain" | "defer" = "uncertain";
+          try {
+            outcome = await deliverScheduledMessage(job);
+          } finally {
+            if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
+          }
+          return outcome !== "defer";
+        });
+        if (!finished) break;
+      }
     } catch {
       diag("scheduled-send.poll", "schedule check failed");
     } finally {

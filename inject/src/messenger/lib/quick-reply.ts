@@ -6,6 +6,7 @@ export interface QuickReplySnapshot {
   draftMatches: boolean;
   sendAvailable: boolean;
   composerEmpty: boolean;
+  manualSubmitted: boolean;
 }
 
 export type QuickReplyDecision =
@@ -42,6 +43,10 @@ export function decideQuickReply(
   }
 
   if (phase === "inserted") {
+    if (snapshot.manualSubmitted) {
+      if (snapshot.composerEmpty) return { action: "success", phase: "confirming" };
+      return expired ? { action: "failure", phase } : { action: "wait", phase };
+    }
     if (expired || !snapshot.draftMatches) {
       return { action: "failure", phase };
     }

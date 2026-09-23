@@ -12,6 +12,7 @@ const ready: QuickReplySnapshot = {
   draftMatches: false,
   sendAvailable: false,
   composerEmpty: true,
+  manualSubmitted: false,
 };
 
 describe("decideQuickReply", () => {
@@ -68,6 +69,26 @@ describe("decideQuickReply", () => {
       action: "success",
       phase: "confirming",
     });
+  });
+
+  test("recognizes a trusted manual submission after insertion", () => {
+    expect(decideQuickReply("inserted", { ...ready, manualSubmitted: true }, false)).toEqual({
+      action: "success",
+      phase: "confirming",
+    });
+    expect(
+      decideQuickReply(
+        "inserted",
+        {
+          ...ready,
+          composerEmpty: false,
+          draftMatches: true,
+          sendAvailable: true,
+          manualSubmitted: true,
+        },
+        false,
+      ),
+    ).toEqual({ action: "wait", phase: "inserted" });
   });
 
   test("waits for React to render the send control, then sends without Enter", () => {

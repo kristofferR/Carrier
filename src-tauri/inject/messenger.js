@@ -5581,11 +5581,11 @@
     return { length: value.length, full: hashText(value), prefixes };
   };
   var opaqueNotificationIdentity = (title, body) => {
-    const normalizedTitle = normalizeNotificationText(title);
+    const normalizedTitle2 = normalizeNotificationText(title);
     const normalizedBody = normalizeNotificationText(body);
     const group = splitGroupSender(normalizedBody);
     return {
-      title: opaqueTextIdentity(normalizedTitle, TITLE_PREFIX_LIMIT),
+      title: opaqueTextIdentity(normalizedTitle2, TITLE_PREFIX_LIMIT),
       body: opaqueTextIdentity(normalizedBody, BODY_PREFIX_LIMIT),
       sender: group.sender === null ? null : hashText(group.sender),
       message: opaqueTextIdentity(group.message, BODY_PREFIX_LIMIT)
@@ -7221,8 +7221,8 @@
       const thread2 = threadPathId(threadPath || "");
       const title = thread2 ? rowTitles.get(thread2) : void 0;
       const otherTitles = [...rowTitles].filter(([key]) => key !== thread2).map(([, value]) => value);
-      const paneMatches = title && thread2 === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
-      const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
+      const paneMatches2 = title && thread2 === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
+      const log = paneMatches2 ? document.querySelector('[role="main"] [role="log"]') : null;
       return log ? notificationLinkCards(log) : [];
     };
     const richMessageBody = (body, threadPath) => notificationLinkBody(body, messageLinkCards(body, threadPath));
@@ -7941,6 +7941,10 @@
       return { action: "failure", phase };
     }
     if (phase === "inserted") {
+      if (snapshot.manualSubmitted) {
+        if (snapshot.composerEmpty) return { action: "success", phase: "confirming" };
+        return expired ? { action: "failure", phase } : { action: "wait", phase };
+      }
       if (expired || !snapshot.draftMatches) {
         return { action: "failure", phase };
       }
@@ -7971,7 +7975,8 @@
     for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
       if (!isShown(media)) continue;
       const control = media.closest('button, [role="button"]');
-      if (control && /^(send|choose|attach)\b/i.test(control.getAttribute("aria-label") || ""))
+      const bounds = control?.getBoundingClientRect();
+      if (media.tagName === "IMG" && control && bounds && bounds.width <= 48 && bounds.height <= 48 && !control.closest('[contenteditable="true"]'))
         continue;
       return true;
     }
@@ -8102,45 +8107,63 @@ ${button.innerHTML}`)
     const deadline = Date.now() + DELIVERY_BUDGET_MS;
     let phase = "waiting";
     let controls = /* @__PURE__ */ new Map();
-    while (true) {
+    let manualSubmitted = false;
+    const onKeydown = (event) => {
+      if (event.isTrusted && event.key === "Enter" && !event.shiftKey && !event.isComposing && phase === "inserted" && composer()?.contains(event.target))
+        manualSubmitted = true;
+    };
+    const onClick = (event) => {
       const box = composer();
-      if (box && hasComposerMedia(box)) return false;
-      const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
-      const snapshot = {
-        threadMatches: currentThreadId() === wantedThread,
-        composerReady: box !== null,
-        draftMatches: composerContainsReply(box ? composerText(box) : null, text),
-        sendAvailable: button !== null,
-        composerEmpty: !box || !composerText(box).trim()
-      };
-      const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
-      phase = decision.phase;
-      switch (decision.action) {
-        case "wait":
-          await pause();
-          break;
-        case "insert": {
-          if (!box) return false;
-          controls = composerControls(box);
-          box.focus();
-          if (!document.execCommand("insertText", false, text)) {
-            diag("quick-reply.insert", "composer rejected insertText");
-            return false;
+      if (event.isTrusted && phase === "inserted" && box && event.target instanceof Node && findSendButton(box, controls)?.contains(event.target))
+        manualSubmitted = true;
+    };
+    document.addEventListener("keydown", onKeydown, true);
+    document.addEventListener("click", onClick, true);
+    try {
+      while (true) {
+        const box = composer();
+        if (box && hasComposerMedia(box)) return false;
+        const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
+        const snapshot = {
+          threadMatches: currentThreadId() === wantedThread,
+          composerReady: box !== null,
+          draftMatches: composerContainsReply(box ? composerText(box) : null, text),
+          sendAvailable: button !== null,
+          composerEmpty: !box || !composerText(box).trim(),
+          manualSubmitted
+        };
+        const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
+        phase = decision.phase;
+        switch (decision.action) {
+          case "wait":
+            await pause();
+            break;
+          case "insert": {
+            if (!box) return false;
+            controls = composerControls(box);
+            box.focus();
+            if (!document.execCommand("insertText", false, text)) {
+              diag("quick-reply.insert", "composer rejected insertText");
+              return false;
+            }
+            insertedReplies.set(id, { path, text });
+            break;
           }
-          insertedReplies.set(id, { path, text });
-          break;
+          case "send":
+            button?.click();
+            await pause();
+            break;
+          case "success":
+            insertedReplies.delete(id);
+            return true;
+          case "failure":
+            diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
+            return false;
         }
-        case "send":
-          button?.click();
-          await pause();
-          break;
-        case "success":
-          insertedReplies.delete(id);
-          return true;
-        case "failure":
-          diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
-          return false;
       }
+    } finally {
+      document.removeEventListener("keydown", onKeydown, true);
+      document.removeEventListener("click", onClick, true);
     }
   }
   async function preserveDraft(path, text, id) {
@@ -8296,12 +8319,24 @@ ${text}`)) {
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneLabel = () => document.querySelector('[role="main"] [role="log"][aria-label]')?.getAttribute("aria-label")?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+  var normalizedTitle = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  var linkTitle = (link) => [...link.querySelectorAll("span")].filter((span) => !span.querySelector("span")).map((span) => normalizedTitle(span.textContent ?? "")).find(Boolean) ?? null;
   var paneTitle = (target) => {
     const link = [...document.querySelectorAll('a[href*="/t/"]')].find(
       (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target)
     );
     if (!link) return null;
-    return [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")].map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase()).find((value) => value.length >= 3) ?? null;
+    const title = linkTitle(link);
+    if (!title) return null;
+    const duplicates = [...document.querySelectorAll('a[href*="/t/"]')].some(
+      (other) => other !== link && threadIdFromHref(other.getAttribute("href")) !== threadIdFromHref(target) && linkTitle(other) === title
+    );
+    return duplicates ? null : title;
+  };
+  var paneMatches = (title) => {
+    const label = paneLabel();
+    const prefix = label.slice(0, -title.length);
+    return label.endsWith(title) && !!prefix && /[^\p{L}\p{N}]$/u.test(prefix);
   };
   var pendingPane = null;
   async function deliverScheduledMessage(message, connectionReady = ready) {
@@ -8317,7 +8352,7 @@ ${text}`)) {
       if (!link) return "defer";
       const title = paneTitle(message.thread);
       if (!title) return "defer";
-      pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
+      pendingPane = { thread: message.thread, label: paneLabel(), title };
       link.click();
       return "defer";
     }
@@ -8348,11 +8383,10 @@ ${text}`)) {
           continue;
         }
         const title = paneTitle(message.thread);
-        if (!title || !paneLabel().includes(title)) return "defer";
+        if (!title || !paneMatches(title)) return "defer";
         if (pendingPane?.thread === message.thread) {
           const label = paneLabel();
-          if (current === pendingPane.previous || label === pendingPane.label || !label.includes(pendingPane.title) || pendingPane.label.includes(pendingPane.title))
-            return "defer";
+          if (label === pendingPane.label || !paneMatches(pendingPane.title)) return "defer";
           pendingPane = null;
         }
         if (!inserted) {
@@ -8526,7 +8560,25 @@ ${text}`)) {
             throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
           }
         }
-        if (!editingItem || recoveredDraft) await request({ op: "arm", id: result.saved });
+        if (!editingItem || recoveredDraft) {
+          try {
+            await request({ op: "arm", id: result.saved });
+          } catch (error) {
+            let status;
+            try {
+              status = (await request({ op: "list" })).items.find(
+                (row) => row.id === result.saved
+              )?.status;
+            } catch {
+            }
+            if (status !== "scheduled") {
+              if (status === "draft" || status === "missed_draft") throw error;
+              throw new Error(
+                "Scheduling could not be confirmed. Check Schedule send before retrying."
+              );
+            }
+          }
+        }
         close();
         toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
       } catch (error) {
@@ -8714,7 +8766,11 @@ ${text}`)) {
         button?.remove();
         return;
       }
-      const nextEmoji = emoji?.isConnected && region.contains(emoji) ? emoji : buttonByLabel(["choose an emoji", "emoji"], region);
+      const nextEmoji = emoji?.isConnected && region.contains(emoji) ? emoji : buttonByLabel(["choose an emoji", "emoji"], region) ?? [
+        ...box.parentElement?.querySelectorAll('button, [role="button"]') ?? []
+      ].find(
+        (candidate) => (box.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && isShown(candidate) && !!candidate.querySelector("svg")
+      );
       if (!nextEmoji) {
         button?.remove();
         return;
@@ -8757,31 +8813,35 @@ ${text}`)) {
       try {
         await request({ op: "list" });
         await warning();
-        const due = nextDueMessage(rows, Date.now());
-        if (!due || !canDeliver || !ready()) return;
-        await withComposerDelivery(async () => {
-          const box = findComposer();
-          if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-          if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
-            return;
-          if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
-            (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
-          )) {
-            window.__carrierOpenThread?.(due.thread);
-            return;
-          }
-          const claimed = await request({ op: "claim", id: due.id });
-          if (claimed.claimed !== due.id) return;
-          const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
-          if (!job) return;
-          if (panel) close();
-          let outcome = "uncertain";
-          try {
-            outcome = await deliverScheduledMessage(job);
-          } finally {
-            if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
-          }
-        });
+        while (canDeliver && ready()) {
+          const due = nextDueMessage(rows, Date.now());
+          if (!due) break;
+          const finished = await withComposerDelivery(async () => {
+            const box = findComposer();
+            if (box && (composerText(box).trim() || hasComposerMedia(box))) return false;
+            if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
+              return false;
+            if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
+              (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
+            )) {
+              window.__carrierOpenThread?.(due.thread);
+              return false;
+            }
+            const claimed = await request({ op: "claim", id: due.id });
+            if (claimed.claimed !== due.id) return false;
+            const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
+            if (!job) return false;
+            if (panel) close();
+            let outcome = "uncertain";
+            try {
+              outcome = await deliverScheduledMessage(job);
+            } finally {
+              if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
+            }
+            return outcome !== "defer";
+          });
+          if (!finished) break;
+        }
       } catch {
         diag("scheduled-send.poll", "schedule check failed");
       } finally {

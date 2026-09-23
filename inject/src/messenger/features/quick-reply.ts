@@ -57,46 +57,77 @@ async function deliver(path: string, text: string, id: number): Promise<boolean>
   const deadline = Date.now() + DELIVERY_BUDGET_MS;
   let phase: QuickReplyPhase = "waiting";
   let controls = new Map<HTMLElement, string>();
-  while (true) {
+  let manualSubmitted = false;
+  const onKeydown = (event: KeyboardEvent) => {
+    if (
+      event.isTrusted &&
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      phase === "inserted" &&
+      composer()?.contains(event.target as Node)
+    )
+      manualSubmitted = true;
+  };
+  const onClick = (event: MouseEvent) => {
     const box = composer();
-    if (box && hasComposerMedia(box)) return false;
-    const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
-    const snapshot: QuickReplySnapshot = {
-      threadMatches: currentThreadId() === wantedThread,
-      composerReady: box !== null,
-      draftMatches: composerContainsReply(box ? composerText(box) : null, text),
-      sendAvailable: button !== null,
-      composerEmpty: !box || !composerText(box).trim(),
-    };
-    const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
-    phase = decision.phase;
+    if (
+      event.isTrusted &&
+      phase === "inserted" &&
+      box &&
+      event.target instanceof Node &&
+      findSendButton(box, controls)?.contains(event.target)
+    )
+      manualSubmitted = true;
+  };
+  document.addEventListener("keydown", onKeydown, true);
+  document.addEventListener("click", onClick, true);
+  try {
+    while (true) {
+      const box = composer();
+      if (box && hasComposerMedia(box)) return false;
+      const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
+      const snapshot: QuickReplySnapshot = {
+        threadMatches: currentThreadId() === wantedThread,
+        composerReady: box !== null,
+        draftMatches: composerContainsReply(box ? composerText(box) : null, text),
+        sendAvailable: button !== null,
+        composerEmpty: !box || !composerText(box).trim(),
+        manualSubmitted,
+      };
+      const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
+      phase = decision.phase;
 
-    switch (decision.action) {
-      case "wait":
-        await pause();
-        break;
-      case "insert": {
-        if (!box) return false;
-        controls = composerControls(box);
-        box.focus();
-        if (!document.execCommand("insertText", false, text)) {
-          diag("quick-reply.insert", "composer rejected insertText");
-          return false;
+      switch (decision.action) {
+        case "wait":
+          await pause();
+          break;
+        case "insert": {
+          if (!box) return false;
+          controls = composerControls(box);
+          box.focus();
+          if (!document.execCommand("insertText", false, text)) {
+            diag("quick-reply.insert", "composer rejected insertText");
+            return false;
+          }
+          insertedReplies.set(id, { path, text });
+          break;
         }
-        insertedReplies.set(id, { path, text });
-        break;
+        case "send":
+          button?.click();
+          await pause();
+          break;
+        case "success":
+          insertedReplies.delete(id);
+          return true;
+        case "failure":
+          diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
+          return false;
       }
-      case "send":
-        button?.click();
-        await pause();
-        break;
-      case "success":
-        insertedReplies.delete(id);
-        return true;
-      case "failure":
-        diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
-        return false;
     }
+  } finally {
+    document.removeEventListener("keydown", onKeydown, true);
+    document.removeEventListener("click", onClick, true);
   }
 }
 

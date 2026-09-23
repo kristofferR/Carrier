@@ -19,9 +19,17 @@ export function hasComposerMedia(box: HTMLElement): boolean {
   for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
     if (!isShown(media)) continue;
     const control = media.closest('button, [role="button"]');
-    // The conversation's quick-reaction button can itself be an emoji image.
-    // A clickable attachment preview is still media, not a toolbar control.
-    if (control && /^(send|choose|attach)\b/i.test(control.getAttribute("aria-label") || ""))
+    // Toolbar icons are compact even when Messenger translates their labels.
+    // Attachment previews occupy a larger surface and remain media when clickable.
+    const bounds = control?.getBoundingClientRect();
+    if (
+      media.tagName === "IMG" &&
+      control &&
+      bounds &&
+      bounds.width <= 48 &&
+      bounds.height <= 48 &&
+      !control.closest('[contenteditable="true"]')
+    )
       continue;
     return true;
   }
