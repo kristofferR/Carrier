@@ -63,6 +63,10 @@ struct Store {
 }
 
 impl Store {
+    fn recovery_marker(path: &std::path::Path) -> PathBuf {
+        path.with_extension("recovery")
+    }
+
     fn load(path: PathBuf) -> Self {
         let loaded = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Vec<Message>>(&bytes).map_err(|e| e.to_string()),
@@ -73,11 +77,39 @@ impl Store {
         if unavailable {
             log::error!("scheduled-send store could not be loaded; scheduling disabled");
         }
-        Self {
+        let mut store = Self {
             path,
             items: loaded.unwrap_or_default(),
             unavailable,
+        };
+        if !store.unavailable {
+            match Self::recovery_marker(&store.path).try_exists() {
+                Ok(true) => {
+                    let mut recovered = store.items.clone();
+                    for item in &mut recovered {
+                        if matches!(item.status, Status::Scheduled | Status::Sending) {
+                            item.status = Status::Uncertain;
+                            item.notified = false;
+                            item.toast_seen = false;
+                        }
+                    }
+                    if store.persist(&recovered).is_ok() {
+                        store.items = recovered;
+                    } else {
+                        store.unavailable = true;
+                        log::error!(
+                            "scheduled-send recovery could not be saved; scheduling disabled"
+                        );
+                    }
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    store.unavailable = true;
+                    log::error!("scheduled-send recovery marker could not be read: {error}");
+                }
+            }
         }
+        store
     }
 
     fn persist(&self, items: &[Message]) -> Result<(), String> {
@@ -86,6 +118,20 @@ impl Store {
         }
         let parent = self.path.parent().ok_or("No schedule directory")?;
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        // The marker is durable before publication. If any later step fails,
+        // restart conservatively turns runnable items into uncertain ones.
+        let marker = Self::recovery_marker(&self.path);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&marker)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        std::fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())?;
         let temp = parent.join(format!(".scheduled-{}.tmp", uuid::Uuid::new_v4()));
         let result = (|| {
             let mut options = std::fs::OpenOptions::new();
@@ -105,6 +151,13 @@ impl Store {
             std::fs::File::open(parent)
                 .and_then(|f| f.sync_all())
                 .map_err(|e| e.to_string())?;
+            std::fs::remove_file(&marker).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            if let Err(error) = std::fs::File::open(parent).and_then(|f| f.sync_all()) {
+                // The queue is already durable. If the marker reappears after
+                // a crash, recovery will conservatively disable those sends.
+                log::warn!("scheduled-send recovery marker removal could not be synced: {error}");
+            }
             Ok(())
         })();
         if result.is_err() {
@@ -661,6 +714,23 @@ mod tests {
         let mut store = Store::load(path.clone());
         assert!(store.commit(Vec::new()).is_err());
         assert_eq!(std::fs::read_to_string(path).unwrap(), "broken");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn published_schedule_with_recovery_marker_cannot_send_after_restart() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("messages.json");
+        let mut store = Store::load(path.clone());
+        store.commit(vec![message()]).unwrap();
+        std::fs::write(Store::recovery_marker(&path), "").unwrap();
+
+        let recovered = Store::load(path.clone());
+        assert!(!recovered.unavailable);
+        assert_eq!(recovered.items[0].status, Status::Uncertain);
+        assert!(!recovered.items[0].eligible(1_000));
+        assert!(!Store::recovery_marker(&path).exists());
+        assert_eq!(Store::load(path).items[0].status, Status::Uncertain);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

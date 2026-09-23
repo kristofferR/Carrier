@@ -8283,6 +8283,8 @@ ${text}`)) {
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
+  var paneLabel = () => document.querySelector('[role="main"] [role="log"][aria-label]')?.getAttribute("aria-label")?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+  var pendingPane = null;
   async function deliverScheduledMessage(message, connectionReady = ready) {
     if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
       return "defer";
@@ -8294,6 +8296,9 @@ ${text}`)) {
         (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread)
       );
       if (!link) return "defer";
+      const title = [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")].map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase()).find((value) => value.length >= 3);
+      if (!title) return "defer";
+      pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
       link.click();
       return "defer";
     }
@@ -8321,6 +8326,12 @@ ${text}`)) {
           if (inserted) break;
           await pause2();
           continue;
+        }
+        if (pendingPane?.thread === message.thread) {
+          const label = paneLabel();
+          if (current === pendingPane.previous || label === pendingPane.label || !label.includes(pendingPane.title) || pendingPane.label.includes(pendingPane.title))
+            return "defer";
+          pendingPane = null;
         }
         if (!inserted) {
           if (composerText(current).trim()) return "defer";
@@ -8724,11 +8735,12 @@ ${text}`)) {
         await request({ op: "list" });
         await warning();
         const due = nextDueMessage(rows, Date.now());
-        if (!due || !canDeliver || panel || !ready()) return;
+        if (!due || !canDeliver || !ready()) return;
         await withComposerDelivery(async () => {
           const box = findComposer();
           if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-          if (thread() !== due.thread && activeTextInput()) return;
+          if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
+            return;
           if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
             (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
           )) {
@@ -8739,6 +8751,7 @@ ${text}`)) {
           if (claimed.claimed !== due.id) return;
           const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
           if (!job) return;
+          if (panel) close();
           let outcome = "uncertain";
           try {
             outcome = await deliverScheduledMessage(job);

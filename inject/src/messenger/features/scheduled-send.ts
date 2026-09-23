@@ -37,6 +37,19 @@ const ready = () =>
 const activeTextInput = () =>
   document.hasFocus() &&
   document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
+const paneLabel = () =>
+  document
+    .querySelector('[role="main"] [role="log"][aria-label]')
+    ?.getAttribute("aria-label")
+    ?.replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase() ?? "";
+let pendingPane: {
+  thread: string;
+  previous: HTMLElement | null;
+  label: string;
+  title: string;
+} | null = null;
 
 /** A native claim has already been persisted. Only "defer" may be retried, and
  * only when we can prove we never clicked Send or left inserted text behind. */
@@ -60,6 +73,11 @@ export async function deliverScheduledMessage(
       (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread),
     );
     if (!link) return "defer";
+    const title = [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")]
+      .map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase())
+      .find((value) => value.length >= 3);
+    if (!title) return "defer";
+    pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
     link.click();
     // The URL can change before Messenger replaces the conversation pane.
     return "defer";
@@ -88,6 +106,17 @@ export async function deliverScheduledMessage(
         if (inserted) break;
         await pause();
         continue;
+      }
+      if (pendingPane?.thread === message.thread) {
+        const label = paneLabel();
+        if (
+          current === pendingPane.previous ||
+          label === pendingPane.label ||
+          !label.includes(pendingPane.title) ||
+          pendingPane.label.includes(pendingPane.title)
+        )
+          return "defer";
+        pendingPane = null;
       }
       if (!inserted) {
         if (composerText(current).trim()) return "defer";
@@ -569,11 +598,16 @@ export function initScheduledSend() {
       await request({ op: "list" });
       await warning();
       const due = nextDueMessage(rows, Date.now());
-      if (!due || !canDeliver || panel || !ready()) return;
+      if (!due || !canDeliver || !ready()) return;
       await withComposerDelivery(async () => {
         const box = findComposer();
         if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-        if (thread() !== due.thread && activeTextInput()) return;
+        if (
+          thread() !== due.thread &&
+          activeTextInput() &&
+          !panel?.contains(document.activeElement)
+        )
+          return;
         // Missing virtualized row requires a reload. Do it before claiming so
         // the fresh page can still claim the same job within its original window.
         if (
@@ -589,6 +623,7 @@ export function initScheduledSend() {
         if (claimed.claimed !== due.id) return;
         const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
         if (!job) return;
+        if (panel) close();
         let outcome: "sent" | "missed" | "uncertain" | "defer" = "uncertain";
         try {
           outcome = await deliverScheduledMessage(job);

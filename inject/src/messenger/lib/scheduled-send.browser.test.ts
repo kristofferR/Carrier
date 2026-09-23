@@ -36,7 +36,7 @@ test.skipIf(!chromium)(
       const file = join(directory, "index.html");
       await writeFile(
         file,
-        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
+        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="log" aria-label="Conversation with Original person"></div><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
       var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
       window.__CARRIER_SCHEDULED_SEND_AVAILABLE__=true;
       window.__carrierToast=(message)=>warnings.push(message);
@@ -217,6 +217,7 @@ async function fixtures(
     box.focus();
     const otherThread = document.createElement("a");
     otherThread.href = "/messages/t/999/";
+    otherThread.innerHTML = "<span>Another person</span>";
     let switched = false;
     let updatePathOnClick = false;
     otherThread.addEventListener("click", (event) => {
@@ -238,6 +239,12 @@ async function fixtures(
       "route change defers until the conversation pane settles",
       (await deliver({ ...message(), thread: "/t/999/" }, () => true)) === "defer" &&
         switched &&
+        clicks === 0,
+    );
+    assert(
+      "target route with the old pane still mounted cannot submit",
+      (await deliver({ ...message(), thread: "/t/999/" }, () => true)) === "defer" &&
+        !box.innerText.trim() &&
         clicks === 0,
     );
     history.replaceState(null, "", "/messages/t/456/");
