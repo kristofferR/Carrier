@@ -1,6 +1,12 @@
 //! Durable, at-most-once scheduled submissions. Persist a claim before touching
 //! Messenger; an interrupted claim is uncertain, never automatically replayed.
-use std::{io::Write, path::PathBuf, sync::Mutex, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io::Write,
+    path::PathBuf,
+    sync::Mutex,
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{Listener, Manager};
@@ -20,7 +26,7 @@ enum Status {
     Uncertain,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 struct Message {
     id: String,
     account: String,
@@ -67,6 +73,28 @@ impl Store {
         path.with_extension("recovery")
     }
 
+    fn at_risk(&self, items: &[Message]) -> BTreeSet<(String, String)> {
+        let previous: BTreeMap<_, _> = self
+            .items
+            .iter()
+            .map(|item| ((item.account.as_str(), item.id.as_str()), item))
+            .collect();
+        let next: BTreeMap<_, _> = items
+            .iter()
+            .map(|item| ((item.account.as_str(), item.id.as_str()), item))
+            .collect();
+        self.items
+            .iter()
+            .chain(items)
+            .filter(|item| matches!(item.status, Status::Scheduled | Status::Sending))
+            .filter(|item| {
+                let key = (item.account.as_str(), item.id.as_str());
+                previous.get(&key) != next.get(&key)
+            })
+            .map(|item| (item.account.clone(), item.id.clone()))
+            .collect()
+    }
+
     fn load(path: PathBuf) -> Self {
         let loaded = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice::<Vec<Message>>(&bytes).map_err(|e| e.to_string()),
@@ -85,9 +113,19 @@ impl Store {
         if !store.unavailable {
             match Self::recovery_marker(&store.path).try_exists() {
                 Ok(true) => {
+                    // Empty markers from older versions still require full recovery.
+                    let at_risk: Option<BTreeSet<(String, String)>> =
+                        std::fs::read(Self::recovery_marker(&store.path))
+                            .ok()
+                            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
                     let mut recovered = store.items.clone();
                     for item in &mut recovered {
-                        if matches!(item.status, Status::Scheduled | Status::Sending) {
+                        if item.status == Status::Sending
+                            || (item.status == Status::Scheduled
+                                && at_risk.as_ref().is_none_or(|ids| {
+                                    ids.contains(&(item.account.clone(), item.id.clone()))
+                                }))
+                        {
                             item.status = Status::Uncertain;
                             item.notified = false;
                             item.toast_seen = false;
@@ -118,15 +156,20 @@ impl Store {
         }
         let parent = self.path.parent().ok_or("No schedule directory")?;
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        // The marker is durable before publication. If any later step fails,
-        // restart conservatively turns runnable items into uncertain ones.
+        // The marker is durable before publication. Recovery scopes scheduled
+        // records to changed identities and always handles in-flight claims.
+        let marker_contents =
+            serde_json::to_vec(&self.at_risk(items)).map_err(|e| e.to_string())?;
         let marker = Self::recovery_marker(&self.path);
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .open(&marker)
-            .and_then(|file| file.sync_all())
+            .and_then(|mut file| {
+                file.write_all(&marker_contents)?;
+                file.sync_all()
+            })
             .map_err(|e| e.to_string())?;
         #[cfg(unix)]
         std::fs::File::open(parent)
@@ -731,6 +774,62 @@ mod tests {
         assert!(!recovered.items[0].eligible(1_000));
         assert!(!Store::recovery_marker(&path).exists());
         assert_eq!(Store::load(path).items[0].status, Status::Uncertain);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_only_disables_sends_changed_by_the_interrupted_commit() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("messages.json");
+        let mut store = Store::load(path.clone());
+        let unchanged = message();
+        let mut changed = message();
+        changed.id = "b".into();
+        let mut removed = message();
+        removed.id = "c".into();
+        removed.status = Status::Sending;
+        let mut other_account = message();
+        other_account.account = "999".into();
+        let mut in_flight = message();
+        in_flight.id = "e".into();
+        in_flight.status = Status::Sending;
+        store
+            .commit(vec![
+                unchanged.clone(),
+                changed.clone(),
+                removed,
+                other_account.clone(),
+                in_flight.clone(),
+            ])
+            .unwrap();
+
+        changed.text = "edited".into();
+        let mut added = message();
+        added.id = "d".into();
+        let updated = vec![unchanged, changed, other_account, added, in_flight];
+        let at_risk = store.at_risk(&updated);
+        assert_eq!(
+            at_risk,
+            BTreeSet::from([
+                ("123".into(), "b".into()),
+                ("123".into(), "c".into()),
+                ("123".into(), "d".into()),
+            ])
+        );
+
+        std::fs::write(&path, serde_json::to_vec(&updated).unwrap()).unwrap();
+        std::fs::write(
+            Store::recovery_marker(&path),
+            serde_json::to_vec(&at_risk).unwrap(),
+        )
+        .unwrap();
+        let recovered = Store::load(path);
+        assert_eq!(recovered.items[0].status, Status::Scheduled);
+        assert_eq!(recovered.items[1].status, Status::Uncertain);
+        assert_eq!(recovered.items[2].status, Status::Scheduled);
+        assert_eq!(recovered.items[3].status, Status::Uncertain);
+        assert_eq!(recovered.items[4].status, Status::Uncertain);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
