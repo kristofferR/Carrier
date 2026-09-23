@@ -13,6 +13,10 @@ also counts, even if this account has never connected on this installation.
 Successful bootstrap arms a 90-second deadline for the first encrypted
 connection, so a worker that answers heartbeats but never connects cannot look
 healthy forever. An uninitialized connection-state module alone does not arm it.
+An explicitly started backend setup also has a 90-second deadline to settle,
+independent of page MQTT traffic or availability of the encrypted bridge/state
+APIs. A setup that has not settled remains protected from competing initialization
+and surfaces manual recovery through the prolonged-busy path.
 Recovery waits another 15 seconds for fresh probes, including after wake.
 
 Carrier uses Messenger's existing worker lifecycle:
@@ -47,6 +51,12 @@ There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
 Transient worker-status or callback failures spend one attempt and retain the
 remaining retries; missing or incompatible APIs stop automatic mutation.
+Read-only worker-status and native-window queries each have an eight-second
+deadline. Expiry abandons the observation and releases Carrier's recovery
+invocation for its remaining bounded retries. Late query results cannot reach a
+mutation, and elapsed time is checked again on response in case suspension
+delayed the timeout task. This deadline is deliberately not applied to setup or
+termination: abandoning those operations could leave two initializations racing.
 Even a brief verified-health sample that ends an observation window preserves
 the next-attempt backoff if connectivity drops again. Account switches start a
 new budget and connection history, without racing an old in-flight setup.
@@ -83,6 +93,12 @@ manual failure controls appear while the old setup is still pending. Successful
 invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks
 continue; a prolonged busy state offers manual recovery while awaiting setup.
+Content-free diagnostics distinguish inspection timeouts from pending setup or
+termination. A return to verified encrypted health records elapsed time since the
+observed failure and the number of recovery requests, scoped to this account.
+That elapsed time includes suspension/offline time and does not assert a measured
+server blackout or message-delivery delay. A recovered sample still needs the
+normal sustained-health period before replenishing the retry budget.
 
 Calls, drafts, offline state, sleep, rate limiting, and **Hold Failures** prevent
 automatic worker mutation. Exhausted or unsupported recovery leaves the page
@@ -90,6 +106,10 @@ in place and offers **Reconnect** and **Reload**. Reload preserves the existing
 draft/call and rate-limit protections. Server rate-limit recovery still follows
 its separately coordinated cooldown. Sleep and wake reset the 15-second stale
 settle timer before any new mutation.
+On Linux and Windows, a health-timer gap longer than 15 seconds (or a backwards
+wall-clock jump) also resets this grace period before the next recovery tick.
+macOS uses its native power snapshots. Resetting the settle period discards the
+previous healthy-observation streak, so time asleep cannot replenish retries.
 
 The native watchdog receives `managed` while a responsive page owns transport
 recovery. This pauses native transport reloads without claiming health or
@@ -160,6 +180,26 @@ already initialized shared worker does not restart its encrypted socket. Calling
 a page-local copy of `WAComms` would not control that worker. Carrier does not
 turn on Meta's gated development bridge, inject replacement worker scripts, or
 bind to native Messenger's private binaries to cross this boundary.
+
+Further inspection and a private synthetic test on 2026-09-23 showed why simply
+exposing the worker's `forceResetSocketLoop` would not safely fix an opening or
+handshake stall. The retry-loop reset starts a replacement operation without
+waiting for the old operation to settle. Its generation check prevents old loop
+iterations from starting, but does not fence the socket assignment inside an
+already running `WAComms.socketLoopIteration`. In both inspected retry-loop
+implementations, aborting the old signal and resetting the loop let two opening
+attempts coexist. Resolving the newer attempt first, then the older one, made
+the older socket active again while both sockets remained open. The fake opener
+ignored cancellation, matching the inspected Messenger-specific opener's lack of
+signal consumption. This proves the cancellation/generation gap in those code
+paths, not that this race occurred in the user's live session.
+
+Carrier consequently bounds only its read-only inspection waits and uses the
+guarded worker lifecycle above to replace a failed transport. Implementing a
+socket-level opening/handshake deadline still requires a worker-owned route that
+actually closes pending transports and fences late completions; none was found
+among the normal page RPC routes inspected. Native force-reconnect symbols alone
+do not supply that capability to the web app.
 
 A `force-flush-data` control message exists, but its queue implementation resets
 an in-flight guard and invokes the unload path. It is not a safe general-purpose
@@ -260,6 +300,13 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   healthy, and the document epoch had not changed. This proves the route can
   rebuild that live session in place; it is not a forced handshake-blackhole
   test or proof of safe multi-window shutdown.
+- Run the compiled recovery adapter against the live signed-in session with an
+  isolated loader that makes only its first worker-status query remain pending.
+  It returns `inspection-timeout` after 8,001 ms, releases the recovery guard,
+  and a subsequent real bridge repair succeeds. Resolving the old query late
+  causes no second repair. A fresh worker-state notification and RPC reply report
+  connected, with backend setup ready and the same document and DOM root.
+  No page module is replaced and no message is sent by this test.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it

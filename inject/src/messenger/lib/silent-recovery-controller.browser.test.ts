@@ -153,7 +153,7 @@ async function runFixtures(
 
     adapter.recover = async () => {
       calls++;
-      return "failed";
+      return calls === 4 ? "inspection-timeout" : "failed";
     };
     const retryState = { needed: true, healthy: false };
     const retryRecovery = make(retryState);
@@ -161,16 +161,16 @@ async function runFixtures(
     await advance(15_000);
     retryRecovery.tick();
     await flush();
-    assert("transient failure spends one attempt", calls === 4);
+    assert("inspection timeout spends one attempt", calls === 4);
     await advance(30_000);
     retryRecovery.tick();
     await advance(14_999);
     retryRecovery.tick();
-    assert("transient failure preserves backoff", calls === 4);
+    assert("inspection timeout preserves backoff", calls === 4);
     await advance(1);
     retryRecovery.tick();
     await flush();
-    assert("transient failure permits another attempt", calls === 5);
+    assert("inspection timeout permits another attempt", calls === 5);
 
     const restartFlags: boolean[] = [];
     window.__CARRIER_SETTINGS__ = { multi_instance: false };

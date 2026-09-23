@@ -199,6 +199,10 @@ async function runFixtures(
     for (let i = 0; i < 40; i++) await tick();
     assert("waiting for Messenger never starts a competing bootstrap", recoveries === 0);
     inProgress = false;
+    await tick(60_000);
+    assert("non-macOS timer gap renews probe grace before worker mutation", recoveries === 0);
+    await tick(10_000);
+    assert("resumed page receives the full settle window", recoveries === 0);
     for (let i = 0; i < 5; i++) await tick();
     assert("failed bootstrap recovered once", recoveries === 1 && backendResets === 1);
     assert("health verified", connected && reports.at(-1) === "ok");

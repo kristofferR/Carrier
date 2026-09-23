@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
+import { build } from "esbuild";
 import {
   createFacebookModuleDefineInterceptor,
   type FacebookModuleDefine,
@@ -9,7 +11,10 @@ import {
   SilentRecoveryBudget,
 } from "./worker-recovery";
 
-function fixture(canRestartSharedWorker: () => Promise<boolean> = async () => true) {
+function fixture(
+  canRestartSharedWorker: () => Promise<boolean> = async () => true,
+  Recovery = FacebookWorkerRecovery,
+) {
   let account: string | undefined = "account-a";
   let currentId: string | null = null;
   let inProgress = false;
@@ -63,7 +68,7 @@ function fixture(canRestartSharedWorker: () => Promise<boolean> = async () => tr
           watchdogCalls.push(args),
     },
   };
-  const recovery = new FacebookWorkerRecovery(
+  const recovery = new Recovery(
     (name) => modules[name],
     () => account,
     canRestartSharedWorker,
@@ -109,6 +114,127 @@ function fixture(canRestartSharedWorker: () => Promise<boolean> = async () => tr
     },
   };
 }
+
+let recoverySource: string;
+beforeAll(async () => {
+  const bundle = await build({
+    stdin: {
+      contents: `import { FacebookWorkerRecovery } from "./worker-recovery";
+        globalThis.Recovery = FacebookWorkerRecovery;`,
+      resolveDir: import.meta.dir,
+    },
+    bundle: true,
+    write: false,
+  });
+  recoverySource = bundle.outputFiles[0]!.text;
+});
+
+function deadlineFixture(canRestartSharedWorker?: () => Promise<boolean>) {
+  let now = 0;
+  let nextId = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  const context = {
+    Recovery: FacebookWorkerRecovery,
+    performance: { now: () => now },
+    setTimeout: (run: () => void, delay: number) => {
+      const id = ++nextId;
+      timers.set(id, { at: now + delay, run });
+      return id;
+    },
+    clearTimeout: (id: number) => timers.delete(id),
+  };
+  runInNewContext(recoverySource, context);
+  return {
+    f: fixture(canRestartSharedWorker, context.Recovery),
+    timers,
+    advance: (ms: number, runTimers = true) => {
+      now += ms;
+      if (!runTimers) return;
+      for (const [id, timer] of timers) {
+        if (timer.at > now) continue;
+        timers.delete(id);
+        timer.run();
+      }
+    },
+  };
+}
+
+describe("recovery inspection deadlines", () => {
+  test("a hung status query expires; its late result cannot mutate a later attempt", async () => {
+    const { f, advance, timers } = deadlineFixture();
+    f.currentId = "worker";
+    const pending = Promise.withResolvers<unknown>();
+    f.modules.MAWWebWorkerSingleton = { getWorkerHealthStatus: () => pending.promise };
+    const attempt = f.recovery.recover();
+    advance(8_000);
+    expect(await attempt).toBe("inspection-timeout");
+    expect(timers.size).toBe(0);
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => ({ tag: "shared_exists_and_connected" }),
+    };
+    expect(await f.recovery.recover()).toBe("started");
+    pending.resolve({ tag: "shared_exists_and_connected" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(f.watchdogCalls).toHaveLength(1);
+    expect(timers.size).toBe(0);
+  });
+
+  test("late native inventory cannot shut down the shared worker or reattach a bridge", async () => {
+    const inventory = Promise.withResolvers<boolean>();
+    const { f, advance } = deadlineFixture(() => inventory.promise);
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "worker";
+    f.status = "shared_exists_and_connected";
+    expect(await f.recovery.recover()).toBe("started");
+    const attempt = f.recovery.recover(() => true, true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    advance(8_000);
+    expect(await attempt).toBe("inspection-timeout");
+    inventory.resolve(true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+    expect(f.watchdogCalls).toHaveLength(1);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+  });
+
+  test("overdue responses are rejected even before the timeout task runs after suspension", async () => {
+    const { f, advance, timers } = deadlineFixture();
+    f.currentId = "worker";
+    const pending = Promise.withResolvers<unknown>();
+    f.modules.MAWWebWorkerSingleton = { getWorkerHealthStatus: () => pending.promise };
+    const attempt = f.recovery.recover();
+    advance(60_000, false);
+    pending.resolve({ tag: "shared_exists_and_connected" });
+    expect(await attempt).toBe("inspection-timeout");
+    expect(f.watchdogCalls).toHaveLength(0);
+    expect(timers.size).toBe(0);
+  });
+
+  for (const stage of ["setup", "termination"] as const) {
+    test(`a pending ${stage} still prevents a competing initialization`, async () => {
+      const { f, advance, timers } = deadlineFixture();
+      f.setup.getOrSetupWorker(...f.args);
+      const pending = Promise.withResolvers<boolean>();
+      if (stage === "setup") f.setupResult = pending.promise;
+      else {
+        f.currentId = "dedicated";
+        f.status = "dedicated_exists";
+        f.termination = () => pending.promise;
+      }
+      const attempt = f.recovery.recover();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      advance(3_600_000);
+      expect(await f.recovery.recover()).toBe("busy");
+      expect(timers.size).toBe(0);
+      if (stage === "termination") f.settled = false;
+      pending.resolve(true);
+      expect(await attempt).toBe("started");
+      expect(f.setupCalls).toHaveLength(2);
+    });
+  }
+});
 
 describe("Messenger worker recovery", () => {
   test("requires an unambiguous sole Messenger window for shared shutdown", () => {
@@ -501,6 +627,19 @@ describe("Messenger worker recovery", () => {
 });
 
 describe("silent recovery budget", () => {
+  test("unobserved time across suspend cannot replenish the retry budget", () => {
+    const b = new SilentRecoveryBudget();
+    b.giveUp();
+    b.observe(true, 0);
+    b.observe(true, 55_000);
+    b.interruptHealthObservation();
+    b.observe(true, 3_600_000);
+    expect(b.exhausted).toBe(true);
+    b.observe(true, 3_659_999);
+    expect(b.exhausted).toBe(true);
+    b.observe(true, 3_660_000);
+    expect(b.exhausted).toBe(false);
+  });
   test("waiting for Messenger does not spend repair attempts", () => {
     const b = new SilentRecoveryBudget();
     for (let i = 0; i < 10; i++) {

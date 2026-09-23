@@ -28,6 +28,8 @@ export function createSilentRecovery(options: {
   let manualRequested = false;
   let unhealthySince: number | undefined;
   let busySince: number | undefined;
+  let unverifiedSince: number | undefined;
+  let outageRequests = 0;
   const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
   let scope = accountScope();
   let scopeEpoch = 0;
@@ -59,11 +61,22 @@ export function createSilentRecovery(options: {
       manualRequested = false;
       unhealthySince = undefined;
       busySince = undefined;
+      unverifiedSince = undefined;
+      outageRequests = 0;
       networkRestoredAt = undefined;
       showFailure(false);
     }
     const needed = options.needsRecovery();
     const healthy = options.isHealthy();
+    if (needed) unverifiedSince ??= now();
+    if (healthy && !needed && unverifiedSince !== undefined) {
+      diag(
+        "sync.worker-recovered",
+        `verified transport restored elapsed_ms=${Math.round(now() - unverifiedSince)} recovery_requests=${outageRequests}`,
+      );
+      unverifiedSince = undefined;
+      outageRequests = 0;
+    }
     budget.observe(healthy, now());
     if (healthy && budget.attemptCount === 0) workerRecovery.clearEscalation();
     if (networkRestoredAt !== undefined) {
@@ -98,6 +111,7 @@ export function createSilentRecovery(options: {
     const launchEpoch = scopeEpoch;
     manualRequested = false;
     running = true;
+    outageRequests++;
     runningTimedOut = false;
     // A timeout cannot cancel Messenger's initialization. Keep running latched
     // until the actual promise settles, so no second bootstrap can race it.
@@ -110,7 +124,10 @@ export function createSilentRecovery(options: {
       if (options.isHealthy()) return;
       budget.giveUp();
       showFailure(true);
-      diag("sync.worker-recovery-timeout", "worker recovery did not settle; preserving the page");
+      diag(
+        "sync.worker-recovery-timeout",
+        `worker recovery did not settle phase=${workerRecovery.phase}; preserving the page`,
+      );
     }, SILENT_RECOVERY_TIMEOUT_MS);
     void workerRecovery
       .recover(
@@ -152,6 +169,12 @@ export function createSilentRecovery(options: {
             "worker recovery attempt failed; retrying with backoff",
           );
         }
+        if (result === "inspection-timeout") {
+          diag(
+            "sync.worker-inspection-timeout",
+            "worker inspection timed out before mutation; retrying with backoff",
+          );
+        }
         // A started callback is not proof of sync. The regular probes must
         // establish health; otherwise this attempt expires and backs off.
         options.check();
@@ -178,6 +201,7 @@ export function createSilentRecovery(options: {
     resetSettle: () => {
       unhealthySince = undefined;
       busySince = undefined;
+      budget.interruptHealthObservation();
     },
   };
 }

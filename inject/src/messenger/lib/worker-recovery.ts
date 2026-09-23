@@ -12,7 +12,43 @@ function method(value: unknown, key: string): Method | undefined {
   return typeof candidate === "function" ? (candidate as Method) : undefined;
 }
 
-export type WorkerRecoveryResult = "started" | "busy" | "unsupported" | "failed";
+export type WorkerRecoveryResult =
+  | "started"
+  | "busy"
+  | "unsupported"
+  | "failed"
+  | "inspection-timeout";
+
+const INSPECTION_TIMEOUT_MS = 8_000;
+class InspectionTimeout extends Error {}
+
+type RecoveryPhase =
+  | "idle"
+  | "worker-status"
+  | "window-inventory"
+  | "shared-shutdown"
+  | "dedicated-termination"
+  | "setup"
+  | "bridge-repair";
+
+/** Only read-only queries may be abandoned; setup/termination must stay single-flight. */
+async function inspect(read: () => unknown): Promise<unknown> {
+  const startedAt = performance.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
+      }),
+    ]);
+    // After suspension a promise can run before the overdue timeout task.
+    if (performance.now() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Treat unknown native windows as possible Messenger clients. */
 export function hasSoleMessengerWindow(value: unknown): boolean {
@@ -32,6 +68,11 @@ export class FacebookWorkerRecovery {
   private readonly wrapped = new WeakSet<object>();
   private sharedBridgeRepair: { scope: string; id: string } | undefined;
   private sharedRestartUsedScope: string | undefined;
+  private currentPhase: RecoveryPhase = "idle";
+
+  get phase(): RecoveryPhase {
+    return this.currentPhase;
+  }
 
   constructor(
     private readonly load: ModuleLoader,
@@ -117,7 +158,8 @@ export class FacebookWorkerRecovery {
       // termination is pending. Never replay callbacks from another attempt.
       const replay = this.replay;
       const replayScope = this.scope;
-      const status = record(await health.call(singleton));
+      this.currentPhase = "worker-status";
+      const status = record(await inspect(() => health.call(singleton)));
       if (
         !allowed() ||
         startingScope !== this.accountScope() ||
@@ -126,7 +168,7 @@ export class FacebookWorkerRecovery {
       ) {
         return "busy";
       }
-      // Never terminate a shared worker: it may serve another window's call.
+      // Unknown worker protocols cannot establish a safe recovery path.
       if (
         !status ||
         ![
@@ -157,6 +199,7 @@ export class FacebookWorkerRecovery {
         if (!terminate) return "unsupported";
         // Messenger's bridge close calls Worker.terminate() for a dedicated
         // worker. It then resets its own backend/portal/creation state.
+        this.currentPhase = "dedicated-termination";
         const stopped = await terminate.call(setup, "bridgeRecovery");
         if (stopped !== true) return "unsupported";
         // Never replay vault material captured for a previous account.
@@ -175,6 +218,7 @@ export class FacebookWorkerRecovery {
           return "busy";
         }
         try {
+          this.currentPhase = "setup";
           await replay();
         } catch (error) {
           reject.call(state, error);
@@ -200,8 +244,10 @@ export class FacebookWorkerRecovery {
           if (!shutdown) return "unsupported";
           let soleWindow = false;
           try {
-            soleWindow = await this.canRestartSharedWorker();
-          } catch (_) {
+            this.currentPhase = "window-inventory";
+            soleWindow = (await inspect(() => this.canRestartSharedWorker())) === true;
+          } catch (error) {
+            if (error instanceof InspectionTimeout) throw error;
             // An unavailable native window inventory cannot prove ownership.
           }
           if (
@@ -221,6 +267,7 @@ export class FacebookWorkerRecovery {
             // Do not replay setup: shutdown is broadcast and its promise does
             // not certify that the old worker has exited.
             this.sharedRestartUsedScope = startingScope;
+            this.currentPhase = "shared-shutdown";
             await shutdown.call(setup, false, "carrier-sync-recovery");
             return "started";
           }
@@ -230,6 +277,7 @@ export class FacebookWorkerRecovery {
         if (typeof callback !== "function") return "unsupported";
         // Reattach this page's bridge using Messenger's existing callback.
         // Status locks prove worker existence, not that its port still works.
+        this.currentPhase = "bridge-repair";
         Reflect.apply(callback, undefined, ["locks_based_recovery", id, "locks_based_recovery"]);
         this.sharedBridgeRepair = { scope: startingScope, id };
         return "started";
@@ -253,6 +301,7 @@ export class FacebookWorkerRecovery {
         ) {
           return "busy";
         }
+        this.currentPhase = "setup";
         await replay();
       } catch (error) {
         // The normal caller does this after a failed setup. Preserve that
@@ -260,11 +309,13 @@ export class FacebookWorkerRecovery {
         reject.call(state, error);
       }
       return "started";
-    } catch (_) {
+    } catch (error) {
+      if (error instanceof InspectionTimeout) return "inspection-timeout";
       // Known missing or changed APIs return unsupported above. An operation
       // that exists but throws may recover on a later bounded attempt.
       return "failed";
     } finally {
+      this.currentPhase = "idle";
       this.recovering = false;
     }
   }
@@ -291,6 +342,10 @@ export class SilentRecoveryBudget {
 
   get attemptCount(): number {
     return this.attempts;
+  }
+
+  interruptHealthObservation(): void {
+    this.healthySince = undefined;
   }
 
   observe(healthy: boolean, now: number): void {

@@ -3,6 +3,7 @@ import {
   ConsecutiveFailureThreshold,
   isMessengerRealtimeUrl,
   REALTIME_CONNECT_GRACE_MS,
+  REALTIME_NEVER_CONNECTED_MS,
   type RealtimeHealthSource,
   RealtimeHealthWatchdog,
   WorkerConnectionWatchdog,
@@ -83,13 +84,19 @@ const workerId = (): unknown => {
   }
 };
 
-const workerSetupState = (): "ready" | "failed" | "unknown" => {
+const workerSetupState = (): "ready" | "failed" | "starting" | "unknown" => {
   try {
     const page = window as unknown as { require?: (name: string) => unknown };
     const state = page.require?.("MAWWaitForBackendSetup") as
-      | { isBackendSetupSettled?: () => unknown; isBackendSetupSuccessful?: () => unknown }
+      | {
+          isBackendSetupSettled?: () => unknown;
+          isBackendSetupSuccessful?: () => unknown;
+          isBackendSetupInProgress?: () => unknown;
+        }
       | undefined;
-    if (state?.isBackendSetupSettled?.() !== true) return "unknown";
+    if (state?.isBackendSetupSettled?.() !== true) {
+      return state?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
+    }
     const successful = state.isBackendSetupSuccessful?.();
     return successful === true ? "ready" : successful === false ? "failed" : "unknown";
   } catch (_) {
@@ -120,6 +127,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
+  let setupStartedAt: number | undefined;
   let verified: { at: number; stillCurrent: () => boolean } | undefined;
   let stateRouteUnavailableFor: (() => boolean) | undefined;
   let probeIdentity:
@@ -237,6 +245,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       connectionRemembered = rememberedConnection(connectionKey);
       workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
       workerDisconnected = false;
+      setupStartedAt = undefined;
       verified = undefined;
       callbacks.onUnknown("worker-connection");
     }
@@ -250,12 +259,23 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       } catch (_) {}
     }
     const setup = workerSetupState();
+    // A confirmed setup attempt must settle even if page MQTT is healthy or
+    // the encrypted state/bridge APIs have not become available yet.
+    if (setup === "starting") setupStartedAt ??= now();
+    else setupStartedAt = undefined;
+    const setupStale =
+      setupStartedAt !== undefined && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
     const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
-    const disconnected = setup === "failed" || connectionStale;
+    const disconnected = setup === "failed" || setupStale || connectionStale;
     if (disconnected !== workerDisconnected) {
       workerDisconnected = disconnected;
       if (disconnected) {
-        diag("sync.worker-disconnected", "encrypted-message connection stayed disconnected");
+        diag(
+          "sync.worker-disconnected",
+          setupStale
+            ? "encrypted backend setup did not settle"
+            : "encrypted-message connection stayed disconnected",
+        );
       }
     }
     if (disconnected) callbacks.onStale("worker-connection");

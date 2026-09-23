@@ -29,6 +29,8 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   let moduleAvailable = true;
   let setupFailed = false;
   let setupReady = false;
+  let setupInProgress = false;
+  let bridgeAvailable = true;
   const storage = new Map<string, string>();
   const createMonitor = (account = "123") => {
     const tracker = new RealtimeRecoveryTracker(now);
@@ -48,6 +50,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
           return {
             isBackendSetupSettled: () => setupFailed || setupReady,
             isBackendSetupSuccessful: () => !setupFailed,
+            isBackendSetupInProgress: () => setupInProgress,
             getCurrentWorkerID: () => "worker",
           };
         }
@@ -56,6 +59,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
           return { WACommsConnectionState: connection };
         }
         if (name === "MAWBridgeSendAndReceive") {
+          if (!bridgeAvailable) return null;
           return {
             sendAndReceive: async (_namespace: string, route: string) => {
               probes += 1;
@@ -187,6 +191,23 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   connected = false;
   await fresh.check();
   expect(fresh.isVerifiedHealthy()).toBe(false);
+
+  // An actual bootstrap has a deadline independent of both page traffic and
+  // whether the worker has published its bridge/connection-state modules yet.
+  setupReady = false;
+  setupInProgress = true;
+  for (const missingApis of [false, true]) {
+    bridgeAvailable = moduleAvailable = !missingApis;
+    const starting = createMonitor(missingApis ? "1001" : "1000");
+    await starting.check();
+    now += REALTIME_NEVER_CONNECTED_MS - 1;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("ok");
+    now += 1;
+    await starting.check();
+    expect(starting.tracker.status(now)).toBe("stale");
+    expect(starting.isVerifiedHealthy()).toBe(false);
+  }
 });
 
 function stateProbeFixture() {

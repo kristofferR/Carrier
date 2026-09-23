@@ -430,6 +430,25 @@
     const candidate = record(value)?.[key];
     return typeof candidate === "function" ? candidate : void 0;
   }
+  var INSPECTION_TIMEOUT_MS = 8e3;
+  var InspectionTimeout = class extends Error {
+  };
+  async function inspect(read) {
+    const startedAt = performance.now();
+    let timer;
+    try {
+      const result = await Promise.race([
+        read(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
+        })
+      ]);
+      if (performance.now() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
+      return result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   function hasSoleMessengerWindow(value) {
     if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
     const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
@@ -446,6 +465,10 @@
       __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
       __publicField(this, "sharedBridgeRepair");
       __publicField(this, "sharedRestartUsedScope");
+      __publicField(this, "currentPhase", "idle");
+    }
+    get phase() {
+      return this.currentPhase;
     }
     observeSetupExports(value) {
       const exports = record(value);
@@ -511,7 +534,8 @@
         const initialBridge = bridge?.call(setup);
         const replay = this.replay;
         const replayScope = this.scope;
-        const status = record(await health.call(singleton));
+        this.currentPhase = "worker-status";
+        const status = record(await inspect(() => health.call(singleton)));
         if (!allowed() || startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
           return "busy";
         }
@@ -532,6 +556,7 @@
           }
           const terminate = method(setup, "terminateDedicatedWorker");
           if (!terminate) return "unsupported";
+          this.currentPhase = "dedicated-termination";
           const stopped = await terminate.call(setup, "bridgeRecovery");
           if (stopped !== true) return "unsupported";
           if (startingScope !== this.accountScope() || this.replay !== replay || this.scope !== replayScope) {
@@ -541,6 +566,7 @@
             return "busy";
           }
           try {
+            this.currentPhase = "setup";
             await replay();
           } catch (error) {
             reject.call(state2, error);
@@ -554,14 +580,17 @@
             if (!shutdown) return "unsupported";
             let soleWindow = false;
             try {
-              soleWindow = await this.canRestartSharedWorker();
-            } catch (_) {
+              this.currentPhase = "window-inventory";
+              soleWindow = await inspect(() => this.canRestartSharedWorker()) === true;
+            } catch (error) {
+              if (error instanceof InspectionTimeout) throw error;
             }
             if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || inProgress.call(state2) === true || settled.call(state2) !== true) {
               return "busy";
             }
             if (soleWindow) {
               this.sharedRestartUsedScope = startingScope;
+              this.currentPhase = "shared-shutdown";
               await shutdown.call(setup, false, "carrier-sync-recovery");
               return "started";
             }
@@ -569,6 +598,7 @@
           const recovery = this.load("MAWWorkerWatchdogRecovery");
           const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
           if (typeof callback !== "function") return "unsupported";
+          this.currentPhase = "bridge-repair";
           Reflect.apply(callback, void 0, ["locks_based_recovery", id, "locks_based_recovery"]);
           this.sharedBridgeRepair = { scope: startingScope, id };
           return "started";
@@ -581,14 +611,17 @@
           if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state2) === true || currentId.call(state2) != null) {
             return "busy";
           }
+          this.currentPhase = "setup";
           await replay();
         } catch (error) {
           reject.call(state2, error);
         }
         return "started";
-      } catch (_) {
+      } catch (error) {
+        if (error instanceof InspectionTimeout) return "inspection-timeout";
         return "failed";
       } finally {
+        this.currentPhase = "idle";
         this.recovering = false;
       }
     }
@@ -612,6 +645,9 @@
     }
     get attemptCount() {
       return this.attempts;
+    }
+    interruptHealthObservation() {
+      this.healthySince = void 0;
     }
     observe(healthy, now) {
       if (healthy) {
@@ -1009,7 +1045,9 @@
     try {
       const page = window;
       const state2 = page.require?.("MAWWaitForBackendSetup");
-      if (state2?.isBackendSetupSettled?.() !== true) return "unknown";
+      if (state2?.isBackendSetupSettled?.() !== true) {
+        return state2?.isBackendSetupInProgress?.() === true ? "starting" : "unknown";
+      }
       const successful = state2.isBackendSetupSuccessful?.();
       return successful === true ? "ready" : successful === false ? "failed" : "unknown";
     } catch (_) {
@@ -1032,6 +1070,7 @@
     let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
+    let setupStartedAt;
     let verified;
     let stateRouteUnavailableFor;
     let probeIdentity;
@@ -1115,6 +1154,7 @@
         connectionRemembered = rememberedConnection(connectionKey);
         workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
         workerDisconnected = false;
+        setupStartedAt = void 0;
         verified = void 0;
         callbacks.onUnknown("worker-connection");
       }
@@ -1127,12 +1167,18 @@
         }
       }
       const setup = workerSetupState();
+      if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
+      else setupStartedAt = void 0;
+      const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
       const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
-      const disconnected = setup === "failed" || connectionStale;
+      const disconnected = setup === "failed" || setupStale || connectionStale;
       if (disconnected !== workerDisconnected) {
         workerDisconnected = disconnected;
         if (disconnected) {
-          diag("sync.worker-disconnected", "encrypted-message connection stayed disconnected");
+          diag(
+            "sync.worker-disconnected",
+            setupStale ? "encrypted backend setup did not settle" : "encrypted-message connection stayed disconnected"
+          );
         }
       }
       if (disconnected) callbacks.onStale("worker-connection");
@@ -1211,6 +1257,8 @@
     let manualRequested = false;
     let unhealthySince;
     let busySince;
+    let unverifiedSince;
+    let outageRequests = 0;
     const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
     let scope = accountScope();
     let scopeEpoch = 0;
@@ -1242,11 +1290,22 @@
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
+        unverifiedSince = void 0;
+        outageRequests = 0;
         networkRestoredAt = void 0;
         showFailure(false);
       }
       const needed = options.needsRecovery();
       const healthy = options.isHealthy();
+      if (needed) unverifiedSince ?? (unverifiedSince = now());
+      if (healthy && !needed && unverifiedSince !== void 0) {
+        diag(
+          "sync.worker-recovered",
+          `verified transport restored elapsed_ms=${Math.round(now() - unverifiedSince)} recovery_requests=${outageRequests}`
+        );
+        unverifiedSince = void 0;
+        outageRequests = 0;
+      }
       budget.observe(healthy, now());
       if (healthy && budget.attemptCount === 0) workerRecovery.clearEscalation();
       if (networkRestoredAt !== void 0) {
@@ -1277,6 +1336,7 @@
       const launchEpoch = scopeEpoch;
       manualRequested = false;
       running = true;
+      outageRequests++;
       runningTimedOut = false;
       const timeout = nativeSetTimeout3(() => {
         runningTimedOut = true;
@@ -1287,7 +1347,10 @@
         if (options.isHealthy()) return;
         budget.giveUp();
         showFailure(true);
-        diag("sync.worker-recovery-timeout", "worker recovery did not settle; preserving the page");
+        diag(
+          "sync.worker-recovery-timeout",
+          `worker recovery did not settle phase=${workerRecovery.phase}; preserving the page`
+        );
       }, SILENT_RECOVERY_TIMEOUT_MS);
       void workerRecovery.recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
@@ -1325,6 +1388,12 @@
             "worker recovery attempt failed; retrying with backoff"
           );
         }
+        if (result === "inspection-timeout") {
+          diag(
+            "sync.worker-inspection-timeout",
+            "worker inspection timed out before mutation; retrying with backoff"
+          );
+        }
         options.check();
       }).catch(() => {
         nativeClearTimeout2(timeout);
@@ -1348,6 +1417,7 @@
       resetSettle: () => {
         unhealthySince = void 0;
         busySince = void 0;
+        budget.interruptHealthObservation();
       }
     };
   }
@@ -1770,7 +1840,13 @@
       clearPending();
       emitHeartbeat();
     });
+    let lastHealthTickAt = Date.now();
     setInterval(() => {
+      const tickAt = Date.now();
+      if (!isMac4 && (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)) {
+        silentRecovery.resetSettle();
+      }
+      lastHealthTickAt = tickAt;
       sampleSyncProcessing(processingActive());
       if (systemSleeping || rateLimitRemainingMs() > 0) {
         emitHeartbeat();
@@ -2911,16 +2987,16 @@
   }
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
-    const inspect = (value) => {
+    const inspect2 = (value) => {
       const restore2 = findFTSRestoreSync(value, seen);
       if (restore2) onFTSRestoreSync(restore2);
     };
-    inspect(result);
+    inspect2(result);
     for (let index = 4; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
-      inspect(candidate);
+      inspect2(candidate);
       if (candidate && typeof candidate === "object") {
-        inspect(candidate.exports);
+        inspect2(candidate.exports);
       }
     }
   }
@@ -3085,7 +3161,7 @@
   }
   var observedErrorStreams = /* @__PURE__ */ new WeakSet();
   function observeFacebookErrors(result, args, listener) {
-    const inspect = (value) => {
+    const inspect2 = (value) => {
       if (!value || typeof value !== "object" || observedErrorStreams.has(value)) return;
       try {
         const stream = value;
@@ -3104,13 +3180,13 @@
     };
     for (const value of [result, ...args.slice(-2)]) {
       try {
-        inspect(value);
+        inspect2(value);
         if (value && typeof value === "object") {
           const record2 = value;
-          inspect(record2.default);
-          inspect(record2.exports);
+          inspect2(record2.default);
+          inspect2(record2.exports);
           if (record2.exports && typeof record2.exports === "object") {
-            inspect(record2.exports.default);
+            inspect2(record2.exports.default);
           }
         }
       } catch (_) {
@@ -4658,7 +4734,7 @@
       seen.add(text);
       labels.push(text);
     };
-    const inspect = (el) => {
+    const inspect2 = (el) => {
       for (const attr of LABEL_ATTRS) {
         const value = el.getAttribute(attr);
         if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
@@ -4677,9 +4753,9 @@
         }
       }
     };
-    if (root instanceof Element) inspect(root);
+    if (root instanceof Element) inspect2(root);
     for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
-      inspect(el);
+      inspect2(el);
     }
     for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
     return labels;
@@ -7261,7 +7337,7 @@
     let scanScheduled = false;
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
-      const inspect = (node) => {
+      const inspect2 = (node) => {
         const element = node instanceof Element ? node : node.parentElement;
         if (!element) return;
         const links = /* @__PURE__ */ new Set();
@@ -7276,8 +7352,8 @@
         }
       };
       for (const record2 of records) {
-        inspect(record2.target);
-        for (const node of record2.addedNodes) inspect(node);
+        inspect2(record2.target);
+        for (const node of record2.addedNodes) inspect2(node);
       }
       unreadArrivals.markRowsChanged(changedKeys, Date.now());
       if (scanScheduled) return;

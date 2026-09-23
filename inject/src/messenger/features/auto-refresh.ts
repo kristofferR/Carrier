@@ -10,7 +10,11 @@ import {
   PowerStateTracker,
   type ScheduledRefreshReason,
 } from "../lib/auto-refresh";
-import { looksLikeFacebookErrorPage, RealtimeRecoveryTracker } from "../lib/realtime-health";
+import {
+  looksLikeFacebookErrorPage,
+  REALTIME_UNOBSERVED_SETTLE_MS,
+  RealtimeRecoveryTracker,
+} from "../lib/realtime-health";
 import { RenderHealthProbe } from "../lib/render-health";
 import { isMessengerContentPath } from "../lib/threads";
 import { SILENT_RECOVERY_RELOAD_EVENT } from "../lib/worker-recovery";
@@ -379,11 +383,18 @@ export function initAutoRefresh() {
     emitHeartbeat();
   });
 
-  // Check often enough that an overdue callback recovers immediately when a
-  // suspended WebView resumes. The same tick checks Messenger's realtime MQTT
-  // transport for disconnects, stuck reconnects, and half-open silence — before
-  // the heartbeat, so the emitted realtime status reflects this tick.
+  // Windows/Linux do not emit AppKit power snapshots. A timer gap gives fresh
+  // probes time to run before mutation, even when performance.now pauses in sleep.
+  let lastHealthTickAt = Date.now();
   setInterval(() => {
+    const tickAt = Date.now();
+    if (
+      !isMac &&
+      (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)
+    ) {
+      silentRecovery.resetSettle();
+    }
+    lastHealthTickAt = tickAt;
     sampleSyncProcessing(processingActive());
     if (systemSleeping || rateLimitRemainingMs() > 0) {
       emitHeartbeat();
