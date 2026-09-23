@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ConversationNotificationTracker,
   groupPreviewSender,
+  isDraftMessagePreview,
   isOwnMessagePreview,
   NotificationCorrelationQueue,
   NotifiedSignatureStore,
@@ -146,6 +147,16 @@ describe("ConversationNotificationTracker", () => {
         { key: "2", signature: "first message" },
       ]),
     ).toEqual(["1"]);
+  });
+
+  test("ignores a draft without losing the previous message signature", () => {
+    const tracker = new ConversationNotificationTracker();
+    const message = [{ key: "1", signature: "Earlier message" }];
+    expect(tracker.observe(message, ["1"])).toEqual([]);
+    // A draft row is omitted from both inputs by the notification scanner.
+    expect(tracker.observe([], [])).toEqual([]);
+    expect(tracker.observe(message, ["1"])).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "New message" }], ["1"])).toEqual(["1"]);
   });
 
   test("keeps virtualized rows but forgets rows observed as no longer unread", () => {
@@ -1413,6 +1424,18 @@ describe("isOwnMessagePreview", () => {
   test("does not suppress incoming previews", () => {
     expect(isOwnMessagePreview("Jane: hello")).toBe(false);
     expect(isOwnMessagePreview("New message")).toBe(false);
+  });
+});
+
+describe("isDraftMessagePreview", () => {
+  test("recognizes Messenger's draft label with or without visible draft text", () => {
+    expect(isDraftMessagePreview("Draft:")).toBe(true);
+    expect(isDraftMessagePreview("  Draft: halfway written  ")).toBe(true);
+  });
+
+  test("keeps ordinary message previews eligible", () => {
+    expect(isDraftMessagePreview("Jane: Draft: ready for review")).toBe(false);
+    expect(isDraftMessagePreview("Draft report: ready for review")).toBe(false);
   });
 });
 

@@ -6635,6 +6635,9 @@
       value.trim().replace(/\s+/g, " ")
     );
   }
+  function isDraftMessagePreview(value) {
+    return /^draft\s*:/i.test(value.trim());
+  }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
     const normalizedPageTitle = normalizeNotificationText(pageTitle);
     const normalizedRowTitle = normalizeNotificationText(rowTitle);
@@ -7558,7 +7561,9 @@
         muted
       };
     };
-    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter((conversation) => Boolean(conversation?.body.length)).map(({ key, title, body }) => ({ key, title, body }));
+    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter(
+      (conversation) => conversation !== null && conversation.body.length > 0 && !isDraftMessagePreview(conversation.body)
+    ).map(({ key, title, body }) => ({ key, title, body }));
     function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
       const pageSignal = notificationCorrelations.consumePageForRow(
         conversation,
@@ -7825,7 +7830,7 @@
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
-          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
+          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !isDraftMessagePreview(conversation.body)
         );
         const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
         const notifyKeys = new Set(
@@ -7839,15 +7844,19 @@
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
         notifiedStore.observeRead(
-          new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
-          observed.map(({ key }) => key),
+          new Set(
+            observed.filter(({ unread, body }) => unread && !isDraftMessagePreview(body)).map(({ key }) => key)
+          ),
+          observed.filter(({ body }) => !isDraftMessagePreview(body)).map(({ key }) => key),
           detectedAt,
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
-        const routeCandidates = observed.filter(({ body }) => body.length > 0);
+        const routeCandidates = observed.filter(
+          ({ body }) => body.length > 0 && !isDraftMessagePreview(body)
+        );
         const hydratedReadKeys = new Set(
-          listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
+          listHydrated ? observed.filter(({ unread, body }) => !unread && !isDraftMessagePreview(body)).map(({ key }) => key) : []
         );
         clearTimeout(readConfirmationTimer);
         readConfirmationTimer = void 0;
@@ -7890,7 +7899,7 @@
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
-            observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+            routeCandidates.map(({ key }) => key),
             readObservedKeys,
             readTransitions
           )
@@ -7917,16 +7926,20 @@
         }
         for (const key of pendingArrivalKeys) {
           const row = observed.find((conversation) => conversation.key === key);
-          if (row && !conversations.some((conversation) => conversation.key === key)) {
+          if (row && (!row.unread || isOwnMessagePreview(row.body))) {
             pendingArrivalKeys.delete(key);
           }
         }
         pageNotificationReceipts.discardReadMatches(
-          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          observed.filter(
+            ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body)
+          ),
           detectedAt
         );
         pendingPageNotifications.discardReadMatches(
-          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          observed.filter(
+            ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body)
+          ),
           detectedAt
         );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);

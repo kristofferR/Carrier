@@ -23,6 +23,7 @@ import { nicknameMode, showNicknames } from "../lib/nicknames";
 import {
   ConversationNotificationTracker,
   groupPreviewSender,
+  isDraftMessagePreview,
   isOwnMessagePreview,
   type NativeNotificationDelivery,
   NotificationCorrelationQueue,
@@ -964,7 +965,12 @@ export function initNotificationBridge() {
   currentPageRouteCandidates = () =>
     chatRows()
       .map(conversationFromLink)
-      .filter((conversation): conversation is Conversation => Boolean(conversation?.body.length))
+      .filter(
+        (conversation): conversation is Conversation =>
+          conversation !== null &&
+          conversation.body.length > 0 &&
+          !isDraftMessagePreview(conversation.body),
+      )
       .map(({ key, title, body }) => ({ key, title, body }));
 
   function pairPendingPageNotification(
@@ -1334,7 +1340,10 @@ export function initNotificationBridge() {
         .filter((conversation): conversation is Conversation => conversation !== null);
       for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
       const conversations = observed.filter(
-        (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body),
+        (conversation) =>
+          conversation.unread &&
+          !isOwnMessagePreview(conversation.body) &&
+          !isDraftMessagePreview(conversation.body),
       );
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const notifyKeys = new Set(
@@ -1359,8 +1368,12 @@ export function initNotificationBridge() {
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
       notifiedStore.observeRead(
-        new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
-        observed.map(({ key }) => key),
+        new Set(
+          observed
+            .filter(({ unread, body }) => unread && !isDraftMessagePreview(body))
+            .map(({ key }) => key),
+        ),
+        observed.filter(({ body }) => !isDraftMessagePreview(body)).map(({ key }) => key),
         detectedAt,
         listHydrated,
       );
@@ -1371,13 +1384,19 @@ export function initNotificationBridge() {
       // must not evict a tracked signature either. The first hydrated
       // observation primes silently instead.
       const hydrated = conversations.filter(({ body }) => body.length > 0);
-      const routeCandidates = observed.filter(({ body }) => body.length > 0);
+      const routeCandidates = observed.filter(
+        ({ body }) => body.length > 0 && !isDraftMessagePreview(body),
+      );
       // Confirm read state before the signature tracker runs: a thread turning
       // unread again is only a new message if this document had established it
       // was read, and the tracker needs that verdict for the very scan the
       // transition shows up in.
       const hydratedReadKeys = new Set<string>(
-        listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : [],
+        listHydrated
+          ? observed
+              .filter(({ unread, body }) => !unread && !isDraftMessagePreview(body))
+              .map(({ key }) => key)
+          : [],
       );
       clearTimeout(readConfirmationTimer);
       readConfirmationTimer = undefined;
@@ -1432,7 +1451,7 @@ export function initNotificationBridge() {
       const changed = new Set(
         conversationTracker.observe(
           hydrated.map(({ key, body }) => ({ key, signature: body })),
-          observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+          routeCandidates.map(({ key }) => key),
           readObservedKeys,
           readTransitions,
         ),
@@ -1464,7 +1483,7 @@ export function initNotificationBridge() {
       }
       for (const key of pendingArrivalKeys) {
         const row = observed.find((conversation) => conversation.key === key);
-        if (row && !conversations.some((conversation) => conversation.key === key)) {
+        if (row && (!row.unread || isOwnMessagePreview(row.body))) {
           pendingArrivalKeys.delete(key);
         }
       }
@@ -1481,11 +1500,15 @@ export function initNotificationBridge() {
       // fallback (absorbed by the native dedupe) beats routing the click to
       // the wrong conversation or suppressing the unread thread's banner.
       pageNotificationReceipts.discardReadMatches(
-        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        observed.filter(
+          ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body),
+        ),
         detectedAt,
       );
       pendingPageNotifications.discardReadMatches(
-        observed.filter(({ unread, body }) => !unread && body.length > 0),
+        observed.filter(
+          ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body),
+        ),
         detectedAt,
       );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
