@@ -7980,19 +7980,29 @@
       region
     );
   }
-  function findSendButton(box) {
+  function composerControls(box) {
+    const region = composerRegion(box);
+    const controls = /* @__PURE__ */ new Map();
+    if (!region) return controls;
+    for (const button of region.querySelectorAll('button, [role="button"]')) {
+      if (button.hasAttribute("data-carrier-schedule")) continue;
+      controls.set(button, `${button.getAttribute("aria-label") ?? ""}
+${button.innerHTML}`);
+    }
+    return controls;
+  }
+  function findSendButton(box, before) {
     const region = composerRegion(box);
     if (!region) return null;
-    for (const button of region.querySelectorAll(
-      'button[aria-label], [role="button"][aria-label]'
-    )) {
-      if (button.hasAttribute("data-carrier-schedule") || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+    const changed = [];
+    for (const button of region.querySelectorAll('button, [role="button"]')) {
+      if (button.hasAttribute("data-carrier-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
         continue;
-      const label = (button.getAttribute("aria-label") || "").toLowerCase();
-      if (label === "send" || label.includes("press enter to send") || label.includes("send message"))
-        return button;
+      if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
+${button.innerHTML}`)
+        changed.push(button);
     }
-    return null;
+    return changed.length === 1 ? changed[0] ?? null : null;
   }
   function replaceComposerText(box, text) {
     box.focus();
@@ -8091,10 +8101,11 @@
     }
     const deadline = Date.now() + DELIVERY_BUDGET_MS;
     let phase = "waiting";
+    let controls = /* @__PURE__ */ new Map();
     while (true) {
       const box = composer();
       if (box && hasComposerMedia(box)) return false;
-      const button = phase === "inserted" && box ? findSendButton(box) : null;
+      const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
       const snapshot = {
         threadMatches: currentThreadId() === wantedThread,
         composerReady: box !== null,
@@ -8110,6 +8121,7 @@
           break;
         case "insert": {
           if (!box) return false;
+          controls = composerControls(box);
           box.focus();
           if (!document.execCommand("insertText", false, text)) {
             diag("quick-reply.insert", "composer rejected insertText");
@@ -8284,6 +8296,13 @@ ${text}`)) {
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneLabel = () => document.querySelector('[role="main"] [role="log"][aria-label]')?.getAttribute("aria-label")?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+  var paneTitle = (target) => {
+    const link = [...document.querySelectorAll('a[href*="/t/"]')].find(
+      (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target)
+    );
+    if (!link) return null;
+    return [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")].map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase()).find((value) => value.length >= 3) ?? null;
+  };
   var pendingPane = null;
   async function deliverScheduledMessage(message, connectionReady = ready) {
     if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
@@ -8296,7 +8315,7 @@ ${text}`)) {
         (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread)
       );
       if (!link) return "defer";
-      const title = [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")].map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase()).find((value) => value.length >= 3);
+      const title = paneTitle(message.thread);
       if (!title) return "defer";
       pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
       link.click();
@@ -8308,6 +8327,7 @@ ${text}`)) {
     let clicked = false;
     let cleared = false;
     let interrupted = false;
+    let controls = /* @__PURE__ */ new Map();
     const onInput = (event) => {
       if (event.isTrusted) interrupted = true;
     };
@@ -8327,6 +8347,8 @@ ${text}`)) {
           await pause2();
           continue;
         }
+        const title = paneTitle(message.thread);
+        if (!title || !paneLabel().includes(title)) return "defer";
         if (pendingPane?.thread === message.thread) {
           const label = paneLabel();
           if (current === pendingPane.previous || label === pendingPane.label || !label.includes(pendingPane.title) || pendingPane.label.includes(pendingPane.title))
@@ -8336,13 +8358,14 @@ ${text}`)) {
         if (!inserted) {
           if (composerText(current).trim()) return "defer";
           box = current;
+          controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
           await pause2();
           continue;
         }
         if (current !== box || composerText(current) !== message.text) break;
-        const send = findSendButton(current);
+        const send = findSendButton(current, controls);
         if (!send) {
           await pause2();
           continue;

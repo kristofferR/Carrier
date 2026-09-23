@@ -6,7 +6,12 @@ import {
   type QuickReplyPhase,
   type QuickReplySnapshot,
 } from "../lib/quick-reply";
-import { composerText, findSendButton, hasComposerMedia } from "../lib/scheduled-composer";
+import {
+  composerControls,
+  composerText,
+  findSendButton,
+  hasComposerMedia,
+} from "../lib/scheduled-composer";
 import { withComposerDelivery, withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 import { firstShown } from "./conversation-actions";
@@ -51,10 +56,11 @@ async function deliver(path: string, text: string, id: number): Promise<boolean>
 
   const deadline = Date.now() + DELIVERY_BUDGET_MS;
   let phase: QuickReplyPhase = "waiting";
+  let controls = new Map<HTMLElement, string>();
   while (true) {
     const box = composer();
     if (box && hasComposerMedia(box)) return false;
-    const button = phase === "inserted" && box ? findSendButton(box) : null;
+    const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
     const snapshot: QuickReplySnapshot = {
       threadMatches: currentThreadId() === wantedThread,
       composerReady: box !== null,
@@ -71,6 +77,7 @@ async function deliver(path: string, text: string, id: number): Promise<boolean>
         break;
       case "insert": {
         if (!box) return false;
+        controls = composerControls(box);
         box.focus();
         if (!document.execCommand("insertText", false, text)) {
           diag("quick-reply.insert", "composer rejected insertText");

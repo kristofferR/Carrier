@@ -36,7 +36,7 @@ test.skipIf(!chromium)(
       const file = join(directory, "index.html");
       await writeFile(
         file,
-        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="log" aria-label="Conversation with Original person"></div><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
+        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><a href="/messages/t/456/"><span>Original person</span></a><main role="main"><div role="log" aria-label="Conversation with Original person"></div><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
       var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
       window.__CARRIER_SCHEDULED_SEND_AVAILABLE__=true;
       window.__carrierToast=(message)=>warnings.push(message);
@@ -141,7 +141,7 @@ async function fixtures(
       if (document.querySelector("#send")) return;
       const send = document.createElement("button");
       send.id = "send";
-      send.setAttribute("aria-label", "Press Enter to send");
+      send.setAttribute("aria-label", "Enviar mensaje");
       send.addEventListener("click", () => {
         clicks++;
         box.textContent = "";
@@ -249,8 +249,21 @@ async function fixtures(
     );
     history.replaceState(null, "", "/messages/t/456/");
     otherThread.remove();
+    const userTarget = document.createElement("a");
+    userTarget.href = "/messages/t/888/";
+    userTarget.innerHTML = "<span>Third person</span>";
+    document.body.append(userTarget);
+    history.pushState(null, "", userTarget.href);
     assert(
-      "online sends automatically even with the empty composer focused",
+      "user navigation cannot send through the previous conversation pane",
+      (await deliver({ ...message(), thread: "/t/888/" }, () => true)) === "defer" &&
+        !box.innerText.trim() &&
+        clicks === 0,
+    );
+    history.replaceState(null, "", "/messages/t/456/");
+    userTarget.remove();
+    assert(
+      "localized send control submits automatically with the empty composer focused",
       (await deliver(message(), () => true)) === "sent" && clicks === 1,
     );
     clear();

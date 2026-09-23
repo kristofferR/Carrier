@@ -31,24 +31,39 @@ export function hasComposerMedia(box: HTMLElement): boolean {
   );
 }
 
-export function findSendButton(box: HTMLElement): HTMLElement | null {
+/** Capture controls before insertion so the send action can be identified by
+ * the change Messenger makes when text appears, regardless of locale. */
+export function composerControls(box: HTMLElement): Map<HTMLElement, string> {
+  const region = composerRegion(box);
+  const controls = new Map<HTMLElement, string>();
+  if (!region) return controls;
+  for (const button of region.querySelectorAll<HTMLElement>('button, [role="button"]')) {
+    if (button.hasAttribute("data-carrier-schedule")) continue;
+    controls.set(button, `${button.getAttribute("aria-label") ?? ""}\n${button.innerHTML}`);
+  }
+  return controls;
+}
+
+export function findSendButton(
+  box: HTMLElement,
+  before: Map<HTMLElement, string>,
+): HTMLElement | null {
   const region = composerRegion(box);
   if (!region) return null;
-  for (const button of region.querySelectorAll<HTMLElement>(
-    'button[aria-label], [role="button"][aria-label]',
-  )) {
+  const changed: HTMLElement[] = [];
+  for (const button of region.querySelectorAll<HTMLElement>('button, [role="button"]')) {
     if (
       button.hasAttribute("data-carrier-schedule") ||
+      !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) ||
       !isShown(button) ||
       button.getAttribute("aria-disabled") === "true" ||
       button.matches(":disabled")
     )
       continue;
-    const label = (button.getAttribute("aria-label") || "").toLowerCase();
-    if (label === "send" || label.includes("press enter to send") || label.includes("send message"))
-      return button;
+    if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}\n${button.innerHTML}`)
+      changed.push(button);
   }
-  return null;
+  return changed.length === 1 ? (changed[0] ?? null) : null;
 }
 
 export function replaceComposerText(box: HTMLElement, text: string): boolean {

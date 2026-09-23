@@ -1,5 +1,6 @@
 import { diag, toast } from "../bridge";
 import {
+  composerControls,
   composerRegion,
   composerText,
   findComposer,
@@ -44,6 +45,17 @@ const paneLabel = () =>
     ?.replace(/\s+/g, " ")
     .trim()
     .toLowerCase() ?? "";
+const paneTitle = (target: string) => {
+  const link = [...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].find(
+    (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(target),
+  );
+  if (!link) return null;
+  return (
+    [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")]
+      .map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase())
+      .find((value) => value.length >= 3) ?? null
+  );
+};
 let pendingPane: {
   thread: string;
   previous: HTMLElement | null;
@@ -73,9 +85,7 @@ export async function deliverScheduledMessage(
       (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread),
     );
     if (!link) return "defer";
-    const title = [...(link.closest('[role="row"]') ?? link).querySelectorAll("span")]
-      .map((span) => (span.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase())
-      .find((value) => value.length >= 3);
+    const title = paneTitle(message.thread);
     if (!title) return "defer";
     pendingPane = { thread: message.thread, previous: existing, label: paneLabel(), title };
     link.click();
@@ -88,6 +98,7 @@ export async function deliverScheduledMessage(
   let clicked = false;
   let cleared = false;
   let interrupted = false;
+  let controls = new Map<HTMLElement, string>();
   const onInput = (event: Event) => {
     if (event.isTrusted) interrupted = true;
   };
@@ -107,6 +118,8 @@ export async function deliverScheduledMessage(
         await pause();
         continue;
       }
+      const title = paneTitle(message.thread);
+      if (!title || !paneLabel().includes(title)) return "defer";
       if (pendingPane?.thread === message.thread) {
         const label = paneLabel();
         if (
@@ -121,13 +134,14 @@ export async function deliverScheduledMessage(
       if (!inserted) {
         if (composerText(current).trim()) return "defer";
         box = current;
+        controls = composerControls(box);
         if (!replaceComposerText(box, message.text)) break;
         inserted = true;
         await pause(); // Let Lexical/React render the send control.
         continue;
       }
       if (current !== box || composerText(current) !== message.text) break;
-      const send = findSendButton(current);
+      const send = findSendButton(current, controls);
       if (!send) {
         await pause();
         continue;
