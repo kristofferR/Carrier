@@ -6,7 +6,7 @@ export const syncProcessing = new SyncProcessingProgress(
   () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? undefined,
 );
 
-let stalled = false;
+export let syncProcessingStalled = false;
 let failures = 0;
 let epoch = 0;
 
@@ -16,16 +16,16 @@ export function sampleSyncProcessing(active: boolean) {
   if (snapshot.epoch !== epoch) {
     epoch = snapshot.epoch;
     failures = 0;
-    stalled = false;
+    syncProcessingStalled = false;
   }
   if (snapshot.failed > failures) {
     diag("sync.processing-failed", `failed=${snapshot.failed} pending=${snapshot.pending}`);
   }
   failures = snapshot.failed;
-  if (snapshot.stalled !== stalled) {
-    stalled = snapshot.stalled;
+  if (snapshot.stalled !== syncProcessingStalled) {
+    syncProcessingStalled = snapshot.stalled;
     diag(
-      stalled ? "sync.processing-stalled" : "sync.processing-cleared",
+      syncProcessingStalled ? "sync.processing-stalled" : "sync.processing-cleared",
       `pending=${snapshot.pending} active_ms=${snapshot.oldestActiveMs} omitted=${snapshot.omitted}`,
     );
   }

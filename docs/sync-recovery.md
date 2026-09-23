@@ -78,7 +78,8 @@ three attempts with 30-second observation windows and 15/60-second backoff.
 Transient worker-status or callback failures spend one attempt and retain the
 remaining retries; missing or incompatible APIs stop automatic mutation.
 Read-only worker-status and native-window queries each have an eight-second
-deadline. Expiry abandons the observation and releases Carrier's recovery
+deadline using timers captured before Facebook wraps page scheduling APIs.
+Expiry abandons the observation and releases Carrier's recovery
 invocation for its remaining bounded retries. Late query results cannot reach a
 mutation, and elapsed time is checked again on response in case suspension
 delayed the timeout task. This deadline is deliberately not applied to setup or
@@ -121,6 +122,9 @@ Once an encrypted disconnect has been observed, a missing or malformed state API
 cannot clear it or restart its grace period. It remains a fault until a fresh
 connected notification and RPC reply arrive, or a real account/worker-ID boundary
 starts new observation. Restoring only a cached `true` value is insufficient.
+A new connection-state object also starts fresh connection observation, including
+dedicated workers that reuse the same ID. A missing state API alone does not
+erase the previously observed disconnect.
 A ready backend or remembered encrypted connection also starts a 90-second
 verification deadline while fresh proof is absent. Replacing a worker gives it
 new observation grace, but cached `true` and heartbeat-only fallback cannot
@@ -263,7 +267,11 @@ committed to the page's database. Carrier observes the existing
 payloads. Recovery snapshots include pending, completed, failed, and omitted
 counts plus the oldest pending batch's active time. A failed batch or one still
 pending after two minutes of observed foreground, online, awake time produces a
-diagnostic. Idle conversations, background time, and suspended timer gaps do not
+diagnostic. A sustained pending batch also shows a sync warning and manual
+**Reload** action even when transport probes stay healthy. Drafts, calls, offline
+state, and rate limiting retain their reload protections. Notification activity
+samples processing and transport; notifications alone never trigger reloads.
+Idle conversations, background time, and suspended timer gaps do not
 establish a processing stall. An unrelated completion cannot clear an older
 pending batch.
 

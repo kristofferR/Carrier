@@ -147,6 +147,14 @@ function deadlineFixture(canRestartSharedWorker?: () => Promise<boolean>) {
   return {
     f: fixture(canRestartSharedWorker, context.Recovery),
     timers,
+    replaceSchedulingAPIs: () => {
+      context.setTimeout = () => {
+        throw new Error("page timer wrapper must not run");
+      };
+      context.clearTimeout = () => {
+        throw new Error("page timer wrapper must not run");
+      };
+    },
     advance: (ms: number, runTimers = true) => {
       now += ms;
       if (!runTimers) return;
@@ -160,6 +168,21 @@ function deadlineFixture(canRestartSharedWorker?: () => Promise<boolean>) {
 }
 
 describe("recovery inspection deadlines", () => {
+  test("inspection keeps its native timers after the page replaces scheduling APIs", async () => {
+    const { f, advance, replaceSchedulingAPIs, timers } = deadlineFixture();
+    replaceSchedulingAPIs();
+    f.modules.MAWWebWorkerSingleton = { getWorkerHealthStatus: () => new Promise(() => {}) };
+    const attempt = f.recovery.recover();
+    advance(8000);
+    expect(await attempt).toBe("inspection-timeout");
+    expect(timers.size).toBe(0);
+    f.currentId = "worker";
+    f.modules.MAWWebWorkerSingleton = {
+      getWorkerHealthStatus: async () => ({ tag: "shared_exists_and_connected" }),
+    };
+    expect(await f.recovery.recover()).toBe("started");
+    expect(f.watchdogCalls).toHaveLength(1);
+  });
   function stalledSetup(canRestartSharedWorker?: () => Promise<boolean>) {
     const value = deadlineFixture(canRestartSharedWorker);
     const { f } = value;

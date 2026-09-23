@@ -500,3 +500,22 @@ test("only fresh encrypted state or a new worker clears a confirmed disconnect",
   await fixture.probe();
   expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
 });
+
+test("a replacement connection state receives startup grace even with the same worker ID", async () => {
+  const fixture = stateProbeFixture();
+  await fixture.probe();
+  fixture.deliver(false);
+  await fixture.probe();
+  await fixture.advance(15_000);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(15_000)).toBe(true);
+  fixture.changeState();
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(15_000)).toBe(false);
+  await fixture.advance(89_999);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(104_999)).toBe(false);
+  await fixture.advance(1);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(105_000)).toBe(true);
+});

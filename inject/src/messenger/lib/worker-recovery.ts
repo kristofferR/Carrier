@@ -22,6 +22,9 @@ export type WorkerRecoveryResult =
   | "inspection-timeout";
 
 const INSPECTION_TIMEOUT_MS = 8_000;
+const nativeSetTimeout = setTimeout.bind(globalThis);
+const nativeClearTimeout = clearTimeout.bind(globalThis);
+const nativeNow = performance.now.bind(performance);
 class InspectionTimeout extends Error {}
 
 type RecoveryPhase =
@@ -36,20 +39,20 @@ type RecoveryPhase =
 
 /** Only read-only queries may be abandoned; setup/termination must stay single-flight. */
 async function inspect(read: () => unknown): Promise<unknown> {
-  const startedAt = performance.now();
+  const startedAt = nativeNow();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       read(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
+        timer = nativeSetTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
       }),
     ]);
     // After suspension a promise can run before the overdue timeout task.
-    if (performance.now() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
+    if (nativeNow() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
     return result;
   } finally {
-    clearTimeout(timer);
+    nativeClearTimeout(timer);
   }
 }
 
@@ -102,7 +105,7 @@ export class FacebookWorkerRecovery {
             callback.length === 3
               ? { callback: callback as Method, scope: owner.accountScope() }
               : undefined;
-          owner.setupStartedAt = performance.now();
+          owner.setupStartedAt = nativeNow();
         } catch (_) {
           owner.lifecycle = undefined;
         }
@@ -133,7 +136,7 @@ export class FacebookWorkerRecovery {
             const retryArgs = [...args];
             retryArgs[4] = "bridgeRecovery";
             owner.scope = owner.accountScope();
-            owner.setupStartedAt = performance.now();
+            owner.setupStartedAt = nativeNow();
             owner.replay = () => Reflect.apply(target, receiver, retryArgs);
           } catch (_) {
             owner.scope = undefined;
@@ -204,7 +207,7 @@ export class FacebookWorkerRecovery {
         !!this.replay &&
         this.scope === startingScope &&
         this.setupStartedAt !== undefined &&
-        performance.now() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
+        nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
         stillPendingAndDisconnected();
       if (pendingSetup && !stalledSetup) return "busy";
       const initialId = currentId.call(state);

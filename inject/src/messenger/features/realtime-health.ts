@@ -126,6 +126,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   };
   let connectionKey = accountKey();
   let connectionWorkerId = workerId();
+  let connectionState = workerConnectionState();
   let connectionRemembered = rememberedConnection(connectionKey);
   let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
@@ -252,13 +253,16 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   const checkConnection = () => {
     const currentKey = accountKey();
     const currentWorkerId = workerId();
+    const currentState = workerConnectionState();
+    const stateChanged = currentState !== undefined && currentState !== connectionState;
     const workerChanged =
       typeof currentWorkerId === "string" &&
       currentWorkerId.length > 0 &&
       currentWorkerId !== connectionWorkerId;
-    if (currentKey !== connectionKey || workerChanged) {
+    if (currentKey !== connectionKey || workerChanged || stateChanged) {
       connectionKey = currentKey;
       connectionWorkerId = currentWorkerId;
+      connectionState = currentState;
       connectionRemembered = rememberedConnection(connectionKey);
       workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
       workerDisconnected = false;

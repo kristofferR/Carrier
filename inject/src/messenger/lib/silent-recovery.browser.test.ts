@@ -17,7 +17,7 @@ test.skipIf(!chromium)(
     try {
       const bundle = await build({
         stdin: {
-          contents: `import { initAutoRefresh } from "../features/auto-refresh"; import { initSyncHealth } from "../features/sync-health"; import { workerRecovery } from "../features/worker-recovery"; (${runFixtures.toString()})(initAutoRefresh, initSyncHealth, workerRecovery);`,
+          contents: `import { initAutoRefresh } from "../features/auto-refresh"; import { initSyncHealth } from "../features/sync-health"; import { workerRecovery } from "../features/worker-recovery"; import { syncProcessing } from "../features/sync-processing"; (${runFixtures.toString()})(initAutoRefresh, initSyncHealth, workerRecovery, syncProcessing);`,
           resolveDir: import.meta.dir,
         },
         bundle: true,
@@ -67,6 +67,7 @@ async function runFixtures(
   initRecovery: () => void,
   initHealth: () => void,
   adapter: { observeSetupExports: (value: unknown) => void },
+  processing: { observeLogger: (value: unknown) => void },
 ) {
   const result = document.getElementById("result")!;
   const assert = (name: string, condition: boolean) => {
@@ -287,6 +288,53 @@ async function runFixtures(
     };
     for (let i = 0; i < 15; i++) await tick();
     assert("fresh replacement replenishes the episode", reports.at(-1) === "ok");
+    const logger = {
+      start(_id: number) {},
+      endSuccess(_id: number) {},
+      endFailure(_id: number) {},
+    };
+    processing.observeLogger(logger);
+    logger.start(1);
+    window.__carrierOnNotification?.();
+    for (let i = 0; i < 25; i++) await tick();
+    const processingBanner = document.getElementById("carrier-sync-banner");
+    assert("stalled processing is visible despite healthy transport", !!processingBanner);
+    assert(
+      "processing warning does not claim a broken connection",
+      processingBanner?.textContent?.includes("slow to update") === true,
+    );
+    const reload = processingBanner?.querySelector<HTMLButtonElement>("[data-carrier-reload]");
+    assert("processing stall offers manual reload", !!reload && !reload.hidden && !reload.disabled);
+    assert(
+      "processing stall does not offer an ineffective worker reconnect",
+      !processingBanner?.querySelector("button:not([hidden]):not([data-carrier-reload])"),
+    );
+    assert(
+      "processing stall never reloads or repairs automatically",
+      performance.timeOrigin === origin && recoveries === 3,
+    );
+    composer.textContent = "Preserve this draft";
+    await tick();
+    assert("processing reload protects drafts", reload?.disabled === true);
+    composer.textContent = "";
+    window.__carrierInCall = true;
+    await tick();
+    assert("processing reload protects calls", reload?.disabled === true);
+    window.__carrierInCall = false;
+    logger.start(2);
+    logger.endSuccess(2);
+    await tick();
+    assert(
+      "unrelated completion cannot clear the processing warning",
+      !!document.getElementById("carrier-sync-banner"),
+    );
+    logger.endSuccess(1);
+    await tick();
+    await tick();
+    assert(
+      "draining the stalled batch clears the warning",
+      !document.getElementById("carrier-sync-banner"),
+    );
     modules.MAWBridgeSendAndReceive = { sendAndReceive: async () => {} };
     for (let i = 0; i < 16; i++) await tick();
     let bridgeRepairs = 0;

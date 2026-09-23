@@ -436,22 +436,25 @@
     return typeof candidate === "function" ? candidate : void 0;
   }
   var INSPECTION_TIMEOUT_MS = 8e3;
+  var nativeSetTimeout = setTimeout.bind(globalThis);
+  var nativeClearTimeout = clearTimeout.bind(globalThis);
+  var nativeNow = performance.now.bind(performance);
   var InspectionTimeout = class extends Error {
   };
   async function inspect(read) {
-    const startedAt = performance.now();
+    const startedAt = nativeNow();
     let timer;
     try {
       const result = await Promise.race([
         read(),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
+          timer = nativeSetTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
         })
       ]);
-      if (performance.now() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
+      if (nativeNow() - startedAt >= INSPECTION_TIMEOUT_MS) throw new InspectionTimeout();
       return result;
     } finally {
-      clearTimeout(timer);
+      nativeClearTimeout(timer);
     }
   }
   function hasSoleMessengerWindow(value) {
@@ -488,7 +491,7 @@
           try {
             const callback = args[0];
             owner.lifecycle = result === void 0 && args.length === 1 && typeof callback === "function" && callback.length === 3 ? { callback, scope: owner.accountScope() } : void 0;
-            owner.setupStartedAt = performance.now();
+            owner.setupStartedAt = nativeNow();
           } catch (_) {
             owner.lifecycle = void 0;
           }
@@ -513,7 +516,7 @@
               const retryArgs = [...args];
               retryArgs[4] = "bridgeRecovery";
               owner.scope = owner.accountScope();
-              owner.setupStartedAt = performance.now();
+              owner.setupStartedAt = nativeNow();
               owner.replay = () => Reflect.apply(target, receiver, retryArgs);
             } catch (_) {
               owner.scope = void 0;
@@ -567,7 +570,7 @@
         const connectionState = pendingSetup ? currentConnectionState() : void 0;
         const connected = method(connectionState, "isConnected");
         const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
-        const stalledSetup = pendingSetup && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && performance.now() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
+        const stalledSetup = pendingSetup && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
         if (pendingSetup && !stalledSetup) return "busy";
         const initialId = currentId.call(state2);
         if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
@@ -1141,6 +1144,7 @@
     };
     let connectionKey = accountKey();
     let connectionWorkerId = workerId();
+    let connectionState = workerConnectionState();
     let connectionRemembered = rememberedConnection(connectionKey);
     let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
@@ -1231,10 +1235,13 @@
     const checkConnection = () => {
       const currentKey = accountKey();
       const currentWorkerId = workerId();
+      const currentState = workerConnectionState();
+      const stateChanged = currentState !== void 0 && currentState !== connectionState;
       const workerChanged = typeof currentWorkerId === "string" && currentWorkerId.length > 0 && currentWorkerId !== connectionWorkerId;
-      if (currentKey !== connectionKey || workerChanged) {
+      if (currentKey !== connectionKey || workerChanged || stateChanged) {
         connectionKey = currentKey;
         connectionWorkerId = currentWorkerId;
+        connectionState = currentState;
         connectionRemembered = rememberedConnection(connectionKey);
         workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
         workerDisconnected = false;
@@ -1345,8 +1352,8 @@
   var NETWORK_RESTORATION_GRACE_MS = 15e3;
   function createSilentRecovery(options) {
     const budget = new SilentRecoveryBudget();
-    const nativeSetTimeout3 = window.setTimeout.bind(window);
-    const nativeClearTimeout2 = window.clearTimeout.bind(window);
+    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeClearTimeout3 = window.clearTimeout.bind(window);
     const now = performance.now.bind(performance);
     const wallNow = Date.now.bind(Date);
     let lastTickAt = wallNow();
@@ -1466,15 +1473,15 @@
         );
       };
       restartRunningDeadline = () => {
-        nativeClearTimeout2(timeout);
-        timeout = nativeSetTimeout3(expire, SILENT_RECOVERY_TIMEOUT_MS);
+        nativeClearTimeout3(timeout);
+        timeout = nativeSetTimeout4(expire, SILENT_RECOVERY_TIMEOUT_MS);
       };
       restartRunningDeadline();
       void workerRecovery.recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
         budget.attemptCount >= 2 || busySince !== void 0 && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS
       ).then((result) => {
-        nativeClearTimeout2(timeout);
+        nativeClearTimeout3(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -1515,7 +1522,7 @@
         }
         options.check();
       }).catch(() => {
-        nativeClearTimeout2(timeout);
+        nativeClearTimeout3(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -1643,7 +1650,7 @@
   var syncProcessing = new SyncProcessingProgress(
     () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? void 0
   );
-  var stalled = false;
+  var syncProcessingStalled = false;
   var failures = 0;
   var epoch = 0;
   function sampleSyncProcessing(active) {
@@ -1651,16 +1658,16 @@
     if (snapshot.epoch !== epoch) {
       epoch = snapshot.epoch;
       failures = 0;
-      stalled = false;
+      syncProcessingStalled = false;
     }
     if (snapshot.failed > failures) {
       diag("sync.processing-failed", `failed=${snapshot.failed} pending=${snapshot.pending}`);
     }
     failures = snapshot.failed;
-    if (snapshot.stalled !== stalled) {
-      stalled = snapshot.stalled;
+    if (snapshot.stalled !== syncProcessingStalled) {
+      syncProcessingStalled = snapshot.stalled;
       diag(
-        stalled ? "sync.processing-stalled" : "sync.processing-cleared",
+        syncProcessingStalled ? "sync.processing-stalled" : "sync.processing-cleared",
         `pending=${snapshot.pending} active_ms=${snapshot.oldestActiveMs} omitted=${snapshot.omitted}`
       );
     }
@@ -1675,8 +1682,8 @@
       performance.now.bind(performance)
     );
     const documentEpochMs = Math.floor(performance.timeOrigin);
-    const nativeSetTimeout3 = window.setTimeout.bind(window);
-    const nativeNow = performance.now.bind(performance);
+    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeNow2 = performance.now.bind(performance);
     let reloadRequestedAt;
     let unloadObserved = false;
     window.addEventListener("beforeunload", () => {
@@ -1774,7 +1781,7 @@
               visible && document.readyState === "complete" && contentPresent && isMessengerContentPath(location.pathname)
             ),
             document_epoch_ms: documentEpochMs,
-            document_age_ms: Math.round(nativeNow()),
+            document_age_ms: Math.round(nativeNow2()),
             visible,
             focused: document.hasFocus(),
             content_page: isMessengerContentPath(location.pathname)
@@ -1801,14 +1808,14 @@
     const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
       const processing = sampleSyncProcessing(processingActive());
-      const snapshot = `age=${Math.round(nativeNow())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
+      const snapshot = `age=${Math.round(nativeNow2())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
       await Promise.race([
         invoke("plugin:event|emit", {
           event: "carrier:diag",
           payload: { key: "recovery.snapshot", msg: snapshot }
         })?.catch?.(() => {
         }),
-        new Promise((resolve) => nativeSetTimeout3(resolve, 500))
+        new Promise((resolve) => nativeSetTimeout4(resolve, 500))
       ]);
     };
     window.__carrierCaptureRecovery = captureRecovery;
@@ -1859,12 +1866,12 @@
       }
       pending = false;
       if (reloadRequestedAt === void 0) {
-        reloadRequestedAt = nativeNow();
+        reloadRequestedAt = nativeNow2();
         unloadObserved = false;
-        nativeSetTimeout3(() => {
+        nativeSetTimeout4(() => {
           diag(
             "sync.reload-unfinished",
-            `same document alive ${Math.round(nativeNow() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
+            `same document alive ${Math.round(nativeNow2() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
           );
           reloadRequestedAt = void 0;
         }, 15e3);
@@ -2042,8 +2049,8 @@
   var nativeReflectApply = Reflect.apply;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
-  var nativeSetTimeout = globalThis.setTimeout;
-  var nativeClearTimeout = globalThis.clearTimeout;
+  var nativeSetTimeout2 = globalThis.setTimeout;
+  var nativeClearTimeout2 = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -2061,7 +2068,7 @@
     return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        nativeReflectApply(nativeClearTimeout, globalThis, [timer]);
+        nativeReflectApply(nativeClearTimeout2, globalThis, [timer]);
         nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
@@ -2089,7 +2096,7 @@
         ]);
       };
       nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
-      timer = nativeReflectApply(nativeSetTimeout, globalThis, [
+      timer = nativeReflectApply(nativeSetTimeout2, globalThis, [
         () => {
           cleanup();
           reject(new Error("native download timed out"));
@@ -2142,7 +2149,7 @@
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout2 = window.setTimeout;
+  var nativeSetTimeout3 = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -2588,7 +2595,7 @@
         focusedIndex = 0;
         const firstItem = menuItems[0];
         if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout2, window, [
+        nativeReflectApply3(nativeSetTimeout3, window, [
           () => {
             nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
             nativeReflectApply3(nativeAddEventListener2, document, [
@@ -8434,24 +8441,25 @@ ${text}`)) {
           label.setAttribute("role", "alert");
           banner.appendChild(label);
         }
-        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : recoveryFailed ? "Messenger could not reconnect. Chats may be out of date." : "⚠ Messenger sync is broken — chats may be out of date";
+        const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : recoveryFailed ? "Messenger could not reconnect. Chats may be out of date." : syncProcessingStalled ? "Messenger is slow to update messages. Chats may be out of date." : "⚠ Messenger sync is broken — chats may be out of date";
         if (label.textContent !== message) label.textContent = message;
-        let retry = banner.querySelector("button");
+        const buttonStyle = {
+          background: "#1c1e21",
+          color: "#fff",
+          border: "none",
+          borderRadius: "6px",
+          padding: "6px 10px",
+          font: "inherit",
+          flexShrink: "0",
+          cursor: "pointer",
+          pointerEvents: "auto"
+        };
+        let retry = banner.querySelector("button:not([data-carrier-reload])");
         if ((limited || recoveryFailed) && !retry) {
           retry = document.createElement("button");
           retry.type = "button";
           retry.textContent = "Try again";
-          Object.assign(retry.style, {
-            background: "#1c1e21",
-            color: "#fff",
-            border: "none",
-            borderRadius: "6px",
-            padding: "6px 10px",
-            font: "inherit",
-            flexShrink: "0",
-            cursor: "pointer",
-            pointerEvents: "auto"
-          });
+          Object.assign(retry.style, buttonStyle);
           retry.addEventListener("click", (event) => {
             if (!event.isTrusted || manualRetryPending) return;
             if (sawRateLimit) retryRateLimitNow();
@@ -8468,19 +8476,19 @@ ${text}`)) {
           retry.textContent = limited ? retry.disabled ? "Retry pending…" : "Try again" : "Reconnect";
         }
         let reload = banner.querySelector("[data-carrier-reload]");
-        if (recoveryFailed && !reload) {
+        if ((recoveryFailed || syncProcessingStalled) && !reload) {
           reload = document.createElement("button");
           reload.type = "button";
           reload.dataset.carrierReload = "";
           reload.textContent = "Reload";
-          if (retry) reload.style.cssText = retry.style.cssText;
+          Object.assign(reload.style, buttonStyle);
           reload.addEventListener("click", (event) => {
             if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
           });
           banner.appendChild(reload);
         }
         if (reload) {
-          reload.hidden = limited || !recoveryFailed;
+          reload.hidden = limited || !recoveryFailed && !syncProcessingStalled;
           reload.disabled = protectedNow || !navigator.onLine;
         }
         if (existing) return;
@@ -8523,7 +8531,7 @@ ${text}`)) {
     window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
       recoveryFailed = event.detail === true;
       if (sawRateLimit) showSyncBanner(true);
-      else if (recoveryFailed || degraded) showSyncBanner();
+      else if (recoveryFailed || degraded || syncProcessingStalled) showSyncBanner();
       else hideSyncBanner();
     });
     window.addEventListener("offline", () => tracker.abandonOutstanding());
@@ -8562,10 +8570,10 @@ ${text}`)) {
       if (!document.hidden && isMessengerContentPath(location.pathname)) {
         stuckLoading.observe(loadingSpinnerVisible());
       }
-      const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
+      const degradedNow = tracker.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
       if (degradedNow && !degraded) {
         degraded = true;
-        const reason = stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
+        const reason = syncProcessingStalled ? "message processing stalled" : stuckLoading.persistent() ? "loading UI stuck" : `requests failing (${tracker.summary(now)})`;
         diag("sync.stalled", `messenger sync degraded: ${reason}`);
         emitSyncAlert("degraded");
       } else if (!degradedNow && degraded) {

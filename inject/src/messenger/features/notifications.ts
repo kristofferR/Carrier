@@ -606,8 +606,8 @@ export function initNotificationBridge() {
       }
       if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
     }
-    // Nudge the auto-refresh so the conversation view catches up even when
-    // Facebook's in-WebView live sync stalls.
+    // Recheck transport and processing after new-message activity. Receiving a
+    // notification alone does not prove a stalled view or justify a reload.
     try {
       window.__carrierOnNotification?.();
     } catch (_) {}

@@ -35,6 +35,7 @@ import {
   reportRateLimit,
   retryRateLimitNow,
 } from "./rate-limit";
+import { syncProcessingStalled } from "./sync-processing";
 
 // Hidden/minimized webviews throttle or suspend page timers on every
 // platform, so this interval alone would lag in the background. The native
@@ -268,24 +269,27 @@ export function initSyncHealth() {
           : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish."
         : recoveryFailed
           ? "Messenger could not reconnect. Chats may be out of date."
-          : "⚠ Messenger sync is broken — chats may be out of date";
+          : syncProcessingStalled
+            ? "Messenger is slow to update messages. Chats may be out of date."
+            : "⚠ Messenger sync is broken — chats may be out of date";
       if (label.textContent !== message) label.textContent = message;
-      let retry = banner.querySelector("button");
+      const buttonStyle = {
+        background: "#1c1e21",
+        color: "#fff",
+        border: "none",
+        borderRadius: "6px",
+        padding: "6px 10px",
+        font: "inherit",
+        flexShrink: "0",
+        cursor: "pointer",
+        pointerEvents: "auto",
+      };
+      let retry = banner.querySelector<HTMLButtonElement>("button:not([data-carrier-reload])");
       if ((limited || recoveryFailed) && !retry) {
         retry = document.createElement("button");
         retry.type = "button";
         retry.textContent = "Try again";
-        Object.assign(retry.style, {
-          background: "#1c1e21",
-          color: "#fff",
-          border: "none",
-          borderRadius: "6px",
-          padding: "6px 10px",
-          font: "inherit",
-          flexShrink: "0",
-          cursor: "pointer",
-          pointerEvents: "auto",
-        });
+        Object.assign(retry.style, buttonStyle);
         retry.addEventListener("click", (event) => {
           if (!event.isTrusted || manualRetryPending) return;
           if (sawRateLimit) retryRateLimitNow();
@@ -310,19 +314,19 @@ export function initSyncHealth() {
           : "Reconnect";
       }
       let reload = banner.querySelector<HTMLButtonElement>("[data-carrier-reload]");
-      if (recoveryFailed && !reload) {
+      if ((recoveryFailed || syncProcessingStalled) && !reload) {
         reload = document.createElement("button");
         reload.type = "button";
         reload.dataset.carrierReload = "";
         reload.textContent = "Reload";
-        if (retry) reload.style.cssText = retry.style.cssText;
+        Object.assign(reload.style, buttonStyle);
         reload.addEventListener("click", (event) => {
           if (event.isTrusted) window.dispatchEvent(new Event(SILENT_RECOVERY_RELOAD_EVENT));
         });
         banner.appendChild(reload);
       }
       if (reload) {
-        reload.hidden = limited || !recoveryFailed;
+        reload.hidden = limited || (!recoveryFailed && !syncProcessingStalled);
         reload.disabled = protectedNow || !navigator.onLine;
       }
       if (existing) return;
@@ -363,7 +367,7 @@ export function initSyncHealth() {
   window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
     recoveryFailed = (event as CustomEvent<unknown>).detail === true;
     if (sawRateLimit) showSyncBanner(true);
-    else if (recoveryFailed || degraded) showSyncBanner();
+    else if (recoveryFailed || degraded || syncProcessingStalled) showSyncBanner();
     else hideSyncBanner();
   });
 
@@ -415,12 +419,14 @@ export function initSyncHealth() {
     if (!document.hidden && isMessengerContentPath(location.pathname)) {
       stuckLoading.observe(loadingSpinnerVisible());
     }
-    const degradedNow = tracker.degraded(now) || stuckLoading.persistent();
+    const degradedNow = tracker.degraded(now) || stuckLoading.persistent() || syncProcessingStalled;
     if (degradedNow && !degraded) {
       degraded = true;
-      const reason = stuckLoading.persistent()
-        ? "loading UI stuck"
-        : `requests failing (${tracker.summary(now)})`;
+      const reason = syncProcessingStalled
+        ? "message processing stalled"
+        : stuckLoading.persistent()
+          ? "loading UI stuck"
+          : `requests failing (${tracker.summary(now)})`;
       diag("sync.stalled", `messenger sync degraded: ${reason}`);
       emitSyncAlert("degraded");
     } else if (!degradedNow && degraded) {
