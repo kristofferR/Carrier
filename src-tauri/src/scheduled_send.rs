@@ -169,13 +169,18 @@ impl Store {
                     if item.status == Status::Sending {
                         return Err("This message is already being submitted.".into());
                     }
+                    let status = if item.status == Status::Draft {
+                        Status::Draft
+                    } else {
+                        Status::Scheduled
+                    };
                     *item = Message {
                         id,
                         account: request.account.clone(),
                         thread,
                         text: text.into(),
                         due,
-                        status: Status::Scheduled,
+                        status,
                         notified: false,
                         toast_seen: false,
                     };
@@ -211,7 +216,11 @@ impl Store {
                 item.status = Status::Scheduled;
             }
             "claim" => {
-                if label != "main" || items.iter().any(|m| m.status == Status::Sending) {
+                if label != "main"
+                    || items
+                        .iter()
+                        .any(|m| m.account == request.account && m.status == Status::Sending)
+                {
                     return Ok(None);
                 }
                 let item = items
@@ -525,6 +534,52 @@ mod tests {
         let reloaded = Store::load(path);
         assert_eq!(reloaded.items[0].status, Status::Scheduled);
         assert_eq!(reloaded.items[0].due, 2_000);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn rescheduling_a_recovered_draft_still_requires_arming() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let mut store = Store::load(dir.join("messages.json"));
+        let mut draft = message();
+        draft.status = Status::Draft;
+        store.commit(vec![draft]).unwrap();
+        let mut req = Request {
+            request: "a".repeat(32),
+            op: "save".into(),
+            account: "123".into(),
+            id: Some("a".into()),
+            thread: Some("/t/456/".into()),
+            text: Some("hello".into()),
+            due: Some(2_000),
+        };
+        store.apply(&req, "main", 1_000).unwrap();
+        assert_eq!(store.items[0].status, Status::Draft);
+        req.op = "claim".into();
+        assert_eq!(store.apply(&req, "main", 2_000).unwrap(), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn a_stale_claim_from_another_account_does_not_block_delivery() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let mut store = Store::load(dir.join("messages.json"));
+        let mut foreign = message();
+        foreign.status = Status::Sending;
+        let mut current = message();
+        current.id = "b".into();
+        current.account = "999".into();
+        store.commit(vec![foreign, current]).unwrap();
+        let req = Request {
+            request: "a".repeat(32),
+            op: "claim".into(),
+            account: "999".into(),
+            id: Some("b".into()),
+            thread: None,
+            text: None,
+            due: None,
+        };
+        assert_eq!(store.apply(&req, "main", 1_000).unwrap(), Some("b".into()));
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

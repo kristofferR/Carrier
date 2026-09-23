@@ -215,6 +215,8 @@ impl Default for Settings {
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
+    /// Fixed at process startup; the setting itself takes effect after restart.
+    pub(crate) scheduled_send_available: bool,
     /// Serializes every settings read-modify-write operation before it enters
     /// blocking/native work. Awaiting this queue avoids both stale snapshots and
     /// one waiting OS thread per mutation during a burst.

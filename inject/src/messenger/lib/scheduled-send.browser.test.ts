@@ -35,6 +35,7 @@ test.skipIf(!chromium)(
         file,
         `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
       var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
+      window.__CARRIER_SCHEDULED_SEND_AVAILABLE__=true;
       window.__carrierToast=(message)=>warnings.push(message);
       window.__TAURI_INTERNALS__={invoke:async()=>{}};
       var carrierScheduledSend=async function(request){
@@ -43,7 +44,7 @@ test.skipIf(!chromium)(
         if(request.op==='save') {
           saved=request.id || 'saved-fixture';
           if(request.id) {
-            scheduleItems.forEach(item=>{if(item.id===request.id){item.due=request.due;item.status='scheduled';}});
+            scheduleItems.forEach(item=>{if(item.id===request.id){item.due=request.due;if(item.status!=='draft')item.status='scheduled';}});
           } else {
             scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
           }
@@ -356,6 +357,41 @@ async function fixtures(
         page.scheduleItems[0]?.status === "scheduled" &&
         box.innerText === "Another draft",
     );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    page.scheduleItems = [
+      { ...message(), id: "recovered", status: "draft", text: "Recovered draft" },
+    ];
+    box.textContent = "Recovered draft";
+    await settle();
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    const opsBeforeRecovered = page.scheduleOps.length;
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    await settle();
+    assert(
+      "recovered draft clears before arming",
+      page.scheduleOps.slice(opsBeforeRecovered).join(",") === "save,arm" &&
+        page.scheduleItems[0]?.status === "scheduled" &&
+        !box.innerText.trim(),
+    );
+    window.__CARRIER_SETTINGS__ = { multi_instance: true };
+    box.textContent = "Another draft";
+    await settle();
+    const opsBeforeSettingChange = page.scheduleOps.length;
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    assert(
+      "pending restart does not stop polling in the current process",
+      page.scheduleOps.slice(opsBeforeSettingChange).includes("list"),
+    );
+    icon()?.click();
+    await settle();
+    assert(
+      "pending restart keeps scheduling available",
+      !!document.querySelector(".carrier-schedule-panel"),
+    );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     page.scheduleItems = [{ ...message(), status: "missed", due: Date.now() - 120_001 }];
     document.dispatchEvent(new Event("visibilitychange"));
     await settle();

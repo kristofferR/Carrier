@@ -1104,6 +1104,7 @@ pub fn run() {
         )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
+            scheduled_send_available: single_instance,
             settings_worker: tokio::sync::Mutex::new(()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),

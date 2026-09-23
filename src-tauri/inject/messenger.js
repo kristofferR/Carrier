@@ -8456,6 +8456,12 @@ ${text}`)) {
       const expectedBox = sourceBox;
       const expectedThread = panelThread;
       const expectedText = sourceText;
+      const recoveredDraft = editingItem?.status === "draft";
+      if (recoveredDraft && (editingItem.thread !== expectedThread || !expectedBox?.isConnected || composerText(expectedBox) !== editingItem.text || hasComposerMedia(expectedBox))) {
+        busy = false;
+        toast("Open the original conversation with its unchanged draft to schedule this message.");
+        return;
+      }
       try {
         const result = await request({
           op: "save",
@@ -8465,14 +8471,15 @@ ${text}`)) {
           due
         });
         if (!result.saved) throw new Error("Message was not saved.");
-        if (!editingItem) {
-          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current && composerText(expectedBox) === expectedText && !hasComposerMedia(expectedBox);
+        if (!editingItem || recoveredDraft) {
+          const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
+          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
           if (!unchanged || !expectedBox || !replaceComposerText(expectedBox, "") || composerText(expectedBox).trim()) {
-            await request({ op: "cancel", id: result.saved });
+            if (!editingItem) await request({ op: "cancel", id: result.saved });
             throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
           }
         }
-        if (!editingItem) await request({ op: "arm", id: result.saved });
+        if (!editingItem || recoveredDraft) await request({ op: "arm", id: result.saved });
         close();
         toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
       } catch (error) {
@@ -8621,7 +8628,7 @@ ${text}`)) {
         close(true);
         return;
       }
-      if (window.__CARRIER_SETTINGS__?.multi_instance) {
+      if (window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false) {
         toast("Scheduled sending is unavailable with multiple app instances enabled.");
         return;
       }
@@ -8697,7 +8704,8 @@ ${text}`)) {
       syncColors();
     }
     const poll = async () => {
-      if (polling || busy || !account() || window.__CARRIER_SETTINGS__?.multi_instance) return;
+      if (polling || busy || !account() || window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false)
+        return;
       polling = true;
       try {
         await request({ op: "list" });

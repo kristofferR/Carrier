@@ -136,6 +136,8 @@ interface Window {
     invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
   };
   __CARRIER_SETTINGS__?: CarrierSettings;
+  /** Scheduled delivery availability fixed when the native process starts. */
+  __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Native watchdog generation baked into this Messenger window. */
   __CARRIER_HEARTBEAT_ID__?: number;
 

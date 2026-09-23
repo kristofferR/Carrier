@@ -261,6 +261,18 @@ export function initScheduledSend() {
     const expectedBox = sourceBox;
     const expectedThread = panelThread;
     const expectedText = sourceText;
+    const recoveredDraft = editingItem?.status === "draft";
+    if (
+      recoveredDraft &&
+      (editingItem.thread !== expectedThread ||
+        !expectedBox?.isConnected ||
+        composerText(expectedBox) !== editingItem.text ||
+        hasComposerMedia(expectedBox))
+    ) {
+      busy = false;
+      toast("Open the original conversation with its unchanged draft to schedule this message.");
+      return;
+    }
     try {
       const result = await request({
         op: "save",
@@ -270,13 +282,14 @@ export function initScheduledSend() {
         due,
       });
       if (!result.saved) throw new Error("Message was not saved.");
-      if (!editingItem) {
+      if (!editingItem || recoveredDraft) {
         // Never clear a changed draft; cancel the persisted schedule instead.
+        const textToClear = recoveredDraft ? (editingItem?.text ?? "") : expectedText;
         const unchanged =
           expectedBox?.isConnected &&
           thread() === expectedThread &&
           account() === current &&
-          composerText(expectedBox) === expectedText &&
+          composerText(expectedBox) === textToClear &&
           !hasComposerMedia(expectedBox);
         if (
           !unchanged ||
@@ -284,13 +297,12 @@ export function initScheduledSend() {
           !replaceComposerText(expectedBox, "") ||
           composerText(expectedBox).trim()
         ) {
-          await request({ op: "cancel", id: result.saved });
+          if (!editingItem) await request({ op: "cancel", id: result.saved });
           throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
         }
       }
-      // New messages need a composer-clear handshake. Rescheduling an existing
-      // item is armed by the save itself.
-      if (!editingItem) await request({ op: "arm", id: result.saved });
+      // Recovered drafts also need the composer-clear handshake before arming.
+      if (!editingItem || recoveredDraft) await request({ op: "arm", id: result.saved });
       close();
       toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
     } catch (error) {
@@ -452,7 +464,7 @@ export function initScheduledSend() {
       close(true);
       return;
     }
-    if (window.__CARRIER_SETTINGS__?.multi_instance) {
+    if (window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false) {
       toast("Scheduled sending is unavailable with multiple app instances enabled.");
       return;
     }
@@ -535,7 +547,8 @@ export function initScheduledSend() {
     syncColors();
   }
   const poll = async () => {
-    if (polling || busy || !account() || window.__CARRIER_SETTINGS__?.multi_instance) return;
+    if (polling || busy || !account() || window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false)
+      return;
     polling = true;
     try {
       await request({ op: "list" });
