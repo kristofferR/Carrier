@@ -110,6 +110,9 @@ test("draft state follows the mounted preview when a thread has duplicate rows",
   prefixes.rememberDraft("123", draft, "Draft: reply", true);
   prefixes.rememberDraft("123", real, "Incoming message", false);
   expect(prefixes.isDraft("123", "Draft: reply")).toBe(true);
+  prefixes.rememberDraft("123", draft, "ready for review", true);
+  expect(prefixes.isDraft("123", "Utkast: ready for review")).toBe(true);
+  expect(prefixes.isDraft("123", "Nachricht: different message")).toBe(false);
   expect(prefixes.isDraft("123", "Incoming message")).toBe(false);
   prefixes.rememberDraft("123", draft, "Incoming message", false);
   expect(prefixes.isDraft("123", "Draft: reply")).toBe(false);

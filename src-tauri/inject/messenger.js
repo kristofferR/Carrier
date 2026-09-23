@@ -3551,9 +3551,11 @@
     }
     isDraft(thread, body) {
       const preview = body.replace(/\s+/g, " ").trim();
-      return [...this.drafts.get(thread)?.values() ?? []].some(
-        (snippet) => snippet.slice(0, 240) === preview || `Draft: ${snippet}`.slice(0, 240) === preview
-      );
+      return [...this.drafts.get(thread)?.values() ?? []].some((snippet) => {
+        if (snippet.slice(0, 240) === preview) return true;
+        const label = /^[^:]{1,40}: /u.exec(preview)?.[0];
+        return label !== void 0 && `${label}${snippet}`.slice(0, 240) === preview;
+      });
     }
     remember(thread, original, displayed) {
       this.entries.delete(thread);
@@ -7252,6 +7254,14 @@
     };
     window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
+    const cancelFallbackForDraftReceipt = (threadId, body) => {
+      if (!body) return;
+      const pending = notificationCorrelations.getRow(threadId);
+      if (!pending || pending.confirmedRepeat || !notificationTextMatches("", body, "", pending.body))
+        return;
+      clearTimeout(pending.timer);
+      notificationCorrelations.removeRow(threadId);
+    };
     let currentPageRouteCandidates = () => [];
     const waitForPageMatchWhileFiltering = (signal) => {
       const cancel = new AbortController();
@@ -7321,6 +7331,7 @@
         if (!pageMatch.draft || !threadId) return;
         pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
         pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+        cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
       };
       if (!s.mute_notifications) {
         const hidePreviewAtConstruction = s.hide_notification_preview === true;
@@ -7403,6 +7414,7 @@
             pageNotificationReceipts.add(originalTitle, originalBody, id);
             if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
               pageNotificationReceipts.retainForDraft(id, threadId);
+              cancelFallbackForDraftReceipt(threadId, originalBody);
             }
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");

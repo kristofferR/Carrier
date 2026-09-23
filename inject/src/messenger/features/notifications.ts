@@ -30,6 +30,7 @@ import {
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
   notificationPresentation,
+  notificationTextMatches,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   PendingPageNotificationStore,
@@ -329,6 +330,14 @@ export function initNotificationBridge() {
     deliverable: boolean;
   }
   const notificationCorrelations = new NotificationCorrelationQueue<PendingFallback>();
+  const cancelFallbackForDraftReceipt = (threadId: string, body: string) => {
+    if (!body) return;
+    const pending = notificationCorrelations.getRow(threadId);
+    if (!pending || pending.confirmedRepeat || !notificationTextMatches("", body, "", pending.body))
+      return;
+    clearTimeout(pending.timer);
+    notificationCorrelations.removeRow(threadId);
+  };
   let currentPageRouteCandidates: () => Array<{
     key: string;
     title: string;
@@ -446,6 +455,7 @@ export function initNotificationBridge() {
       if (!pageMatch.draft || !threadId) return;
       pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
       pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+      cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
     };
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
@@ -582,6 +592,7 @@ export function initNotificationBridge() {
           pageNotificationReceipts.add(originalTitle, originalBody, id);
           if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
             pageNotificationReceipts.retainForDraft(id, threadId);
+            cancelFallbackForDraftReceipt(threadId, originalBody);
           }
         }
         const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");

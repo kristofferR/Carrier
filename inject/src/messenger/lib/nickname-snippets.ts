@@ -27,10 +27,13 @@ export class NativeSnippetPrefixes {
 
   isDraft(thread: string, body: string) {
     const preview = body.replace(/\s+/g, " ").trim();
-    return [...(this.drafts.get(thread)?.values() ?? [])].some(
-      (snippet) =>
-        snippet.slice(0, 240) === preview || `Draft: ${snippet}`.slice(0, 240) === preview,
-    );
+    return [...(this.drafts.get(thread)?.values() ?? [])].some((snippet) => {
+      if (snippet.slice(0, 240) === preview) return true;
+      // Messenger renders the draft label separately from snippetRaw, and
+      // localizes it. Match the label's shape against this owner's snippet.
+      const label = /^[^:]{1,40}: /u.exec(preview)?.[0];
+      return label !== undefined && `${label}${snippet}`.slice(0, 240) === preview;
+    });
   }
 
   remember(thread: string, original: string, displayed: string) {
