@@ -9,17 +9,28 @@ import {
 /** Undo only the sender prefix that Carrier rendered, before notification truncation. */
 export class NativeSnippetPrefixes {
   private readonly entries = new Map<string, { original: string; displayed: string }>();
-  private readonly drafts = new Set<string>();
+  private readonly drafts = new Map<string, Map<object, string>>();
 
-  rememberDraft(thread: string, draft: boolean) {
-    this.drafts.delete(thread);
-    if (!/^\d+$/.test(thread) || !draft) return;
-    this.drafts.add(thread);
-    if (this.drafts.size > 500) this.drafts.delete(this.drafts.values().next().value!);
+  rememberDraft(thread: string, owner: object, snippet: string, draft: boolean) {
+    if (!/^\d+$/.test(thread)) return;
+    if (!draft) return this.forgetDraft(thread, owner);
+    const entries = this.drafts.get(thread) ?? new Map<object, string>();
+    entries.set(owner, snippet.replace(/\s+/g, " ").trim());
+    this.drafts.set(thread, entries);
   }
 
-  isDraft(thread: string) {
-    return this.drafts.has(thread);
+  forgetDraft(thread: string, owner: object) {
+    const entries = this.drafts.get(thread);
+    entries?.delete(owner);
+    if (entries?.size === 0) this.drafts.delete(thread);
+  }
+
+  isDraft(thread: string, body: string) {
+    const preview = body.replace(/\s+/g, " ").trim();
+    return [...(this.drafts.get(thread)?.values() ?? [])].some(
+      (snippet) =>
+        snippet.slice(0, 240) === preview || `Draft: ${snippet}`.slice(0, 240) === preview,
+    );
   }
 
   remember(thread: string, original: string, displayed: string) {
@@ -47,7 +58,8 @@ interface SnippetReact {
     snapshot: () => NicknameMode,
   ): NicknameMode;
   useState<T>(initial: T): [T, (value: T) => void];
-  useLayoutEffect(effect: () => void, dependencies: unknown[]): void;
+  useRef<T>(initial: T): { current: T };
+  useLayoutEffect(effect: () => undefined | (() => void), dependencies: unknown[]): void;
   useEffect(effect: () => (() => void) | undefined, dependencies: unknown[]): void;
 }
 type Names = { key: string; snippet: string; info: ConversationNotificationNames | null };
@@ -76,18 +88,21 @@ export function patchNicknameSnippets(
     typeof react?.createElement !== "function" ||
     typeof react.useSyncExternalStore !== "function" ||
     typeof react.useState !== "function" ||
+    typeof react.useRef !== "function" ||
     typeof react.useEffect !== "function" ||
     typeof react.useLayoutEffect !== "function" ||
     typeof i64?.to_string !== "function" ||
     typeof vault?.maybeUnvault !== "function"
   )
     return;
-  const { createElement, useSyncExternalStore, useState, useEffect, useLayoutEffect } = react;
+  const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } =
+    react;
   const { to_string: threadKey } = i64;
   const { maybeUnvault } = vault;
   const component = function CarrierNicknameSnippet(props: unknown) {
     const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
     const [names, setNames] = useState<Names | null>(null);
+    const owner = useRef({}).current;
     const record = props && typeof props === "object" ? (props as Record<string, unknown>) : {};
     const thread = record.thread;
     let key = "",
@@ -134,8 +149,9 @@ export function patchNicknameSnippets(
       prefixes.remember(key, originalPrefix, displayedPrefix);
     }, [key, originalPrefix, displayedPrefix]);
     useLayoutEffect(() => {
-      prefixes.rememberDraft(key, draft);
-    }, [key, draft]);
+      prefixes.rememberDraft(key, owner, snippet, draft);
+      return () => prefixes.forgetDraft(key, owner);
+    }, [key, owner, snippet, draft]);
     return createElement(
       original,
       displayed !== snippet ? { ...record, snippetRaw: displayed } : props,

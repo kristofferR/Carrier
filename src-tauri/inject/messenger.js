@@ -3535,16 +3535,25 @@
   var NativeSnippetPrefixes = class {
     constructor() {
       __publicField(this, "entries", /* @__PURE__ */ new Map());
-      __publicField(this, "drafts", /* @__PURE__ */ new Set());
+      __publicField(this, "drafts", /* @__PURE__ */ new Map());
     }
-    rememberDraft(thread, draft) {
-      this.drafts.delete(thread);
-      if (!/^\d+$/.test(thread) || !draft) return;
-      this.drafts.add(thread);
-      if (this.drafts.size > 500) this.drafts.delete(this.drafts.values().next().value);
+    rememberDraft(thread, owner, snippet, draft) {
+      if (!/^\d+$/.test(thread)) return;
+      if (!draft) return this.forgetDraft(thread, owner);
+      const entries = this.drafts.get(thread) ?? /* @__PURE__ */ new Map();
+      entries.set(owner, snippet.replace(/\s+/g, " ").trim());
+      this.drafts.set(thread, entries);
     }
-    isDraft(thread) {
-      return this.drafts.has(thread);
+    forgetDraft(thread, owner) {
+      const entries = this.drafts.get(thread);
+      entries?.delete(owner);
+      if (entries?.size === 0) this.drafts.delete(thread);
+    }
+    isDraft(thread, body) {
+      const preview = body.replace(/\s+/g, " ").trim();
+      return [...this.drafts.get(thread)?.values() ?? []].some(
+        (snippet) => snippet.slice(0, 240) === preview || `Draft: ${snippet}`.slice(0, 240) === preview
+      );
     }
     remember(thread, original, displayed) {
       this.entries.delete(thread);
@@ -3571,14 +3580,15 @@
     const react = importModule("react");
     const i64 = importModule("I64");
     const vault = importModule("ReStoreVaulting");
-    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
+    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useRef !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
       return;
-    const { createElement, useSyncExternalStore, useState, useEffect, useLayoutEffect } = react;
+    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react;
     const { to_string: threadKey } = i64;
     const { maybeUnvault } = vault;
     const component = function CarrierNicknameSnippet(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
+      const owner = useRef({}).current;
       const record2 = props && typeof props === "object" ? props : {};
       const thread = record2.thread;
       let key = "", snippet = "";
@@ -3617,8 +3627,9 @@
         prefixes.remember(key, originalPrefix, displayedPrefix);
       }, [key, originalPrefix, displayedPrefix]);
       useLayoutEffect(() => {
-        prefixes.rememberDraft(key, draft);
-      }, [key, draft]);
+        prefixes.rememberDraft(key, owner, snippet, draft);
+        return () => prefixes.forgetDraft(key, owner);
+      }, [key, owner, snippet, draft]);
       return createElement(
         original,
         displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
@@ -6260,10 +6271,19 @@
         }
       } catch (_) {
       }
-      if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
-        this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
-      }
+      this.trimOrdinaryReceipts();
       this.persist();
+    }
+    trimOrdinaryReceipts() {
+      let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
+      for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT; ) {
+        if (this.receipts[index].draftThread) {
+          index++;
+        } else {
+          this.receipts.splice(index, 1);
+          ordinary--;
+        }
+      }
     }
     persist() {
       try {
@@ -6285,7 +6305,7 @@
     add(title, body, nativeId, at = Date.now()) {
       this.prune(at);
       this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
-      if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+      this.trimOrdinaryReceipts();
       this.persist();
     }
     recordDelivery(nativeId, delivery) {
@@ -7632,7 +7652,7 @@
         displayTitle: text.title,
         body: text.body,
         displayBody,
-        draft: nativeSnippetPrefixes.isDraft(id),
+        draft: nativeSnippetPrefixes.isDraft(id, displayBody),
         // Every face the row draws, in render order. A photo-less group renders
         // several member images side by side, and no individual one of them is a
         // valid thread icon — taking just the first labelled every message in

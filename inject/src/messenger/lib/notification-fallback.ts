@@ -850,6 +850,18 @@ export class PendingPageNotificationStore {
 export class PageNotificationReceiptStore {
   private readonly receipts: PageNotificationReceipt[] = [];
 
+  private trimOrdinaryReceipts(): void {
+    let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
+    for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT; ) {
+      if (this.receipts[index]!.draftThread) {
+        index++;
+      } else {
+        this.receipts.splice(index, 1);
+        ordinary--;
+      }
+    }
+  }
+
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
     private readonly storageKey = "__carrier_page_notification_receipts__",
@@ -885,9 +897,7 @@ export class PageNotificationReceiptStore {
         }
       }
     } catch (_) {}
-    if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
-      this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
-    }
+    this.trimOrdinaryReceipts();
     this.persist();
   }
 
@@ -912,7 +922,7 @@ export class PageNotificationReceiptStore {
   add(title: string, body: string, nativeId: number, at = Date.now()): void {
     this.prune(at);
     this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
-    if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+    this.trimOrdinaryReceipts();
     this.persist();
   }
 

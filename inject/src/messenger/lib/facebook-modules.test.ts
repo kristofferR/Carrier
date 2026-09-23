@@ -143,6 +143,7 @@ describe("Facebook module interception", () => {
         createElement: (component: unknown, props: unknown) => ({ component, props }),
         useSyncExternalStore: (_subscribe: unknown, snapshot: () => string) => snapshot(),
         useState: (initial: unknown) => [initial, () => {}],
+        useRef: (initial: unknown) => ({ current: initial }),
         useEffect: () => {},
         useLayoutEffect: () => {},
       },

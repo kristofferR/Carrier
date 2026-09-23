@@ -605,6 +605,20 @@ describe("NotifiedSignatureStore", () => {
 });
 
 describe("PageNotificationReceiptStore", () => {
+  test("keeps a draft receipt when later notifications exceed the ordinary receipt limit", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    for (let id = 43; id < 70; id++) receipts.add(`Other ${id}`, `Message ${id}`, id, 1_000);
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 32_000);
+    expect(
+      reloaded
+        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_000)
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
+  });
+
   test("keeps draft delivery evidence until its real preview appears after native dedupe", () => {
     const storage = memoryStorage();
     const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);

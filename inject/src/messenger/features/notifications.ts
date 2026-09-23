@@ -970,7 +970,7 @@ export function initNotificationBridge() {
       displayTitle: text.title,
       body: text.body,
       displayBody,
-      draft: nativeSnippetPrefixes.isDraft(id),
+      draft: nativeSnippetPrefixes.isDraft(id, displayBody),
       // Every face the row draws, in render order. A photo-less group renders
       // several member images side by side, and no individual one of them is a
       // valid thread icon — taking just the first labelled every message in
