@@ -1163,11 +1163,13 @@
       const account = accountKey();
       const id = workerId();
       if (!probeIdentity || probeIdentity.account !== account || probeIdentity.id !== id || probeIdentity.state !== state2) {
+        const replaced = probeIdentity !== void 0;
         probeIdentity = { account, id, state: state2 };
         workerFailures.succeeded();
         verified = void 0;
         stateRouteUnavailableFor = void 0;
         callbacks.onUnknown("worker");
+        if (replaced) callbacks.onWorkerChanged?.();
       }
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
@@ -1901,7 +1903,8 @@
       },
       onUnknown: (source) => {
         realtimeRecovery.withdraw(source);
-      }
+      },
+      onWorkerChanged: () => silentRecovery.resetSettle()
     });
     const silentRecovery = createSilentRecovery({
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),

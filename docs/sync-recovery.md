@@ -107,6 +107,8 @@ disconnected state also does not claim transport health. Probe-failure streaks
 reset when the account, worker ID, or state manager changes. The previous worker's
 failed-probe verdict is withdrawn synchronously at that boundary, even while its
 last probe is pending, so the next recovery tick cannot act on obsolete evidence.
+The boundary also restarts the controller's probe grace without refunding attempts;
+an expired global health deadline cannot bypass that replacement observation window.
 A successful RPC
 with no state delivery instead times out after eight seconds. Listeners are
 removed on success, failure, and timeout; late replies cannot launch fallback

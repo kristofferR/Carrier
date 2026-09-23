@@ -114,6 +114,7 @@ async function runFixtures(
   let backendResets = 0;
   let supported = true;
   let online = true;
+  let workerId = "worker";
   Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
   const connectionListeners = new Set<(value: unknown) => void>();
   const reports: string[] = [];
@@ -139,7 +140,7 @@ async function runFixtures(
       isBackendSetupSettled: () => true,
       isBackendSetupSuccessful: () => successful,
       isBackendSetupInProgress: () => inProgress,
-      getCurrentWorkerID: () => (successful ? "worker" : null),
+      getCurrentWorkerID: () => (successful ? workerId : null),
       resetBackendSetup: () => {
         backendResets++;
       },
@@ -277,6 +278,33 @@ async function runFixtures(
       reports.at(-1) === "managed",
     );
     assert("hold prevents mutation while transport proof is unavailable", recoveries === 3);
+    // Replenish the episode, then age every health source while recovery is held.
+    workerId = "healthy-replacement";
+    modules.MAWBridgeSendAndReceive = {
+      sendAndReceive: async () => {
+        for (const listener of connectionListeners) listener(true);
+      },
+    };
+    for (let i = 0; i < 15; i++) await tick();
+    assert("fresh replacement replenishes the episode", reports.at(-1) === "ok");
+    modules.MAWBridgeSendAndReceive = { sendAndReceive: async () => {} };
+    for (let i = 0; i < 16; i++) await tick();
+    let bridgeRepairs = 0;
+    modules.MAWWorkerWatchdogRecovery = {
+      getWorkerRecoveryForWatchdog: () => () => bridgeRepairs++,
+    };
+    workerId = "unverified-replacement";
+    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    await tick();
+    assert(
+      "replacement does not inherit the expired global-health settle window",
+      bridgeRepairs === 0,
+    );
+    await tick();
+    await tick();
+    assert("replacement receives fresh probe grace", bridgeRepairs === 0);
+    for (let i = 0; i < 4; i++) await tick();
+    assert("a replacement that remains unverified can still recover", bridgeRepairs === 1);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

@@ -312,6 +312,7 @@ export function initAutoRefresh() {
     onUnknown: (source) => {
       realtimeRecovery.withdraw(source);
     },
+    onWorkerChanged: () => silentRecovery.resetSettle(),
   });
 
   const silentRecovery = createSilentRecovery({

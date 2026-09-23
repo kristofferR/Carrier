@@ -20,6 +20,8 @@ type RealtimeHealthCallbacks = {
   onStale: (source: RealtimeHealthSource) => void;
   /** The source can no longer observe the transport either way. */
   onUnknown: (source: RealtimeHealthSource) => void;
+  /** Give a replacement worker time to answer before recovery can mutate it. */
+  onWorkerChanged?: () => void;
 };
 
 export type RealtimeHealthMonitor = {
@@ -157,6 +159,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       probeIdentity.id !== id ||
       probeIdentity.state !== state
     ) {
+      const replaced = probeIdentity !== undefined;
       probeIdentity = { account, id, state };
       workerFailures.succeeded();
       verified = undefined;
@@ -164,6 +167,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       // The synchronous recovery tick must not inherit the old worker's verdict,
       // even while that worker's final probe is still pending.
       callbacks.onUnknown("worker");
+      if (replaced) callbacks.onWorkerChanged?.();
     }
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();

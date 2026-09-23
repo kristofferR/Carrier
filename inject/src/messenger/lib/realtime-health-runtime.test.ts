@@ -222,6 +222,7 @@ function stateProbeFixture() {
   const timers = new Map<number, { due: number; run: () => void }>();
   const listeners = new Set<(value: unknown) => void>();
   const requests: string[] = [];
+  let identityChanges = 0;
   const tracker = new RealtimeRecoveryTracker(now);
   const schedule = (run: () => void, delay: number) => {
     const timer = ++nextTimer;
@@ -285,11 +286,15 @@ function stateProbeFixture() {
     onHealthy: (source) => tracker.healthy(source, now),
     onStale: (source) => tracker.stale(source),
     onUnknown: (source) => tracker.withdraw(source),
+    onWorkerChanged: () => identityChanges++,
   });
   const flush = async () => {
     for (let i = 0; i < 24; i++) await Promise.resolve();
   };
   return {
+    get identityChanges() {
+      return identityChanges;
+    },
     requests,
     listeners,
     tracker,
@@ -375,6 +380,7 @@ for (const boundary of ["changeAccount", "changeWorker", "changeState"] as const
       // before any replacement probe or the old pending probe can settle.
       expect(fixture.tracker.needsRecovery(24_000)).toBe(false);
       expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+      expect(fixture.identityChanges).toBe(1);
       await fixture.advance(8000);
       expect(fixture.tracker.needsRecovery(32_000)).toBe(false);
     });
