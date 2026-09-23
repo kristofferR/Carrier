@@ -66,6 +66,7 @@ export async function deliverScheduledMessage(
   let box: HTMLElement | null = null;
   let inserted = false;
   let clicked = false;
+  let cleared = false;
   let interrupted = false;
   const onInput = (event: Event) => {
     if (event.isTrusted) interrupted = true;
@@ -130,9 +131,10 @@ export async function deliverScheduledMessage(
       account() === message.account &&
       composerText(box) === message.text
     )
-      replaceComposerText(box, "");
+      cleared = replaceComposerText(box, "");
   }
   if (clicked) return "uncertain";
+  if (inserted && !cleared && (!box?.isConnected || !composerText(box).trim())) return "uncertain";
   if (inserted && box?.isConnected && composerText(box).trim()) return "missed";
   return sendWindow(message.due, Date.now()) === "missed" ? "missed" : "defer";
 }

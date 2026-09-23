@@ -272,6 +272,16 @@ async function fixtures(
     );
     changeBeforeSend = undefined;
     clear();
+    changeBeforeSend = () => {
+      // Messenger may submit the inserted text before Carrier clicks Send.
+      box.textContent = "";
+    };
+    assert(
+      "externally submitted text is uncertain instead of retryable",
+      (await deliver(message(), () => true)) === "uncertain" && clicks === 1,
+    );
+    changeBeforeSend = undefined;
+    clear();
     quickReply();
     delay = 600;
     window.__carrierQuickReply?.("/t/456/", "Quick reply without Enter", 1, 1);

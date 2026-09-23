@@ -8299,6 +8299,7 @@ ${text}`)) {
     let box = null;
     let inserted = false;
     let clicked = false;
+    let cleared = false;
     let interrupted = false;
     const onInput = (event) => {
       if (event.isTrusted) interrupted = true;
@@ -8350,9 +8351,10 @@ ${text}`)) {
       document.removeEventListener("pointerdown", onInput, true);
       document.removeEventListener("keydown", onInput, true);
       if (!clicked && inserted && box?.isConnected && thread() === message.thread && account() === message.account && composerText(box) === message.text)
-        replaceComposerText(box, "");
+        cleared = replaceComposerText(box, "");
     }
     if (clicked) return "uncertain";
+    if (inserted && !cleared && (!box?.isConnected || !composerText(box).trim())) return "uncertain";
     if (inserted && box?.isConnected && composerText(box).trim()) return "missed";
     return sendWindow(message.due, Date.now()) === "missed" ? "missed" : "defer";
   }
