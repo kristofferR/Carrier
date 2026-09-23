@@ -201,7 +201,13 @@
         }
       }
 
-      async function persist(key, value) {
+      let pendingSave = Promise.resolve();
+      function persist(key, value) {
+        pendingSave = pendingSave.then(() => saveSetting(key, value));
+        return pendingSave;
+      }
+
+      async function saveSetting(key, value) {
         try {
           // Re-read first so we don't clobber a change made elsewhere (e.g.
           // View → Toggle Always on Top) with a stale snapshot.
@@ -324,25 +330,28 @@
         group.setAttribute("aria-labelledby", "nickname-heading");
         const heading = document.createElement("div");
         heading.className = "nickname-heading";
-        heading.innerHTML = '<div class="label" id="nickname-heading">Show nicknames</div><div class="hint">Choose where Carrier uses nicknames, including sidebar previews and notifications.</div>';
+        heading.innerHTML = '<div class="label" id="nickname-heading">Disable nicknames</div><div class="hint">Choose where Carrier uses real names, including sidebar previews and notifications.</div>';
         group.append(heading);
         const mode = nicknameScope(settings);
         for (const [scope, label, hint] of [
-          ["direct", "One-to-one chats", "Use nicknames in private conversations."],
-          ["groups", "Group chats", "Use nicknames for group members."],
+          ["direct", "One-to-one chats", "Use real names in private conversations."],
+          ["groups", "Group chats", "Use real names for group members."],
         ]) {
           const row = document.createElement("label");
           row.className = "row";
           const cb = document.createElement("input");
           cb.type = "checkbox";
           cb.dataset.nicknameScope = scope;
-          cb.checked = mode === "all" || mode === scope;
-          cb.onchange = () => persist("nickname_scope", (fresh) => {
-            const current = nicknameScope(fresh);
-            const other = scope === "direct" ? "groups" : "direct";
-            const otherEnabled = current === "all" || current === other;
-            return cb.checked ? (otherEnabled ? "all" : scope) : (otherEnabled ? other : "off");
-          });
+          cb.checked = mode !== "all" && mode !== scope;
+          cb.onchange = () => {
+            const disabled = cb.checked;
+            return persist("nickname_scope", (fresh) => {
+              const current = nicknameScope(fresh);
+              const other = scope === "direct" ? "groups" : "direct";
+              const otherEnabled = current === "all" || current === other;
+              return disabled ? (otherEnabled ? other : "off") : (otherEnabled ? "all" : scope);
+            });
+          };
           const text = document.createElement("div");
           text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
           row.append(cb, text);

@@ -70,6 +70,20 @@ export function patchNicknameReplies(
     return;
   const { useSyncExternalStore, useState, useEffect } = react,
     { to_string: stringify } = i64;
+  // All mounted replies in a thread share one in-flight participant read.
+  // Discard settled requests so later renders can pick up changed nicknames.
+  const pending = new Map<string, Promise<ConversationNotificationNames | null>>();
+  const readNames = (key: string) => {
+    const existing = pending.get(key);
+    if (existing) return existing;
+    const request = loadNames(key);
+    pending.set(key, request);
+    void request.then(
+      () => pending.delete(key),
+      () => pending.delete(key),
+    );
+    return request;
+  };
   const hook = function useCarrierReplyAttribution(this: unknown, ...args: unknown[]) {
     const text: unknown = Reflect.apply(original, this, args);
     const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
@@ -93,7 +107,7 @@ export function patchNicknameReplies(
     useEffect(() => {
       if (!key || typeof text !== "string" || !text) return;
       let cancelled = false;
-      loadNames(key)
+      readNames(key)
         .then((info) => {
           if (!cancelled) setNames({ key, info });
         })

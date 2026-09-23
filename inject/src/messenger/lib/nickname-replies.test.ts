@@ -96,3 +96,34 @@ test("reply hook preserves the original hook, message, quoted text, and async li
   await Promise.resolve();
   expect(state).toBeNull();
 });
+
+test("mounted replies share an in-flight read but later renders fetch fresh names", async () => {
+  let reads = 0;
+  const effects: Array<() => unknown> = [];
+  const modules: Record<string, unknown> = {
+    react: {
+      useSyncExternalStore: (_subscribe: unknown, snapshot: () => NicknameMode) => snapshot(),
+      useState: () => [null, () => {}],
+      useEffect: (effect: () => unknown) => effects.push(effect),
+    },
+    I64: { to_string: (id: unknown) => id },
+  };
+  const exports = { default: (_message: unknown) => "Captain replied to Skipper" };
+  patchNicknameReplies(
+    exports,
+    (name) => modules[name],
+    { getSnapshot: () => "off", subscribe: () => () => {} },
+    async () => {
+      reads++;
+      return info;
+    },
+  );
+  const message = { threadKey: "123", senderId: "1", replyToUserId: "2" };
+  exports.default(message);
+  exports.default(message);
+  for (const effect of effects) effect();
+  expect(reads).toBe(1);
+  await Promise.resolve();
+  effects[0]!();
+  expect(reads).toBe(2);
+});

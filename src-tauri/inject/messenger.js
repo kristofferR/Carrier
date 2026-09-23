@@ -3483,6 +3483,18 @@
     if (typeof react?.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof i64?.to_string !== "function")
       return;
     const { useSyncExternalStore, useState, useEffect } = react, { to_string: stringify } = i64;
+    const pending = /* @__PURE__ */ new Map();
+    const readNames = (key) => {
+      const existing = pending.get(key);
+      if (existing) return existing;
+      const request = loadNames(key);
+      pending.set(key, request);
+      void request.then(
+        () => pending.delete(key),
+        () => pending.delete(key)
+      );
+      return request;
+    };
     const hook = function useCarrierReplyAttribution(...args) {
       const text = Reflect.apply(original, this, args);
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
@@ -3502,7 +3514,7 @@
       useEffect(() => {
         if (!key || typeof text !== "string" || !text) return;
         let cancelled = false;
-        loadNames(key).then((info) => {
+        readNames(key).then((info) => {
           if (!cancelled) setNames({ key, info });
         }).catch(() => {
         });
