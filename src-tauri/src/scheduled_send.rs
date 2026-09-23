@@ -16,6 +16,7 @@ enum Status {
     Scheduled,
     Sending,
     Missed,
+    MissedDraft,
     Uncertain,
 }
 
@@ -42,8 +43,10 @@ impl Message {
 
     fn expire(&mut self, now: u64) {
         if now > self.due.saturating_add(GRACE_MS) {
-            if matches!(self.status, Status::Scheduled | Status::Draft) {
+            if self.status == Status::Scheduled {
                 self.status = Status::Missed;
+            } else if self.status == Status::Draft {
+                self.status = Status::MissedDraft;
             } else if self.status == Status::Sending
                 && now > self.due.saturating_add(GRACE_MS + 15_000)
             {
@@ -136,6 +139,14 @@ impl Store {
         if !valid_account(&request.account) {
             return Err("Sign in to schedule a message.".into());
         }
+        if !delivery_window(label)
+            && matches!(
+                request.op.as_str(),
+                "claim" | "sent" | "missed" | "uncertain" | "defer"
+            )
+        {
+            return Err("Only a Messenger window can submit scheduled messages.".into());
+        }
         if request.op == "list" {
             return Ok(None);
         }
@@ -169,7 +180,7 @@ impl Store {
                     if item.status == Status::Sending {
                         return Err("This message is already being submitted.".into());
                     }
-                    let status = if item.status == Status::Draft {
+                    let status = if matches!(item.status, Status::Draft | Status::MissedDraft) {
                         Status::Draft
                     } else {
                         Status::Scheduled
@@ -216,10 +227,9 @@ impl Store {
                 item.status = Status::Scheduled;
             }
             "claim" => {
-                if label != "main"
-                    || items
-                        .iter()
-                        .any(|m| m.account == request.account && m.status == Status::Sending)
+                if items
+                    .iter()
+                    .any(|m| m.account == request.account && m.status == Status::Sending)
                 {
                     return Ok(None);
                 }
@@ -234,9 +244,6 @@ impl Store {
                 claimed = Some(item.id.clone());
             }
             "sent" | "missed" | "uncertain" | "defer" => {
-                if label != "main" {
-                    return Err("Only the main window can submit scheduled messages.".into());
-                }
                 let index = items
                     .iter()
                     .position(|m| {
@@ -265,7 +272,10 @@ impl Store {
                     })
                     .ok_or("Message no longer exists")?;
                 if request.op == "seen" {
-                    if matches!(items[index].status, Status::Missed | Status::Uncertain) {
+                    if matches!(
+                        items[index].status,
+                        Status::Missed | Status::MissedDraft | Status::Uncertain
+                    ) {
                         items[index].toast_seen = true;
                     }
                 } else {
@@ -284,6 +294,10 @@ impl Store {
 
 fn valid_account(account: &str) -> bool {
     !account.is_empty() && account.len() <= 32 && account.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn delivery_window(label: &str) -> bool {
+    label == "main" || label.starts_with("win-")
 }
 
 #[derive(Deserialize)]
@@ -328,7 +342,7 @@ fn respond(
         Ok(id) => (id, None),
         Err(e) => (None, Some(e)),
     };
-    let data = serde_json::json!({ "items": rows, "claimed": if request.op == "claim" { claimed.clone() } else { None }, "saved": if request.op == "save" { claimed } else { None }, "error": error, "can_deliver": label == "main" }).to_string();
+    let data = serde_json::json!({ "items": rows, "claimed": if request.op == "claim" { claimed.clone() } else { None }, "saved": if request.op == "save" { claimed } else { None }, "error": error, "can_deliver": delivery_window(label) }).to_string();
     let reply = Reply {
         request: &request.request,
         data,
@@ -406,7 +420,11 @@ pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
                     let before = item.status;
                     item.expire(now_ms());
                     changed |= before != item.status;
-                    if matches!(item.status, Status::Missed | Status::Uncertain) && !item.notified {
+                    if matches!(
+                        item.status,
+                        Status::Missed | Status::MissedDraft | Status::Uncertain
+                    ) && !item.notified
+                    {
                         item.notified = true;
                         changed = true;
                         warn = true;
@@ -473,11 +491,10 @@ mod tests {
             text: None,
             due: None,
         };
-        assert_eq!(store.apply(&req, "win-1", 1_000).unwrap(), None);
+        assert_eq!(store.apply(&req, "win-1", 1_000).unwrap(), Some("a".into()));
         req.account = "999".into();
         assert!(store.apply(&req, "main", 1_000).is_err());
         req.account = "123".into();
-        assert_eq!(store.apply(&req, "main", 1_000).unwrap(), Some("a".into()));
         assert_eq!(store.apply(&req, "main", 1_000).unwrap(), None);
         let loaded = Store::load(path);
         assert_eq!(loaded.items[0].status, Status::Sending);
@@ -485,7 +502,7 @@ mod tests {
         assert!(store.apply(&req, "main", 1_000).is_err());
         req.op = "defer".into();
         req.due = Some(1_000);
-        store.apply(&req, "main", 121_001).unwrap();
+        store.apply(&req, "win-1", 121_001).unwrap();
         assert_eq!(store.items[0].status, Status::Missed);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -557,6 +574,31 @@ mod tests {
         assert_eq!(store.items[0].status, Status::Draft);
         req.op = "claim".into();
         assert_eq!(store.apply(&req, "main", 2_000).unwrap(), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn expired_unarmed_draft_still_requires_composer_clear_before_rescheduling() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let mut store = Store::load(dir.join("messages.json"));
+        let mut draft = message();
+        draft.status = Status::Draft;
+        draft.expire(121_001);
+        assert_eq!(draft.status, Status::MissedDraft);
+        store.commit(vec![draft]).unwrap();
+        let mut req = Request {
+            request: "a".repeat(32),
+            op: "save".into(),
+            account: "123".into(),
+            id: Some("a".into()),
+            thread: Some("/t/456/".into()),
+            text: Some("hello".into()),
+            due: Some(200_000),
+        };
+        store.apply(&req, "main", 122_000).unwrap();
+        assert_eq!(store.items[0].status, Status::Draft);
+        req.op = "claim".into();
+        assert_eq!(store.apply(&req, "win-1", 200_000).unwrap(), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

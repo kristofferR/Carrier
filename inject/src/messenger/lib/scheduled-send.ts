@@ -7,7 +7,7 @@ export interface ScheduledMessage {
   thread: string;
   text: string;
   due: number;
-  status: "draft" | "scheduled" | "sending" | "missed" | "uncertain";
+  status: "draft" | "scheduled" | "sending" | "missed" | "missed_draft" | "uncertain";
   toast_seen: boolean;
 }
 

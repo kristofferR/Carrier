@@ -204,7 +204,9 @@ export function initScheduledSend() {
   const warning = async () => {
     if (document.hidden || !window.__carrierToast) return;
     const missed = rows.filter(
-      (row) => (row.status === "missed" || row.status === "uncertain") && !row.toast_seen,
+      (row) =>
+        (row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain") &&
+        !row.toast_seen,
     );
     if (!missed.length) return;
     toast(
@@ -263,7 +265,8 @@ export function initScheduledSend() {
     const expectedBox = sourceBox;
     const expectedThread = panelThread;
     const expectedText = sourceText;
-    const recoveredDraft = editingItem?.status === "draft";
+    const recoveredDraft =
+      editingItem?.status === "draft" || editingItem?.status === "missed_draft";
     if (
       recoveredDraft &&
       (editingItem.thread !== expectedThread ||
@@ -412,7 +415,7 @@ export function initScheduledSend() {
       for (const row of [...rows].sort((a, b) => a.due - b.due)) {
         const item = element("div", "carrier-schedule-item");
         const status =
-          row.status === "missed"
+          row.status === "missed" || row.status === "missed_draft"
             ? "Not sent"
             : row.status === "uncertain"
               ? "Send unconfirmed"
@@ -424,7 +427,9 @@ export function initScheduledSend() {
         item.append(
           element(
             "strong",
-            row.status === "missed" || row.status === "uncertain" ? "carrier-schedule-warning" : "",
+            row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain"
+              ? "carrier-schedule-warning"
+              : "",
             `${status} · ${formatScheduleTime(row.due, true)}`,
           ),
           element(

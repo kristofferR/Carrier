@@ -8415,7 +8415,7 @@ ${text}`)) {
     const warning = async () => {
       if (document.hidden || !window.__carrierToast) return;
       const missed = rows.filter(
-        (row) => (row.status === "missed" || row.status === "uncertain") && !row.toast_seen
+        (row) => (row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain") && !row.toast_seen
       );
       if (!missed.length) return;
       toast(
@@ -8467,7 +8467,7 @@ ${text}`)) {
       const expectedBox = sourceBox;
       const expectedThread = panelThread;
       const expectedText = sourceText;
-      const recoveredDraft = editingItem?.status === "draft";
+      const recoveredDraft = editingItem?.status === "draft" || editingItem?.status === "missed_draft";
       if (recoveredDraft && (editingItem.thread !== expectedThread || !expectedBox?.isConnected || composerText(expectedBox) !== editingItem.text || hasComposerMedia(expectedBox))) {
         busy = false;
         toast("Open the original conversation with its unchanged draft to schedule this message.");
@@ -8596,11 +8596,11 @@ ${text}`)) {
         panel.append(element("h3", "carrier-schedule-divider", "Scheduled messages"));
         for (const row of [...rows].sort((a, b) => a.due - b.due)) {
           const item = element("div", "carrier-schedule-item");
-          const status = row.status === "missed" ? "Not sent" : row.status === "uncertain" ? "Send unconfirmed" : row.status === "sending" ? "Submitting…" : row.status === "draft" ? "Not scheduled" : "Scheduled";
+          const status = row.status === "missed" || row.status === "missed_draft" ? "Not sent" : row.status === "uncertain" ? "Send unconfirmed" : row.status === "sending" ? "Submitting…" : row.status === "draft" ? "Not scheduled" : "Scheduled";
           item.append(
             element(
               "strong",
-              row.status === "missed" || row.status === "uncertain" ? "carrier-schedule-warning" : "",
+              row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain" ? "carrier-schedule-warning" : "",
               `${status} · ${formatScheduleTime(row.due, true)}`
             ),
             element(

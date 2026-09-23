@@ -44,7 +44,7 @@ test.skipIf(!chromium)(
         if(request.op==='save') {
           saved=request.id || 'saved-fixture';
           if(request.id) {
-            scheduleItems.forEach(item=>{if(item.id===request.id){item.due=request.due;if(item.status!=='draft')item.status='scheduled';}});
+            scheduleItems.forEach(item=>{if(item.id===request.id){item.due=request.due;item.status=item.status==='draft'||item.status==='missed_draft'?'draft':'scheduled';}});
           } else {
             scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
           }
@@ -393,6 +393,24 @@ async function fixtures(
     assert(
       "recovered draft clears before arming",
       page.scheduleOps.slice(opsBeforeRecovered).join(",") === "save,arm" &&
+        page.scheduleItems[0]?.status === "scheduled" &&
+        !box.innerText.trim(),
+    );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    page.scheduleItems = [
+      { ...message(), id: "expired-draft", status: "missed_draft", text: "Expired draft" },
+    ];
+    box.textContent = "Expired draft";
+    await settle();
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    const opsBeforeExpired = page.scheduleOps.length;
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    await settle();
+    assert(
+      "expired unarmed draft clears before arming",
+      page.scheduleOps.slice(opsBeforeExpired).join(",") === "save,arm" &&
         page.scheduleItems[0]?.status === "scheduled" &&
         !box.innerText.trim(),
     );
