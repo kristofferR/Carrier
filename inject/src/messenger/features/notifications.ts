@@ -319,6 +319,7 @@ export function initNotificationBridge() {
     title: string;
     displayTitle: string;
     body: string;
+    displayBody: string;
     threadPath: string;
     fingerprint: string;
     dedupeKey: string;
@@ -914,9 +915,11 @@ export function initNotificationBridge() {
         hasTextChild: hasCandidateTextChild(el),
       };
     });
-    const text = conversationTextParts(surfaces, (body) =>
-      nativeSnippetPrefixes.original(id, body),
-    );
+    let displayBody = "";
+    const text = conversationTextParts(surfaces, (body) => {
+      displayBody = body.slice(0, 240);
+      return nativeSnippetPrefixes.original(id, body);
+    });
     // The same predicate the text extraction uses: a sprite counted here would
     // become the notification icon, or read as a group's member composite.
     const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(
@@ -936,6 +939,7 @@ export function initNotificationBridge() {
       title: nativeThreadTitles.original(id, text.title),
       displayTitle: text.title,
       body: text.body,
+      displayBody,
       // Every face the row draws, in render order. A photo-less group renders
       // several member images side by side, and no individual one of them is a
       // valid thread icon — taking just the first labelled every message in
@@ -1066,7 +1070,7 @@ export function initNotificationBridge() {
       hidePreview
         ? "Messenger"
         : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-      hidePreview ? "New message" : fallback.body,
+      hidePreview ? "New message" : fallback.displayBody,
       "",
       fallback.dedupeKey,
       () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -1119,6 +1123,7 @@ export function initNotificationBridge() {
         title: conversation.title,
         displayTitle: conversation.displayTitle,
         body: conversation.body,
+        displayBody: conversation.displayBody,
         threadPath: conversation.threadPath,
         fingerprint,
         dedupeKey,
@@ -1210,13 +1215,38 @@ export function initNotificationBridge() {
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
-      const richBody = richMessageBody(content.body, conversation.threadPath);
+      const visibleContent = group
+        ? content
+        : notificationPresentation(
+            conversation.displayTitle,
+            conversation.displayBody,
+            conversation.isGroup,
+            {
+              sender: "",
+              thread: "",
+            },
+          );
+      const visiblePresentation = group
+        ? presentation
+        : notificationPresentation(
+            nativeThreadTitles.displayed(
+              conversation.key,
+              conversation.title,
+              conversation.displayTitle,
+            ),
+            conversation.displayBody,
+            conversation.isGroup,
+            { sender, thread },
+          );
+      const richBody = richMessageBody(visibleContent.body, conversation.threadPath);
       const named = notificationNames(
-        presentation.title,
-        content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
+        visiblePresentation.title,
+        visibleContent.subtitle && !visiblePresentation.subtitle
+          ? `${visibleContent.title}: ${richBody}`
+          : richBody,
         group,
         showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-        presentation.subtitle ? "sender" : "group",
+        visiblePresentation.subtitle ? "sender" : "group",
       );
       const text = notificationPhotoText(named.title, named.body, Boolean(image));
       emitNotification(
@@ -1230,7 +1260,7 @@ export function initNotificationBridge() {
         },
         conversation.threadPath,
         undefined,
-        hidePreview ? "" : presentation.subtitle,
+        hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
       );
     }, FALLBACK_DELAY_MS);
@@ -1241,6 +1271,7 @@ export function initNotificationBridge() {
       title: conversation.title,
       displayTitle: conversation.displayTitle,
       body: conversation.body,
+      displayBody: conversation.displayBody,
       threadPath: conversation.threadPath,
       fingerprint,
       dedupeKey,

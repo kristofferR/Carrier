@@ -7521,10 +7521,11 @@
           hasTextChild: hasCandidateTextChild(el)
         };
       });
-      const text = conversationTextParts(
-        surfaces,
-        (body) => nativeSnippetPrefixes.original(id, body)
-      );
+      let displayBody = "";
+      const text = conversationTextParts(surfaces, (body) => {
+        displayBody = body.slice(0, 240);
+        return nativeSnippetPrefixes.original(id, body);
+      });
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );
@@ -7542,6 +7543,7 @@
         title: nativeThreadTitles.original(id, text.title),
         displayTitle: text.title,
         body: text.body,
+        displayBody,
         // Every face the row draws, in render order. A photo-less group renders
         // several member images side by side, and no individual one of them is a
         // valid thread icon — taking just the first labelled every message in
@@ -7627,7 +7629,7 @@
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-        hidePreview ? "New message" : fallback.body,
+        hidePreview ? "New message" : fallback.displayBody,
         "",
         fallback.dedupeKey,
         () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -7665,6 +7667,7 @@
           title: conversation.title,
           displayTitle: conversation.displayTitle,
           body: conversation.body,
+          displayBody: conversation.displayBody,
           threadPath: conversation.threadPath,
           fingerprint,
           dedupeKey,
@@ -7732,13 +7735,32 @@
           "notify.fallback",
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
-        const richBody = richMessageBody(content.body, conversation.threadPath);
+        const visibleContent = group ? content : notificationPresentation(
+          conversation.displayTitle,
+          conversation.displayBody,
+          conversation.isGroup,
+          {
+            sender: "",
+            thread: ""
+          }
+        );
+        const visiblePresentation = group ? presentation : notificationPresentation(
+          nativeThreadTitles.displayed(
+            conversation.key,
+            conversation.title,
+            conversation.displayTitle
+          ),
+          conversation.displayBody,
+          conversation.isGroup,
+          { sender, thread }
+        );
+        const richBody = richMessageBody(visibleContent.body, conversation.threadPath);
         const named = notificationNames(
-          presentation.title,
-          content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
+          visiblePresentation.title,
+          visibleContent.subtitle && !visiblePresentation.subtitle ? `${visibleContent.title}: ${richBody}` : richBody,
           group,
           showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-          presentation.subtitle ? "sender" : "group"
+          visiblePresentation.subtitle ? "sender" : "group"
         );
         const text = notificationPhotoText(named.title, named.body, Boolean(image));
         emitNotification(
@@ -7752,7 +7774,7 @@
           },
           conversation.threadPath,
           void 0,
-          hidePreview ? "" : presentation.subtitle,
+          hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image
         );
       }, FALLBACK_DELAY_MS);
@@ -7763,6 +7785,7 @@
         title: conversation.title,
         displayTitle: conversation.displayTitle,
         body: conversation.body,
+        displayBody: conversation.displayBody,
         threadPath: conversation.threadPath,
         fingerprint,
         dedupeKey,
