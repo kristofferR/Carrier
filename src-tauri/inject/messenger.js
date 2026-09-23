@@ -8821,7 +8821,7 @@ ${text}`)) {
             if (box && (composerText(box).trim() || hasComposerMedia(box))) return false;
             if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
               return false;
-            if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
+            if (![...document.querySelectorAll('a[href*="/t/"]')].some(
               (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
             )) {
               window.__carrierOpenThread?.(due.thread);

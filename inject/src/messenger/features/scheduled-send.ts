@@ -660,10 +660,9 @@ export function initScheduledSend() {
             !panel?.contains(document.activeElement)
           )
             return false;
-          // Missing virtualized row requires a reload. Do it before claiming so
-          // the fresh page can still claim the same job within its original window.
+          // Missing virtualized row requires a reload, even on the current
+          // route: pane verification needs that row's title.
           if (
-            thread() !== due.thread &&
             ![...document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')].some(
               (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread),
             )
