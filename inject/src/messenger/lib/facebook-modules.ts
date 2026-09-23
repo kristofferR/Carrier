@@ -1,3 +1,4 @@
+import { patchNicknameReplies } from "./nickname-replies";
 import { patchNicknameSnippets } from "./nickname-snippets";
 import { patchNicknameThreadTitles } from "./nickname-thread-titles";
 import {
@@ -309,7 +310,8 @@ function wrapFactory(
       (moduleName === "MWPContactContext.react" ||
         moduleName === "useLSGetThreadTitle.react" ||
         moduleName === "MWPThreadCapabilitiesContext" ||
-        moduleName === "MWThreadSnippetForDisplay.react") &&
+        moduleName === "MWThreadSnippetForDisplay.react" ||
+        moduleName === "useMWReplySnippetContent") &&
       nicknamePreference
     ) {
       // This Haste module imports React through the namespace dependency slot.
@@ -319,7 +321,9 @@ function wrapFactory(
         if (typeof importModule === "function") {
           const react: unknown = importModule("react");
           const patch = (value: unknown) => {
-            if (moduleName === "MWThreadSnippetForDisplay.react") {
+            if (moduleName === "useMWReplySnippetContent") {
+              patchNicknameReplies(value, (name) => importModule(name), nicknamePreference);
+            } else if (moduleName === "MWThreadSnippetForDisplay.react") {
               patchNicknameSnippets(value, (name) => importModule(name), nicknamePreference);
             } else if (moduleName === "useLSGetThreadTitle.react") {
               patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
@@ -411,7 +415,8 @@ export function createFacebookModuleDefineInterceptor(
             (moduleName === "MWPContactContext.react" ||
               moduleName === "useLSGetThreadTitle.react" ||
               moduleName === "MWPThreadCapabilitiesContext" ||
-              moduleName === "MWThreadSnippetForDisplay.react")) ||
+              moduleName === "MWThreadSnippetForDisplay.react" ||
+              moduleName === "useMWReplySnippetContent")) ||
           (preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker") ||
           moduleName === "MAWWebWorkerSingleton" ||
           moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
@@ -425,7 +430,8 @@ export function createFacebookModuleDefineInterceptor(
         if (
           (moduleName === "useLSGetThreadTitle.react" ||
             moduleName === "MWPThreadCapabilitiesContext" ||
-            moduleName === "MWThreadSnippetForDisplay.react") &&
+            moduleName === "MWThreadSnippetForDisplay.react" ||
+            moduleName === "useMWReplySnippetContent") &&
           Array.isArray(args[1])
         ) {
           args[1] = [...new Set([...args[1], "react", "I64", "LSMessagingThreadTypeUtil"])];

@@ -200,6 +200,15 @@ function databaseHarness(
 }
 
 describe("Messenger group-name reader", () => {
+  test("retains contact identities for reply attribution", async () => {
+    const h = databaseHarness([
+      [{ nickname: "Captain" }, { id: "42", name: "Alex Example", firstName: "Alex" }],
+    ]);
+    h.modules.I64 = { of_string: (value: string) => value, to_string: (value: unknown) => value };
+    expect((await readConversationNotificationNames("123", h.load))?.participants[0]?.id).toBe(
+      "42",
+    );
+  });
   test("reads only the requested group's bounded membership and its contact photos", async () => {
     const h = databaseHarness();
     expect(await readConversationNotificationNames("123", h.load)).toEqual(group);
