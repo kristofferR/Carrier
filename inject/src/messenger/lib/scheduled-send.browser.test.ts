@@ -281,6 +281,17 @@ async function fixtures(
       page.replyResults.at(-1)?.ok === true && clicks === 2 && !box.innerText.trim(),
     );
     clear();
+    box.textContent = "yesterday";
+    window.__carrierQuickReplyDraft?.("/t/456/", "yes", 2, 2);
+    await settle();
+    assert(
+      "fallback appends a short reply despite a substring collision",
+      page.replyResults.at(-1)?.ok === true &&
+        box.innerText.startsWith("yesterday") &&
+        box.innerText.endsWith("yes") &&
+        box.innerText !== "yesterday",
+    );
+    clear();
     box.textContent = "Schedule UI test";
     await settle();
     Date.now = () => new Date(2026, 8, 23, 18, 18).getTime();

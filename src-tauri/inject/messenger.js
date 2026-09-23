@@ -8073,6 +8073,7 @@
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+  var insertedReplies = /* @__PURE__ */ new Map();
   var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
@@ -8082,7 +8083,7 @@
     );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
-  async function deliver(path, text) {
+  async function deliver(path, text, id) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
@@ -8114,6 +8115,7 @@
             diag("quick-reply.insert", "composer rejected insertText");
             return false;
           }
+          insertedReplies.set(id, { path, text });
           break;
         }
         case "send":
@@ -8121,6 +8123,7 @@
           await pause();
           break;
         case "success":
+          insertedReplies.delete(id);
           return true;
         case "failure":
           diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
@@ -8128,7 +8131,7 @@
       }
     }
   }
-  async function preserveDraft(path, text) {
+  async function preserveDraft(path, text, id) {
     const wantedThread = threadPathId(path);
     if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       return false;
@@ -8139,7 +8142,11 @@
       if (currentThreadId() === wantedThread && box) {
         box.focus();
         if (!text) return true;
-        if (composerIncludesReply(box.textContent, text)) return true;
+        const inserted = insertedReplies.get(id);
+        if (composerContainsReply(box.textContent, text) || inserted?.path === path && inserted.text === text && composerIncludesReply(box.textContent, text)) {
+          insertedReplies.delete(id);
+          return true;
+        }
         if ((box.textContent || "").trim()) {
           const selection = window.getSelection();
           const range = document.createRange();
@@ -8153,12 +8160,14 @@ ${text}`)) {
             diag("quick-reply.draft", "fallback append failed");
             return false;
           }
+          insertedReplies.delete(id);
           return true;
         }
         if (!document.execCommand("insertText", false, text)) {
           diag("quick-reply.draft", "fallback insertText failed");
           return false;
         }
+        insertedReplies.delete(id);
         return true;
       }
       await pause();
@@ -8173,7 +8182,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void withComposerDelivery(() => deliver(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
+      void withComposerDelivery(() => deliver(path, text, id)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8184,7 +8193,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
+      void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text, id)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
