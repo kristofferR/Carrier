@@ -61,6 +61,8 @@ export async function deliverScheduledMessage(
     );
     if (!link) return "defer";
     link.click();
+    // The URL can change before Messenger replaces the conversation pane.
+    return "defer";
   }
   const deadline = Math.min(message.due + SEND_GRACE_MS, Date.now() + 12_000);
   let box: HTMLElement | null = null;
@@ -506,7 +508,13 @@ export function initScheduledSend() {
       close();
     }
     if (panel && (thread() !== panelThread || !box || hasComposerMedia(box))) close();
-    if (!box || !region || !thread() || hasComposerMedia(box) || !composerText(box).trim()) {
+    if (
+      !box ||
+      !region ||
+      !thread() ||
+      hasComposerMedia(box) ||
+      (!composerText(box).trim() && !rows.length && !panel)
+    ) {
       button?.remove();
       return;
     }

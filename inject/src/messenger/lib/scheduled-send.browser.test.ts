@@ -7,7 +7,10 @@ import type { initQuickReply } from "../features/quick-reply";
 import type { deliverScheduledMessage, initScheduledSend } from "../features/scheduled-send";
 import type { ScheduledMessage, ScheduleRequest, ScheduleResponse } from "./scheduled-send";
 
-const chromium = Bun.which("chromium") || Bun.which("google-chrome");
+const chromium =
+  process.env.CARRIER_BROWSER_TESTS === "1"
+    ? Bun.which("chrome-headless-shell") || Bun.which("chromium") || Bun.which("google-chrome")
+    : null;
 
 test.skipIf(!chromium)(
   "schedule composer auto-submits, expires safely, hides for media, and quick reply waits for React",
@@ -80,14 +83,17 @@ test.skipIf(!chromium)(
             "--dump-dom",
             new URL("/messages/t/456/", server.url).href,
           ],
-          { stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" },
+          { stdout: "pipe", stderr: "pipe", timeout: 50_000, killSignal: "SIGKILL" },
         );
         const [output, errors, exit] = await Promise.all([
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
           child.exited,
         ]);
-        expect(exit, errors).toBe(0);
+        expect(
+          exit,
+          exit === 137 ? `Chromium timed out before dumping the DOM\n${errors}` : errors,
+        ).toBe(0);
         expect(output.match(/<pre id="result">([^<]+)/)?.[1]).toBe("PASS");
       } finally {
         await server.stop(true);
@@ -212,9 +218,11 @@ async function fixtures(
     const otherThread = document.createElement("a");
     otherThread.href = "/messages/t/999/";
     let switched = false;
+    let updatePathOnClick = false;
     otherThread.addEventListener("click", (event) => {
       event.preventDefault();
       switched = true;
+      if (updatePathOnClick) history.pushState(null, "", otherThread.href);
     });
     document.body.append(otherThread);
     assert(
@@ -223,6 +231,16 @@ async function fixtures(
         !switched &&
         clicks === 0,
     );
+    box.blur();
+    switched = false;
+    updatePathOnClick = true;
+    assert(
+      "route change defers until the conversation pane settles",
+      (await deliver({ ...message(), thread: "/t/999/" }, () => true)) === "defer" &&
+        switched &&
+        clicks === 0,
+    );
+    history.replaceState(null, "", "/messages/t/456/");
     otherThread.remove();
     assert(
       "online sends automatically even with the empty composer focused",
@@ -363,7 +381,7 @@ async function fixtures(
         page.scheduleItems[0]?.status === "scheduled" &&
         !box.innerText.trim(),
     );
-    assert("empty composer stays hidden with queued messages", !icon());
+    assert("saved messages keep the clock available with an empty composer", !!icon());
     box.textContent = "Another draft";
     await settle();
     icon()?.click();

@@ -399,13 +399,16 @@ pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
         if request.request.len() != 32 || !request.request.bytes().all(|b| b.is_ascii_hexdigit()) {
             return;
         }
-        let outcome =
-            handle
-                .state::<Mutex<Store>>()
-                .lock()
-                .unwrap()
-                .apply(&request, &label, now_ms());
-        respond(&handle, &label, &request, outcome);
+        let handle = handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let outcome =
+                handle
+                    .state::<Mutex<Store>>()
+                    .lock()
+                    .unwrap()
+                    .apply(&request, &label, now_ms());
+            respond(&handle, &label, &request, outcome);
+        });
     });
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {

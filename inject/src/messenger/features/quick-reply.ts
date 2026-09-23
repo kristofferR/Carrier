@@ -108,11 +108,10 @@ async function preserveDraft(path: string, text: string, id: number): Promise<bo
       box.focus();
       if (!text) return true;
       const inserted = insertedReplies.get(id);
+      const current = composerText(box);
       if (
-        composerContainsReply(box.textContent, text) ||
-        (inserted?.path === path &&
-          inserted.text === text &&
-          composerIncludesReply(box.textContent, text))
+        composerContainsReply(current, text) ||
+        (inserted?.path === path && inserted.text === text && composerIncludesReply(current, text))
       ) {
         insertedReplies.delete(id);
         return true;
@@ -120,7 +119,7 @@ async function preserveDraft(path: string, text: string, id: number): Promise<bo
       // This fallback never sends automatically. Preserve both pieces when a
       // draft already exists instead of acknowledging and dropping the native
       // reply that brought the user here.
-      if ((box.textContent || "").trim()) {
+      if (current.trim()) {
         const selection = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(box);

@@ -1263,6 +1263,8 @@ fn linux_notification_owner(
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const QUICK_REPLY_DRAFT_TIMEOUT: Duration = Duration::from_secs(45);
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_PENDING_PAGE_REPLIES: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1498,7 +1500,12 @@ fn register_pending_page_reply(
         thread_path.to_string(),
         text.to_string(),
         mode,
-        Instant::now() + QUICK_REPLY_ACK_TIMEOUT,
+        Instant::now()
+            + match mode {
+                PendingReplyMode::Send => QUICK_REPLY_ACK_TIMEOUT,
+                // A fallback can wait behind scheduled delivery before navigation.
+                PendingReplyMode::Draft => QUICK_REPLY_DRAFT_TIMEOUT,
+            },
     );
 }
 

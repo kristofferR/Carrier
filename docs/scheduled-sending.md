@@ -3,7 +3,8 @@
 Write a message, then select the clock immediately to the left of the smiley.
 Choose a quick delay or **Choose date & time**. Times use the local timezone and
 24-hour `HH:mm` format. The custom picker starts ten minutes from now. The clock
-follows the conversation's icon color and appears only while text is entered.
+follows the conversation's icon color and appears while text is entered or
+messages are saved.
 
 After confirmation, Carrier saves the message locally and clears the composer.
 It submits the message automatically at the chosen time. You do not need to

@@ -8143,11 +8143,12 @@
         box.focus();
         if (!text) return true;
         const inserted = insertedReplies.get(id);
-        if (composerContainsReply(box.textContent, text) || inserted?.path === path && inserted.text === text && composerIncludesReply(box.textContent, text)) {
+        const current = composerText(box);
+        if (composerContainsReply(current, text) || inserted?.path === path && inserted.text === text && composerIncludesReply(current, text)) {
           insertedReplies.delete(id);
           return true;
         }
-        if ((box.textContent || "").trim()) {
+        if (current.trim()) {
           const selection = window.getSelection();
           const range = document.createRange();
           range.selectNodeContents(box);
@@ -8294,6 +8295,7 @@ ${text}`)) {
       );
       if (!link) return "defer";
       link.click();
+      return "defer";
     }
     const deadline = Math.min(message.due + SEND_GRACE_MS, Date.now() + 12e3);
     let box = null;
@@ -8674,7 +8676,7 @@ ${text}`)) {
         close();
       }
       if (panel && (thread() !== panelThread || !box || hasComposerMedia(box))) close();
-      if (!box || !region || !thread() || hasComposerMedia(box) || !composerText(box).trim()) {
+      if (!box || !region || !thread() || hasComposerMedia(box) || !composerText(box).trim() && !rows.length && !panel) {
         button?.remove();
         return;
       }
