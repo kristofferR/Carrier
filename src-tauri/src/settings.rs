@@ -242,6 +242,8 @@ impl Default for Settings {
 
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
+    /// Fixed at process startup; the setting itself takes effect after restart.
+    pub(crate) scheduled_send_available: bool,
     /// Serializes every settings read-modify-write operation before it enters
     /// blocking/native work. Awaiting this queue avoids both stale snapshots and
     /// one waiting OS thread per mutation during a burst.
@@ -486,12 +488,12 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<SaveOutcome, Stri
 }
 
 #[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::fs::rename(source, destination)
 }
 
 #[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
