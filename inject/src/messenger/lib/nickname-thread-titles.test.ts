@@ -60,6 +60,12 @@ test("one-to-one titles toggle without changing subscribed participant records o
   mode = "groups";
   expect(exports.default(thread)).toEqual({ ...result, threadTitle: "Alex Example" });
   expect(exports.default({ ...thread, threadType: "group" })).toBe(result);
+  mode = "direct";
+  expect(exports.default(thread)).toBe(result);
+  expect(exports.default({ ...thread, threadType: "group" })).toEqual({
+    ...result,
+    threadTitle: "Alex Example",
+  });
   expect(participant.nickname).toBe("Captain");
   mode = "all";
   expect(exports.default(thread)).toBe(result);

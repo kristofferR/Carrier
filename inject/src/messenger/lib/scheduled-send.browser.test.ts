@@ -217,6 +217,12 @@ async function fixtures(
     region.querySelector("button")?.setAttribute("aria-label", "Enviar reacción");
     await settle();
     assert("localized emoji and reaction controls keep the clock available", !!icon());
+    window.__CARRIER_SETTINGS__ = { zoom: 200 };
+    document.body.style.zoom = "2";
+    await settle();
+    assert("zoomed toolbar icon is not mistaken for an attachment", !!icon());
+    document.body.style.zoom = "";
+    window.__CARRIER_SETTINGS__ = undefined;
     for (const tag of ["img", "video"] as const) {
       const media = document.createElement(tag);
       region.append(media);

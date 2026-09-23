@@ -22,12 +22,14 @@ export function hasComposerMedia(box: HTMLElement): boolean {
     // Toolbar icons are compact even when Messenger translates their labels.
     // Attachment previews occupy a larger surface and remain media when clickable.
     const bounds = control?.getBoundingClientRect();
+    const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
+    const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
     if (
       media.tagName === "IMG" &&
       control &&
       bounds &&
-      bounds.width <= 48 &&
-      bounds.height <= 48 &&
+      bounds.width / scale <= 48 &&
+      bounds.height / scale <= 48 &&
       !control.closest('[contenteditable="true"]')
     )
       continue;

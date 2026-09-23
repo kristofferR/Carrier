@@ -1,9 +1,11 @@
-export type NicknameMode = "all" | "groups" | "off";
+export type NicknameMode = "all" | "direct" | "groups" | "off";
 
 export function nicknameMode(settings?: {
+  nickname_scope?: NicknameMode | null;
   show_nicknames?: boolean;
   nicknames_group_only?: boolean;
 }): NicknameMode {
+  if (settings?.nickname_scope) return settings.nickname_scope;
   return settings?.show_nicknames === false
     ? "off"
     : settings?.nicknames_group_only
@@ -13,7 +15,11 @@ export function nicknameMode(settings?: {
 
 /** Unknown conversation types retain Messenger's presentation. */
 export function showNicknames(mode: NicknameMode, isGroup?: boolean) {
-  return mode === "all" || (mode === "groups" && isGroup !== false);
+  return (
+    mode === "all" ||
+    (mode === "groups" && isGroup !== false) ||
+    (mode === "direct" && isGroup !== true)
+  );
 }
 
 export interface NicknamePreference {

@@ -130,6 +130,53 @@ describe("Facebook module interception", () => {
     expect(exports.default({ threadKey: "456", threadType: "group" })).toMatchObject({
       threadTitle: "Captain",
     });
+    const snippet = (props: unknown) => props;
+    defineDefaultExport(intercepted, "MWThreadSnippetForDisplay.react", snippet);
+    const snippetModule = definitions.get("MWThreadSnippetForDisplay.react")!;
+    expect(snippetModule.dependencies).toContain("ReStoreVaulting");
+    expect(snippetModule.dependencies).toContain("react");
+    expect(snippetModule.dependencies).toContain("I64");
+    const snippetExports = { default: snippet };
+    const snippetModules = {
+      ...modules,
+      react: {
+        createElement: (component: unknown, props: unknown) => ({ component, props }),
+        useSyncExternalStore: (_subscribe: unknown, snapshot: () => string) => snapshot(),
+        useState: (initial: unknown) => [initial, () => {}],
+        useEffect: () => {},
+        useLayoutEffect: () => {},
+      },
+      ReStoreVaulting: { maybeUnvault: () => null },
+    } as Record<string, unknown>;
+    snippetModule.factory(
+      undefined,
+      undefined,
+      undefined,
+      (name: string) => snippetModules[name],
+      undefined,
+      { exports: snippetExports },
+      snippetExports,
+    );
+    expect(snippetExports.default).not.toBe(snippet);
+    const props = { thread: { threadKey: "123" }, snippetRaw: "hello" };
+    expect(snippetExports.default(props)).toEqual({ component: snippet, props });
+    const reply = () => "You replied to Captain";
+    defineDefaultExport(intercepted, "useMWReplySnippetContent", reply);
+    const replyModule = definitions.get("useMWReplySnippetContent")!;
+    expect(replyModule.dependencies).toContain("react");
+    expect(replyModule.dependencies).toContain("I64");
+    const replyExports = { default: reply };
+    replyModule.factory(
+      undefined,
+      undefined,
+      undefined,
+      (name: string) => snippetModules[name],
+      undefined,
+      { exports: replyExports },
+      replyExports,
+    );
+    expect(replyExports.default).not.toBe(reply);
+    expect(replyExports.default()).toBe("You replied to Captain");
     intercepted("MWPThreadCapabilitiesContext", ["react"], () => {});
     expect(definitions.get("MWPThreadCapabilitiesContext")!.dependencies).toContain(
       "LSMessagingThreadTypeUtil",
