@@ -104,7 +104,10 @@ retry. Draft, call, rate-limit, sleep, and Hold Failures guards still apply.
 A missing subscription API or an explicit missing-route error falls back to
 the ordinary heartbeat, which proves responsiveness only. A freshly delivered
 disconnected state also does not claim transport health. Probe-failure streaks
-reset when the account, worker ID, or state manager changes. A successful RPC
+reset when the account, worker ID, or state manager changes. The previous worker's
+failed-probe verdict is withdrawn synchronously at that boundary, even while its
+last probe is pending, so the next recovery tick cannot act on obsolete evidence.
+A successful RPC
 with no state delivery instead times out after eight seconds. Listeners are
 removed on success, failure, and timeout; late replies cannot launch fallback
 requests or certify a replaced worker. Page MQTT or an unavailable

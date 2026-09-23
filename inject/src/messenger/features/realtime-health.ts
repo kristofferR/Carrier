@@ -148,14 +148,6 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     return health;
   };
   const checkWorker = () => {
-    if (workerProbePending) return;
-    const bridge = facebookBridgeModule();
-    if (typeof bridge?.sendAndReceive !== "function") {
-      verified = undefined;
-      callbacks.onUnknown("worker");
-      return;
-    }
-    const sendAndReceive = bridge.sendAndReceive.bind(bridge);
     const state = workerConnectionState();
     const account = accountKey();
     const id = workerId();
@@ -169,7 +161,18 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       workerFailures.succeeded();
       verified = undefined;
       stateRouteUnavailableFor = undefined;
+      // The synchronous recovery tick must not inherit the old worker's verdict,
+      // even while that worker's final probe is still pending.
+      callbacks.onUnknown("worker");
     }
+    if (workerProbePending) return;
+    const bridge = facebookBridgeModule();
+    if (typeof bridge?.sendAndReceive !== "function") {
+      verified = undefined;
+      callbacks.onUnknown("worker");
+      return;
+    }
+    const sendAndReceive = bridge.sendAndReceive.bind(bridge);
     const stillCurrent = () =>
       account === accountKey() && state === workerConnectionState() && id === workerId();
     const observation = stateRouteUnavailableFor?.()

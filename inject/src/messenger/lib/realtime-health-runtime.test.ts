@@ -305,6 +305,9 @@ function stateProbeFixture() {
     changeWorker: () => {
       id = "worker-2";
     },
+    changeState: () => {
+      modules.WACommsConnectionState = { WACommsConnectionState: { ...connection } };
+    },
     complete: () => complete?.(),
     reject: (error: unknown) => reject?.(error),
     probe: async () => {
@@ -354,6 +357,29 @@ test("state delivery may arrive after the RPC response", async () => {
   expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
   expect(fixture.listeners.size).toBe(0);
 });
+
+for (const boundary of ["changeAccount", "changeWorker", "changeState"] as const) {
+  for (const pending of [false, true]) {
+    test(`${boundary} withdraws the old failed-probe verdict synchronously (pending=${pending})`, async () => {
+      const fixture = stateProbeFixture();
+      fixture.setMode("drop");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await fixture.probe();
+        await fixture.advance(8000);
+      }
+      expect(fixture.tracker.needsRecovery(24_000)).toBe(true);
+      if (pending) await fixture.probe();
+      fixture[boundary]();
+      fixture.monitor.check();
+      // auto-refresh calls the recovery controller immediately after check(),
+      // before any replacement probe or the old pending probe can settle.
+      expect(fixture.tracker.needsRecovery(24_000)).toBe(false);
+      expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+      await fixture.advance(8000);
+      expect(fixture.tracker.needsRecovery(32_000)).toBe(false);
+    });
+  }
+}
 
 test("a worker without the state route falls back without certifying encrypted health", async () => {
   const fixture = stateProbeFixture();

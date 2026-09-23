@@ -1159,14 +1159,6 @@
       return health;
     };
     const checkWorker = () => {
-      if (workerProbePending) return;
-      const bridge = facebookBridgeModule();
-      if (typeof bridge?.sendAndReceive !== "function") {
-        verified = void 0;
-        callbacks.onUnknown("worker");
-        return;
-      }
-      const sendAndReceive = bridge.sendAndReceive.bind(bridge);
       const state2 = workerConnectionState();
       const account = accountKey();
       const id = workerId();
@@ -1175,7 +1167,16 @@
         workerFailures.succeeded();
         verified = void 0;
         stateRouteUnavailableFor = void 0;
+        callbacks.onUnknown("worker");
       }
+      if (workerProbePending) return;
+      const bridge = facebookBridgeModule();
+      if (typeof bridge?.sendAndReceive !== "function") {
+        verified = void 0;
+        callbacks.onUnknown("worker");
+        return;
+      }
+      const sendAndReceive = bridge.sendAndReceive.bind(bridge);
       const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
       const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
