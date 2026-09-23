@@ -7418,12 +7418,9 @@
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       return true;
     }
-    const completeCapacityEviction = async (fallback) => {
+    const completeCapacityEviction = (fallback) => {
       if (!fallback.deliverable) return;
-      const expectedFingerprint = notifiedStore.notifiedFingerprint(fallback.key);
-      const group = window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : await conversationNames(fallback.key);
       const settings = window.__CARRIER_SETTINGS__ || {};
-      if (notifiedStore.notifiedFingerprint(fallback.key) !== expectedFingerprint) return;
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
         notifiedStore.markSuppressed(
           fallback.key,
@@ -7439,17 +7436,10 @@
         notificationDedupeKey("", fallback.body)
       );
       diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
-      const named = notificationNames(
-        nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-        fallback.body,
-        group,
-        showNicknames(nicknameMode(settings), group?.isGroup),
-        "group"
-      );
       emitNotification(
         ++notifySeq,
-        hidePreview ? "Messenger" : named.title,
-        hidePreview ? "New message" : named.body,
+        hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
+        hidePreview ? "New message" : fallback.body,
         "",
         fallback.dedupeKey,
         () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -7460,7 +7450,7 @@
       const displaced = notificationCorrelations.addRow(fallback);
       if (!displaced) return;
       clearTimeout(displaced.row.timer);
-      if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
+      if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
     };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);

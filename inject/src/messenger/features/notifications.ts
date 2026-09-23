@@ -1035,19 +1035,12 @@ export function initNotificationBridge() {
   // merely remove its identity while leaving a timer that can no longer pass
   // the map ownership check. Deliver without an avatar under pressure; native
   // content dedupe still absorbs a page Notification that arrives afterward.
-  const completeCapacityEviction = async (fallback: PendingFallback) => {
+  const completeCapacityEviction = (fallback: PendingFallback) => {
     // This arrival already crossed its delivery boundary as suppressed. A
     // later settings change must not revive it merely because queue pressure
     // retires its opposite-order correlation window.
     if (!fallback.deliverable) return;
-    const expectedFingerprint = notifiedStore.notifiedFingerprint(fallback.key);
-    const group = window.__CARRIER_SETTINGS__?.hide_notification_preview
-      ? null
-      : await conversationNames(fallback.key);
     const settings = window.__CARRIER_SETTINGS__ || {};
-    // A newer delivery may win while names load. Do not overwrite its receipt
-    // or replay the older preview that was evicted from the correlation queue.
-    if (notifiedStore.notifiedFingerprint(fallback.key) !== expectedFingerprint) return;
     if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
       notifiedStore.markSuppressed(
         fallback.key,
@@ -1063,17 +1056,14 @@ export function initNotificationBridge() {
       notificationDedupeKey("", fallback.body),
     );
     diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
-    const named = notificationNames(
-      nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
-      fallback.body,
-      group,
-      showNicknames(nicknameMode(settings), group?.isGroup),
-      "group",
-    );
+    // The row has left the correlation queue. Queue native IPC in this task so
+    // a reload cannot abandon the delivery while contact names are loading.
     emitNotification(
       ++notifySeq,
-      hidePreview ? "Messenger" : named.title,
-      hidePreview ? "New message" : named.body,
+      hidePreview
+        ? "Messenger"
+        : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
+      hidePreview ? "New message" : fallback.body,
       "",
       fallback.dedupeKey,
       () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -1085,7 +1075,7 @@ export function initNotificationBridge() {
     const displaced = notificationCorrelations.addRow(fallback);
     if (!displaced) return;
     clearTimeout(displaced.row.timer);
-    if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
+    if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
   };
 
   const scheduleFallback = (
