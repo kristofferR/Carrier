@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
@@ -26,10 +26,14 @@ test.skipIf(!chromium)(
         bundle: true,
         write: false,
       });
+      const css = await readFile(
+        join(import.meta.dir, "../../../../src-tauri/inject/messenger.css"),
+        "utf8",
+      );
       const file = join(directory, "index.html");
       await writeFile(
         file,
-        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20"><path fill="rgb(0, 237, 136)" d="M0 0h20v20H0z"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
+        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
       var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
       window.__carrierToast=(message)=>warnings.push(message);
       window.__TAURI_INTERNALS__={invoke:async()=>{}};
@@ -150,6 +154,17 @@ async function fixtures(
     init();
     await settle();
     const icon = () => document.querySelector<HTMLButtonElement>("[data-carrier-schedule]");
+    assert("empty composer has no clock", !icon());
+    box.textContent = "Draft";
+    await settle();
+    assert("text reveals clock", !!icon());
+    box.firstChild!.textContent = "   ";
+    box.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await settle();
+    assert("clearing to whitespace hides clock immediately", !icon());
+    box.firstChild!.textContent = "Draft";
+    box.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await settle();
     assert(
       "clock is immediately left of the smiley wrapper",
       icon()?.nextElementSibling?.id === "emoji-wrapper",
@@ -158,6 +173,18 @@ async function fixtures(
       "clock inherits Messenger's icon color",
       getComputedStyle(icon()!).color === "rgb(0, 237, 136)",
     );
+    const clockSvg = icon()!.querySelector("svg")!;
+    const smileySvg = document.querySelector<SVGSVGElement>("#emoji-wrapper svg")!;
+    const clockRect = clockSvg.getBoundingClientRect();
+    const smileyRect = smileySvg.getBoundingClientRect();
+    const paintedWidth = (svg: SVGSVGElement) =>
+      (svg.getBBox().width / svg.viewBox.baseVal.width) * svg.getBoundingClientRect().width;
+    assert(
+      "clock circle matches smiley diameter",
+      paintedWidth(clockSvg) === paintedWidth(smileySvg),
+    );
+    assert("clock has space before smiley", smileyRect.left - clockRect.right >= 8);
+    assert("clock is not dimmed", getComputedStyle(icon()!).opacity === "1");
     for (const tag of ["img", "video"] as const) {
       const media = document.createElement(tag);
       region.append(media);
@@ -175,6 +202,7 @@ async function fixtures(
     assert("clickable attachment previews also hide the clock", !icon());
     preview.remove();
     await settle();
+    clear();
     box.focus();
     assert(
       "online sends automatically even with the empty composer focused",
@@ -235,13 +263,36 @@ async function fixtures(
     clear();
     box.textContent = "Schedule UI test";
     await settle();
+    Date.now = () => new Date(2026, 8, 23, 18, 18).getTime();
     icon()?.click();
     await settle();
     assert("quick choices open", document.querySelectorAll(".carrier-schedule-preset").length >= 3);
     assert(
-      "24h field",
+      "custom picker defaults to ten minutes ahead in 24h format",
       document.querySelector<HTMLInputElement>(".carrier-schedule-fields input[type=text]")
-        ?.value === "09:00",
+        ?.value === "18:28",
+    );
+    assert(
+      "custom picker defaults to today",
+      document.querySelector<HTMLInputElement>(".carrier-schedule-fields input[type=date]")
+        ?.value === "2026-09-23",
+    );
+    Date.now = realNow;
+    const panel = document.querySelector<HTMLElement>(".carrier-schedule-panel")!;
+    assert(
+      "dark popup uses primary text instead of black composer container",
+      getComputedStyle(panel).color === "rgb(226, 229, 233)",
+    );
+    assert(
+      "dark popup has matching surface",
+      getComputedStyle(panel).backgroundColor === "rgb(37, 39, 40)",
+    );
+    document.documentElement.style.setProperty("--primary-text", "#050505");
+    document.documentElement.style.setProperty("--card-background", "#ffffff");
+    assert(
+      "popup follows light theme",
+      getComputedStyle(panel).color === "rgb(5, 5, 5)" &&
+        getComputedStyle(panel).backgroundColor === "rgb(255, 255, 255)",
     );
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert("Escape closes", !document.querySelector(".carrier-schedule-panel"));
@@ -255,6 +306,7 @@ async function fixtures(
         page.scheduleItems[0]?.status === "scheduled" &&
         !box.innerText.trim(),
     );
+    assert("empty composer stays hidden with queued messages", !icon());
     page.scheduleItems = [{ ...message(), status: "missed", due: Date.now() - 120_001 }];
     document.dispatchEvent(new Event("visibilitychange"));
     await settle();

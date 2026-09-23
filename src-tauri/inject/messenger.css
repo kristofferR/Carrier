@@ -372,12 +372,13 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
   padding: 6px;
   align-self: flex-end;
   margin: 2px 0;
+  /* Messenger's emoji wrapper has a -12px inline-start margin. */
+  margin-inline-end: 12px;
   border-radius: 50%;
   cursor: pointer;
   position: relative;
 }
 .carrier-schedule-button svg { display: block; width: 20px; height: 20px; }
-.carrier-schedule-button:disabled { opacity: .4; cursor: default; }
 .carrier-schedule-button:hover,
 .carrier-schedule-button[aria-expanded="true"] { background: color-mix(in srgb, currentColor 13%, transparent); }
 .carrier-schedule-button[data-queued="true"]::after {

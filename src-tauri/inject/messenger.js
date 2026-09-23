@@ -8428,19 +8428,7 @@ ${text}`)) {
       const accent = fill && fill !== "none" ? fill : getComputedStyle(emoji).color;
       button.style.color = accent;
       if (!panel) return;
-      const root = getComputedStyle(document.documentElement);
-      const region = sourceBox && composerRegion(sourceBox);
-      const color = region ? getComputedStyle(region).color : root.getPropertyValue("--primary-text");
       panel.style.setProperty("--schedule-accent", accent);
-      panel.style.setProperty("--schedule-text", color || "#e4e6eb");
-      panel.style.setProperty(
-        "--schedule-surface",
-        root.getPropertyValue("--card-background") || "#242526"
-      );
-      panel.style.setProperty(
-        "--schedule-muted",
-        root.getPropertyValue("--secondary-text") || "#aeb4bf"
-      );
     };
     const save = async (due) => {
       if (busy) return;
@@ -8493,7 +8481,7 @@ ${text}`)) {
         busy = false;
       }
     };
-    const customPicker = (container, due = schedulePresets(Date.now()).at(-1).due) => {
+    const customPicker = (container, due = Date.now() + 10 * 6e4) => {
       const fields = element("div", "carrier-schedule-fields");
       const dateLabel = element("label", "", "Date");
       const date = element("input", "");
@@ -8581,7 +8569,7 @@ ${text}`)) {
         element(
           "p",
           "carrier-schedule-note carrier-schedule-divider",
-          "Sends automatically while Carrier is running and connected. Up to 2 minutes late; after that, it stays unsent and you’ll be warned."
+          "Sends automatically while Carrier is running and connected."
         )
       );
       if (rows.length && !editing) {
@@ -8666,7 +8654,7 @@ ${text}`)) {
         close();
       }
       if (panel && (thread() !== panelThread || !box || hasComposerMedia(box))) close();
-      if (!box || !region || !thread() || hasComposerMedia(box)) {
+      if (!box || !region || !thread() || hasComposerMedia(box) || !composerText(box).trim()) {
         button?.remove();
         return;
       }
@@ -8698,12 +8686,11 @@ ${text}`)) {
         button.setAttribute("aria-expanded", "false");
         button.setAttribute("aria-controls", "carrier-schedule-panel");
         button.title = "Schedule send";
-        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
+        button.innerHTML = '<svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
       }
       if (button.parentElement !== parent || button.nextElementSibling !== before)
         parent.insertBefore(button, before);
       button.dataset.queued = String(rows.length > 0);
-      button.disabled = !composerText(box).trim() && rows.length === 0;
       button.title = rows.length ? `Schedule send · ${rows.length} saved` : "Schedule send";
       syncColors();
     }
@@ -8766,6 +8753,7 @@ ${text}`)) {
         attributeFilter: ["style", "class", "src", "aria-label", "aria-disabled"]
       });
       document.addEventListener("change", scheduleMount, true);
+      document.addEventListener("input", scheduleMount, true);
       document.addEventListener(
         "keydown",
         (event) => {
