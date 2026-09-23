@@ -4,6 +4,7 @@ import {
   type FacebookModuleDefine,
   isConversationSearchInput,
 } from "../lib/facebook-modules";
+import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
@@ -21,6 +22,13 @@ export function initFacebookModuleInterception() {
   const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
   const wrappedDefines = new WeakSet<object>();
   const searchIndex = new FacebookFTSIdleCoordinator();
+  const nicknamePreference = {
+    getSnapshot: () => nicknameMode(window.__CARRIER_SETTINGS__),
+    subscribe: (listener: () => void) => {
+      window.addEventListener("carrier:settings", listener);
+      return () => window.removeEventListener("carrier:settings", listener);
+    },
+  };
   let pauseTimer: number | undefined;
 
   const wakeSearchIndex = () => {
@@ -68,6 +76,7 @@ export function initFacebookModuleInterception() {
       (exports) => syncProcessing.observeLogger(exports),
       (exports) => workerRecovery.observeLifecycleExports(exports),
       /mac/i.test(navigator.platform),
+      nicknamePreference,
     );
     wrappedDefines.add(wrapped);
     return wrapped;

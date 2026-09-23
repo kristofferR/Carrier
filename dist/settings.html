@@ -45,6 +45,9 @@
       .row input { margin-top: 2px; width: 16px; height: 16px; }
       .label { font-weight: 500; }
       .hint { color: #65676b; font-size: 12px; margin-top: 2px; }
+      .nickname-options { border: 1px solid #e4e6eb; border-radius: 8px; background: #f7f8fa; }
+      .nickname-options .nickname-scope { margin: 0 12px 10px 39px; border-left: 1px solid #ccd0d5; border-radius: 0 8px 8px 0; }
+      .nickname-scope.disabled { opacity: .5; cursor: default; }
       footer {
         padding: 12px 20px; border-top: 1px solid #e4e6eb;
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -62,6 +65,8 @@
         .tabs { background: #242526; }
         .tabs, footer { border-color: #3a3b3c; }
         .hint { color: #b0b3b8; }
+        .nickname-options { background: #292c30; border-color: #3c444f; }
+        .nickname-options .nickname-scope { border-left-color: #4b5058; }
         .tab { color: #b0b3b8; }
         .tab:hover { background: #3a3b3c; color: #e4e6eb; }
         .tab.active { background: #263a59; color: #5b9bff; }
@@ -101,6 +106,8 @@
         ["clear_notifications_on_view", "Clear When Viewed", "Remove a conversation's notifications when you view it in Carrier."],
         ["attention_on_message", "Bounce Dock Icon", "Bounce the Dock icon when a message arrives while Carrier is unfocused."],
         ["hide_names_avatars", "Hide Names & Avatars", "Blur contact names and avatars in the conversation list (Cmd/Ctrl+Shift+H)."],
+        ["nicknames_group_only", "Group chats only", "Use real names in one-to-one chats."],
+        ["show_nicknames", "Show Nicknames", "Use chat nicknames in conversations and notifications."],
         ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
         ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
         ["menu_bar_only", "Menu Bar Only", "Hide the Dock icon and live in the menu bar (needs the tray)."],
@@ -150,7 +157,7 @@
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "hide_names_avatars", "system_emoji", "stop_media_autoplay"] },
+          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "hide_names_avatars", "show_nicknames", "system_emoji", "stop_media_autoplay"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
@@ -308,6 +315,18 @@
             : "Use the full-color icon or a monochrome mark tinted for the desktop theme.",
           false,
         );
+      }
+
+      function nicknameRows() {
+        const group = document.createElement("div");
+        group.className = "nickname-options";
+        const scope = checkboxRow("nicknames_group_only");
+        scope.classList.add("nickname-scope");
+        const disabled = !settings.show_nicknames;
+        scope.querySelector("input").disabled = disabled;
+        scope.classList.toggle("disabled", disabled);
+        group.append(checkboxRow("show_nicknames"), scope);
+        return group;
       }
 
       function checkboxRow(key) {
@@ -477,6 +496,7 @@
         tray_icon_style: trayIconStyleRow,
         custom_css: customCssRow,
         open_logs: openLogsRow,
+        show_nicknames: nicknameRows,
       };
 
       function renderBody() {
