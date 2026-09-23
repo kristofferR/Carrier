@@ -33,7 +33,7 @@ test.skipIf(!chromium)(
       const file = join(directory, "index.html");
       await writeFile(
         file,
-        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
+        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px} #region{color:#050505} h2,h3{color:#1c1e21} #emoji-wrapper{margin-left:-12px;padding:0 4px 4px 0} #emoji-wrapper [role=button]{box-sizing:content-box;width:20px;height:20px;padding:8px;margin:-4px;display:flex} :root{--primary-text:#e2e5e9;--card-background:#252728;--secondary-text:#b0b3b8}</style><style>${css}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20" viewBox="0 0 20 20"><path fill="rgb(0, 237, 136)" d="M10 0a10 10 0 1 0 0 20 10 10 0 0 0 0-20"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
       var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
       window.__carrierToast=(message)=>warnings.push(message);
       window.__TAURI_INTERNALS__={invoke:async()=>{}};
@@ -284,6 +284,18 @@ async function fixtures(
       getComputedStyle(panel).color === "rgb(226, 229, 233)",
     );
     assert(
+      "dark heading overrides Messenger's heading color",
+      getComputedStyle(panel.querySelector("h2")!).color === "rgb(226, 229, 233)",
+    );
+    const closeButton = panel.querySelector<HTMLButtonElement>(".carrier-schedule-close")!;
+    const closeRect = closeButton.getBoundingClientRect();
+    const crossRect = closeButton.querySelector("svg")!.getBoundingClientRect();
+    assert(
+      "close icon is centered in its button",
+      Math.abs(closeRect.left + closeRect.width / 2 - crossRect.left - crossRect.width / 2) < 0.5 &&
+        Math.abs(closeRect.top + closeRect.height / 2 - crossRect.top - crossRect.height / 2) < 0.5,
+    );
+    assert(
       "dark popup has matching surface",
       getComputedStyle(panel).backgroundColor === "rgb(37, 39, 40)",
     );
@@ -293,6 +305,10 @@ async function fixtures(
       "popup follows light theme",
       getComputedStyle(panel).color === "rgb(5, 5, 5)" &&
         getComputedStyle(panel).backgroundColor === "rgb(255, 255, 255)",
+    );
+    assert(
+      "light heading follows light primary text",
+      getComputedStyle(panel.querySelector("h2")!).color === "rgb(5, 5, 5)",
     );
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert("Escape closes", !document.querySelector(".carrier-schedule-panel"));

@@ -340,11 +340,14 @@ export function initScheduledSend() {
     if (!panel) return;
     panel.replaceChildren();
     const heading = element("div", "carrier-schedule-heading");
+    const closeButton = action("", () => close(true), "carrier-schedule-close");
+    closeButton.setAttribute("aria-label", "Close scheduling");
+    closeButton.innerHTML =
+      '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     heading.append(
       element("h2", "", editing ? "Reschedule message" : "Schedule send"),
-      action("×", () => close(true), "carrier-schedule-close"),
+      closeButton,
     );
-    heading.querySelector("button")?.setAttribute("aria-label", "Close scheduling");
     panel.append(heading);
     if (editing) {
       panel.append(element("p", "carrier-schedule-preview", editing.text));

@@ -403,11 +403,14 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
   font: 13px/1.45 -apple-system, system-ui, sans-serif;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .carrier-schedule-panel * { box-sizing: border-box; }
 .__fb-dark-mode .carrier-schedule-panel { color-scheme: dark; }
 .__fb-light-mode .carrier-schedule-panel { color-scheme: light; }
 .carrier-schedule-panel button, .carrier-schedule-panel input { font: inherit; }
+.carrier-schedule-panel input { -webkit-user-select: text; user-select: text; }
 .carrier-schedule-panel button { cursor: pointer; }
 .carrier-schedule-panel button:focus-visible, .carrier-schedule-panel input:focus-visible,
 .carrier-schedule-panel summary:focus-visible, .carrier-schedule-button:focus-visible {
@@ -415,7 +418,10 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
 }
 .carrier-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px; }
 .carrier-schedule-heading h2 { font: inherit; font-weight: 650; font-size: 15px; margin: 0; }
-.carrier-schedule-close { border: 0; background: transparent; color: var(--schedule-muted); border-radius: 50%; width: 28px; height: 28px; padding: 0; font-size: 23px !important; }
+/* Messenger gives headings their own light-theme color, even in dark mode. */
+.carrier-schedule-panel :is(h2, h3) { color: var(--schedule-text); }
+.carrier-schedule-close { display: grid; place-items: center; flex: 0 0 28px; border: 0; background: transparent; color: var(--schedule-muted); border-radius: 50%; width: 28px; height: 28px; padding: 0; }
+.carrier-schedule-close svg { display: block; width: 18px; height: 18px; }
 .carrier-schedule-preset { width: 100%; display: flex; justify-content: space-between; gap: 10px; border: 0; background: transparent; color: inherit; padding: 12px 8px; border-radius: 8px; text-align: left; }
 .carrier-schedule-preset:hover, .carrier-schedule-close:hover { background: color-mix(in srgb, var(--schedule-text) 8%, transparent); }
 .carrier-schedule-time { color: var(--schedule-muted); }
