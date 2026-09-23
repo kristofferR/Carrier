@@ -69,11 +69,18 @@ interface CarrierToastAction {
   url: string;
 }
 
+interface CarrierToastOptions {
+  warning?: boolean;
+}
+
 /**
  * Closure-scoped bridge supplied by the Rust initialization wrapper. It signs
  * the request without serializing its non-extractable native authorization.
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
+declare const carrierScheduledSend: (
+  request: import("./messenger/lib/scheduled-send").ScheduleRequest,
+) => Promise<import("./messenger/lib/scheduled-send").ScheduleResponse>;
 
 declare const carrierMediaPlatform: "macos" | "windows" | "linux";
 type CarrierMediaPermissionState =
@@ -134,7 +141,11 @@ interface Window {
   __CARRIER_HEARTBEAT_ID__?: number;
 
   // panel.js
-  __carrierToast?: (msg: string, action?: CarrierToastAction) => void;
+  __carrierToast?: (
+    msg: string,
+    action?: CarrierToastAction,
+    options?: CarrierToastOptions,
+  ) => void;
   __carrierCheckUpdates?: () => void;
   __carrierToggleSettings?: () => void;
   __carrierToggleShortcuts?: () => void;

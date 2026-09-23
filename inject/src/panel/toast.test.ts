@@ -102,6 +102,18 @@ describe("installToast", () => {
     expect(descriptor?.writable).toBe(false);
     expect(descriptor?.configurable).toBe(false);
   });
+
+  test("announces missed-send warnings as alerts and resets for ordinary toasts", () => {
+    cleanup = installToast();
+    window.__carrierToast?.("Scheduled message not sent", undefined, { warning: true });
+    const toast = body.children[0];
+    expect(toast?.attributes.get("role")).toBe("alert");
+    expect(toast?.attributes.get("aria-live")).toBe("assertive");
+    expect(toast?.style.border).toContain("solid");
+    window.__carrierToast?.("Message copied");
+    expect(toast?.attributes.get("role")).toBe("status");
+    expect(toast?.style.border).toBe("none");
+  });
 });
 
 describe("canActivateToastAction", () => {

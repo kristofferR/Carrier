@@ -60,13 +60,20 @@ export function installToast() {
     carrierRevealDownload(action.url)?.catch?.(() => {});
   });
 
-  const showToast = (msg: string, nextAction?: CarrierToastAction) => {
+  const showToast = (
+    msg: string,
+    nextAction?: CarrierToastAction,
+    options?: CarrierToastOptions,
+  ) => {
     if (!mounted) {
       document.body.appendChild(toastEl);
       mounted = true;
     }
 
     action = nextAction;
+    toastEl.setAttribute("role", options?.warning ? "alert" : "status");
+    toastEl.setAttribute("aria-live", options?.warning ? "assertive" : "polite");
+    toastEl.style.border = options?.warning ? "1px solid #b58130" : "none";
     message.textContent = msg;
     toastEl.replaceChildren(message);
     toastEl.style.pointerEvents = action ? "auto" : "none";
@@ -91,7 +98,7 @@ export function installToast() {
           action = undefined;
         }, 250);
       },
-      action ? 6000 : 2600,
+      options?.warning ? 8000 : action ? 6000 : 2600,
     );
   };
 

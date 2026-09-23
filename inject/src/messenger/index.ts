@@ -31,6 +31,7 @@ import { initNotificationBridge } from "./features/notifications";
 import { initQuickReply } from "./features/quick-reply";
 import { initRateLimit } from "./features/rate-limit";
 import { initRecentThreads } from "./features/recent-threads";
+import { initScheduledSend } from "./features/scheduled-send";
 import { initSelectorHealth } from "./features/selector-health";
 import { initSettingsButton } from "./features/settings-button";
 import { initShareIntake } from "./features/share-intake";
@@ -85,6 +86,7 @@ function main() {
   initFeature("recent-threads", initRecentThreads);
   initFeature("thread-nav", initThreadNav);
   initFeature("quick-reply", initQuickReply);
+  initFeature("scheduled-send", initScheduledSend);
   initFeature("hide-names", initHideNames);
   initFeature("system-emoji", initSystemEmoji);
   initFeature("media-permissions", initMediaPermissionWarning);

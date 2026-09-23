@@ -110,6 +110,7 @@ cryptographically verified updates.
 
 ### Messenger tools
 
+- [Schedule text messages](docs/scheduled-sending.md) with quick delays or a 24-hour date/time picker
 - Jump directly to conversations and cycle through them from the keyboard
 - Toggle the conversation information sidebar
 - Search conversations or the active thread without reaching for the mouse
