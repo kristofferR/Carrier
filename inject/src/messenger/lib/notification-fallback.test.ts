@@ -606,14 +606,44 @@ describe("NotifiedSignatureStore", () => {
 
 describe("PageNotificationReceiptStore", () => {
   test("keeps draft delivery evidence until its real preview appears after native dedupe", () => {
-    const receipts = new PageNotificationReceiptStore(memoryStorage());
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
     receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
     expect(receipts.consumeUniquelyMatching([], 32_000).size).toBe(0);
+    receipts.discardReadMatches([{ key: "2", title: "Jane", body: "Incoming message" }], 32_100);
     expect(
-      receipts
-        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_100)
+      new PageNotificationReceiptStore(
+        storage,
+        undefined,
+        undefined,
+        1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+      )
+        .consumeUniquelyMatching(
+          [
+            { key: "2", title: "Jane", body: "Incoming message" },
+            { key: "1", title: "Jane", body: "Incoming message" },
+          ],
+          1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+        )
         .get("1"),
     ).toEqual({ nativeId: 42 });
+  });
+
+  test("retires a draft receipt when its thread shows a different real preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Earlier message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    receipts.retireDraftsWithDifferentPreview(
+      [{ key: "1", title: "Jane", body: "Different message" }],
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+    );
+    expect(
+      receipts.consumeMatching(
+        { key: "1", title: "Jane", body: "Earlier message" },
+        1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+      ),
+    ).toBeNull();
   });
 
   test("pairs a page notification after reload without persisting raw content", () => {

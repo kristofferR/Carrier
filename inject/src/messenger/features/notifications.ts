@@ -573,6 +573,9 @@ export function initNotificationBridge() {
           (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft))
         ) {
           pageNotificationReceipts.add(originalTitle, originalBody, id);
+          if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
+            pageNotificationReceipts.retainForDraft(id, threadId);
+          }
         }
         const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
         const named = notificationNames(
@@ -1528,10 +1531,17 @@ export function initNotificationBridge() {
         signal.matchedDraft = true;
         signal.threadPath = conversation.threadPath;
         signal.threadMuted = conversation.muted;
+        if (signal.nativeId !== undefined) {
+          pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
+        }
         if (signal.emitted && signal.nativeId !== undefined) {
           updateNotificationRoute(signal.nativeId, conversation.threadPath);
         }
       }
+      pageNotificationReceipts.retireDraftsWithDifferentPreview(
+        observed.filter(({ body, draft }) => body.length > 0 && !draft),
+        detectedAt,
+      );
       const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
       const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
         hydrated,

@@ -6246,7 +6246,7 @@
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && now - candidate.at >= 0 && (candidate.draftThread !== void 0 || now - candidate.at <= this.ttlMs)) {
               this.receipts.push(candidate);
             }
           }
@@ -6268,7 +6268,7 @@
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const age = now - this.receipts[index].at;
-        if (age < 0 || age > this.ttlMs) {
+        if (age < 0 || age > this.ttlMs && !this.receipts[index].draftThread) {
           this.receipts.splice(index, 1);
           changed = true;
         }
@@ -6287,12 +6287,33 @@
       receipt.nativeDelivery = delivery;
       this.persist();
     }
+    retainForDraft(nativeId, threadKey) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.draftThread = hashText(threadKey);
+      this.persist();
+    }
+    retireDraftsWithDifferentPreview(rows, now = Date.now()) {
+      this.prune(now);
+      const previews = new Map(
+        [...rows].map((row) => [hashText(row.key), opaqueNotificationIdentity(row.title, row.body)])
+      );
+      const remaining = this.receipts.filter((receipt) => {
+        if (!receipt.draftThread) return true;
+        const preview = previews.get(receipt.draftThread);
+        return !preview || opaqueNotificationMatches(receipt.identity, preview);
+      });
+      if (remaining.length === this.receipts.length) return;
+      this.receipts.splice(0, this.receipts.length, ...remaining);
+      this.persist();
+    }
     consumeMatching(row, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return null;
       const identity = opaqueNotificationIdentity(row.title, row.body);
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
+        if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
         if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
         this.receipts.splice(index, 1);
         this.persist();
@@ -6308,7 +6329,7 @@
      * ambiguous receipt is DROPPED instead: Messenger virtualizes the list, so
      * waiting for a unique match could just as well settle it onto the wrong
      * twin once the other scrolls away. Duplicate anchors for one thread count
-     * as a single row.
+     * as a single row. A draft receipt also requires its known thread key.
      */
     consumeUniquelyMatching(rows, now = Date.now()) {
       this.prune(now);
@@ -6326,6 +6347,7 @@
         let match = null;
         let ambiguous = false;
         for (const [key, identity] of identities) {
+          if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
           if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
           if (match !== null && match !== key) {
             ambiguous = true;
@@ -6349,17 +6371,23 @@
      * that message's only notification. This drops even when an unread twin
      * shares the text — the receipt's true thread is unknowable then, and a
      * duplicate fallback (absorbed by the native dedupe) beats misrouting the
-     * click or marking the wrong thread delivered.
+     * click or marking the wrong thread delivered. Draft receipts have a known
+     * thread, so only that row can retire them.
      */
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      const read = [...readRows].map((row) => ({
+        key: row.key ? hashText(row.key) : null,
+        identity: opaqueNotificationIdentity(row.title, row.body)
+      }));
       if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
-        if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+        if (!read.some(
+          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && opaqueNotificationMatches(receipt.identity, identity)
+        )) {
           continue;
         }
         this.receipts.splice(index, 1);
@@ -7324,6 +7352,9 @@
           const hidePreview = deliverySettings.hide_notification_preview === true;
           if (pageMatch.draft || pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
             pageNotificationReceipts.add(originalTitle, originalBody, id);
+            if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
+              pageNotificationReceipts.retainForDraft(id, threadId);
+            }
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
           const named = notificationNames(
@@ -7976,10 +8007,17 @@
           signal.matchedDraft = true;
           signal.threadPath = conversation.threadPath;
           signal.threadMuted = conversation.muted;
+          if (signal.nativeId !== void 0) {
+            pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
+          }
           if (signal.emitted && signal.nativeId !== void 0) {
             updateNotificationRoute(signal.nativeId, conversation.threadPath);
           }
         }
+        pageNotificationReceipts.retireDraftsWithDifferentPreview(
+          observed.filter(({ body, draft }) => body.length > 0 && !draft),
+          detectedAt
+        );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
         const pendingPageArrivals = pendingPageNotifications.consumeUniquelyMatching(
           hydrated,
