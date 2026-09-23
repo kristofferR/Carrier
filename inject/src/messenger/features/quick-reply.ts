@@ -1,12 +1,13 @@
 import { diag } from "../bridge";
 import {
   composerContainsReply,
+  composerIncludesReply,
   decideQuickReply,
   type QuickReplyPhase,
   type QuickReplySnapshot,
 } from "../lib/quick-reply";
 import { composerText, findSendButton, hasComposerMedia } from "../lib/scheduled-composer";
-import { withComposerDelivery } from "../lib/scheduled-send";
+import { withComposerDelivery, withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 import { firstShown } from "./conversation-actions";
 
@@ -103,7 +104,7 @@ async function preserveDraft(path: string, text: string): Promise<boolean> {
     if (currentThreadId() === wantedThread && box) {
       box.focus();
       if (!text) return true;
-      if (composerContainsReply(box.textContent, text)) return true;
+      if (composerIncludesReply(box.textContent, text)) return true;
       // This fallback never sends automatically. Preserve both pieces when a
       // draft already exists instead of acknowledging and dropping the native
       // reply that brought the user here.
@@ -159,7 +160,7 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void withComposerDelivery(() => preserveDraft(path, text))
+    void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text))
       .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");

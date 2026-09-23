@@ -7952,6 +7952,7 @@
     return { action: "wait", phase };
   }
   var composerContainsReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
+  var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/lib/scheduled-composer.ts
   var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
@@ -8010,6 +8011,9 @@
     if (now < due) return "early";
     return now <= due + SEND_GRACE_MS ? "due" : "missed";
   }
+  function nextDueMessage(items, now) {
+    return items.filter((item) => item.status === "scheduled" && sendWindow(item.due, now) === "due").sort((a, b) => a.due - b.due)[0];
+  }
   function schedulePresets(now) {
     const evening = new Date(now);
     evening.setHours(18, 0, 0, 0);
@@ -8043,14 +8047,25 @@
     hourCycle: "h23"
   }).format(time);
   var composerBusy = false;
-  async function withComposerDelivery(run) {
-    if (composerBusy) return void 0;
-    composerBusy = true;
+  var composerWaiters = [];
+  async function runComposerDelivery(run) {
     try {
       return await run();
     } finally {
-      composerBusy = false;
+      const next = composerWaiters.shift();
+      if (next) next();
+      else composerBusy = false;
     }
+  }
+  function withComposerDelivery(run) {
+    if (composerBusy) return Promise.resolve(void 0);
+    composerBusy = true;
+    return runComposerDelivery(run);
+  }
+  async function withComposerDeliveryWhenAvailable(run) {
+    if (composerBusy) await new Promise((resolve) => composerWaiters.push(resolve));
+    else composerBusy = true;
+    return runComposerDelivery(run);
   }
 
   // inject/src/messenger/features/quick-reply.ts
@@ -8124,7 +8139,7 @@
       if (currentThreadId() === wantedThread && box) {
         box.focus();
         if (!text) return true;
-        if (composerContainsReply(box.textContent, text)) return true;
+        if (composerIncludesReply(box.textContent, text)) return true;
         if ((box.textContent || "").trim()) {
           const selection = window.getSelection();
           const range = document.createRange();
@@ -8169,7 +8184,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void withComposerDelivery(() => preserveDraft(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
+      void withComposerDeliveryWhenAvailable(() => preserveDraft(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8698,9 +8713,7 @@ ${text}`)) {
       try {
         await request({ op: "list" });
         await warning();
-        const due = rows.find(
-          (row) => row.status === "scheduled" && sendWindow(row.due, Date.now()) === "due"
-        );
+        const due = nextDueMessage(rows, Date.now());
         if (!due || !canDeliver || panel || !ready()) return;
         await withComposerDelivery(async () => {
           const box = findComposer();

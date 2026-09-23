@@ -12,6 +12,7 @@ import {
   localDateValue,
   localScheduleTime,
   MAX_SCHEDULED_CHARS,
+  nextDueMessage,
   type ScheduledMessage,
   type ScheduleRequest,
   type ScheduleResponse,
@@ -551,9 +552,7 @@ export function initScheduledSend() {
     try {
       await request({ op: "list" });
       await warning();
-      const due = rows.find(
-        (row) => row.status === "scheduled" && sendWindow(row.due, Date.now()) === "due",
-      );
+      const due = nextDueMessage(rows, Date.now());
       if (!due || !canDeliver || panel || !ready()) return;
       await withComposerDelivery(async () => {
         const box = findComposer();

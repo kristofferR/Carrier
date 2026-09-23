@@ -43,6 +43,15 @@ export function sendWindow(due: number, now: number): "early" | "due" | "missed"
   return now <= due + SEND_GRACE_MS ? "due" : "missed";
 }
 
+export function nextDueMessage(
+  items: ScheduledMessage[],
+  now: number,
+): ScheduledMessage | undefined {
+  return items
+    .filter((item) => item.status === "scheduled" && sendWindow(item.due, now) === "due")
+    .sort((a, b) => a.due - b.due)[0];
+}
+
 export function schedulePresets(now: number) {
   const evening = new Date(now);
   evening.setHours(18, 0, 0, 0);
@@ -90,12 +99,26 @@ export const formatScheduleTime = (time: number, includeDate = false): string =>
 
 /** Shared with notification replies so two automations cannot use one composer. */
 let composerBusy = false;
-export async function withComposerDelivery<T>(run: () => Promise<T>): Promise<T | undefined> {
-  if (composerBusy) return undefined;
-  composerBusy = true;
+const composerWaiters: Array<() => void> = [];
+async function runComposerDelivery<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } finally {
-    composerBusy = false;
+    const next = composerWaiters.shift();
+    if (next) next();
+    else composerBusy = false;
   }
+}
+
+export function withComposerDelivery<T>(run: () => Promise<T>): Promise<T | undefined> {
+  if (composerBusy) return Promise.resolve(undefined);
+  composerBusy = true;
+  return runComposerDelivery(run);
+}
+
+/** Keep a notification reply's draft fallback until the current delivery releases the composer. */
+export async function withComposerDeliveryWhenAvailable<T>(run: () => Promise<T>): Promise<T> {
+  if (composerBusy) await new Promise<void>((resolve) => composerWaiters.push(resolve));
+  else composerBusy = true;
+  return runComposerDelivery(run);
 }

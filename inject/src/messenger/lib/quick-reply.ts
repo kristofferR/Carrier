@@ -57,3 +57,6 @@ export function decideQuickReply(
 
 export const composerContainsReply = (content: string | null, reply: string): boolean =>
   reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
+
+export const composerIncludesReply = (content: string | null, reply: string): boolean =>
+  reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));

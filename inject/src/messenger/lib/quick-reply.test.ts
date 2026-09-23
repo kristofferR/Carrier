@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { composerContainsReply, decideQuickReply, type QuickReplySnapshot } from "./quick-reply";
+import {
+  composerContainsReply,
+  composerIncludesReply,
+  decideQuickReply,
+  type QuickReplySnapshot,
+} from "./quick-reply";
 
 const ready: QuickReplySnapshot = {
   threadMatches: true,
@@ -84,4 +89,10 @@ describe("composerContainsReply", () => {
     expect(composerContainsReply("hello there", "HELLO")).toBe(false);
     expect(composerContainsReply(null, "hello")).toBe(false);
   });
+});
+
+test("draft fallback recognizes a reply the user has edited", () => {
+  expect(composerContainsReply("hello there!", "hello there")).toBe(false);
+  expect(composerIncludesReply("hello there!", "hello there")).toBe(true);
+  expect(composerIncludesReply("other draft", "hello there")).toBe(false);
 });
