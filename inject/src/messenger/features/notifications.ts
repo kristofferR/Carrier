@@ -1096,19 +1096,19 @@ export function initNotificationBridge() {
       conversation.title,
       conversation.body,
       conversation.isGroup,
+      { sender: "", thread: "" },
     );
     // Start the bounded conversion during the pairing grace period. A banner
-    // naming a sender must not substitute other group members' faces when the
-    // sender's photo is unavailable. Group-titled banners keep the group icon.
+    // can fall back to the group identity if the sender's photo is unavailable.
+    // Convert both in parallel so that fallback adds no delivery delay.
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
     const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
-    const avatar = hiddenAtConstruction
+    const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : avatarToDataUrl(senderIcon);
+    const threadAvatar = hiddenAtConstruction
       ? Promise.resolve("")
-      : content.subtitle
-        ? avatarToDataUrl(senderIcon)
-        : facesToDataUrl(conversation.icons);
+      : facesToDataUrl(conversation.icons);
     const thumbnail = notificationThumbnail(
       hiddenAtConstruction
         ? ""
@@ -1127,7 +1127,16 @@ export function initNotificationBridge() {
         return;
       }
       const hiddenBeforeImages = settings.hide_notification_preview === true;
-      const [icon, image] = hiddenBeforeImages ? ["", ""] : await Promise.all([avatar, thumbnail]);
+      const [sender, thread, image] = hiddenBeforeImages
+        ? ["", "", ""]
+        : await Promise.all([senderAvatar, threadAvatar, thumbnail]);
+      const presentation = notificationPresentation(
+        conversation.title,
+        conversation.body,
+        conversation.isGroup,
+        { sender, thread },
+      );
+      const { icon } = presentation;
       // Content-free breadcrumb for missing photos; private banners deliberately
       // carry no picture and should not report a failed conversion.
       if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
@@ -1152,9 +1161,10 @@ export function initNotificationBridge() {
         "notify.fallback",
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
+      const richBody = richMessageBody(content.body, conversation.threadPath);
       const text = notificationPhotoText(
-        content.title,
-        richMessageBody(content.body, conversation.threadPath),
+        presentation.title,
+        content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
         Boolean(image),
       );
       emitNotification(
@@ -1168,7 +1178,7 @@ export function initNotificationBridge() {
         },
         conversation.threadPath,
         undefined,
-        hidePreview ? "" : content.subtitle,
+        hidePreview ? "" : presentation.subtitle,
         hidePreview ? "" : image,
       );
     }, FALLBACK_DELAY_MS);
