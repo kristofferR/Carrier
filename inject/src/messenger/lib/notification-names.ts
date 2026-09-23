@@ -1,10 +1,16 @@
 import { normalizeSenderName } from "./sender-avatars";
 
 export interface NotificationParticipant {
+  id?: string;
   name: string;
   firstName: string;
   nickname: string;
   avatar: string;
+}
+
+/** Contact hydration can provide the full name before the first-name field. */
+export function participantFirstName(person: NotificationParticipant) {
+  return person.firstName.trim() || person.name.trim().split(/\s+/u)[0] || person.name;
 }
 
 export interface ConversationNotificationNames {
@@ -110,7 +116,10 @@ export async function readConversationNotificationNames(
       LSDatabaseSingleton: Promise<MessengerDatabase>;
     };
     const db = await singleton.LSDatabaseSingleton;
-    const i64 = importModule("I64") as { of_string(value: string): unknown };
+    const i64 = importModule("I64") as {
+      of_string(value: string): unknown;
+      to_string?(value: unknown): unknown;
+    };
     const q = importModule("ReQL") as MessengerQueries;
     const types = importModule("LSMessagingThreadTypeUtil") as {
       isGroup(type: unknown): boolean;
@@ -149,10 +158,15 @@ export async function readConversationNotificationNames(
       const c = contact as Record<string, unknown>;
       if (typeof c.name !== "string" || !c.name.trim()) return null;
       let avatar: unknown;
+      let id: unknown;
+      try {
+        if (c.id != null) id = i64.to_string?.(c.id);
+      } catch (_) {}
       try {
         if (typeof photo === "function") avatar = photo(contact);
       } catch (_) {}
       participants.push({
+        ...(typeof id === "string" && /^\d+$/.test(id) ? { id } : {}),
         name: c.name,
         firstName: typeof c.firstName === "string" ? c.firstName : "",
         nickname: typeof p.nickname === "string" ? p.nickname : "",

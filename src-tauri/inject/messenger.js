@@ -486,7 +486,7 @@
       const register = method(exports, "setOnCloseForWorkerInstance");
       if (!exports || !register || this.wrapped.has(register)) return;
       const owner = this;
-      const wrapped2 = new Proxy(register, {
+      const wrapped3 = new Proxy(register, {
         apply(target, receiver, args) {
           const result = Reflect.apply(target, receiver, args);
           try {
@@ -501,8 +501,8 @@
         }
       });
       try {
-        exports.setOnCloseForWorkerInstance = wrapped2;
-        this.wrapped.add(wrapped2);
+        exports.setOnCloseForWorkerInstance = wrapped3;
+        this.wrapped.add(wrapped3);
       } catch (_) {
       }
     }
@@ -511,7 +511,7 @@
       const setup = method(exports, "getOrSetupWorker");
       if (!exports || !setup || this.wrapped.has(setup)) return;
       const owner = this;
-      const wrapped2 = new Proxy(setup, {
+      const wrapped3 = new Proxy(setup, {
         apply(target, receiver, args) {
           owner.replay = void 0;
           owner.scope = void 0;
@@ -534,8 +534,8 @@
         }
       });
       try {
-        exports.getOrSetupWorker = wrapped2;
-        this.wrapped.add(wrapped2);
+        exports.getOrSetupWorker = wrapped3;
+        this.wrapped.add(wrapped3);
       } catch (_) {
       }
     }
@@ -3336,6 +3336,9 @@
   };
 
   // inject/src/messenger/lib/notification-names.ts
+  function participantFirstName(person) {
+    return person.firstName.trim() || person.name.trim().split(/\s+/u)[0] || person.name;
+  }
   function aliases(person) {
     return [person.name, person.firstName, person.nickname].filter(Boolean).map(normalizeSenderName);
   }
@@ -3413,11 +3416,17 @@
         const c = contact;
         if (typeof c.name !== "string" || !c.name.trim()) return null;
         let avatar;
+        let id;
+        try {
+          if (c.id != null) id = i64.to_string?.(c.id);
+        } catch (_) {
+        }
         try {
           if (typeof photo === "function") avatar = photo(contact);
         } catch (_) {
         }
         participants.push({
+          ...typeof id === "string" && /^\d+$/.test(id) ? { id } : {},
           name: c.name,
           firstName: typeof c.firstName === "string" ? c.firstName : "",
           nickname: typeof p.nickname === "string" ? p.nickname : "",
@@ -3442,6 +3451,74 @@
     }
   }
 
+  // inject/src/messenger/lib/nickname-replies.ts
+  function replyAttribution(text, sender, recipient, info, mode) {
+    if (showNicknames(mode, info.isGroup)) return text;
+    const person = (id) => info.participants.find((p) => p.id === id);
+    const name = (p) => info.isGroup ? participantFirstName(p) : p.name;
+    const from = person(sender), to = person(recipient);
+    let result = text;
+    if (from) {
+      const alias = [from.nickname, from.name].find(
+        (value) => value && result.startsWith(`${value} `)
+      );
+      if (alias) result = name(from) + result.slice(alias.length);
+    }
+    if (to) {
+      const alias = [to.nickname, to.name].find((value) => value && result.endsWith(` ${value}`));
+      if (alias) result = result.slice(0, -alias.length) + name(to);
+    }
+    return result;
+  }
+  var wrapped = /* @__PURE__ */ new WeakSet();
+  function patchNicknameReplies(value, importModule, preference, loadNames = (key) => readConversationNotificationNames(
+    key,
+    globalThis.require
+  )) {
+    if (!value || typeof value !== "object") return;
+    const exports = value, original = exports.default;
+    if (typeof original !== "function" || wrapped.has(original)) return;
+    const react = importModule("react");
+    const i64 = importModule("I64");
+    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof i64?.to_string !== "function")
+      return;
+    const { useSyncExternalStore, useState, useEffect } = react, { to_string: stringify } = i64;
+    const hook = function useCarrierReplyAttribution(...args) {
+      const text = Reflect.apply(original, this, args);
+      const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+      const [names2, setNames] = useState(null);
+      const message = args[0];
+      const id = (field) => {
+        try {
+          if (message && typeof message === "object" && field in message) {
+            const value2 = stringify(message[field]);
+            if (typeof value2 === "string" && /^\d+$/.test(value2)) return value2;
+          }
+        } catch (_) {
+        }
+        return "";
+      };
+      const key = id("threadKey"), sender = id("senderId"), recipient = id("replyToUserId");
+      useEffect(() => {
+        if (!key || typeof text !== "string" || !text) return;
+        let cancelled = false;
+        loadNames(key).then((info) => {
+          if (!cancelled) setNames({ key, info });
+        }).catch(() => {
+        });
+        return () => {
+          cancelled = true;
+        };
+      }, [key, text, mode]);
+      return typeof text === "string" && names2?.key === key && names2.info ? replyAttribution(text, sender, recipient, names2.info, mode) : text;
+    };
+    try {
+      exports.default = hook;
+      wrapped.add(hook);
+    } catch (_) {
+    }
+  }
+
   // inject/src/messenger/lib/nickname-snippets.ts
   var NativeSnippetPrefixes = class {
     constructor() {
@@ -3460,7 +3537,7 @@
     }
   };
   var nativeSnippetPrefixes = new NativeSnippetPrefixes();
-  var wrapped = /* @__PURE__ */ new WeakSet();
+  var wrapped2 = /* @__PURE__ */ new WeakSet();
   function patchNicknameSnippets(value, importModule, preference, loadNames = (key) => readConversationNotificationNames(
     key,
     globalThis.require
@@ -3468,7 +3545,7 @@
     if (!value || typeof value !== "object") return;
     const exports = value;
     const original = exports.default;
-    if (typeof original !== "function" || wrapped.has(original)) return;
+    if (typeof original !== "function" || wrapped2.has(original)) return;
     const react = importModule("react");
     const i64 = importModule("I64");
     const vault = importModule("ReStoreVaulting");
@@ -3508,13 +3585,8 @@
       const sender = info ? notificationSenderPrefix(snippet, info) : void 0;
       let displayed = snippet;
       if (sender && info?.isGroup) {
-        displayed = notificationNames(
-          "",
-          snippet,
-          info,
-          showNicknames(mode, info.isGroup),
-          "group"
-        ).body;
+        const name = showNicknames(mode, info.isGroup) && sender.person.nickname || participantFirstName(sender.person);
+        displayed = `${name}: ${snippet.slice(sender.end)}`;
       }
       const tail = sender ? snippet.slice(sender.end) : snippet;
       const originalPrefix = sender ? snippet.slice(0, sender.end) : "";
@@ -3529,7 +3601,7 @@
     };
     try {
       exports.default = component;
-      wrapped.add(component);
+      wrapped2.add(component);
     } catch (_) {
     }
   }
@@ -3573,7 +3645,7 @@
     if (typeof react?.useSyncExternalStore !== "function" || typeof react.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
       return;
     const { useSyncExternalStore, useMemo } = react;
-    const wrapped2 = new Proxy(original, {
+    const wrapped3 = new Proxy(original, {
       apply(target, receiver, args) {
         const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
         const result = Reflect.apply(target, receiver, args);
@@ -3612,8 +3684,8 @@
       }
     });
     try {
-      exports.default = wrapped2;
-      wrappedHooks.add(wrapped2);
+      exports.default = wrapped3;
+      wrappedHooks.add(wrapped3);
     } catch (_) {
     }
   }
@@ -3764,13 +3836,13 @@
   function wrapTelemetryMethod(record2, key, shouldBlockTelemetry) {
     const original = record2[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
-    const wrapped2 = function(...args) {
+    const wrapped3 = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
       return Reflect.apply(original, this, args);
     };
-    wrappedTelemetryMethods.add(wrapped2);
+    wrappedTelemetryMethods.add(wrapped3);
     try {
-      record2[key] = wrapped2;
+      record2[key] = wrapped3;
     } catch (_) {
     }
   }
@@ -3784,14 +3856,14 @@
   function wrapFalcoFactory(record2, shouldBlockTelemetry) {
     const original = record2.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
-    const wrapped2 = function(...args) {
+    const wrapped3 = function(...args) {
       const logger = Reflect.apply(original, this, args);
       patchFalcoLogger(logger, shouldBlockTelemetry);
       return logger;
     };
-    wrappedFalcoFactories.add(wrapped2);
+    wrappedFalcoFactories.add(wrapped3);
     try {
-      record2.create = wrapped2;
+      record2.create = wrapped3;
     } catch (_) {
     }
   }
@@ -3823,15 +3895,17 @@
     return result;
   }
   function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle, nicknamePreference) {
-    const wrapped2 = function(...factoryArgs) {
+    const wrapped3 = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") && nicknamePreference) {
+      if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react" || moduleName === "useMWReplySnippetContent") && nicknamePreference) {
         try {
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
             const react = importModule("react");
             const patch = (value) => {
-              if (moduleName === "MWThreadSnippetForDisplay.react") {
+              if (moduleName === "useMWReplySnippetContent") {
+                patchNicknameReplies(value, (name) => importModule(name), nicknamePreference);
+              } else if (moduleName === "MWThreadSnippetForDisplay.react") {
                 patchNicknameSnippets(value, (name) => importModule(name), nicknamePreference);
               } else if (moduleName === "useLSGetThreadTitle.react") {
                 patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
@@ -3878,10 +3952,10 @@
       return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
     };
     try {
-      Object.defineProperty(wrapped2, "length", { value: factory.length });
+      Object.defineProperty(wrapped3, "length", { value: factory.length });
     } catch (_) {
     }
-    return wrapped2;
+    return wrapped3;
   }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
@@ -3893,8 +3967,8 @@
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && (moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
-          if ((moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") && Array.isArray(args[1])) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && (moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react" || moduleName === "useMWReplySnippetContent") || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+          if ((moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react" || moduleName === "useMWReplySnippetContent") && Array.isArray(args[1])) {
             args[1] = [.../* @__PURE__ */ new Set([...args[1], "react", "I64", "LSMessagingThreadTypeUtil"])];
           }
           if (moduleName === "MWThreadSnippetForDisplay.react" && Array.isArray(args[1])) {
@@ -3922,14 +3996,14 @@
     const exports = value;
     const gate = exports.shouldUseMAWSharedWorker;
     if (typeof gate !== "function" || gate.length !== 0 || dedicatedWorkerGates.has(gate)) return;
-    const wrapped2 = new Proxy(gate, {
+    const wrapped3 = new Proxy(gate, {
       apply(target, receiver, args) {
         const result = Reflect.apply(target, receiver, args);
         return typeof result === "boolean" ? false : result;
       }
     });
-    exports.shouldUseMAWSharedWorker = wrapped2;
-    dedicatedWorkerGates.add(wrapped2);
+    exports.shouldUseMAWSharedWorker = wrapped3;
+    dedicatedWorkerGates.add(wrapped3);
   }
   var observedErrorStreams = /* @__PURE__ */ new WeakSet();
   function observeFacebookErrors(result, args, listener) {
@@ -4008,7 +4082,7 @@
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      const wrapped2 = createFacebookModuleDefineInterceptor(
+      const wrapped3 = createFacebookModuleDefineInterceptor(
         value,
         shouldBlockTelemetry,
         (restore2) => searchIndex.register(restore2),
@@ -4021,8 +4095,8 @@
         /mac/i.test(navigator.platform),
         nicknamePreference
       );
-      wrappedDefines.add(wrapped2);
-      return wrapped2;
+      wrappedDefines.add(wrapped3);
+      return wrapped3;
     };
     try {
       const inherited = Object.getOwnPropertyDescriptor(window, "__d");

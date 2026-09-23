@@ -1,8 +1,8 @@
 import { type NicknameMode, type NicknamePreference, showNicknames } from "./nicknames";
 import {
   type ConversationNotificationNames,
-  notificationNames,
   notificationSenderPrefix,
+  participantFirstName,
   readConversationNotificationNames,
 } from "./notification-names";
 
@@ -108,13 +108,10 @@ export function patchNicknameSnippets(
     const sender = info ? notificationSenderPrefix(snippet, info) : undefined;
     let displayed = snippet;
     if (sender && info?.isGroup) {
-      displayed = notificationNames(
-        "",
-        snippet,
-        info,
-        showNicknames(mode, info.isGroup),
-        "group",
-      ).body;
+      const name =
+        (showNicknames(mode, info.isGroup) && sender.person.nickname) ||
+        participantFirstName(sender.person);
+      displayed = `${name}: ${snippet.slice(sender.end)}`;
     }
     const tail = sender ? snippet.slice(sender.end) : snippet;
     const originalPrefix = sender ? snippet.slice(0, sender.end) : "";

@@ -160,6 +160,23 @@ describe("Facebook module interception", () => {
     expect(snippetExports.default).not.toBe(snippet);
     const props = { thread: { threadKey: "123" }, snippetRaw: "hello" };
     expect(snippetExports.default(props)).toEqual({ component: snippet, props });
+    const reply = () => "You replied to Captain";
+    defineDefaultExport(intercepted, "useMWReplySnippetContent", reply);
+    const replyModule = definitions.get("useMWReplySnippetContent")!;
+    expect(replyModule.dependencies).toContain("react");
+    expect(replyModule.dependencies).toContain("I64");
+    const replyExports = { default: reply };
+    replyModule.factory(
+      undefined,
+      undefined,
+      undefined,
+      (name: string) => snippetModules[name],
+      undefined,
+      { exports: replyExports },
+      replyExports,
+    );
+    expect(replyExports.default).not.toBe(reply);
+    expect(replyExports.default()).toBe("You replied to Captain");
     intercepted("MWPThreadCapabilitiesContext", ["react"], () => {});
     expect(definitions.get("MWPThreadCapabilitiesContext")!.dependencies).toContain(
       "LSMessagingThreadTypeUtil",

@@ -8,7 +8,7 @@ import type { ConversationNotificationNames } from "./notification-names";
 const info: ConversationNotificationNames = {
   title: "Weekend",
   isGroup: true,
-  participants: [{ name: "Alex Example", firstName: "Alex", nickname: "Captain", avatar: "" }],
+  participants: [{ name: "Alex Example", firstName: "", nickname: "Captain", avatar: "" }],
 };
 
 test("vaulted sidebar prefixes follow scope without mutating messages or saved data", async () => {
