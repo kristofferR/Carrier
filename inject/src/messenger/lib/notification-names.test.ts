@@ -58,6 +58,21 @@ describe("notification nickname presentation", () => {
     }
   });
 
+  test("one-to-one only uses nicknames in private notifications and real names in groups", () => {
+    const mode = nicknameMode({ nickname_scope: "direct" });
+    expect(
+      notificationNames(
+        "Captain",
+        "hello",
+        { ...group, isGroup: false },
+        showNicknames(mode, false),
+      ),
+    ).toEqual({ title: "Captain", body: "hello" });
+    expect(
+      notificationNames("Weekend", "Captain: hello", group, showNicknames(mode, true), "group"),
+    ).toEqual({ title: "Weekend", body: "Alex: hello" });
+  });
+
   test("handles native page titles without changing message text or a member-named group", () => {
     expect(notificationNames("Captain", "Alex: is a label I typed", group, false)).toEqual({
       title: "Alex",

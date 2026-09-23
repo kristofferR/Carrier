@@ -25,7 +25,7 @@ function namedParticipant(name: string, group: ConversationNotificationNames) {
 }
 
 /** Only rewrite a proven sender prefix; the message following it is untouched. */
-function prefixedParticipant(body: string, group: ConversationNotificationNames) {
+export function notificationSenderPrefix(body: string, group: ConversationNotificationNames) {
   const matches = new Map<NotificationParticipant, number>();
   // A nickname can itself contain a colon. If more than one person could own
   // the prefix, neither a short-name guess nor a longest-prefix guess is safe.
@@ -42,7 +42,7 @@ function prefixedParticipant(body: string, group: ConversationNotificationNames)
 
 export function notificationSender(body: string, group: ConversationNotificationNames | null) {
   if (!group?.isGroup) return undefined;
-  return prefixedParticipant(body, group)?.person;
+  return notificationSenderPrefix(body, group)?.person;
 }
 
 /** Presentation only: matching, routes and dedupe must keep using the original text. */
@@ -69,7 +69,7 @@ export function notificationNames(
         : "sender"
       : titleKind;
   const person = kind === "sender" ? namedParticipant(title, group) : undefined;
-  const prefix = kind === "group" ? prefixedParticipant(body, group) : undefined;
+  const prefix = kind === "group" ? notificationSenderPrefix(body, group) : undefined;
   return {
     title: person ? displayName(person) : title,
     body: prefix ? `${displayName(prefix.person)}: ${body.slice(prefix.end)}` : body,

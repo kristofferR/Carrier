@@ -29,6 +29,15 @@ use crate::window::is_dark;
 use crate::window::splash_background;
 use crate::window::theme_for;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum NicknameScope {
+    All,
+    Direct,
+    Groups,
+    Off,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -92,7 +101,9 @@ pub(crate) struct Settings {
     pub(crate) attention_on_message: bool,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     pub(crate) hide_names_avatars: bool,
-    /// Prefer chat nicknames over real names for message authors and notifications.
+    /// Explicit scope takes precedence; None retains the legacy two-toggle preference.
+    pub(crate) nickname_scope: Option<NicknameScope>,
+    /// Legacy nickname preferences, retained so existing installs keep their behavior.
     pub(crate) show_nicknames: bool,
     /// Restrict nickname presentation to group chats when nicknames are enabled.
     pub(crate) nicknames_group_only: bool,
@@ -198,6 +209,7 @@ impl Default for Settings {
             clear_notifications_on_view: true,
             attention_on_message: false,
             hide_names_avatars: false,
+            nickname_scope: None,
             show_nicknames: true,
             nicknames_group_only: false,
             system_emoji: false,
@@ -1041,6 +1053,7 @@ mod tests {
     #[test]
     fn nickname_preference_preserves_defaults_and_round_trips() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.nickname_scope, None);
         assert!(settings.show_nicknames);
         assert!(!settings.nicknames_group_only);
         let settings = Settings {
@@ -1052,6 +1065,25 @@ mod tests {
         let loaded: Settings = serde_json::from_str(&saved).unwrap();
         assert!(!loaded.show_nicknames);
         assert!(loaded.nicknames_group_only);
+    }
+
+    #[test]
+    fn nickname_scopes_round_trip_and_reject_invalid_values() {
+        for scope in [
+            NicknameScope::All,
+            NicknameScope::Direct,
+            NicknameScope::Groups,
+            NicknameScope::Off,
+        ] {
+            let settings = Settings {
+                nickname_scope: Some(scope),
+                ..Settings::default()
+            };
+            let saved = serde_json::to_string(&settings).unwrap();
+            let loaded: Settings = serde_json::from_str(&saved).unwrap();
+            assert_eq!(loaded.nickname_scope, Some(scope));
+        }
+        assert!(serde_json::from_str::<Settings>(r#"{"nickname_scope":"invalid"}"#).is_err());
     }
 
     #[test]

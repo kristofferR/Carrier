@@ -486,7 +486,7 @@
       const register = method(exports, "setOnCloseForWorkerInstance");
       if (!exports || !register || this.wrapped.has(register)) return;
       const owner = this;
-      const wrapped = new Proxy(register, {
+      const wrapped2 = new Proxy(register, {
         apply(target, receiver, args) {
           const result = Reflect.apply(target, receiver, args);
           try {
@@ -501,8 +501,8 @@
         }
       });
       try {
-        exports.setOnCloseForWorkerInstance = wrapped;
-        this.wrapped.add(wrapped);
+        exports.setOnCloseForWorkerInstance = wrapped2;
+        this.wrapped.add(wrapped2);
       } catch (_) {
       }
     }
@@ -511,7 +511,7 @@
       const setup = method(exports, "getOrSetupWorker");
       if (!exports || !setup || this.wrapped.has(setup)) return;
       const owner = this;
-      const wrapped = new Proxy(setup, {
+      const wrapped2 = new Proxy(setup, {
         apply(target, receiver, args) {
           owner.replay = void 0;
           owner.scope = void 0;
@@ -534,8 +534,8 @@
         }
       });
       try {
-        exports.getOrSetupWorker = wrapped;
-        this.wrapped.add(wrapped);
+        exports.getOrSetupWorker = wrapped2;
+        this.wrapped.add(wrapped2);
       } catch (_) {
       }
     }
@@ -3052,10 +3052,11 @@
 
   // inject/src/messenger/lib/nicknames.ts
   function nicknameMode(settings) {
+    if (settings?.nickname_scope) return settings.nickname_scope;
     return settings?.show_nicknames === false ? "off" : settings?.nicknames_group_only ? "groups" : "all";
   }
   function showNicknames(mode, isGroup) {
-    return mode === "all" || mode === "groups" && isGroup !== false;
+    return mode === "all" || mode === "groups" && isGroup !== false || mode === "direct" && isGroup !== true;
   }
   var threadContexts = /* @__PURE__ */ new WeakMap();
   function threadContext(react, runtime) {
@@ -3127,6 +3128,412 @@
     }
   }
 
+  // inject/src/messenger/lib/sender-avatars.ts
+  var SENDER_AVATAR_LIMIT = 500;
+  var SENDER_AVATAR_VERSION = 3;
+  var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
+  var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
+  var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
+  function avatarPhotoId(url) {
+    try {
+      return new URL(url, "https://www.facebook.com/").pathname;
+    } catch (_) {
+      return url;
+    }
+  }
+  var COLLISION_WINDOW_MS = 5 * 6e4;
+  var GROUP_THREAD_LIMIT = 200;
+  var AMBIGUOUS_LIMIT = 200;
+  var SenderAvatarStore = class {
+    constructor(storage = null, limit = SENDER_AVATAR_LIMIT) {
+      __publicField(this, "storage", storage);
+      __publicField(this, "limit", limit);
+      __publicField(this, "entries", /* @__PURE__ */ new Map());
+      __publicField(this, "ambiguous", /* @__PURE__ */ new Set());
+      __publicField(this, "groupThreads", /* @__PURE__ */ new Set());
+      try {
+        const raw = this.storage?.getItem(SENDER_AVATAR_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        const persisted = parsed && typeof parsed === "object" && "version" in parsed && parsed.version === SENDER_AVATAR_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
+        for (const entry of persisted) {
+          if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && typeof entry[2] === "string") {
+            if (entry[1]) {
+              this.entries.set(entry[0], {
+                url: entry[1],
+                owner: entry[2],
+                photo: typeof entry[3] === "string" ? entry[3] : avatarPhotoId(entry[1]),
+                at: typeof entry[4] === "number" ? entry[4] : 0
+              });
+            } else {
+              this.ambiguous.add(entry[0]);
+            }
+          }
+        }
+        const ambiguous = parsed && typeof parsed === "object" && "ambiguous" in parsed && Array.isArray(parsed.ambiguous) ? parsed.ambiguous : [];
+        for (const key of ambiguous) {
+          if (typeof key === "string" && key) this.ambiguous.add(key);
+        }
+        const groups = parsed && typeof parsed === "object" && "groups" in parsed && Array.isArray(parsed.groups) ? parsed.groups : [];
+        for (const id of groups) {
+          if (typeof id === "string" && id) this.groupThreads.add(id);
+        }
+      } catch (_) {
+      }
+      if (this.trim()) this.persist();
+    }
+    trim() {
+      let trimmed = false;
+      while (this.entries.size > this.limit) {
+        this.entries.delete(this.entries.keys().next().value);
+        trimmed = true;
+      }
+      while (this.ambiguous.size > AMBIGUOUS_LIMIT) {
+        this.ambiguous.delete(this.ambiguous.values().next().value);
+        trimmed = true;
+      }
+      while (this.groupThreads.size > GROUP_THREAD_LIMIT) {
+        this.groupThreads.delete(this.groupThreads.values().next().value);
+        trimmed = true;
+      }
+      return trimmed;
+    }
+    persist() {
+      try {
+        this.storage?.setItem(
+          SENDER_AVATAR_STORAGE_KEY,
+          JSON.stringify({
+            version: SENDER_AVATAR_VERSION,
+            entries: [...this.entries].map(([key, entry]) => [
+              key,
+              entry.url,
+              entry.owner,
+              entry.photo,
+              entry.at
+            ]),
+            ambiguous: [...this.ambiguous],
+            groups: [...this.groupThreads]
+          })
+        );
+      } catch (_) {
+      }
+    }
+    /**
+     * Record one name/avatar pairing; returns whether anything changed. `owner`
+     * names who the URL belongs to when the key is an alias for them ("Kim" for
+     * "Kim Andersen"): an alias two different people answer to identifies
+     * neither, so the second claim retires it and the group photo wins instead.
+     * Two contacts who share a name across different threads never meet here.
+     * Re-seeing an unchanged pairing writes nothing — a rendered thread repeats
+     * the same faces on every scan.
+     */
+    remember(threadId, name, url, owner = name, at = 0) {
+      const normalized = normalizeSenderName(name);
+      const ownerKey = normalizeSenderName(owner) || normalized;
+      if (!threadId || !normalized || !url) return false;
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return false;
+      const photo = avatarPhotoId(url);
+      const existing = this.entries.get(key);
+      if (existing) {
+        if (existing.owner !== ownerKey) return this.markAmbiguous(threadId, name);
+        if (existing.photo !== photo && at - existing.at < COLLISION_WINDOW_MS) {
+          return this.markAmbiguous(threadId, name);
+        }
+        if (existing.url === url) {
+          const stale = at - existing.at >= COLLISION_WINDOW_MS;
+          existing.at = at;
+          this.entries.delete(key);
+          this.entries.set(key, existing);
+          if (stale) this.persist();
+          return false;
+        }
+      }
+      this.entries.delete(key);
+      this.entries.set(key, { url, owner: ownerKey, photo, at });
+      this.trim();
+      this.persist();
+      return true;
+    }
+    /**
+     * Resolve a preview's sender prefix. Group previews name the sender the same
+     * way the thread does ("Kim"), but a members list may hold the full name — so
+     * a unique "Kim …" match counts, while several of them do not, even when one
+     * of them also cached the short name: showing the wrong person's face is
+     * worse than showing the group photo.
+     */
+    resolve(threadId, name) {
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
+      const prefix = `${key} `;
+      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(prefix));
+      const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
+      if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
+      const exact = this.entries.get(key);
+      if (exact) {
+        const rival = prefixed.some(([, entry]) => entry.owner !== exact.owner);
+        return rival ? { verdict: "ambiguous", url: "" } : { verdict: "exact", url: exact.url };
+      }
+      const only = prefixed[0];
+      return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
+    }
+    /** The avatar for a preview's sender prefix, or "" when it is not knowable. */
+    lookup(threadId, name) {
+      return this.resolve(threadId, name).url;
+    }
+    /** Why a sender resolves the way it does — for the dev-only MCP probe. */
+    describe(threadId, name) {
+      return this.resolve(threadId, name).verdict;
+    }
+    /**
+     * Remember that a thread is a group, which only its own message rows can
+     * prove (they print the sender's name above each message). A direct message
+     * that happens to start with "John: " must not be read as a sender prefix.
+     */
+    rememberGroupThread(id) {
+      if (!id || this.groupThreads.has(id)) return false;
+      this.groupThreads.add(id);
+      this.trim();
+      this.persist();
+      return true;
+    }
+    /**
+     * Give up on a name: two people in this thread answer to it. Sticky, and
+     * held outside the avatar entries so evicting a face cannot resurrect it.
+     */
+    markAmbiguous(threadId, name) {
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return false;
+      const key = entryKey(threadId, name);
+      if (this.ambiguous.has(key)) return false;
+      this.ambiguous.add(key);
+      this.entries.delete(key);
+      const prefix = `${threadId}\0`;
+      for (const [candidate, entry] of [...this.entries]) {
+        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
+        this.entries.delete(candidate);
+        this.ambiguous.add(candidate);
+      }
+      this.trim();
+      this.persist();
+      return true;
+    }
+    isGroupThread(id) {
+      return this.groupThreads.has(id);
+    }
+    get size() {
+      return this.entries.size;
+    }
+    /** Counts only, for the dev-only MCP probe. */
+    get stats() {
+      return {
+        avatars: this.entries.size,
+        groups: this.groupThreads.size,
+        retired: this.ambiguous.size
+      };
+    }
+  };
+
+  // inject/src/messenger/lib/notification-names.ts
+  function aliases(person) {
+    return [person.name, person.firstName, person.nickname].filter(Boolean).map(normalizeSenderName);
+  }
+  function namedParticipant(name, group) {
+    const matches = group.participants.filter(
+      (person) => aliases(person).includes(normalizeSenderName(name))
+    );
+    return matches.length === 1 ? matches[0] : void 0;
+  }
+  function notificationSenderPrefix(body, group) {
+    const matches = /* @__PURE__ */ new Map();
+    for (let end2 = body.indexOf(": "); end2 > 0 && end2 <= 200; end2 = body.indexOf(": ", end2 + 2)) {
+      const prefix = normalizeSenderName(body.slice(0, end2));
+      for (const person2 of group.participants) {
+        if (aliases(person2).includes(prefix)) matches.set(person2, end2 + 2);
+      }
+    }
+    if (matches.size !== 1) return void 0;
+    const [person, end] = matches.entries().next().value;
+    return { person, end };
+  }
+  function notificationSender(body, group) {
+    if (!group?.isGroup) return void 0;
+    return notificationSenderPrefix(body, group)?.person;
+  }
+  function notificationNames(title, body, group, showNicknames2, titleKind = "unknown") {
+    if (!group) return { title, body };
+    const displayName = (person2) => showNicknames2 && person2.nickname || group.isGroup && person2.firstName || person2.name;
+    if (!group.isGroup) {
+      const person2 = namedParticipant(title, group);
+      return { title: person2 ? displayName(person2) : title, body };
+    }
+    const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
+    const person = kind === "sender" ? namedParticipant(title, group) : void 0;
+    const prefix = kind === "group" ? notificationSenderPrefix(body, group) : void 0;
+    return {
+      title: person ? displayName(person) : title,
+      body: prefix ? `${displayName(prefix.person)}: ${body.slice(prefix.end)}` : body
+    };
+  }
+  var PARTICIPANT_LIMIT = 500;
+  async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
+    if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
+    let timer;
+    const read = async () => {
+      const singleton = importModule("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = importModule("I64");
+      const q = importModule("ReQL");
+      const types = importModule("LSMessagingThreadTypeUtil");
+      const key = i64.of_string(threadId);
+      const thread = await db.tables.threads.get(key);
+      if (!thread || typeof thread !== "object" || !("threadType" in thread)) return null;
+      const isGroup = types.isGroup(thread.threadType) === true;
+      if (!isGroup && types.isOneToOne(thread.threadType) !== true) return null;
+      const rows = await q.toArrayAsync(
+        q.leftJoin(
+          q.fromTableAscending(db.tables.participants).getKeyRange(key),
+          q.fromTableAscending(db.tables.contacts)
+        ).take(PARTICIPANT_LIMIT + 1)
+      );
+      if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT) return null;
+      let photo;
+      try {
+        photo = importModule("getLSMediaContactProfilePictureUrl");
+      } catch (_) {
+      }
+      const participants = [];
+      for (const row of rows) {
+        if (!Array.isArray(row)) return null;
+        const [participant, contact] = row;
+        if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object")
+          return null;
+        const p = participant;
+        const c = contact;
+        if (typeof c.name !== "string" || !c.name.trim()) return null;
+        let avatar;
+        try {
+          if (typeof photo === "function") avatar = photo(contact);
+        } catch (_) {
+        }
+        participants.push({
+          name: c.name,
+          firstName: typeof c.firstName === "string" ? c.firstName : "",
+          nickname: typeof p.nickname === "string" ? p.nickname : "",
+          avatar: typeof avatar === "string" ? avatar : ""
+        });
+      }
+      return {
+        isGroup,
+        title: "threadName" in thread && typeof thread.threadName === "string" ? thread.threadName : "",
+        participants
+      };
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/lib/nickname-snippets.ts
+  var NativeSnippetPrefixes = class {
+    constructor() {
+      __publicField(this, "entries", /* @__PURE__ */ new Map());
+    }
+    remember(thread, original, displayed) {
+      this.entries.delete(thread);
+      if (!/^\d+$/.test(thread) || original === displayed) return;
+      const normalize = (text) => text.replace(/\s+/g, " ");
+      this.entries.set(thread, { original: normalize(original), displayed: normalize(displayed) });
+      if (this.entries.size > 500) this.entries.delete(this.entries.keys().next().value);
+    }
+    original(thread, text) {
+      const entry = this.entries.get(thread);
+      return entry && text.startsWith(entry.displayed) ? entry.original + text.slice(entry.displayed.length) : text;
+    }
+  };
+  var nativeSnippetPrefixes = new NativeSnippetPrefixes();
+  var wrapped = /* @__PURE__ */ new WeakSet();
+  function patchNicknameSnippets(value, importModule, preference, loadNames = (key) => readConversationNotificationNames(
+    key,
+    globalThis.require
+  ), prefixes = nativeSnippetPrefixes) {
+    if (!value || typeof value !== "object") return;
+    const exports = value;
+    const original = exports.default;
+    if (typeof original !== "function" || wrapped.has(original)) return;
+    const react = importModule("react");
+    const i64 = importModule("I64");
+    const vault = importModule("ReStoreVaulting");
+    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
+      return;
+    const { createElement, useSyncExternalStore, useState, useEffect, useLayoutEffect } = react;
+    const { to_string: threadKey } = i64;
+    const { maybeUnvault } = vault;
+    const component = function CarrierNicknameSnippet(props) {
+      const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+      const [names2, setNames] = useState(null);
+      const record2 = props && typeof props === "object" ? props : {};
+      const thread = record2.thread;
+      let key = "", snippet = "";
+      try {
+        if (thread && typeof thread === "object" && "threadKey" in thread) {
+          const id = threadKey(thread.threadKey);
+          if (typeof id === "string") key = id;
+        }
+        const raw = typeof record2.snippetRaw === "string" ? maybeUnvault(record2.snippetRaw) ?? record2.snippetRaw : null;
+        if (typeof raw === "string") snippet = raw;
+      } catch (_) {
+      }
+      const draft = record2.isDraftMessage === true;
+      useEffect(() => {
+        if (!key || !snippet.includes(": ") || draft) return;
+        let cancelled = false;
+        loadNames(key).then((info2) => {
+          if (!cancelled) setNames({ key, snippet, info: info2 });
+        }).catch(() => {
+        });
+        return () => {
+          cancelled = true;
+        };
+      }, [key, snippet, draft, mode]);
+      const info = !draft && names2?.key === key && names2.snippet === snippet ? names2.info : null;
+      const sender = info ? notificationSenderPrefix(snippet, info) : void 0;
+      let displayed = snippet;
+      if (sender && info?.isGroup) {
+        displayed = notificationNames(
+          "",
+          snippet,
+          info,
+          showNicknames(mode, info.isGroup),
+          "group"
+        ).body;
+      }
+      const tail = sender ? snippet.slice(sender.end) : snippet;
+      const originalPrefix = sender ? snippet.slice(0, sender.end) : "";
+      const displayedPrefix = displayed.slice(0, displayed.length - tail.length);
+      useLayoutEffect(() => {
+        prefixes.remember(key, originalPrefix, displayedPrefix);
+      }, [key, originalPrefix, displayedPrefix]);
+      return createElement(
+        original,
+        displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
+      );
+    };
+    try {
+      exports.default = component;
+      wrapped.add(component);
+    } catch (_) {
+    }
+  }
+
   // inject/src/messenger/lib/nickname-thread-titles.ts
   var NativeThreadTitles = class {
     constructor() {
@@ -3166,7 +3573,7 @@
     if (typeof react?.useSyncExternalStore !== "function" || typeof react.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
       return;
     const { useSyncExternalStore, useMemo } = react;
-    const wrapped = new Proxy(original, {
+    const wrapped2 = new Proxy(original, {
       apply(target, receiver, args) {
         const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
         const result = Reflect.apply(target, receiver, args);
@@ -3205,8 +3612,8 @@
       }
     });
     try {
-      exports.default = wrapped;
-      wrappedHooks.add(wrapped);
+      exports.default = wrapped2;
+      wrappedHooks.add(wrapped2);
     } catch (_) {
     }
   }
@@ -3357,13 +3764,13 @@
   function wrapTelemetryMethod(record2, key, shouldBlockTelemetry) {
     const original = record2[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
-    const wrapped = function(...args) {
+    const wrapped2 = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
       return Reflect.apply(original, this, args);
     };
-    wrappedTelemetryMethods.add(wrapped);
+    wrappedTelemetryMethods.add(wrapped2);
     try {
-      record2[key] = wrapped;
+      record2[key] = wrapped2;
     } catch (_) {
     }
   }
@@ -3377,14 +3784,14 @@
   function wrapFalcoFactory(record2, shouldBlockTelemetry) {
     const original = record2.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
-    const wrapped = function(...args) {
+    const wrapped2 = function(...args) {
       const logger = Reflect.apply(original, this, args);
       patchFalcoLogger(logger, shouldBlockTelemetry);
       return logger;
     };
-    wrappedFalcoFactories.add(wrapped);
+    wrappedFalcoFactories.add(wrapped2);
     try {
-      record2.create = wrapped;
+      record2.create = wrapped2;
     } catch (_) {
     }
   }
@@ -3416,15 +3823,17 @@
     return result;
   }
   function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle, nicknamePreference) {
-    const wrapped = function(...factoryArgs) {
+    const wrapped2 = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") && nicknamePreference) {
+      if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") && nicknamePreference) {
         try {
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
             const react = importModule("react");
             const patch = (value) => {
-              if (moduleName === "useLSGetThreadTitle.react") {
+              if (moduleName === "MWThreadSnippetForDisplay.react") {
+                patchNicknameSnippets(value, (name) => importModule(name), nicknamePreference);
+              } else if (moduleName === "useLSGetThreadTitle.react") {
                 patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
               } else if (moduleName === "MWPThreadCapabilitiesContext") {
                 const types = importModule("LSMessagingThreadTypeUtil");
@@ -3469,10 +3878,10 @@
       return patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry);
     };
     try {
-      Object.defineProperty(wrapped, "length", { value: factory.length });
+      Object.defineProperty(wrapped2, "length", { value: factory.length });
     } catch (_) {
     }
-    return wrapped;
+    return wrapped2;
   }
   function createFacebookModuleDefineInterceptor(define, shouldBlockTelemetry, onFTSRestoreSync = () => {
   }, onFacebookError = () => {
@@ -3484,9 +3893,12 @@
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && (moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
-          if ((moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") && Array.isArray(args[1])) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && (moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+          if ((moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext" || moduleName === "MWThreadSnippetForDisplay.react") && Array.isArray(args[1])) {
             args[1] = [.../* @__PURE__ */ new Set([...args[1], "react", "I64", "LSMessagingThreadTypeUtil"])];
+          }
+          if (moduleName === "MWThreadSnippetForDisplay.react" && Array.isArray(args[1])) {
+            args[1] = [.../* @__PURE__ */ new Set([...args[1], "ReStoreVaulting"])];
           }
           args[2] = wrapFactory(
             moduleName,
@@ -3510,14 +3922,14 @@
     const exports = value;
     const gate = exports.shouldUseMAWSharedWorker;
     if (typeof gate !== "function" || gate.length !== 0 || dedicatedWorkerGates.has(gate)) return;
-    const wrapped = new Proxy(gate, {
+    const wrapped2 = new Proxy(gate, {
       apply(target, receiver, args) {
         const result = Reflect.apply(target, receiver, args);
         return typeof result === "boolean" ? false : result;
       }
     });
-    exports.shouldUseMAWSharedWorker = wrapped;
-    dedicatedWorkerGates.add(wrapped);
+    exports.shouldUseMAWSharedWorker = wrapped2;
+    dedicatedWorkerGates.add(wrapped2);
   }
   var observedErrorStreams = /* @__PURE__ */ new WeakSet();
   function observeFacebookErrors(result, args, listener) {
@@ -3596,7 +4008,7 @@
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      const wrapped = createFacebookModuleDefineInterceptor(
+      const wrapped2 = createFacebookModuleDefineInterceptor(
         value,
         shouldBlockTelemetry,
         (restore2) => searchIndex.register(restore2),
@@ -3609,8 +4021,8 @@
         /mac/i.test(navigator.platform),
         nicknamePreference
       );
-      wrappedDefines.add(wrapped);
-      return wrapped;
+      wrappedDefines.add(wrapped2);
+      return wrapped2;
     };
     try {
       const inherited = Object.getOwnPropertyDescriptor(window, "__d");
@@ -4937,7 +5349,7 @@
     }
     return false;
   }
-  function conversationTextParts(candidates) {
+  function conversationTextParts(candidates, canonicalBody) {
     const values = [];
     const eligible = candidates.filter(
       ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
@@ -4961,9 +5373,10 @@
       }
       values.push({ text, y: candidate.y });
     }
+    const body = values[1]?.text || "";
     return {
       title: (values[0]?.text || "Messenger").slice(0, 80),
-      body: (values[1]?.text || "").slice(0, 240)
+      body: (canonicalBody ? canonicalBody(body) : body).slice(0, 240)
     };
   }
   function isUnreadConversationText(fontWeight, text) {
@@ -6268,320 +6681,6 @@
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
-  // inject/src/messenger/lib/sender-avatars.ts
-  var SENDER_AVATAR_LIMIT = 500;
-  var SENDER_AVATAR_VERSION = 3;
-  var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
-  var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
-  var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
-  function avatarPhotoId(url) {
-    try {
-      return new URL(url, "https://www.facebook.com/").pathname;
-    } catch (_) {
-      return url;
-    }
-  }
-  var COLLISION_WINDOW_MS = 5 * 6e4;
-  var GROUP_THREAD_LIMIT = 200;
-  var AMBIGUOUS_LIMIT = 200;
-  var SenderAvatarStore = class {
-    constructor(storage = null, limit = SENDER_AVATAR_LIMIT) {
-      __publicField(this, "storage", storage);
-      __publicField(this, "limit", limit);
-      __publicField(this, "entries", /* @__PURE__ */ new Map());
-      __publicField(this, "ambiguous", /* @__PURE__ */ new Set());
-      __publicField(this, "groupThreads", /* @__PURE__ */ new Set());
-      try {
-        const raw = this.storage?.getItem(SENDER_AVATAR_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : null;
-        const persisted = parsed && typeof parsed === "object" && "version" in parsed && parsed.version === SENDER_AVATAR_VERSION && "entries" in parsed && Array.isArray(parsed.entries) ? parsed.entries : [];
-        for (const entry of persisted) {
-          if (Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "string" && typeof entry[2] === "string") {
-            if (entry[1]) {
-              this.entries.set(entry[0], {
-                url: entry[1],
-                owner: entry[2],
-                photo: typeof entry[3] === "string" ? entry[3] : avatarPhotoId(entry[1]),
-                at: typeof entry[4] === "number" ? entry[4] : 0
-              });
-            } else {
-              this.ambiguous.add(entry[0]);
-            }
-          }
-        }
-        const ambiguous = parsed && typeof parsed === "object" && "ambiguous" in parsed && Array.isArray(parsed.ambiguous) ? parsed.ambiguous : [];
-        for (const key of ambiguous) {
-          if (typeof key === "string" && key) this.ambiguous.add(key);
-        }
-        const groups = parsed && typeof parsed === "object" && "groups" in parsed && Array.isArray(parsed.groups) ? parsed.groups : [];
-        for (const id of groups) {
-          if (typeof id === "string" && id) this.groupThreads.add(id);
-        }
-      } catch (_) {
-      }
-      if (this.trim()) this.persist();
-    }
-    trim() {
-      let trimmed = false;
-      while (this.entries.size > this.limit) {
-        this.entries.delete(this.entries.keys().next().value);
-        trimmed = true;
-      }
-      while (this.ambiguous.size > AMBIGUOUS_LIMIT) {
-        this.ambiguous.delete(this.ambiguous.values().next().value);
-        trimmed = true;
-      }
-      while (this.groupThreads.size > GROUP_THREAD_LIMIT) {
-        this.groupThreads.delete(this.groupThreads.values().next().value);
-        trimmed = true;
-      }
-      return trimmed;
-    }
-    persist() {
-      try {
-        this.storage?.setItem(
-          SENDER_AVATAR_STORAGE_KEY,
-          JSON.stringify({
-            version: SENDER_AVATAR_VERSION,
-            entries: [...this.entries].map(([key, entry]) => [
-              key,
-              entry.url,
-              entry.owner,
-              entry.photo,
-              entry.at
-            ]),
-            ambiguous: [...this.ambiguous],
-            groups: [...this.groupThreads]
-          })
-        );
-      } catch (_) {
-      }
-    }
-    /**
-     * Record one name/avatar pairing; returns whether anything changed. `owner`
-     * names who the URL belongs to when the key is an alias for them ("Kim" for
-     * "Kim Andersen"): an alias two different people answer to identifies
-     * neither, so the second claim retires it and the group photo wins instead.
-     * Two contacts who share a name across different threads never meet here.
-     * Re-seeing an unchanged pairing writes nothing — a rendered thread repeats
-     * the same faces on every scan.
-     */
-    remember(threadId, name, url, owner = name, at = 0) {
-      const normalized = normalizeSenderName(name);
-      const ownerKey = normalizeSenderName(owner) || normalized;
-      if (!threadId || !normalized || !url) return false;
-      const key = entryKey(threadId, name);
-      if (this.ambiguous.has(key)) return false;
-      const photo = avatarPhotoId(url);
-      const existing = this.entries.get(key);
-      if (existing) {
-        if (existing.owner !== ownerKey) return this.markAmbiguous(threadId, name);
-        if (existing.photo !== photo && at - existing.at < COLLISION_WINDOW_MS) {
-          return this.markAmbiguous(threadId, name);
-        }
-        if (existing.url === url) {
-          const stale = at - existing.at >= COLLISION_WINDOW_MS;
-          existing.at = at;
-          this.entries.delete(key);
-          this.entries.set(key, existing);
-          if (stale) this.persist();
-          return false;
-        }
-      }
-      this.entries.delete(key);
-      this.entries.set(key, { url, owner: ownerKey, photo, at });
-      this.trim();
-      this.persist();
-      return true;
-    }
-    /**
-     * Resolve a preview's sender prefix. Group previews name the sender the same
-     * way the thread does ("Kim"), but a members list may hold the full name — so
-     * a unique "Kim …" match counts, while several of them do not, even when one
-     * of them also cached the short name: showing the wrong person's face is
-     * worse than showing the group photo.
-     */
-    resolve(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
-      const key = entryKey(threadId, name);
-      if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
-      const prefix = `${key} `;
-      const prefixed = [...this.entries].filter(([candidate]) => candidate.startsWith(prefix));
-      const retired = [...this.ambiguous].filter((candidate) => candidate.startsWith(prefix)).length;
-      if (prefixed.length + retired > 1 || retired > 0) return { verdict: "ambiguous", url: "" };
-      const exact = this.entries.get(key);
-      if (exact) {
-        const rival = prefixed.some(([, entry]) => entry.owner !== exact.owner);
-        return rival ? { verdict: "ambiguous", url: "" } : { verdict: "exact", url: exact.url };
-      }
-      const only = prefixed[0];
-      return only ? { verdict: "full-name", url: only[1].url } : { verdict: "miss", url: "" };
-    }
-    /** The avatar for a preview's sender prefix, or "" when it is not knowable. */
-    lookup(threadId, name) {
-      return this.resolve(threadId, name).url;
-    }
-    /** Why a sender resolves the way it does — for the dev-only MCP probe. */
-    describe(threadId, name) {
-      return this.resolve(threadId, name).verdict;
-    }
-    /**
-     * Remember that a thread is a group, which only its own message rows can
-     * prove (they print the sender's name above each message). A direct message
-     * that happens to start with "John: " must not be read as a sender prefix.
-     */
-    rememberGroupThread(id) {
-      if (!id || this.groupThreads.has(id)) return false;
-      this.groupThreads.add(id);
-      this.trim();
-      this.persist();
-      return true;
-    }
-    /**
-     * Give up on a name: two people in this thread answer to it. Sticky, and
-     * held outside the avatar entries so evicting a face cannot resurrect it.
-     */
-    markAmbiguous(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return false;
-      const key = entryKey(threadId, name);
-      if (this.ambiguous.has(key)) return false;
-      this.ambiguous.add(key);
-      this.entries.delete(key);
-      const prefix = `${threadId}\0`;
-      for (const [candidate, entry] of [...this.entries]) {
-        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
-        this.entries.delete(candidate);
-        this.ambiguous.add(candidate);
-      }
-      this.trim();
-      this.persist();
-      return true;
-    }
-    isGroupThread(id) {
-      return this.groupThreads.has(id);
-    }
-    get size() {
-      return this.entries.size;
-    }
-    /** Counts only, for the dev-only MCP probe. */
-    get stats() {
-      return {
-        avatars: this.entries.size,
-        groups: this.groupThreads.size,
-        retired: this.ambiguous.size
-      };
-    }
-  };
-
-  // inject/src/messenger/lib/notification-names.ts
-  function aliases(person) {
-    return [person.name, person.firstName, person.nickname].filter(Boolean).map(normalizeSenderName);
-  }
-  function namedParticipant(name, group) {
-    const matches = group.participants.filter(
-      (person) => aliases(person).includes(normalizeSenderName(name))
-    );
-    return matches.length === 1 ? matches[0] : void 0;
-  }
-  function prefixedParticipant(body, group) {
-    const matches = /* @__PURE__ */ new Map();
-    for (let end2 = body.indexOf(": "); end2 > 0 && end2 <= 200; end2 = body.indexOf(": ", end2 + 2)) {
-      const prefix = normalizeSenderName(body.slice(0, end2));
-      for (const person2 of group.participants) {
-        if (aliases(person2).includes(prefix)) matches.set(person2, end2 + 2);
-      }
-    }
-    if (matches.size !== 1) return void 0;
-    const [person, end] = matches.entries().next().value;
-    return { person, end };
-  }
-  function notificationSender(body, group) {
-    if (!group?.isGroup) return void 0;
-    return prefixedParticipant(body, group)?.person;
-  }
-  function notificationNames(title, body, group, showNicknames2, titleKind = "unknown") {
-    if (!group) return { title, body };
-    const displayName = (person2) => showNicknames2 && person2.nickname || group.isGroup && person2.firstName || person2.name;
-    if (!group.isGroup) {
-      const person2 = namedParticipant(title, group);
-      return { title: person2 ? displayName(person2) : title, body };
-    }
-    const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
-    const person = kind === "sender" ? namedParticipant(title, group) : void 0;
-    const prefix = kind === "group" ? prefixedParticipant(body, group) : void 0;
-    return {
-      title: person ? displayName(person) : title,
-      body: prefix ? `${displayName(prefix.person)}: ${body.slice(prefix.end)}` : body
-    };
-  }
-  var PARTICIPANT_LIMIT = 500;
-  async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
-    if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
-    let timer;
-    const read = async () => {
-      const singleton = importModule("LSDatabaseSingleton");
-      const db = await singleton.LSDatabaseSingleton;
-      const i64 = importModule("I64");
-      const q = importModule("ReQL");
-      const types = importModule("LSMessagingThreadTypeUtil");
-      const key = i64.of_string(threadId);
-      const thread = await db.tables.threads.get(key);
-      if (!thread || typeof thread !== "object" || !("threadType" in thread)) return null;
-      const isGroup = types.isGroup(thread.threadType) === true;
-      if (!isGroup && types.isOneToOne(thread.threadType) !== true) return null;
-      const rows = await q.toArrayAsync(
-        q.leftJoin(
-          q.fromTableAscending(db.tables.participants).getKeyRange(key),
-          q.fromTableAscending(db.tables.contacts)
-        ).take(PARTICIPANT_LIMIT + 1)
-      );
-      if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT) return null;
-      let photo;
-      try {
-        photo = importModule("getLSMediaContactProfilePictureUrl");
-      } catch (_) {
-      }
-      const participants = [];
-      for (const row of rows) {
-        if (!Array.isArray(row)) return null;
-        const [participant, contact] = row;
-        if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object")
-          return null;
-        const p = participant;
-        const c = contact;
-        if (typeof c.name !== "string" || !c.name.trim()) return null;
-        let avatar;
-        try {
-          if (typeof photo === "function") avatar = photo(contact);
-        } catch (_) {
-        }
-        participants.push({
-          name: c.name,
-          firstName: typeof c.firstName === "string" ? c.firstName : "",
-          nickname: typeof p.nickname === "string" ? p.nickname : "",
-          avatar: typeof avatar === "string" ? avatar : ""
-        });
-      }
-      return {
-        isGroup,
-        title: "threadName" in thread && typeof thread.threadName === "string" ? thread.threadName : "",
-        participants
-      };
-    };
-    try {
-      return await Promise.race([
-        read().catch(() => null),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(null), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7336,7 +7435,10 @@
           hasTextChild: hasCandidateTextChild(el)
         };
       });
-      const text = conversationTextParts(surfaces);
+      const text = conversationTextParts(
+        surfaces,
+        (body) => nativeSnippetPrefixes.original(id, body)
+      );
       const images = [...row.querySelectorAll("img[src]")].filter(
         (candidate) => !EMOJI_SOURCE_RE.test(candidate.currentSrc || candidate.src)
       );

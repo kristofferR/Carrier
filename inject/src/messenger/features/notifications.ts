@@ -17,6 +17,7 @@ import {
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "../lib/mute";
+import { nativeSnippetPrefixes } from "../lib/nickname-snippets";
 import { nativeThreadTitles } from "../lib/nickname-thread-titles";
 import { nicknameMode, showNicknames } from "../lib/nicknames";
 import {
@@ -913,7 +914,9 @@ export function initNotificationBridge() {
         hasTextChild: hasCandidateTextChild(el),
       };
     });
-    const text = conversationTextParts(surfaces);
+    const text = conversationTextParts(surfaces, (body) =>
+      nativeSnippetPrefixes.original(id, body),
+    );
     // The same predicate the text extraction uses: a sprite counted here would
     // become the notification icon, or read as a group's member composite.
     const images = [...row.querySelectorAll<HTMLImageElement>("img[src]")].filter(

@@ -45,6 +45,7 @@ interface CarrierSettings {
   clear_notifications_on_view?: boolean;
   attention_on_message?: boolean;
   hide_names_avatars?: boolean;
+  nickname_scope?: "all" | "direct" | "groups" | "off" | null;
   show_nicknames?: boolean;
   nicknames_group_only?: boolean;
   system_emoji?: boolean;

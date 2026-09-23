@@ -73,7 +73,10 @@ export interface ConversationTextCandidate {
 }
 
 /** Build the sender/title and preview from Messenger's nested text surfaces. */
-export function conversationTextParts(candidates: ConversationTextCandidate[]): {
+export function conversationTextParts(
+  candidates: ConversationTextCandidate[],
+  canonicalBody?: (body: string) => string,
+): {
   title: string;
   body: string;
 } {
@@ -117,9 +120,10 @@ export function conversationTextParts(candidates: ConversationTextCandidate[]): 
   }
   // An empty body means the row's preview has not hydrated yet — callers use
   // that to defer notification decisions instead of acting on placeholder text.
+  const body = values[1]?.text || "";
   return {
     title: (values[0]?.text || "Messenger").slice(0, 80),
-    body: (values[1]?.text || "").slice(0, 240),
+    body: (canonicalBody ? canonicalBody(body) : body).slice(0, 240),
   };
 }
 

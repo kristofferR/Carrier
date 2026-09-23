@@ -123,3 +123,17 @@ test("message authors inherit their own message list's scope and react to prefer
   mode = "off";
   expect(render("group").props.nickname).toBeUndefined();
 });
+
+test("explicit scopes support all four combinations and override legacy preferences", () => {
+  for (const mode of ["all", "direct", "groups", "off"] as const) {
+    expect(
+      nicknameMode({ nickname_scope: mode, show_nicknames: false, nicknames_group_only: true }),
+    ).toBe(mode);
+    expect(showNicknames(mode, false)).toBe(mode === "all" || mode === "direct");
+    expect(showNicknames(mode, true)).toBe(mode === "all" || mode === "groups");
+  }
+  expect(
+    nicknameMode({ nickname_scope: null, show_nicknames: true, nicknames_group_only: true }),
+  ).toBe("groups");
+  expect(nicknameMode({ nickname_scope: null, show_nicknames: false })).toBe("off");
+});
