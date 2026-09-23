@@ -76,6 +76,9 @@ export class FacebookWorkerRecovery {
   private sharedBridgeRepair: { scope: string; id: string } | undefined;
   private lifecycleRestartUsedScope: string | undefined;
   private lifecycle: { callback: Method; scope: string | undefined } | undefined;
+  private pausedDedicatedSetup:
+    | { scope: string; replay: () => unknown; state: unknown; setup: unknown }
+    | undefined;
   private currentPhase: RecoveryPhase = "idle";
 
   get phase(): RecoveryPhase {
@@ -98,6 +101,7 @@ export class FacebookWorkerRecovery {
         const result = Reflect.apply(target, receiver, args);
         try {
           const callback = args[0];
+          owner.pausedDedicatedSetup = undefined;
           owner.lifecycle =
             result === undefined &&
             args.length === 1 &&
@@ -125,6 +129,10 @@ export class FacebookWorkerRecovery {
     const owner = this;
     const wrapped = new Proxy(setup, {
       apply(target, receiver, args: unknown[]) {
+        owner.replay = undefined;
+        owner.scope = undefined;
+        owner.setupStartedAt = undefined;
+        owner.pausedDedicatedSetup = undefined;
         // Current MAWSetupWorker ABI: vault, bridge, two lifecycle callbacks,
         // reason, error callback, optional EB state. Unknown shapes fail open.
         if (
@@ -191,10 +199,28 @@ export class FacebookWorkerRecovery {
         return "unsupported";
       }
       const pendingSetup = inProgress.call(state) === true || settled.call(state) !== true;
-      if (pendingSetup && !escalate) return "busy";
+      const paused = this.pausedDedicatedSetup;
+      const canResumeDedicated = () => {
+        if (!paused || this.pausedDedicatedSetup !== paused) return false;
+        const setup = this.load("MAWSetupWorker");
+        return (
+          paused.scope === startingScope &&
+          this.scope === startingScope &&
+          paused.replay === this.replay &&
+          paused.state === state &&
+          paused.setup === setup &&
+          currentId.call(state) === "dedicated" &&
+          inProgress.call(state) === false &&
+          settled.call(state) === false &&
+          method(setup, "waitForWorkerSetup")?.call(setup) === null
+        );
+      };
+      const resumingDedicated = canResumeDedicated();
+      if (pendingSetup && !resumingDedicated && !escalate) return "busy";
       const currentConnectionState = () =>
         record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
-      const connectionState = pendingSetup ? currentConnectionState() : undefined;
+      const connectionState =
+        pendingSetup && !resumingDedicated ? currentConnectionState() : undefined;
       const connected = method(connectionState, "isConnected");
       const stillPendingAndDisconnected = () =>
         inProgress.call(state) === true &&
@@ -203,13 +229,14 @@ export class FacebookWorkerRecovery {
         connected?.call(connectionState) === false;
       const stalledSetup =
         pendingSetup &&
+        !resumingDedicated &&
         escalate &&
         !!this.replay &&
         this.scope === startingScope &&
         this.setupStartedAt !== undefined &&
         nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
         stillPendingAndDisconnected();
-      if (pendingSetup && !stalledSetup) return "busy";
+      if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
       const initialId = currentId.call(state);
       if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
         return "busy";
@@ -243,6 +270,19 @@ export class FacebookWorkerRecovery {
         ].includes(String(status.tag))
       ) {
         return "unsupported";
+      }
+      if (resumingDedicated && paused) {
+        if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
+        // Carrier already stopped this exact dedicated worker, but a protection
+        // gate deferred setup. Resume only after a fresh no-worker inspection.
+        this.pausedDedicatedSetup = undefined;
+        this.currentPhase = "setup";
+        try {
+          await paused.replay();
+        } catch (error) {
+          reject.call(state, error);
+        }
+        return "started";
       }
       if (stalledSetup) {
         if (
@@ -318,6 +358,10 @@ export class FacebookWorkerRecovery {
           inProgress.call(state) === true ||
           settled.call(state) === true
         ) {
+          return "busy";
+        }
+        if (!allowed()) {
+          this.pausedDedicatedSetup = { scope: startingScope, replay, state, setup };
           return "busy";
         }
         try {

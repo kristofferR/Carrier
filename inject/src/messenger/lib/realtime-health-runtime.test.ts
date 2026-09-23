@@ -291,7 +291,7 @@ function stateProbeFixture() {
     },
   };
   const context: { monitor?: typeof monitorRealtimeHealth } = {};
-  runInNewContext(source, {
+  const environment = {
     window: { WebSocket: class extends EventTarget {}, require: (name: string) => modules[name] },
     document: {
       get cookie() {
@@ -306,7 +306,8 @@ function stateProbeFixture() {
     clearTimeout: (timer: number) => timers.delete(timer),
     URL,
     globalThis: context,
-  });
+  };
+  runInNewContext(source, environment);
   const monitor = context.monitor!({
     onHealthy: (source) => tracker.healthy(source, now),
     onStale: (source) => tracker.stale(source),
@@ -326,6 +327,14 @@ function stateProbeFixture() {
     monitor,
     deliver,
     flush,
+    replaceSchedulingAPIs: () => {
+      environment.setTimeout = () => {
+        throw new Error("page timer wrapper must not run");
+      };
+      environment.clearTimeout = () => {
+        throw new Error("page timer wrapper must not run");
+      };
+    },
     setMode: (value: typeof mode) => {
       mode = value;
     },
@@ -375,6 +384,19 @@ test("RPC replies and a cached connected value cannot hide missing state deliver
   expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
   expect(fixture.tracker.needsRecovery(24_000)).toBe(false);
   expect(fixture.listeners.size).toBe(0);
+});
+
+test("worker probes retain native deadlines after Facebook replaces page timers", async () => {
+  const fixture = stateProbeFixture();
+  fixture.replaceSchedulingAPIs();
+  fixture.setMode("pending");
+  await fixture.probe();
+  await fixture.advance(8000);
+  expect(fixture.listeners.size).toBe(0);
+  fixture.setMode("normal");
+  await fixture.probe();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
+  expect(fixture.requests).toHaveLength(2);
 });
 
 test("state delivery may arrive after the RPC response", async () => {

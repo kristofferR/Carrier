@@ -694,6 +694,58 @@ describe("Messenger worker recovery", () => {
     expect(f.watchdogCalls).toHaveLength(0);
   });
 
+  test("dedicated setup pauses behind a new protection gate and resumes without another termination", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    let allowed = true;
+    f.termination = async () => {
+      allowed = false;
+      f.settled = false;
+      f.status = "dedicated_not_exists";
+      return true;
+    };
+    expect(await f.recovery.recover(() => allowed)).toBe("busy");
+    expect(f.setupCalls).toHaveLength(1);
+    expect(await f.recovery.recover(() => allowed)).toBe("busy");
+    allowed = true;
+    expect(await f.recovery.recover(() => allowed)).toBe("started");
+    expect(f.terminationCalls).toHaveLength(1);
+    expect(f.setupCalls).toHaveLength(2);
+    expect(f.resets).toBe(0);
+  });
+
+  for (const change of ["account", "setup", "bridge", "worker", "protected"] as const) {
+    test(`a paused dedicated replay rechecks ${change} after inspection`, async () => {
+      const f = fixture();
+      f.setup.getOrSetupWorker(...f.args);
+      f.currentId = "dedicated";
+      f.status = "dedicated_exists";
+      let allowed = true;
+      f.termination = async () => {
+        allowed = false;
+        f.settled = false;
+        return true;
+      };
+      expect(await f.recovery.recover(() => allowed)).toBe("busy");
+      allowed = true;
+      f.modules.MAWWebWorkerSingleton = {
+        getWorkerHealthStatus: async () => {
+          if (change === "account") f.account = "another-account";
+          else if (change === "setup") f.setup.getOrSetupWorker({}, "unknown-ABI");
+          else if (change === "bridge") f.bridgePromise = Promise.resolve();
+          else if (change === "worker") f.currentId = "replacement";
+          else allowed = false;
+          return { tag: "dedicated_not_exists" };
+        },
+      };
+      expect(await f.recovery.recover(() => allowed)).toBe("busy");
+      expect(f.setupCalls).toHaveLength(change === "setup" ? 2 : 1);
+      expect(f.terminationCalls).toHaveLength(1);
+    });
+  }
+
   test("will not terminate a replacement dedicated worker after asynchronous inspection", async () => {
     const f = fixture();
     f.setup.getOrSetupWorker(...f.args);
@@ -754,9 +806,11 @@ describe("Messenger worker recovery", () => {
     f.account = "account-b";
     expect(await f.recovery.recover()).toBe("unsupported");
     const unknown = fixture();
+    unknown.setup.getOrSetupWorker(...unknown.args);
     unknown.setup.getOrSetupWorker({}, "changed-ABI");
     expect(await unknown.recovery.recover()).toBe("unsupported");
     expect(f.resets + unknown.resets).toBe(0);
+    expect(unknown.setupCalls).toHaveLength(2);
   });
 
   test("unavailable account scope never prevents Messenger's original setup", async () => {

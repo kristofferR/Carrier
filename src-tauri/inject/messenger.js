@@ -475,6 +475,7 @@
       __publicField(this, "sharedBridgeRepair");
       __publicField(this, "lifecycleRestartUsedScope");
       __publicField(this, "lifecycle");
+      __publicField(this, "pausedDedicatedSetup");
       __publicField(this, "currentPhase", "idle");
     }
     get phase() {
@@ -490,6 +491,7 @@
           const result = Reflect.apply(target, receiver, args);
           try {
             const callback = args[0];
+            owner.pausedDedicatedSetup = void 0;
             owner.lifecycle = result === void 0 && args.length === 1 && typeof callback === "function" && callback.length === 3 ? { callback, scope: owner.accountScope() } : void 0;
             owner.setupStartedAt = nativeNow();
           } catch (_) {
@@ -511,6 +513,10 @@
       const owner = this;
       const wrapped = new Proxy(setup, {
         apply(target, receiver, args) {
+          owner.replay = void 0;
+          owner.scope = void 0;
+          owner.setupStartedAt = void 0;
+          owner.pausedDedicatedSetup = void 0;
           if (record(args[0]) && [1, 2, 3, 5].every((index) => typeof args[index] === "function") && typeof args[4] === "string") {
             try {
               const retryArgs = [...args];
@@ -565,13 +571,20 @@
           return "unsupported";
         }
         const pendingSetup = inProgress.call(state2) === true || settled.call(state2) !== true;
-        if (pendingSetup && !escalate) return "busy";
+        const paused = this.pausedDedicatedSetup;
+        const canResumeDedicated = () => {
+          if (!paused || this.pausedDedicatedSetup !== paused) return false;
+          const setup2 = this.load("MAWSetupWorker");
+          return paused.scope === startingScope && this.scope === startingScope && paused.replay === this.replay && paused.state === state2 && paused.setup === setup2 && currentId.call(state2) === "dedicated" && inProgress.call(state2) === false && settled.call(state2) === false && method(setup2, "waitForWorkerSetup")?.call(setup2) === null;
+        };
+        const resumingDedicated = canResumeDedicated();
+        if (pendingSetup && !resumingDedicated && !escalate) return "busy";
         const currentConnectionState = () => record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
-        const connectionState = pendingSetup ? currentConnectionState() : void 0;
+        const connectionState = pendingSetup && !resumingDedicated ? currentConnectionState() : void 0;
         const connected = method(connectionState, "isConnected");
         const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
-        const stalledSetup = pendingSetup && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
-        if (pendingSetup && !stalledSetup) return "busy";
+        const stalledSetup = pendingSetup && !resumingDedicated && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
+        if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
         const initialId = currentId.call(state2);
         if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
           return "busy";
@@ -594,6 +607,17 @@
           "shared_exists_and_connected"
         ].includes(String(status.tag))) {
           return "unsupported";
+        }
+        if (resumingDedicated && paused) {
+          if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
+          this.pausedDedicatedSetup = void 0;
+          this.currentPhase = "setup";
+          try {
+            await paused.replay();
+          } catch (error) {
+            reject.call(state2, error);
+          }
+          return "started";
         }
         if (stalledSetup) {
           if (!["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) || !stillPendingAndDisconnected()) {
@@ -632,6 +656,10 @@
             return "busy";
           }
           if (bridge?.call(setup) != null || inProgress.call(state2) === true || settled.call(state2) === true) {
+            return "busy";
+          }
+          if (!allowed()) {
+            this.pausedDedicatedSetup = { scope: startingScope, replay, state: state2, setup };
             return "busy";
           }
           try {
@@ -1132,6 +1160,8 @@
     }
   };
   function monitorRealtimeHealth(callbacks) {
+    const nativeSetTimeout4 = setTimeout.bind(globalThis);
+    const nativeClearTimeout3 = clearTimeout.bind(globalThis);
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
     const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
@@ -1189,7 +1219,7 @@
       let live = true;
       let timeout;
       const deadline = new Promise((_, reject) => {
-        timeout = setTimeout(
+        timeout = nativeSetTimeout4(
           () => reject(new Error("Messenger worker probe timed out")),
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
@@ -1228,7 +1258,7 @@
       }).finally(() => {
         live = false;
         observation?.dispose();
-        clearTimeout(timeout);
+        nativeClearTimeout3(timeout);
         workerProbePending = false;
       });
     };
@@ -1305,7 +1335,7 @@
             watchdog.received(socket, Date.now());
             callbacks.onHealthy("socket");
           });
-          const failed = () => setTimeout(checkSockets, 1e3);
+          const failed = () => nativeSetTimeout4(checkSockets, 1e3);
           socket.addEventListener("error", failed);
           socket.addEventListener("close", () => {
             watchdog.closed(socket, Date.now());

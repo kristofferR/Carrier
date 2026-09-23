@@ -114,6 +114,8 @@ const workerSetupState = (): "ready" | "failed" | "starting" | "unknown" => {
  * page-owned and fallback transports while preserving the native constructor.
  */
 export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): RealtimeHealthMonitor {
+  const nativeSetTimeout = setTimeout.bind(globalThis);
+  const nativeClearTimeout = clearTimeout.bind(globalThis);
   const watchdog = new RealtimeHealthWatchdog<WebSocket>();
   const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
   const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
@@ -188,7 +190,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     let live = true;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
-      timeout = setTimeout(
+      timeout = nativeSetTimeout(
         () => reject(new Error("Messenger worker probe timed out")),
         WORKER_HEARTBEAT_TIMEOUT_MS,
       );
@@ -246,7 +248,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       .finally(() => {
         live = false;
         observation?.dispose();
-        clearTimeout(timeout);
+        nativeClearTimeout(timeout);
         workerProbePending = false;
       });
   };
@@ -343,7 +345,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
           watchdog.received(socket, Date.now());
           callbacks.onHealthy("socket");
         });
-        const failed = () => setTimeout(checkSockets, 1000);
+        const failed = () => nativeSetTimeout(checkSockets, 1000);
         socket.addEventListener("error", failed);
         socket.addEventListener("close", () => {
           watchdog.closed(socket, Date.now());

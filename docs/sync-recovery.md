@@ -56,6 +56,9 @@ Carrier uses Messenger's existing worker lifecycle:
   exact `dedicated` ID, and successful termination. A failed dedicated startup
   with no worker can also replay setup without termination. Calls, drafts, and
   account changes retain the same protections as shared-worker recovery.
+  If a protection gate changes during termination, setup pauses. Once allowed,
+  a fresh no-worker query plus the unchanged account, setup closure, backend,
+  and empty bridge permit replay without terminating again. A newer setup wins.
 - A pending dedicated bootstrap uses Messenger's registered
   `setOnCloseForWorkerInstance` callback instead. That native callback closes the
   page's Worker, resets backend/portal/creation state, and starts its own setup
@@ -71,7 +74,8 @@ Carrier uses Messenger's existing worker lifecycle:
   worker-status check or dedicated termination is pending wins the race; Carrier
   will not replay either the old or new closure on that attempt.
 - Unknown module signatures, unsupported worker kinds, and account changes fail
-  open. Carrier never manually resets an unsettled initialization.
+  open. An unknown setup invocation discards any older captured replay closure.
+  Carrier never manually resets an unsettled initialization.
 
 There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
@@ -114,8 +118,9 @@ last probe is pending, so the next recovery tick cannot act on obsolete evidence
 The boundary also restarts the controller's probe grace without refunding attempts;
 an expired global health deadline cannot bypass that replacement observation window.
 A successful RPC
-with no state delivery instead times out after eight seconds. Listeners are
-removed on success, failure, and timeout; late replies cannot launch fallback
+with no state delivery instead times out after eight seconds, using timer
+functions captured before Facebook wraps scheduling. Listeners are removed on
+success, failure, and timeout; late replies cannot launch fallback
 requests or certify a replaced worker. Page MQTT or an unavailable
 connection-state API cannot claim encrypted transport health or refund attempts.
 Once an encrypted disconnect has been observed, a missing or malformed state API
