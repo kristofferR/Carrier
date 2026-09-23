@@ -6083,7 +6083,11 @@
   var BODY_PREFIX_LIMIT = 240;
   var PAGE_RECEIPT_LIMIT = 20;
   var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
-  var receiptMatch = (receipt) => receipt.nativeDelivery === void 0 ? { nativeId: receipt.nativeId } : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
+  var receiptMatch = (receipt) => ({
+    nativeId: receipt.nativeId,
+    ...receipt.nativeDelivery === void 0 ? {} : { nativeDelivery: receipt.nativeDelivery },
+    ...receipt.suppressedDraft ? { suppressedDraft: true } : {}
+  });
   var opaqueTextIdentity = (value, prefixLimit) => {
     const prefixes = [];
     const lastPrefix = Math.min(value.length - 1, prefixLimit);
@@ -6113,6 +6117,9 @@
   };
   var opaqueNotificationMatches = (left, right) => {
     if (!opaqueTextMatches(left.title, right.title)) return false;
+    return opaqueNotificationBodyMatches(left, right);
+  };
+  var opaqueNotificationBodyMatches = (left, right) => {
     if (left.body.length === 0 || right.body.length === 0) return true;
     if (opaqueTextMatches(left.body, right.body)) return true;
     const sendersCompatible = left.sender === null || right.sender === null || left.sender === right.sender;
@@ -6246,7 +6253,7 @@
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && now - candidate.at >= 0 && (candidate.draftThread !== void 0 || now - candidate.at <= this.ttlMs)) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && (candidate.draftThread !== void 0 || now - candidate.at <= this.ttlMs)) {
               this.receipts.push(candidate);
             }
           }
@@ -6293,15 +6300,26 @@
       receipt.draftThread = hashText(threadKey);
       this.persist();
     }
+    retainSuppressedDraft(nativeId, threadKey) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.draftThread = hashText(threadKey);
+      receipt.suppressedDraft = true;
+      this.persist();
+    }
     retireDraftsWithDifferentPreview(rows, now = Date.now()) {
       this.prune(now);
-      const previews = new Map(
-        [...rows].map((row) => [hashText(row.key), opaqueNotificationIdentity(row.title, row.body)])
-      );
+      const previews = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        const key = hashText(row.key);
+        const identities = previews.get(key) ?? [];
+        identities.push(opaqueNotificationIdentity(row.title, row.body));
+        previews.set(key, identities);
+      }
       const remaining = this.receipts.filter((receipt) => {
         if (!receipt.draftThread) return true;
-        const preview = previews.get(receipt.draftThread);
-        return !preview || opaqueNotificationMatches(receipt.identity, preview);
+        const identities = previews.get(receipt.draftThread);
+        return !identities || identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity));
       });
       if (remaining.length === this.receipts.length) return;
       this.receipts.splice(0, this.receipts.length, ...remaining);
@@ -6314,7 +6332,8 @@
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
-        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (!(receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)))
+          continue;
         this.receipts.splice(index, 1);
         this.persist();
         return receiptMatch(receipt);
@@ -6337,18 +6356,21 @@
       if (!this.receipts.length) return consumed;
       const identities = /* @__PURE__ */ new Map();
       for (const row of rows) {
-        if (!identities.has(row.key)) {
-          identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
-        }
+        const matches = identities.get(row.key) ?? [];
+        matches.push(opaqueNotificationIdentity(row.title, row.body));
+        identities.set(row.key, matches);
       }
       const remove = [];
       for (let index = 0; index < this.receipts.length; index++) {
         const receipt = this.receipts[index];
         let match = null;
         let ambiguous = false;
-        for (const [key, identity] of identities) {
+        for (const [key, candidates] of identities) {
           if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
-          if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+          if (!candidates.some(
+            (identity) => receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)
+          ))
+            continue;
           if (match !== null && match !== key) {
             ambiguous = true;
             break;
@@ -6386,7 +6408,7 @@
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (!read.some(
-          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && opaqueNotificationMatches(receipt.identity, identity)
+          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
         )) {
           continue;
         }
@@ -7274,6 +7296,12 @@
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const retainSuppressedDraft = (id) => {
+        const threadId = threadPathId(pageMatch.threadPath || "");
+        if (!pageMatch.draft || !threadId) return;
+        pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
+        pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+      };
       if (!s.mute_notifications) {
         const hidePreviewAtConstruction = s.hide_notification_preview === true;
         const originalTitle = String(title || "Messenger");
@@ -7332,6 +7360,7 @@
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
           if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
               notifiedStore.markSuppressed(
@@ -7404,6 +7433,7 @@
           }
         });
       } else {
+        if (pageMatch.draft) retainSuppressedDraft(++notifySeq);
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
           notifiedStore.markSuppressed(
             pageMatch.deliver.key,
@@ -8086,9 +8116,14 @@
             const pending = notificationCorrelations.getRow(conversation.key);
             if (pending) clearTimeout(pending.timer);
             notificationCorrelations.removeRow(conversation.key);
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
-            reconciliation = "matched";
+            if (pageReceipt.suppressedDraft) {
+              notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+              changed.delete(conversation.key);
+            } else {
+              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            }
+            reconciliation = pageReceipt.suppressedDraft ? "suppressed" : "matched";
           }
           if (reconciliation === "repeated") {
             confirmedRepeats.add(conversation.key);

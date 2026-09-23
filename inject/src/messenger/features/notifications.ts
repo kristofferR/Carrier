@@ -441,6 +441,12 @@ export function initNotificationBridge() {
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+    const retainSuppressedDraft = (id: number) => {
+      const threadId = threadPathId(pageMatch.threadPath || "");
+      if (!pageMatch.draft || !threadId) return;
+      pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
+      pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+    };
     // Surface every new-message notification Facebook fires — even while
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
@@ -537,6 +543,7 @@ export function initNotificationBridge() {
           ? mutedThreads.isMuted(threadId)
           : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
         if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+          retainSuppressedDraft(id);
           const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
           if (
             suppressed &&
@@ -644,6 +651,7 @@ export function initNotificationBridge() {
         }
       });
     } else {
+      if (pageMatch.draft) retainSuppressedDraft(++notifySeq);
       if (
         pageMatch.deliver &&
         notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
@@ -1642,17 +1650,21 @@ export function initNotificationBridge() {
         }
         if (pageReceipt) {
           // An earlier scan may have armed a fallback while this receipt was
-          // still ambiguous — the page already emitted this notification, so
-          // that timer must not fire a possible duplicate.
+          // still ambiguous. The page already handled this notification, so
+          // that timer must not fire a delayed banner.
           const pending = notificationCorrelations.getRow(conversation.key);
           if (pending) clearTimeout(pending.timer);
           notificationCorrelations.removeRow(conversation.key);
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-          updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
-          // The receipt proved this fingerprint was already emitted. Treat it
-          // as matched below after retaining any repeated-delivery evidence
-          // needed by the duplicate and pending-result paths above.
-          reconciliation = "matched";
+          if (pageReceipt.suppressedDraft) {
+            notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+            changed.delete(conversation.key);
+          } else {
+            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+          }
+          // Retain repeated-delivery evidence for emitted receipts, while a
+          // muted draft stays suppressed when its real preview appears.
+          reconciliation = pageReceipt.suppressedDraft ? "suppressed" : "matched";
         }
 
         if (reconciliation === "repeated") {

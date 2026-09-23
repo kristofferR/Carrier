@@ -604,14 +604,19 @@ interface PageNotificationReceipt {
   identity: OpaqueNotificationIdentity;
   nativeDelivery?: NativeNotificationDelivery;
   draftThread?: string;
+  suppressedDraft?: boolean;
 }
 
-type PageNotificationReceiptMatch = Pick<PageNotificationReceipt, "nativeId" | "nativeDelivery">;
+type PageNotificationReceiptMatch = Pick<
+  PageNotificationReceipt,
+  "nativeId" | "nativeDelivery" | "suppressedDraft"
+>;
 
-const receiptMatch = (receipt: PageNotificationReceipt): PageNotificationReceiptMatch =>
-  receipt.nativeDelivery === undefined
-    ? { nativeId: receipt.nativeId }
-    : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
+const receiptMatch = (receipt: PageNotificationReceipt): PageNotificationReceiptMatch => ({
+  nativeId: receipt.nativeId,
+  ...(receipt.nativeDelivery === undefined ? {} : { nativeDelivery: receipt.nativeDelivery }),
+  ...(receipt.suppressedDraft ? { suppressedDraft: true } : {}),
+});
 
 const opaqueTextIdentity = (value: string, prefixLimit: number): OpaqueTextIdentity => {
   const prefixes: [number, string][] = [];
@@ -648,6 +653,13 @@ const opaqueNotificationMatches = (
   right: OpaqueNotificationIdentity,
 ): boolean => {
   if (!opaqueTextMatches(left.title, right.title)) return false;
+  return opaqueNotificationBodyMatches(left, right);
+};
+
+const opaqueNotificationBodyMatches = (
+  left: OpaqueNotificationIdentity,
+  right: OpaqueNotificationIdentity,
+): boolean => {
   if (left.body.length === 0 || right.body.length === 0) return true;
   if (opaqueTextMatches(left.body, right.body)) return true;
   const sendersCompatible =
@@ -863,6 +875,8 @@ export class PageNotificationReceiptStore {
               candidate.nativeDelivery === "suppressed") &&
             (candidate.draftThread === undefined ||
               (typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread))) &&
+            (candidate.suppressedDraft === undefined ||
+              (candidate.suppressedDraft === true && candidate.draftThread !== undefined)) &&
             now - candidate.at >= 0 &&
             (candidate.draftThread !== undefined || now - candidate.at <= this.ttlMs)
           ) {
@@ -916,18 +930,33 @@ export class PageNotificationReceiptStore {
     this.persist();
   }
 
+  retainSuppressedDraft(nativeId: number, threadKey: string): void {
+    const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+    if (!receipt) return;
+    receipt.draftThread = hashText(threadKey);
+    receipt.suppressedDraft = true;
+    this.persist();
+  }
+
   retireDraftsWithDifferentPreview(
     rows: Iterable<NotificationText & { key: string }>,
     now = Date.now(),
   ): void {
     this.prune(now);
-    const previews = new Map(
-      [...rows].map((row) => [hashText(row.key), opaqueNotificationIdentity(row.title, row.body)]),
-    );
+    const previews = new Map<string, OpaqueNotificationIdentity[]>();
+    for (const row of rows) {
+      const key = hashText(row.key);
+      const identities = previews.get(key) ?? [];
+      identities.push(opaqueNotificationIdentity(row.title, row.body));
+      previews.set(key, identities);
+    }
     const remaining = this.receipts.filter((receipt) => {
       if (!receipt.draftThread) return true;
-      const preview = previews.get(receipt.draftThread);
-      return !preview || opaqueNotificationMatches(receipt.identity, preview);
+      const identities = previews.get(receipt.draftThread);
+      return (
+        !identities ||
+        identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity))
+      );
     });
     if (remaining.length === this.receipts.length) return;
     this.receipts.splice(0, this.receipts.length, ...remaining);
@@ -944,7 +973,12 @@ export class PageNotificationReceiptStore {
     for (let index = this.receipts.length - 1; index >= 0; index--) {
       const receipt = this.receipts[index]!;
       if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
-      if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+      if (
+        !(receipt.draftThread
+          ? opaqueNotificationBodyMatches(receipt.identity, identity)
+          : opaqueNotificationMatches(receipt.identity, identity))
+      )
+        continue;
       this.receipts.splice(index, 1);
       this.persist();
       return receiptMatch(receipt);
@@ -969,11 +1003,11 @@ export class PageNotificationReceiptStore {
     this.prune(now);
     const consumed = new Map<string, PageNotificationReceiptMatch>();
     if (!this.receipts.length) return consumed;
-    const identities = new Map<string, OpaqueNotificationIdentity>();
+    const identities = new Map<string, OpaqueNotificationIdentity[]>();
     for (const row of rows) {
-      if (!identities.has(row.key)) {
-        identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
-      }
+      const matches = identities.get(row.key) ?? [];
+      matches.push(opaqueNotificationIdentity(row.title, row.body));
+      identities.set(row.key, matches);
     }
     // Oldest first: with duplicate page notifications the native deduper
     // shows the FIRST id and suppresses the newer copies, so the oldest
@@ -983,9 +1017,16 @@ export class PageNotificationReceiptStore {
       const receipt = this.receipts[index]!;
       let match: string | null = null;
       let ambiguous = false;
-      for (const [key, identity] of identities) {
+      for (const [key, candidates] of identities) {
         if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
-        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (
+          !candidates.some((identity) =>
+            receipt.draftThread
+              ? opaqueNotificationBodyMatches(receipt.identity, identity)
+              : opaqueNotificationMatches(receipt.identity, identity),
+          )
+        )
+          continue;
         if (match !== null && match !== key) {
           ambiguous = true;
           break;
@@ -1033,7 +1074,9 @@ export class PageNotificationReceiptStore {
         !read.some(
           ({ key, identity }) =>
             (!receipt.draftThread || receipt.draftThread === key) &&
-            opaqueNotificationMatches(receipt.identity, identity),
+            (receipt.draftThread
+              ? opaqueNotificationBodyMatches(receipt.identity, identity)
+              : opaqueNotificationMatches(receipt.identity, identity)),
         )
       ) {
         continue;

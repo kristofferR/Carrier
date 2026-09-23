@@ -646,6 +646,48 @@ describe("PageNotificationReceiptStore", () => {
     ).toBeNull();
   });
 
+  test("keeps a draft receipt when duplicate anchors disagree about the preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const rows = [
+      { key: "1", title: "Jane", body: "Incoming message" },
+      { key: "1", title: "Jane", body: "Stale message" },
+    ];
+    receipts.retireDraftsWithDifferentPreview(rows, 32_000);
+    expect(receipts.consumeUniquelyMatching(rows, 32_000).get("1")).toEqual({ nativeId: 42 });
+  });
+
+  test("matches a draft receipt after the thread title changes", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Old name", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const rows = [{ key: "1", title: "New name", body: "Incoming message" }];
+    receipts.retireDraftsWithDifferentPreview(rows, 32_000);
+    expect(receipts.consumeUniquelyMatching(rows, 32_000).get("1")).toEqual({ nativeId: 42 });
+  });
+
+  test("retains a muted draft until its real preview can be marked suppressed", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainSuppressedDraft(42, "1");
+    const reloaded = new PageNotificationReceiptStore(
+      storage,
+      undefined,
+      undefined,
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+    );
+    expect(
+      reloaded
+        .consumeUniquelyMatching(
+          [{ key: "1", title: "Jane", body: "Incoming message" }],
+          1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+        )
+        .get("1"),
+    ).toEqual({ nativeId: 42, suppressedDraft: true });
+  });
+
   test("pairs a page notification after reload without persisting raw content", () => {
     const storage = memoryStorage();
     const title = "Project group with a deliberately long title that the row truncates later";
