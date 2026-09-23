@@ -672,6 +672,7 @@ export function initScheduledSend() {
           // A fresh document ties the mounted pane to the requested thread.
           // SPA route changes can leave a previous conversation's composer up.
           if (routeChanged || loadedThread !== due.thread) {
+            if (activeTextInput() && !panel?.contains(document.activeElement)) return false;
             location.href = `https://www.facebook.com/messages${due.thread}`;
             return false;
           }

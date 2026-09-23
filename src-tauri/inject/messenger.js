@@ -7976,7 +7976,11 @@
       if (!isShown(media)) continue;
       const control = media.closest('button, [role="button"]');
       const bounds = control?.getBoundingClientRect();
-      if (media.tagName === "IMG" && control && bounds && bounds.width <= 48 && bounds.height <= 48 && !control.closest('[contenteditable="true"]'))
+      const zoom = Math.min(
+        2,
+        Math.max(0.3, (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100)
+      );
+      if (media.tagName === "IMG" && control && bounds && bounds.width / zoom <= 48 && bounds.height / zoom <= 48 && !control.closest('[contenteditable="true"]'))
         continue;
       return true;
     }
@@ -8866,6 +8870,7 @@ ${text}`)) {
             if (thread() !== due.thread && activeTextInput() && !panel?.contains(document.activeElement))
               return false;
             if (routeChanged || loadedThread !== due.thread) {
+              if (activeTextInput() && !panel?.contains(document.activeElement)) return false;
               location.href = `https://www.facebook.com/messages${due.thread}`;
               return false;
             }
