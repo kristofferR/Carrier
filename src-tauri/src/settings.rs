@@ -92,8 +92,10 @@ pub(crate) struct Settings {
     pub(crate) attention_on_message: bool,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     pub(crate) hide_names_avatars: bool,
-    /// Prefer chat nicknames over real names for message authors.
+    /// Prefer chat nicknames over real names for message authors and notifications.
     pub(crate) show_nicknames: bool,
+    /// Restrict nickname presentation to group chats when nicknames are enabled.
+    pub(crate) nicknames_group_only: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     pub(crate) system_emoji: bool,
     /// Pause videos and animated media that start without a recent user
@@ -197,6 +199,7 @@ impl Default for Settings {
             attention_on_message: false,
             hide_names_avatars: false,
             show_nicknames: true,
+            nicknames_group_only: false,
             system_emoji: false,
             stop_media_autoplay: false,
             zoom: 100,
@@ -1039,13 +1042,16 @@ mod tests {
     fn nickname_preference_preserves_defaults_and_round_trips() {
         let settings: Settings = serde_json::from_str("{}").unwrap();
         assert!(settings.show_nicknames);
+        assert!(!settings.nicknames_group_only);
         let settings = Settings {
             show_nicknames: false,
+            nicknames_group_only: true,
             ..settings
         };
         let saved = serde_json::to_string(&settings).unwrap();
         let loaded: Settings = serde_json::from_str(&saved).unwrap();
         assert!(!loaded.show_nicknames);
+        assert!(loaded.nicknames_group_only);
     }
 
     #[test]

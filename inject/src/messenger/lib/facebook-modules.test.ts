@@ -42,7 +42,7 @@ describe("Facebook module interception", () => {
   test("wraps the nickname provider before consumers read the module exports", () => {
     const { define, definitions } = definitionHarness();
     const preference = {
-      getSnapshot: () => false,
+      getSnapshot: () => "off" as const,
       subscribe: (_listener: () => void) => () => {},
     };
     const intercepted = createFacebookModuleDefineInterceptor(
@@ -77,6 +77,63 @@ describe("Facebook module interception", () => {
       component: original,
       props: { ...props, nickname: undefined },
     });
+  });
+
+  test("registers title and thread-scope dependencies before Haste factories execute", () => {
+    const { define, definitions } = definitionHarness();
+    const intercepted = createFacebookModuleDefineInterceptor(
+      define,
+      () => false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      {
+        getSnapshot: () => "groups",
+        subscribe: () => () => {},
+      },
+    );
+    const original = (_thread: unknown): unknown => ({
+      threadTitle: "Captain",
+      participantsAndContacts: [[{ nickname: "Captain" }, { name: "Alex" }]],
+    });
+    defineDefaultExport(intercepted, "useLSGetThreadTitle.react", original);
+    const definition = definitions.get("useLSGetThreadTitle.react")!;
+    expect(definition.dependencies).toContain("react");
+    expect(definition.dependencies).toContain("I64");
+    expect(definition.dependencies).toContain("LSMessagingThreadTypeUtil");
+    const modules: Record<string, unknown> = {
+      react: {
+        useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => string) => getSnapshot(),
+        useMemo: (compute: () => unknown) => compute(),
+      },
+      I64: { to_string: (key: unknown) => key },
+      intlList: { default: { CONJUNCTIONS: { NONE: "none" } } },
+      LSMessagingThreadTypeUtil: { isGroup: (type: unknown) => type === "group" },
+      MWPGetThreadTitle: { computeThreadTitle: () => "Alex" },
+    };
+    const exports = { default: original };
+    definition.factory(
+      undefined,
+      undefined,
+      undefined,
+      (name: string) => modules[name],
+      undefined,
+      { exports },
+      exports,
+    );
+    expect(exports.default({ threadKey: "123", threadType: "direct" })).toMatchObject({
+      threadTitle: "Alex",
+    });
+    expect(exports.default({ threadKey: "456", threadType: "group" })).toMatchObject({
+      threadTitle: "Captain",
+    });
+    intercepted("MWPThreadCapabilitiesContext", ["react"], () => {});
+    expect(definitions.get("MWPThreadCapabilitiesContext")!.dependencies).toContain(
+      "LSMessagingThreadTypeUtil",
+    );
   });
 
   test("selects Messenger's dedicated worker before consumers read its gate on macOS", () => {

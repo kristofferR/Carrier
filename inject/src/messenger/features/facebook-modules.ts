@@ -4,6 +4,7 @@ import {
   type FacebookModuleDefine,
   isConversationSearchInput,
 } from "../lib/facebook-modules";
+import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
@@ -22,7 +23,7 @@ export function initFacebookModuleInterception() {
   const wrappedDefines = new WeakSet<object>();
   const searchIndex = new FacebookFTSIdleCoordinator();
   const nicknamePreference = {
-    getSnapshot: () => window.__CARRIER_SETTINGS__?.show_nicknames !== false,
+    getSnapshot: () => nicknameMode(window.__CARRIER_SETTINGS__),
     subscribe: (listener: () => void) => {
       window.addEventListener("carrier:settings", listener);
       return () => window.removeEventListener("carrier:settings", listener);

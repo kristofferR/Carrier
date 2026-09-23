@@ -3051,6 +3051,52 @@
   }
 
   // inject/src/messenger/lib/nicknames.ts
+  function nicknameMode(settings) {
+    return settings?.show_nicknames === false ? "off" : settings?.nicknames_group_only ? "groups" : "all";
+  }
+  function showNicknames(mode, isGroup) {
+    return mode === "all" || mode === "groups" && isGroup !== false;
+  }
+  var threadContexts = /* @__PURE__ */ new WeakMap();
+  function threadContext(react, runtime) {
+    let context = threadContexts.get(react);
+    if (!context && runtime.createContext) {
+      context = runtime.createContext(void 0);
+      threadContexts.set(react, context);
+    }
+    return context;
+  }
+  function patchNicknameThreadContext(value, react, isGroup) {
+    if (!value || typeof value !== "object" || !react || typeof react !== "object" || typeof isGroup !== "function")
+      return;
+    const exports = value;
+    const runtime = react;
+    const original = exports.Provider;
+    if (typeof original !== "function" || wrappedProviders.has(original) || !runtime.createElement)
+      return;
+    const context = threadContext(react, runtime);
+    if (!context) return;
+    const { createElement } = runtime;
+    const provider = (props) => {
+      let group;
+      try {
+        if (props && typeof props === "object" && "thread" in props && props.thread && typeof props.thread === "object" && "threadType" in props.thread) {
+          const result = isGroup(props.thread.threadType);
+          if (typeof result === "boolean") group = result;
+        }
+      } catch (_) {
+      }
+      return createElement(context.Provider, {
+        value: group,
+        children: createElement(original, props)
+      });
+    };
+    try {
+      exports.Provider = provider;
+      wrappedProviders.add(provider);
+    } catch (_) {
+    }
+  }
   var wrappedProviders = /* @__PURE__ */ new WeakSet();
   function patchNicknameContext(value, react, preference) {
     if (!value || typeof value !== "object" || !react || typeof react !== "object") return;
@@ -3059,9 +3105,12 @@
     const original = exports.MWPContactContextProvider;
     if (typeof original !== "function" || wrappedProviders.has(original) || typeof runtime.createElement !== "function" || typeof runtime.useSyncExternalStore !== "function")
       return;
-    const { createElement, useSyncExternalStore } = runtime;
+    const { createElement, useSyncExternalStore, useContext } = runtime;
+    const context = threadContext(react, runtime);
     const provider = function CarrierNicknameProvider(props) {
-      const enabled = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+      const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+      const group = context && useContext ? useContext(context) : void 0;
+      const enabled = showNicknames(mode, group);
       if (!enabled && props && typeof props === "object") {
         const record2 = props;
         const contact = record2.contact;
@@ -3074,6 +3123,90 @@
     try {
       exports.MWPContactContextProvider = provider;
       wrappedProviders.add(provider);
+    } catch (_) {
+    }
+  }
+
+  // inject/src/messenger/lib/nickname-thread-titles.ts
+  var NativeThreadTitles = class {
+    constructor() {
+      __publicField(this, "titles", /* @__PURE__ */ new Map());
+    }
+    remember(thread, original, displayed) {
+      if (!/^\d+$/.test(thread)) return;
+      const normalize = (value) => value.replace(/\s+/g, " ").trim().slice(0, 80);
+      this.titles.delete(thread);
+      this.titles.set(thread, { original: normalize(original), displayed: normalize(displayed) });
+      if (this.titles.size > 500) this.titles.delete(this.titles.keys().next().value);
+    }
+    displayed(thread, original, fallback = original) {
+      const entry = this.titles.get(thread);
+      return entry?.original === original ? entry.displayed : fallback;
+    }
+    original(thread, displayed) {
+      const entry = this.titles.get(thread);
+      return entry?.displayed === displayed ? entry.original : displayed;
+    }
+  };
+  var nativeThreadTitles = new NativeThreadTitles();
+  var wrappedHooks = /* @__PURE__ */ new WeakSet();
+  function patchNicknameThreadTitles(value, importModule, preference, titles = nativeThreadTitles) {
+    if (!value || typeof value !== "object") return;
+    const exports = value;
+    const original = exports.default;
+    if (typeof original !== "function" || wrappedHooks.has(original)) return;
+    const react = importModule("react");
+    const compute = importModule("MWPGetThreadTitle");
+    const i64 = importModule("I64");
+    const listModule = importModule("intlList");
+    const intlList = listModule?.default ?? listModule;
+    const types = importModule("LSMessagingThreadTypeUtil");
+    const computeTitle = compute?.computeThreadTitle;
+    const threadKey = i64?.to_string;
+    if (typeof react?.useSyncExternalStore !== "function" || typeof react.useMemo !== "function" || typeof computeTitle !== "function" || typeof threadKey !== "function")
+      return;
+    const { useSyncExternalStore, useMemo } = react;
+    const wrapped = new Proxy(original, {
+      apply(target, receiver, args) {
+        const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+        const result = Reflect.apply(target, receiver, args);
+        return useMemo(() => {
+          if (!result || typeof result !== "object") return result;
+          const record2 = result;
+          const thread = args[0];
+          if (!thread || typeof thread !== "object" || !("threadKey" in thread) || !("threadType" in thread) || typeof record2.threadTitle !== "string" || !Array.isArray(record2.participantsAndContacts))
+            return result;
+          try {
+            let displayed = record2.threadTitle;
+            const group = typeof types?.isGroup === "function" ? types.isGroup(thread.threadType) === true : void 0;
+            if (!showNicknames(mode, group)) {
+              const pairs = record2.participantsAndContacts.map((pair) => {
+                if (!Array.isArray(pair)) return pair;
+                const [participant, contact] = pair;
+                if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object" || !("name" in contact) || typeof contact.name !== "string")
+                  return pair;
+                return [{ ...participant, nickname: void 0 }, contact];
+              });
+              const computed = computeTitle(
+                intlList.CONJUNCTIONS?.NONE,
+                thread.threadType,
+                pairs,
+                record2.actorId
+              );
+              if (typeof computed === "string") displayed = computed;
+            }
+            const key = threadKey(thread.threadKey);
+            if (typeof key === "string") titles.remember(key, record2.threadTitle, displayed);
+            return displayed === record2.threadTitle ? result : { ...record2, threadTitle: displayed };
+          } catch (_) {
+            return result;
+          }
+        }, [result, args[0], mode]);
+      }
+    });
+    try {
+      exports.default = wrapped;
+      wrappedHooks.add(wrapped);
     } catch (_) {
     }
   }
@@ -3285,19 +3418,23 @@
   function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle, nicknamePreference) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if (moduleName === "MWPContactContext.react" && nicknamePreference) {
+      if ((moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") && nicknamePreference) {
         try {
           const importModule = factoryArgs[3];
           if (typeof importModule === "function") {
             const react = importModule("react");
+            const patch = (value) => {
+              if (moduleName === "useLSGetThreadTitle.react") {
+                patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
+              } else if (moduleName === "MWPThreadCapabilitiesContext") {
+                const types = importModule("LSMessagingThreadTypeUtil");
+                patchNicknameThreadContext(value, react, types?.isGroup);
+              } else patchNicknameContext(value, react, nicknamePreference);
+            };
             for (const candidate of [result, ...factoryArgs.slice(-2)]) {
-              patchNicknameContext(candidate, react, nicknamePreference);
+              patch(candidate);
               if (candidate && typeof candidate === "object") {
-                patchNicknameContext(
-                  candidate.exports,
-                  react,
-                  nicknamePreference
-                );
+                patch(candidate.exports);
               }
             }
           }
@@ -3347,7 +3484,10 @@
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && moduleName === "MWPContactContext.react" || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && (moduleName === "MWPContactContext.react" || moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+          if ((moduleName === "useLSGetThreadTitle.react" || moduleName === "MWPThreadCapabilitiesContext") && Array.isArray(args[1])) {
+            args[1] = [.../* @__PURE__ */ new Set([...args[1], "react", "I64", "LSMessagingThreadTypeUtil"])];
+          }
           args[2] = wrapFactory(
             moduleName,
             factory,
@@ -3422,7 +3562,7 @@
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
     const nicknamePreference = {
-      getSnapshot: () => window.__CARRIER_SETTINGS__?.show_nicknames !== false,
+      getSnapshot: () => nicknameMode(window.__CARRIER_SETTINGS__),
       subscribe: (listener) => {
         window.addEventListener("carrier:settings", listener);
         return () => window.removeEventListener("carrier:settings", listener);
@@ -6335,6 +6475,113 @@
     }
   };
 
+  // inject/src/messenger/lib/notification-names.ts
+  function aliases(person) {
+    return [person.name, person.firstName, person.nickname].filter(Boolean).map(normalizeSenderName);
+  }
+  function namedParticipant(name, group) {
+    const matches = group.participants.filter(
+      (person) => aliases(person).includes(normalizeSenderName(name))
+    );
+    return matches.length === 1 ? matches[0] : void 0;
+  }
+  function prefixedParticipant(body, group) {
+    const matches = /* @__PURE__ */ new Map();
+    for (let end2 = body.indexOf(": "); end2 > 0 && end2 <= 200; end2 = body.indexOf(": ", end2 + 2)) {
+      const prefix = normalizeSenderName(body.slice(0, end2));
+      for (const person2 of group.participants) {
+        if (aliases(person2).includes(prefix)) matches.set(person2, end2 + 2);
+      }
+    }
+    if (matches.size !== 1) return void 0;
+    const [person, end] = matches.entries().next().value;
+    return { person, end };
+  }
+  function notificationSender(body, group) {
+    if (!group?.isGroup) return void 0;
+    return prefixedParticipant(body, group)?.person;
+  }
+  function notificationNames(title, body, group, showNicknames2, titleKind = "unknown") {
+    if (!group) return { title, body };
+    const displayName = (person2) => showNicknames2 && person2.nickname || group.isGroup && person2.firstName || person2.name;
+    if (!group.isGroup) {
+      const person2 = namedParticipant(title, group);
+      return { title: person2 ? displayName(person2) : title, body };
+    }
+    const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
+    const person = kind === "sender" ? namedParticipant(title, group) : void 0;
+    const prefix = kind === "group" ? prefixedParticipant(body, group) : void 0;
+    return {
+      title: person ? displayName(person) : title,
+      body: prefix ? `${displayName(prefix.person)}: ${body.slice(prefix.end)}` : body
+    };
+  }
+  var PARTICIPANT_LIMIT = 500;
+  async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
+    if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
+    let timer;
+    const read = async () => {
+      const singleton = importModule("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = importModule("I64");
+      const q = importModule("ReQL");
+      const types = importModule("LSMessagingThreadTypeUtil");
+      const key = i64.of_string(threadId);
+      const thread = await db.tables.threads.get(key);
+      if (!thread || typeof thread !== "object" || !("threadType" in thread)) return null;
+      const isGroup = types.isGroup(thread.threadType) === true;
+      if (!isGroup && types.isOneToOne(thread.threadType) !== true) return null;
+      const rows = await q.toArrayAsync(
+        q.leftJoin(
+          q.fromTableAscending(db.tables.participants).getKeyRange(key),
+          q.fromTableAscending(db.tables.contacts)
+        ).take(PARTICIPANT_LIMIT + 1)
+      );
+      if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT) return null;
+      let photo;
+      try {
+        photo = importModule("getLSMediaContactProfilePictureUrl");
+      } catch (_) {
+      }
+      const participants = [];
+      for (const row of rows) {
+        if (!Array.isArray(row)) return null;
+        const [participant, contact] = row;
+        if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object")
+          return null;
+        const p = participant;
+        const c = contact;
+        if (typeof c.name !== "string" || !c.name.trim()) return null;
+        let avatar;
+        try {
+          if (typeof photo === "function") avatar = photo(contact);
+        } catch (_) {
+        }
+        participants.push({
+          name: c.name,
+          firstName: typeof c.firstName === "string" ? c.firstName : "",
+          nickname: typeof p.nickname === "string" ? p.nickname : "",
+          avatar: typeof avatar === "string" ? avatar : ""
+        });
+      }
+      return {
+        isGroup,
+        title: "threadName" in thread && typeof thread.threadName === "string" ? thread.threadName : "",
+        participants
+      };
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -6714,6 +6961,10 @@
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
+    const conversationNames = (threadId) => readConversationNotificationNames(
+      threadId,
+      window.require
+    );
     const rowTitles = /* @__PURE__ */ new Map();
     const ROW_TITLE_LIMIT = 300;
     const rememberRowTitle = (key, title) => {
@@ -6793,9 +7044,14 @@
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
         const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        const cardMatchWait = pageMatch.signal && !hidePreviewAtConstruction && /^https?:\/\/\S+$/i.test(originalBody.trim()) ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
+        const identityMatchWait = pageMatch.signal && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
+        const names2 = Promise.all([matchWait, identityMatchWait]).then(
+          () => hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : conversationNames(
+            threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || ""
+          )
+        );
         const imageDeadline = Date.now() + 3500;
-        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : Promise.all([matchWait, cardMatchWait]).then(() => {
+        const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : Promise.all([matchWait, identityMatchWait]).then(() => {
           if (hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview) {
             return "";
           }
@@ -6810,8 +7066,8 @@
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           matchWait,
           thumbnail,
-          cardMatchWait
-        ]).then(([icon, , image]) => {
+          names2
+        ]).then(([icon, , image, group]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           if (signal) notificationCorrelations.discardPage(signal);
@@ -6857,9 +7113,17 @@
           if (pageMatch.signal && !pageMatch.signal.matched) {
             pageNotificationReceipts.add(originalTitle, originalBody, id);
           }
-          const text = notificationPhotoText(
+          const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
+          const named = notificationNames(
             originalTitle,
-            richMessageBody(originalBody, threadPath),
+            originalBody,
+            group,
+            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+            group?.isGroup && displayTitle ? "group" : "unknown"
+          );
+          const text = notificationPhotoText(
+            displayTitle || named.title,
+            richMessageBody(named.body, threadPath),
             Boolean(image)
           );
           emitNotification(
@@ -7087,7 +7351,8 @@
       return {
         key: id,
         threadPath: `/t/${id}/`,
-        title: text.title,
+        title: nativeThreadTitles.original(id, text.title),
+        displayTitle: text.title,
         body: text.body,
         // Every face the row draws, in render order. A photo-less group renders
         // several member images side by side, and no individual one of them is a
@@ -7153,9 +7418,12 @@
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       return true;
     }
-    const completeCapacityEviction = (fallback) => {
+    const completeCapacityEviction = async (fallback) => {
       if (!fallback.deliverable) return;
+      const expectedFingerprint = notifiedStore.notifiedFingerprint(fallback.key);
+      const group = window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : await conversationNames(fallback.key);
       const settings = window.__CARRIER_SETTINGS__ || {};
+      if (notifiedStore.notifiedFingerprint(fallback.key) !== expectedFingerprint) return;
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
         notifiedStore.markSuppressed(
           fallback.key,
@@ -7171,10 +7439,17 @@
         notificationDedupeKey("", fallback.body)
       );
       diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+      const named = notificationNames(
+        nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
+        fallback.body,
+        group,
+        showNicknames(nicknameMode(settings), group?.isGroup),
+        "group"
+      );
       emitNotification(
         ++notifySeq,
-        hidePreview ? "Messenger" : fallback.title,
-        hidePreview ? "New message" : fallback.body,
+        hidePreview ? "Messenger" : named.title,
+        hidePreview ? "New message" : named.body,
         "",
         fallback.dedupeKey,
         () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -7185,7 +7460,7 @@
       const displaced = notificationCorrelations.addRow(fallback);
       if (!displaced) return;
       clearTimeout(displaced.row.timer);
-      if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+      if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
     };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
@@ -7210,6 +7485,7 @@
           at: detectedAt,
           timer: timer2,
           title: conversation.title,
+          displayTitle: conversation.displayTitle,
           body: conversation.body,
           threadPath: conversation.threadPath,
           fingerprint,
@@ -7227,7 +7503,11 @@
       );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
       const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
-      const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : avatarToDataUrl(senderIcon);
+      const names2 = hiddenAtConstruction ? Promise.resolve(null) : conversationNames(conversation.key);
+      const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : names2.then((group) => {
+        const person = notificationSender(conversation.body, group);
+        return avatarToDataUrl(person ? person.avatar || senderIcon : group ? "" : senderIcon);
+      });
       const threadAvatar = hiddenAtConstruction ? Promise.resolve("") : facesToDataUrl(conversation.icons);
       const thumbnail = notificationThumbnail(
         hiddenAtConstruction ? "" : notificationLinkImage(
@@ -7245,9 +7525,13 @@
           return;
         }
         const hiddenBeforeImages = settings.hide_notification_preview === true;
-        const [sender, thread, image] = hiddenBeforeImages ? ["", "", ""] : await Promise.all([senderAvatar, threadAvatar, thumbnail]);
+        const [sender, thread, image, group] = hiddenBeforeImages ? ["", "", "", null] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2]);
         const presentation = notificationPresentation(
-          conversation.title,
+          nativeThreadTitles.displayed(
+            conversation.key,
+            conversation.title,
+            conversation.displayTitle
+          ),
           conversation.body,
           conversation.isGroup,
           { sender, thread }
@@ -7271,11 +7555,14 @@
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
         const richBody = richMessageBody(content.body, conversation.threadPath);
-        const text = notificationPhotoText(
+        const named = notificationNames(
           presentation.title,
           content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
-          Boolean(image)
+          group,
+          showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+          presentation.subtitle ? "sender" : "group"
         );
+        const text = notificationPhotoText(named.title, named.body, Boolean(image));
         emitNotification(
           ++notifySeq,
           hidePreview ? "Messenger" : text.title,
@@ -7296,6 +7583,7 @@
         at: detectedAt,
         timer,
         title: conversation.title,
+        displayTitle: conversation.displayTitle,
         body: conversation.body,
         threadPath: conversation.threadPath,
         fingerprint,

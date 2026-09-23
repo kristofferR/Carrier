@@ -17,6 +17,8 @@ import {
   suppressMutedDelivery,
   suppressNotificationDelivery,
 } from "../lib/mute";
+import { nativeThreadTitles } from "../lib/nickname-thread-titles";
+import { nicknameMode, showNicknames } from "../lib/nicknames";
 import {
   ConversationNotificationTracker,
   groupPreviewSender,
@@ -42,6 +44,11 @@ import {
   notificationLinkCards,
   notificationLinkImage,
 } from "../lib/notification-links";
+import {
+  notificationNames,
+  notificationSender,
+  readConversationNotificationNames,
+} from "../lib/notification-names";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -279,6 +286,11 @@ export function initNotificationBridge() {
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   const senderAvatars = new SenderAvatarStore(notificationStorage);
+  const conversationNames = (threadId: string) =>
+    readConversationNotificationNames(
+      threadId,
+      (window as unknown as { require?: unknown }).require,
+    );
   // Validated thread ids and their latest exact row titles, used only to bind
   // sender-avatar harvesting to the open conversation. A display title never
   // establishes page-notification identity: names can collide or change while
@@ -304,6 +316,7 @@ export function initNotificationBridge() {
     at: number;
     timer: number;
     title: string;
+    displayTitle: string;
     body: string;
     threadPath: string;
     fingerprint: string;
@@ -435,20 +448,25 @@ export function initNotificationBridge() {
         pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
-      // Link enrichment needs its own bounded route wait even when muted
-      // filtering is disabled or its longer wait is cancelled by a setting change.
-      const cardMatchWait =
-        pageMatch.signal &&
-        !hidePreviewAtConstruction &&
-        /^https?:\/\/\S+$/i.test(originalBody.trim())
+      // Names and link enrichment need a bounded route wait even when muted
+      // filtering is disabled. Never infer a group identity from a display name.
+      const identityMatchWait =
+        pageMatch.signal && !hidePreviewAtConstruction
           ? waitForPageNotificationMatch(pageMatch.signal, 1000)
           : Promise.resolve();
+      const names = Promise.all([matchWait, identityMatchWait]).then(() =>
+        hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview
+          ? null
+          : conversationNames(
+              threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || "",
+            ),
+      );
       // Card lookup needs the route supplied by a page-first match. Keep any
       // late image load ahead of the four-second auto-refresh nudge.
       const imageDeadline = Date.now() + 3500;
       const thumbnail = opts.image
         ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image)
-        : Promise.all([matchWait, cardMatchWait]).then(() => {
+        : Promise.all([matchWait, identityMatchWait]).then(() => {
             if (
               hidePreviewAtConstruction ||
               window.__CARRIER_SETTINGS__?.hide_notification_preview
@@ -466,8 +484,8 @@ export function initNotificationBridge() {
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
         matchWait,
         thumbnail,
-        cardMatchWait,
-      ]).then(([icon, , image]) => {
+        names,
+      ]).then(([icon, , image, group]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
         if (signal) notificationCorrelations.discardPage(signal);
@@ -535,9 +553,17 @@ export function initNotificationBridge() {
         if (pageMatch.signal && !pageMatch.signal.matched) {
           pageNotificationReceipts.add(originalTitle, originalBody, id);
         }
-        const text = notificationPhotoText(
+        const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
+        const named = notificationNames(
           originalTitle,
-          richMessageBody(originalBody, threadPath),
+          originalBody,
+          group,
+          showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+          group?.isGroup && displayTitle ? "group" : "unknown",
+        );
+        const text = notificationPhotoText(
+          displayTitle || named.title,
+          richMessageBody(named.body, threadPath),
           Boolean(image),
         );
         emitNotification(
@@ -904,7 +930,8 @@ export function initNotificationBridge() {
     return {
       key: id,
       threadPath: `/t/${id}/`,
-      title: text.title,
+      title: nativeThreadTitles.original(id, text.title),
+      displayTitle: text.title,
       body: text.body,
       // Every face the row draws, in render order. A photo-less group renders
       // several member images side by side, and no individual one of them is a
@@ -1008,12 +1035,19 @@ export function initNotificationBridge() {
   // merely remove its identity while leaving a timer that can no longer pass
   // the map ownership check. Deliver without an avatar under pressure; native
   // content dedupe still absorbs a page Notification that arrives afterward.
-  const completeCapacityEviction = (fallback: PendingFallback) => {
+  const completeCapacityEviction = async (fallback: PendingFallback) => {
     // This arrival already crossed its delivery boundary as suppressed. A
     // later settings change must not revive it merely because queue pressure
     // retires its opposite-order correlation window.
     if (!fallback.deliverable) return;
+    const expectedFingerprint = notifiedStore.notifiedFingerprint(fallback.key);
+    const group = window.__CARRIER_SETTINGS__?.hide_notification_preview
+      ? null
+      : await conversationNames(fallback.key);
     const settings = window.__CARRIER_SETTINGS__ || {};
+    // A newer delivery may win while names load. Do not overwrite its receipt
+    // or replay the older preview that was evicted from the correlation queue.
+    if (notifiedStore.notifiedFingerprint(fallback.key) !== expectedFingerprint) return;
     if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
       notifiedStore.markSuppressed(
         fallback.key,
@@ -1029,10 +1063,17 @@ export function initNotificationBridge() {
       notificationDedupeKey("", fallback.body),
     );
     diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+    const named = notificationNames(
+      nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
+      fallback.body,
+      group,
+      showNicknames(nicknameMode(settings), group?.isGroup),
+      "group",
+    );
     emitNotification(
       ++notifySeq,
-      hidePreview ? "Messenger" : fallback.title,
-      hidePreview ? "New message" : fallback.body,
+      hidePreview ? "Messenger" : named.title,
+      hidePreview ? "New message" : named.body,
       "",
       fallback.dedupeKey,
       () => window.__carrierOpenThread?.(fallback.threadPath),
@@ -1044,7 +1085,7 @@ export function initNotificationBridge() {
     const displaced = notificationCorrelations.addRow(fallback);
     if (!displaced) return;
     clearTimeout(displaced.row.timer);
-    if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+    if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
   };
 
   const scheduleFallback = (
@@ -1083,6 +1124,7 @@ export function initNotificationBridge() {
         at: detectedAt,
         timer,
         title: conversation.title,
+        displayTitle: conversation.displayTitle,
         body: conversation.body,
         threadPath: conversation.threadPath,
         fingerprint,
@@ -1105,7 +1147,17 @@ export function initNotificationBridge() {
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
     const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
-    const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : avatarToDataUrl(senderIcon);
+    const names = hiddenAtConstruction
+      ? Promise.resolve(null)
+      : conversationNames(conversation.key);
+    const senderAvatar = hiddenAtConstruction
+      ? Promise.resolve("")
+      : names.then((group) => {
+          const person = notificationSender(conversation.body, group);
+          // Resolve the face from the original identity, before changing its label.
+          // This also handles nicknames that don't resemble a contact's real name.
+          return avatarToDataUrl(person ? person.avatar || senderIcon : group ? "" : senderIcon);
+        });
     const threadAvatar = hiddenAtConstruction
       ? Promise.resolve("")
       : facesToDataUrl(conversation.icons);
@@ -1127,11 +1179,15 @@ export function initNotificationBridge() {
         return;
       }
       const hiddenBeforeImages = settings.hide_notification_preview === true;
-      const [sender, thread, image] = hiddenBeforeImages
-        ? ["", "", ""]
-        : await Promise.all([senderAvatar, threadAvatar, thumbnail]);
+      const [sender, thread, image, group] = hiddenBeforeImages
+        ? (["", "", "", null] as const)
+        : await Promise.all([senderAvatar, threadAvatar, thumbnail, names]);
       const presentation = notificationPresentation(
-        conversation.title,
+        nativeThreadTitles.displayed(
+          conversation.key,
+          conversation.title,
+          conversation.displayTitle,
+        ),
         conversation.body,
         conversation.isGroup,
         { sender, thread },
@@ -1162,11 +1218,14 @@ export function initNotificationBridge() {
         `unread row changed without a page Notification (visibility: ${document.visibilityState})`,
       );
       const richBody = richMessageBody(content.body, conversation.threadPath);
-      const text = notificationPhotoText(
+      const named = notificationNames(
         presentation.title,
         content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
-        Boolean(image),
+        group,
+        showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+        presentation.subtitle ? "sender" : "group",
       );
+      const text = notificationPhotoText(named.title, named.body, Boolean(image));
       emitNotification(
         ++notifySeq,
         hidePreview ? "Messenger" : text.title,
@@ -1187,6 +1246,7 @@ export function initNotificationBridge() {
       at: detectedAt,
       timer,
       title: conversation.title,
+      displayTitle: conversation.displayTitle,
       body: conversation.body,
       threadPath: conversation.threadPath,
       fingerprint,

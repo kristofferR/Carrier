@@ -1,4 +1,9 @@
-import { type NicknamePreference, patchNicknameContext } from "./nicknames";
+import { patchNicknameThreadTitles } from "./nickname-thread-titles";
+import {
+  type NicknamePreference,
+  patchNicknameContext,
+  patchNicknameThreadContext,
+} from "./nicknames";
 
 export type FacebookModuleDefine = (this: unknown, ...args: unknown[]) => unknown;
 
@@ -299,21 +304,30 @@ function wrapFactory(
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
-    if (moduleName === "MWPContactContext.react" && nicknamePreference) {
+    if (
+      (moduleName === "MWPContactContext.react" ||
+        moduleName === "useLSGetThreadTitle.react" ||
+        moduleName === "MWPThreadCapabilitiesContext") &&
+      nicknamePreference
+    ) {
       // This Haste module imports React through the namespace dependency slot.
       // Patch before consumers receive the provider, so React owns every render.
       try {
         const importModule = factoryArgs[3];
         if (typeof importModule === "function") {
           const react: unknown = importModule("react");
+          const patch = (value: unknown) => {
+            if (moduleName === "useLSGetThreadTitle.react") {
+              patchNicknameThreadTitles(value, (name) => importModule(name), nicknamePreference);
+            } else if (moduleName === "MWPThreadCapabilitiesContext") {
+              const types = importModule("LSMessagingThreadTypeUtil") as { isGroup?: unknown };
+              patchNicknameThreadContext(value, react, types?.isGroup);
+            } else patchNicknameContext(value, react, nicknamePreference);
+          };
           for (const candidate of [result, ...factoryArgs.slice(-2)]) {
-            patchNicknameContext(candidate, react, nicknamePreference);
+            patch(candidate);
             if (candidate && typeof candidate === "object") {
-              patchNicknameContext(
-                (candidate as Record<string, unknown>).exports,
-                react,
-                nicknamePreference,
-              );
+              patch((candidate as Record<string, unknown>).exports);
             }
           }
         }
@@ -389,7 +403,10 @@ export function createFacebookModuleDefineInterceptor(
         typeof moduleName === "string" &&
         typeof factory === "function" &&
         (moduleName === "MAWSetupWorker" ||
-          (nicknamePreference !== undefined && moduleName === "MWPContactContext.react") ||
+          (nicknamePreference !== undefined &&
+            (moduleName === "MWPContactContext.react" ||
+              moduleName === "useLSGetThreadTitle.react" ||
+              moduleName === "MWPThreadCapabilitiesContext")) ||
           (preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker") ||
           moduleName === "MAWWebWorkerSingleton" ||
           moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
@@ -398,6 +415,15 @@ export function createFacebookModuleDefineInterceptor(
           TELEMETRY_MODULES.has(moduleName) ||
           BACKGROUND_SERVICE_MODULES.has(moduleName))
       ) {
+        // Haste only permits imports declared at registration. This hook did
+        // not previously use React's external-store hook or stringify keys.
+        if (
+          (moduleName === "useLSGetThreadTitle.react" ||
+            moduleName === "MWPThreadCapabilitiesContext") &&
+          Array.isArray(args[1])
+        ) {
+          args[1] = [...new Set([...args[1], "react", "I64", "LSMessagingThreadTypeUtil"])];
+        }
         args[2] = wrapFactory(
           moduleName,
           factory as FacebookModuleFactory,
