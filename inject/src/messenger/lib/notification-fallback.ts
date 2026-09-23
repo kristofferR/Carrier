@@ -1406,13 +1406,18 @@ export function groupPreviewSender(value: string): string {
   return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
 }
 
-/** Present an identified group sender above the conversation and message. */
-export function notificationPresentation(title: string, body: string, isGroup: boolean) {
+/** Keep the displayed identity consistent with the photo that actually loaded. */
+export function notificationPresentation(
+  title: string,
+  body: string,
+  isGroup: boolean,
+  photos: { sender: string; thread: string },
+) {
   const { sender, message } = splitGroupSender(body);
-  if (isGroup && sender && message.trim()) {
-    return { title: sender, subtitle: title, body: message };
+  if (isGroup && sender && message.trim() && (photos.sender || !photos.thread)) {
+    return { title: sender, subtitle: title, body: message, icon: photos.sender };
   }
-  return { title, subtitle: "", body };
+  return { title, subtitle: "", body, icon: photos.thread };
 }
 
 /** Best-effort suppression for previews produced by the signed-in user. */

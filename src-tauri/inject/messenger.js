@@ -5927,12 +5927,12 @@
   function groupPreviewSender(value) {
     return splitGroupSender(value.replace(/\s+/g, " ").trim()).sender || "";
   }
-  function notificationPresentation(title, body, isGroup) {
+  function notificationPresentation(title, body, isGroup, photos) {
     const { sender, message } = splitGroupSender(body);
-    if (isGroup && sender && message.trim()) {
-      return { title: sender, subtitle: title, body: message };
+    if (isGroup && sender && message.trim() && (photos.sender || !photos.thread)) {
+      return { title: sender, subtitle: title, body: message, icon: photos.sender };
     }
-    return { title, subtitle: "", body };
+    return { title, subtitle: "", body, icon: photos.thread };
   }
   function isOwnMessagePreview(value) {
     return /^(?:you|du|me|meg):|^(?:you|du|me|meg)\s+(?:sent|replied|forwarded|reacted|sendte|svarte|videresendte|reagerte)\b/i.test(
@@ -7165,11 +7165,13 @@
       const content = notificationPresentation(
         conversation.title,
         conversation.body,
-        conversation.isGroup
+        conversation.isGroup,
+        { sender: "", thread: "" }
       );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
       const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
-      const avatar = hiddenAtConstruction ? Promise.resolve("") : content.subtitle ? avatarToDataUrl(senderIcon) : facesToDataUrl(conversation.icons);
+      const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : avatarToDataUrl(senderIcon);
+      const threadAvatar = hiddenAtConstruction ? Promise.resolve("") : facesToDataUrl(conversation.icons);
       const thumbnail = notificationThumbnail(
         hiddenAtConstruction ? "" : notificationLinkImage(
           content.body,
@@ -7186,7 +7188,14 @@
           return;
         }
         const hiddenBeforeImages = settings.hide_notification_preview === true;
-        const [icon, image] = hiddenBeforeImages ? ["", ""] : await Promise.all([avatar, thumbnail]);
+        const [sender, thread, image] = hiddenBeforeImages ? ["", "", ""] : await Promise.all([senderAvatar, threadAvatar, thumbnail]);
+        const presentation = notificationPresentation(
+          conversation.title,
+          conversation.body,
+          conversation.isGroup,
+          { sender, thread }
+        );
+        const { icon } = presentation;
         if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
           diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
@@ -7204,9 +7213,10 @@
           "notify.fallback",
           `unread row changed without a page Notification (visibility: ${document.visibilityState})`
         );
+        const richBody = richMessageBody(content.body, conversation.threadPath);
         const text = notificationPhotoText(
-          content.title,
-          richMessageBody(content.body, conversation.threadPath),
+          presentation.title,
+          content.subtitle && !presentation.subtitle ? `${content.title}: ${richBody}` : richBody,
           Boolean(image)
         );
         emitNotification(
@@ -7220,7 +7230,7 @@
           },
           conversation.threadPath,
           void 0,
-          hidePreview ? "" : content.subtitle,
+          hidePreview ? "" : presentation.subtitle,
           hidePreview ? "" : image
         );
       }, FALLBACK_DELAY_MS);

@@ -30,33 +30,77 @@ const memoryStorage = () => {
 };
 
 describe("notificationPresentation", () => {
+  const photos = { sender: "sender-png", thread: "thread-png" };
   test("separates the sender, group, and actual message", () => {
     expect(
-      notificationPresentation("Weekend trip 🍗", "Kim: Shared a link. (youtube.com)", true),
+      notificationPresentation(
+        "Weekend trip 🍗",
+        "Kim: Shared a link. (youtube.com)",
+        true,
+        photos,
+      ),
     ).toEqual({
       title: "Kim",
       subtitle: "Weekend trip 🍗",
       body: "Shared a link. (youtube.com)",
+      icon: "sender-png",
     });
-    expect(notificationPresentation("Weekend trip 🍗", "Kim: 🍗", true)).toEqual({
+    expect(notificationPresentation("Weekend trip 🍗", "Kim: 🍗", true, photos)).toEqual({
       title: "Kim",
       subtitle: "Weekend trip 🍗",
       body: "🍗",
+      icon: "sender-png",
     });
   });
 
   test("preserves unknown senders and direct messages without guessing", () => {
     for (const body of ["Shared a link", "https://youtube.com/watch", "Kim: "]) {
-      expect(notificationPresentation("Weekend trip", body, true)).toEqual({
+      expect(notificationPresentation("Weekend trip", body, true, photos)).toEqual({
         title: "Weekend trip",
         subtitle: "",
         body,
+        icon: "thread-png",
       });
     }
-    expect(notificationPresentation("Kim", "Note: bring lunch", false)).toEqual({
+    expect(notificationPresentation("Kim", "Note: bring lunch", false, photos)).toEqual({
       title: "Kim",
       subtitle: "",
       body: "Note: bring lunch",
+      icon: "thread-png",
+    });
+  });
+
+  test("uses the group identity when the sender photo is missing or failed conversion", () => {
+    expect(
+      notificationPresentation("Weekend trip", "Kim: Bring lunch", true, {
+        sender: "",
+        thread: "composite-png",
+      }),
+    ).toEqual({
+      title: "Weekend trip",
+      subtitle: "",
+      body: "Kim: Bring lunch",
+      icon: "composite-png",
+    });
+  });
+
+  test("keeps sender text when no photo loaded and never substitutes a group face for a sender", () => {
+    expect(
+      notificationPresentation("Weekend trip", "Kim: Bring lunch", true, {
+        sender: "",
+        thread: "",
+      }),
+    ).toEqual({ title: "Kim", subtitle: "Weekend trip", body: "Bring lunch", icon: "" });
+    expect(
+      notificationPresentation("Weekend trip", "Kim: Bring lunch", true, {
+        sender: "sender-png",
+        thread: "",
+      }),
+    ).toEqual({
+      title: "Kim",
+      subtitle: "Weekend trip",
+      body: "Bring lunch",
+      icon: "sender-png",
     });
   });
 });
