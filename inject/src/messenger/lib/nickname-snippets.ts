@@ -9,6 +9,18 @@ import {
 /** Undo only the sender prefix that Carrier rendered, before notification truncation. */
 export class NativeSnippetPrefixes {
   private readonly entries = new Map<string, { original: string; displayed: string }>();
+  private readonly drafts = new Set<string>();
+
+  rememberDraft(thread: string, draft: boolean) {
+    this.drafts.delete(thread);
+    if (!/^\d+$/.test(thread) || !draft) return;
+    this.drafts.add(thread);
+    if (this.drafts.size > 500) this.drafts.delete(this.drafts.values().next().value!);
+  }
+
+  isDraft(thread: string) {
+    return this.drafts.has(thread);
+  }
 
   remember(thread: string, original: string, displayed: string) {
     this.entries.delete(thread);
@@ -121,6 +133,9 @@ export function patchNicknameSnippets(
     useLayoutEffect(() => {
       prefixes.remember(key, originalPrefix, displayedPrefix);
     }, [key, originalPrefix, displayedPrefix]);
+    useLayoutEffect(() => {
+      prefixes.rememberDraft(key, draft);
+    }, [key, draft]);
     return createElement(
       original,
       displayed !== snippet ? { ...record, snippetRaw: displayed } : props,

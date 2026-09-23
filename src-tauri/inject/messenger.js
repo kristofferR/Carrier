@@ -3535,6 +3535,16 @@
   var NativeSnippetPrefixes = class {
     constructor() {
       __publicField(this, "entries", /* @__PURE__ */ new Map());
+      __publicField(this, "drafts", /* @__PURE__ */ new Set());
+    }
+    rememberDraft(thread, draft) {
+      this.drafts.delete(thread);
+      if (!/^\d+$/.test(thread) || !draft) return;
+      this.drafts.add(thread);
+      if (this.drafts.size > 500) this.drafts.delete(this.drafts.values().next().value);
+    }
+    isDraft(thread) {
+      return this.drafts.has(thread);
     }
     remember(thread, original, displayed) {
       this.entries.delete(thread);
@@ -3606,6 +3616,9 @@
       useLayoutEffect(() => {
         prefixes.remember(key, originalPrefix, displayedPrefix);
       }, [key, originalPrefix, displayedPrefix]);
+      useLayoutEffect(() => {
+        prefixes.rememberDraft(key, draft);
+      }, [key, draft]);
       return createElement(
         original,
         displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
@@ -6635,9 +6648,6 @@
       value.trim().replace(/\s+/g, " ")
     );
   }
-  function isDraftMessagePreview(value) {
-    return /^draft\s*:/i.test(value.trim());
-  }
   function notificationTextMatches(pageTitle, pageBody, rowTitle, rowBody) {
     const normalizedPageTitle = normalizeNotificationText(pageTitle);
     const normalizedRowTitle = normalizeNotificationText(rowTitle);
@@ -7547,6 +7557,7 @@
         displayTitle: text.title,
         body: text.body,
         displayBody,
+        draft: nativeSnippetPrefixes.isDraft(id),
         // Every face the row draws, in render order. A photo-less group renders
         // several member images side by side, and no individual one of them is a
         // valid thread icon — taking just the first labelled every message in
@@ -7562,7 +7573,7 @@
       };
     };
     currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter(
-      (conversation) => conversation !== null && conversation.body.length > 0 && !isDraftMessagePreview(conversation.body)
+      (conversation) => conversation !== null && conversation.body.length > 0 && !conversation.draft
     ).map(({ key, title, body }) => ({ key, title, body }));
     function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
       const pageSignal = notificationCorrelations.consumePageForRow(
@@ -7830,7 +7841,7 @@
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
-          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !isDraftMessagePreview(conversation.body)
+          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft
         );
         const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
         const notifyKeys = new Set(
@@ -7844,19 +7855,15 @@
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
         notifiedStore.observeRead(
-          new Set(
-            observed.filter(({ unread, body }) => unread && !isDraftMessagePreview(body)).map(({ key }) => key)
-          ),
-          observed.filter(({ body }) => !isDraftMessagePreview(body)).map(({ key }) => key),
+          new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
+          observed.map(({ key }) => key),
           detectedAt,
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
-        const routeCandidates = observed.filter(
-          ({ body }) => body.length > 0 && !isDraftMessagePreview(body)
-        );
+        const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
         const hydratedReadKeys = new Set(
-          listHydrated ? observed.filter(({ unread, body }) => !unread && !isDraftMessagePreview(body)).map(({ key }) => key) : []
+          listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
         clearTimeout(readConfirmationTimer);
         readConfirmationTimer = void 0;
@@ -7931,15 +7938,11 @@
           }
         }
         pageNotificationReceipts.discardReadMatches(
-          observed.filter(
-            ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body)
-          ),
+          observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
           detectedAt
         );
         pendingPageNotifications.discardReadMatches(
-          observed.filter(
-            ({ unread, body }) => !unread && body.length > 0 && !isDraftMessagePreview(body)
-          ),
+          observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
           detectedAt
         );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);

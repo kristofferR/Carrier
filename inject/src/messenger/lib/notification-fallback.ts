@@ -1427,11 +1427,6 @@ export function isOwnMessagePreview(value: string): boolean {
   );
 }
 
-/** Messenger replaces the last-message preview with this label while composing. */
-export function isDraftMessagePreview(value: string): boolean {
-  return /^draft\s*:/i.test(value.trim());
-}
-
 /** Whether page and row signals describe the same conversation update. */
 export function notificationTextMatches(
   pageTitle: string,

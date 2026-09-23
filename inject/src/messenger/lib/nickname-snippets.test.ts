@@ -76,8 +76,12 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
   expect(loadCount).toBe(2);
   mode = "off";
   expect(render({ ...props, isDraftMessage: true }).props.snippetRaw).toBe(props.snippetRaw);
+  expect(prefixes.isDraft("123")).toBe(true);
   expect(prefixes.original("123", "Alex: draft")).toBe("Alex: draft");
-  expect(render({ ...props, snippetRaw: "New message" }).props.snippetRaw).toBe("New message");
+  expect(render({ ...props, snippetRaw: "Draft: ready for review" }).props.snippetRaw).toBe(
+    "Draft: ready for review",
+  );
+  expect(prefixes.isDraft("123")).toBe(false);
   expect(props.snippetRaw).toBe("vault:Captain: hello Captain 🙂");
   // A late read from the previous conversation must not update a reused row.
   render();
