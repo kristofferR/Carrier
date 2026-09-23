@@ -3050,6 +3050,34 @@
     }).observe(document.documentElement, { childList: true, subtree: true });
   }
 
+  // inject/src/messenger/lib/nicknames.ts
+  var wrappedProviders = /* @__PURE__ */ new WeakSet();
+  function patchNicknameContext(value, react, preference) {
+    if (!value || typeof value !== "object" || !react || typeof react !== "object") return;
+    const exports = value;
+    const runtime = react;
+    const original = exports.MWPContactContextProvider;
+    if (typeof original !== "function" || wrappedProviders.has(original) || typeof runtime.createElement !== "function" || typeof runtime.useSyncExternalStore !== "function")
+      return;
+    const { createElement, useSyncExternalStore } = runtime;
+    const provider = function CarrierNicknameProvider(props) {
+      const enabled = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
+      if (!enabled && props && typeof props === "object") {
+        const record2 = props;
+        const contact = record2.contact;
+        if (typeof record2.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
+          return createElement(original, { ...record2, nickname: void 0 });
+        }
+      }
+      return createElement(original, props);
+    };
+    try {
+      exports.MWPContactContextProvider = provider;
+      wrappedProviders.add(provider);
+    } catch (_) {
+    }
+  }
+
   // inject/src/messenger/lib/facebook-modules.ts
   function isConversationSearchInput({
     hasAccessibleName,
@@ -3254,9 +3282,29 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle, nicknamePreference) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
+      if (moduleName === "MWPContactContext.react" && nicknamePreference) {
+        try {
+          const importModule = factoryArgs[3];
+          if (typeof importModule === "function") {
+            const react = importModule("react");
+            for (const candidate of [result, ...factoryArgs.slice(-2)]) {
+              patchNicknameContext(candidate, react, nicknamePreference);
+              if (candidate && typeof candidate === "object") {
+                patchNicknameContext(
+                  candidate.exports,
+                  react,
+                  nicknamePreference
+                );
+              }
+            }
+          }
+        } catch (_) {
+        }
+        return result;
+      }
       if (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
         const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : moduleName === "MAWWebWorkerSingleton" ? onWorkerLifecycle : moduleName === "shouldUseMAWSharedWorker" ? preferDedicatedWorkerExports : onProcessingLogger;
         for (const candidate of [result, ...factoryArgs.slice(-2)]) {
@@ -3294,12 +3342,12 @@
   }, onWorkerSetup = () => {
   }, onProcessingLogger = () => {
   }, onWorkerLifecycle = () => {
-  }, preferDedicatedWorker = false) {
+  }, preferDedicatedWorker = false, nicknamePreference) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || nicknamePreference !== void 0 && moduleName === "MWPContactContext.react" || preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
@@ -3308,7 +3356,8 @@
             onFacebookError,
             onWorkerSetup,
             onProcessingLogger,
-            onWorkerLifecycle
+            onWorkerLifecycle,
+            nicknamePreference
           );
         }
         return Reflect.apply(target, thisArg, args);
@@ -3372,6 +3421,13 @@
     const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
+    const nicknamePreference = {
+      getSnapshot: () => window.__CARRIER_SETTINGS__?.show_nicknames !== false,
+      subscribe: (listener) => {
+        window.addEventListener("carrier:settings", listener);
+        return () => window.removeEventListener("carrier:settings", listener);
+      }
+    };
     let pauseTimer;
     const wakeSearchIndex = () => {
       searchIndex.wake();
@@ -3410,7 +3466,8 @@
         (exports) => workerRecovery.observeSetupExports(exports),
         (exports) => syncProcessing.observeLogger(exports),
         (exports) => workerRecovery.observeLifecycleExports(exports),
-        /mac/i.test(navigator.platform)
+        /mac/i.test(navigator.platform),
+        nicknamePreference
       );
       wrappedDefines.add(wrapped);
       return wrapped;

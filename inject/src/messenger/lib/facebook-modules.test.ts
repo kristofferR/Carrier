@@ -39,6 +39,46 @@ function defineDefaultExport(
 }
 
 describe("Facebook module interception", () => {
+  test("wraps the nickname provider before consumers read the module exports", () => {
+    const { define, definitions } = definitionHarness();
+    const preference = {
+      getSnapshot: () => false,
+      subscribe: (_listener: () => void) => () => {},
+    };
+    const intercepted = createFacebookModuleDefineInterceptor(
+      define,
+      () => false,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      preference,
+    );
+    const original = (props: unknown): unknown => props;
+    intercepted("MWPContactContext.react", ["react"], (...args: unknown[]) => {
+      (args[6] as Record<string, unknown>).MWPContactContextProvider = original;
+    });
+    const exports = { MWPContactContextProvider: original };
+    const importModule = (name: string) => {
+      expect(name).toBe("react");
+      return {
+        createElement: (component: unknown, props: unknown) => ({ component, props }),
+        useSyncExternalStore: (_subscribe: unknown, snapshot: () => boolean) => snapshot(),
+      };
+    };
+    definitions
+      .get("MWPContactContext.react")!
+      .factory(undefined, undefined, undefined, importModule, undefined, { exports }, exports);
+    expect(exports.MWPContactContextProvider).not.toBe(original);
+    const props = { contact: { name: "Alex" }, nickname: "Captain", children: {} };
+    expect(exports.MWPContactContextProvider(props)).toEqual({
+      component: original,
+      props: { ...props, nickname: undefined },
+    });
+  });
+
   test("selects Messenger's dedicated worker before consumers read its gate on macOS", () => {
     const { define, definitions } = definitionHarness();
     const intercepted = createFacebookModuleDefineInterceptor(

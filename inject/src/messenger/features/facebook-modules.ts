@@ -21,6 +21,13 @@ export function initFacebookModuleInterception() {
   const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
   const wrappedDefines = new WeakSet<object>();
   const searchIndex = new FacebookFTSIdleCoordinator();
+  const nicknamePreference = {
+    getSnapshot: () => window.__CARRIER_SETTINGS__?.show_nicknames !== false,
+    subscribe: (listener: () => void) => {
+      window.addEventListener("carrier:settings", listener);
+      return () => window.removeEventListener("carrier:settings", listener);
+    },
+  };
   let pauseTimer: number | undefined;
 
   const wakeSearchIndex = () => {
@@ -68,6 +75,7 @@ export function initFacebookModuleInterception() {
       (exports) => syncProcessing.observeLogger(exports),
       (exports) => workerRecovery.observeLifecycleExports(exports),
       /mac/i.test(navigator.platform),
+      nicknamePreference,
     );
     wrappedDefines.add(wrapped);
     return wrapped;

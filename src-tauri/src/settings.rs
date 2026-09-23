@@ -92,6 +92,8 @@ pub(crate) struct Settings {
     pub(crate) attention_on_message: bool,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
     pub(crate) hide_names_avatars: bool,
+    /// Prefer chat nicknames over real names for message authors.
+    pub(crate) show_nicknames: bool,
     /// Render Facebook emoji sprites as native system emoji glyphs.
     pub(crate) system_emoji: bool,
     /// Pause videos and animated media that start without a recent user
@@ -194,6 +196,7 @@ impl Default for Settings {
             clear_notifications_on_view: true,
             attention_on_message: false,
             hide_names_avatars: false,
+            show_nicknames: true,
             system_emoji: false,
             stop_media_autoplay: false,
             zoom: 100,
@@ -1030,6 +1033,19 @@ mod tests {
         // Existing installs should not opt into autoplay suppression implicitly.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.stop_media_autoplay);
+    }
+
+    #[test]
+    fn nickname_preference_preserves_defaults_and_round_trips() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
+        assert!(settings.show_nicknames);
+        let settings = Settings {
+            show_nicknames: false,
+            ..settings
+        };
+        let saved = serde_json::to_string(&settings).unwrap();
+        let loaded: Settings = serde_json::from_str(&saved).unwrap();
+        assert!(!loaded.show_nicknames);
     }
 
     #[test]

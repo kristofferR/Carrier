@@ -1,3 +1,5 @@
+import { type NicknamePreference, patchNicknameContext } from "./nicknames";
+
 export type FacebookModuleDefine = (this: unknown, ...args: unknown[]) => unknown;
 
 type FacebookModuleFactory = (this: unknown, ...args: unknown[]) => unknown;
@@ -293,9 +295,31 @@ function wrapFactory(
   onWorkerSetup: (exports: unknown) => void,
   onProcessingLogger: (exports: unknown) => void,
   onWorkerLifecycle: (exports: unknown) => void,
+  nicknamePreference?: NicknamePreference,
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
+    if (moduleName === "MWPContactContext.react" && nicknamePreference) {
+      // This Haste module imports React through the namespace dependency slot.
+      // Patch before consumers receive the provider, so React owns every render.
+      try {
+        const importModule = factoryArgs[3];
+        if (typeof importModule === "function") {
+          const react: unknown = importModule("react");
+          for (const candidate of [result, ...factoryArgs.slice(-2)]) {
+            patchNicknameContext(candidate, react, nicknamePreference);
+            if (candidate && typeof candidate === "object") {
+              patchNicknameContext(
+                (candidate as Record<string, unknown>).exports,
+                react,
+                nicknamePreference,
+              );
+            }
+          }
+        }
+      } catch (_) {}
+      return result;
+    }
     if (
       moduleName === "MAWSetupWorker" ||
       moduleName === "MAWWebWorkerSingleton" ||
@@ -355,6 +379,7 @@ export function createFacebookModuleDefineInterceptor(
   onProcessingLogger: (exports: unknown) => void = () => {},
   onWorkerLifecycle: (exports: unknown) => void = () => {},
   preferDedicatedWorker = false,
+  nicknamePreference?: NicknamePreference,
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -364,6 +389,7 @@ export function createFacebookModuleDefineInterceptor(
         typeof moduleName === "string" &&
         typeof factory === "function" &&
         (moduleName === "MAWSetupWorker" ||
+          (nicknamePreference !== undefined && moduleName === "MWPContactContext.react") ||
           (preferDedicatedWorker && moduleName === "shouldUseMAWSharedWorker") ||
           moduleName === "MAWWebWorkerSingleton" ||
           moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
@@ -381,6 +407,7 @@ export function createFacebookModuleDefineInterceptor(
           onWorkerSetup,
           onProcessingLogger,
           onWorkerLifecycle,
+          nicknamePreference,
         );
       }
       return Reflect.apply(target, thisArg, args);

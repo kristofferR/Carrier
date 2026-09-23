@@ -45,6 +45,7 @@ interface CarrierSettings {
   clear_notifications_on_view?: boolean;
   attention_on_message?: boolean;
   hide_names_avatars?: boolean;
+  show_nicknames?: boolean;
   system_emoji?: boolean;
   /** Pause video/GIF playback unless it follows a recent user interaction. */
   stop_media_autoplay?: boolean;
