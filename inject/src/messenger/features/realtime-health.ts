@@ -33,6 +33,10 @@ export type RealtimeHealthMonitor = {
 const WORKER_HEARTBEAT_TIMEOUT_MS = 8_000;
 const WORKER_FAILURE_LIMIT = 3;
 
+let verifiedConnection: () => boolean = () => false;
+/** Fail closed when Messenger cannot prove its encrypted transport is ready. */
+export const scheduledSendConnectionReady = () => navigator.onLine && verifiedConnection();
+
 type FacebookBridgeModule = {
   sendAndReceive?: (
     namespace: string,
@@ -363,12 +367,10 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     diag("sync.monitor", "could not observe Messenger realtime WebSockets");
   }
 
-  return {
-    check,
-    isVerifiedHealthy: () =>
-      verified?.stillCurrent() === true &&
-      now() - verified.at < REALTIME_CONNECT_GRACE_MS &&
-      workerIsConnected() === true &&
-      workerSetupState() === "ready",
-  };
+  verifiedConnection = () =>
+    verified?.stillCurrent() === true &&
+    now() - verified.at < REALTIME_CONNECT_GRACE_MS &&
+    workerIsConnected() === true &&
+    workerSetupState() === "ready";
+  return { check, isVerifiedHealthy: verifiedConnection };
 }

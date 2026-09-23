@@ -8,8 +8,10 @@ import { stripFacebookTracking } from "./lib/links";
 export const invoke = (cmd: string, args?: Record<string, unknown>) =>
   window.__TAURI_INTERNALS__?.invoke(cmd, args);
 
-export const toast = (msg: string, action?: CarrierToastAction) =>
-  window.__carrierToast ? window.__carrierToast(msg, action) : console.log("[carrier]", msg);
+export const toast = (msg: string, action?: CarrierToastAction, options?: CarrierToastOptions) =>
+  window.__carrierToast
+    ? window.__carrierToast(msg, action, options)
+    : console.log("[carrier]", msg);
 
 /* ----------------------------- Diagnostics ---------------------------- */
 // Every page feature hangs off Facebook's unstable DOM, and failures used to

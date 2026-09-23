@@ -2271,6 +2271,55 @@ fn activate_notification(
     });
 }
 
+/// Delivery warnings are operational alerts, independent of muted incoming
+/// chats. Fixed copy never exposes the account, recipient, or message text.
+pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
+    let title = "Scheduled message needs attention";
+    let body = "A scheduled message was missed or its send could not be confirmed. Carrier will not retry it. Open Schedule send to review.";
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        deliver_notification_macos(
+            title,
+            body,
+            0,
+            None,
+            false,
+            MacNotificationOptions::default(),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    crate::windows::toast::deliver_notification_windows(
+        app,
+        crate::windows::toast::WindowsToastOptions {
+            title: title.into(),
+            body: body.into(),
+            avatar: None,
+            image: None,
+            sound: false,
+            native_id: 0,
+            page_id: None,
+            thread_path: None,
+            reply_eligible: false,
+            is_sync_alert: true,
+        },
+    );
+    #[cfg(target_os = "linux")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            show_linux_notification(title, body, None, false, false, move |(response, token)| {
+                if matches!(
+                    response,
+                    LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
+                ) {
+                    activate_notification(app, 0, None, None, token);
+                }
+            })
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

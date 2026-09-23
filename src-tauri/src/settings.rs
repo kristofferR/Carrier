@@ -459,12 +459,12 @@ fn write_settings_to_path(path: &Path, s: &Settings) -> Result<SaveOutcome, Stri
 }
 
 #[cfg(not(target_os = "windows"))]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::fs::rename(source, destination)
 }
 
 #[cfg(target_os = "windows")]
-fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,

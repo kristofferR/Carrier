@@ -136,7 +136,7 @@
 
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var toast = (msg, action) => window.__carrierToast ? window.__carrierToast(msg, action) : console.log("[carrier]", msg);
+  var toast = (msg, action2, options) => window.__carrierToast ? window.__carrierToast(msg, action2, options) : console.log("[carrier]", msg);
   var diag = /* @__PURE__ */ (() => {
     const RATE_MS = 6e4;
     const lastSent = /* @__PURE__ */ new Map();
@@ -1110,6 +1110,8 @@
   // inject/src/messenger/features/realtime-health.ts
   var WORKER_HEARTBEAT_TIMEOUT_MS = 8e3;
   var WORKER_FAILURE_LIMIT = 3;
+  var verifiedConnection = () => false;
+  var scheduledSendConnectionReady = () => navigator.onLine && verifiedConnection();
   var facebookBridgeModule = () => {
     try {
       const facebookRequire = window.require;
@@ -1194,11 +1196,11 @@
     };
     const checkWorker = () => {
       const state2 = workerConnectionState();
-      const account = accountKey();
+      const account2 = accountKey();
       const id = workerId();
-      if (!probeIdentity || probeIdentity.account !== account || probeIdentity.id !== id || probeIdentity.state !== state2) {
+      if (!probeIdentity || probeIdentity.account !== account2 || probeIdentity.id !== id || probeIdentity.state !== state2) {
         const replaced = probeIdentity !== void 0;
-        probeIdentity = { account, id, state: state2 };
+        probeIdentity = { account: account2, id, state: state2 };
         workerFailures.succeeded();
         verified = void 0;
         stateRouteUnavailableFor = void 0;
@@ -1213,7 +1215,7 @@
         return;
       }
       const sendAndReceive = bridge.sendAndReceive.bind(bridge);
-      const stillCurrent = () => account === accountKey() && state2 === workerConnectionState() && id === workerId();
+      const stillCurrent = () => account2 === accountKey() && state2 === workerConnectionState() && id === workerId();
       const observation = stateRouteUnavailableFor?.() ? void 0 : observeWorkerConnection(state2, now);
       workerProbePending = true;
       let live = true;
@@ -1244,7 +1246,7 @@
           return;
         }
         workerFailures.succeeded();
-        if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
+        if (connected === true && account2 && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
         if (connected === true) {
@@ -1352,10 +1354,8 @@
     } catch (_) {
       diag("sync.monitor", "could not observe Messenger realtime WebSockets");
     }
-    return {
-      check,
-      isVerifiedHealthy: () => verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready"
-    };
+    verifiedConnection = () => verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready";
+    return { check, isVerifiedHealthy: verifiedConnection };
   }
 
   // inject/src/messenger/features/worker-recovery.ts
@@ -2262,13 +2262,13 @@
   async function runNativeAction(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return;
-    const { action, signature } = detail;
-    if (typeof action !== "string" || !carrierVerifyResult) return;
-    if (!await carrierVerifyResult("carrier:context-action", { action }, signature)) return;
+    const { action: action2, signature } = detail;
+    if (typeof action2 !== "string" || !carrierVerifyResult) return;
+    if (!await carrierVerifyResult("carrier:context-action", { action: action2 }, signature)) return;
     const handlers = nativeActionHandlers;
     for (let index = 0; index < handlers.length; index += 1) {
       const handler = handlers[index];
-      if (!handler || handler[0] !== action) continue;
+      if (!handler || handler[0] !== action2) continue;
       clearNativeActionHandlers();
       handler[1]();
       return;
@@ -2280,14 +2280,14 @@
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
       if (!item) continue;
-      const action = contextActionToken();
+      const action2 = contextActionToken();
       const run = () => {
-        item[1](isMac2 ? action : void 0);
+        item[1](isMac2 ? action2 : void 0);
       };
-      appendOwn(nativeActionHandlers, [action, run]);
+      appendOwn(nativeActionHandlers, [action2, run]);
       appendOwn(
         nativeItems,
-        item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action }
+        item[2] ? { label: item[0], action: action2, value: item[2] } : { label: item[0], action: action2 }
       );
     }
     if (!nativeShowContextMenu)
@@ -2297,14 +2297,14 @@
       throw error;
     });
   }
-  async function shareSrc(src, fallbackName, fx, fy, action) {
-    await carrierClaimContextAction(action);
-    const { id } = await downloadSrc(src, fallbackName, action);
-    await carrierShareDownload(id, fx, fy, action);
+  async function shareSrc(src, fallbackName, fx, fy, action2) {
+    await carrierClaimContextAction(action2);
+    const { id } = await downloadSrc(src, fallbackName, action2);
+    await carrierShareDownload(id, fx, fy, action2);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
-  async function downloadSrc(src, fallbackName, action) {
+  async function downloadSrc(src, fallbackName, action2) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
     if (oversizeByHeader(res)) throw new Error("file too large");
@@ -2323,7 +2323,7 @@
     a.style.display = "none";
     document.body.appendChild(a);
     try {
-      if (action) await carrierPrepareDownload(action, href);
+      if (action2) await carrierPrepareDownload(action2, href);
       if (window.__CARRIER_SETTINGS__?.download_behavior === "ask") {
         await carrierChooseDownload(href, name);
       }
@@ -2335,17 +2335,17 @@
       URL.revokeObjectURL(href);
     }
   }
-  async function copyImageSrc(src, action) {
-    if (action) await carrierClaimContextAction(action);
+  async function copyImageSrc(src, action2) {
+    if (action2) await carrierClaimContextAction(action2);
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-    const maxSize = action ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
+    const maxSize = action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
     if (Number(res.headers.get("content-length")) > maxSize) {
       throw new Error("image too large");
     }
     const blob = await res.blob();
     if (blob.size > maxSize) throw new Error("image too large");
-    if (!action) {
+    if (!action2) {
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
       return;
     }
@@ -2371,7 +2371,7 @@
       ]);
       nativeReflectApply3(nativeReadAsDataURL, reader, [blob]);
     });
-    await carrierCopyImage(dataUrl, action);
+    await carrierCopyImage(dataUrl, action2);
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
@@ -2419,7 +2419,7 @@
         if (imgSrc) {
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[0],
-            (action) => copyImageSrc(imgSrc, action).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
+            (action2) => copyImageSrc(imgSrc, action2).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
           ]);
           addItem([
             IMAGE_CONTEXT_MENU_LABELS[1],
@@ -2428,7 +2428,7 @@
           if (isMac2) {
             addItem([
               IMAGE_CONTEXT_MENU_LABELS[2],
-              (action) => action ? shareSrc(imgSrc, "image", fx, fy, action).catch(
+              (action2) => action2 ? shareSrc(imgSrc, "image", fx, fy, action2).catch(
                 (error) => toastDownloadFailure(error, "Share failed")
               ) : void 0
             ]);
@@ -2443,7 +2443,7 @@
           if (isMac2) {
             addItem([
               VIDEO_CONTEXT_MENU_LABELS[1],
-              (action) => action ? shareSrc(vidSrc, "video", fx, fy, action).catch(
+              (action2) => action2 ? shareSrc(vidSrc, "video", fx, fy, action2).catch(
                 (error) => toastDownloadFailure(error, "Share failed")
               ) : void 0
             ]);
@@ -2952,8 +2952,8 @@
   // inject/src/messenger/features/emoji-images.ts
   var PREFETCH_MARGIN = 80;
   var SCAN_DELAY_MS = 50;
-  function rectOf2(element) {
-    const rect = element.getBoundingClientRect();
+  function rectOf2(element2) {
+    const rect = element2.getBoundingClientRect();
     return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
   }
   function visibleClipFor(image) {
@@ -3132,19 +3132,19 @@
     constructor() {
       __publicField(this, "titles", /* @__PURE__ */ new Map());
     }
-    remember(thread, original, displayed) {
-      if (!/^\d+$/.test(thread)) return;
+    remember(thread2, original, displayed) {
+      if (!/^\d+$/.test(thread2)) return;
       const normalize = (value) => value.replace(/\s+/g, " ").trim().slice(0, 80);
-      this.titles.delete(thread);
-      this.titles.set(thread, { original: normalize(original), displayed: normalize(displayed) });
+      this.titles.delete(thread2);
+      this.titles.set(thread2, { original: normalize(original), displayed: normalize(displayed) });
       if (this.titles.size > 500) this.titles.delete(this.titles.keys().next().value);
     }
-    displayed(thread, original, fallback = original) {
-      const entry = this.titles.get(thread);
+    displayed(thread2, original, fallback = original) {
+      const entry = this.titles.get(thread2);
       return entry?.original === original ? entry.displayed : fallback;
     }
-    original(thread, displayed) {
-      const entry = this.titles.get(thread);
+    original(thread2, displayed) {
+      const entry = this.titles.get(thread2);
       return entry?.displayed === displayed ? entry.original : displayed;
     }
   };
@@ -3173,12 +3173,12 @@
         return useMemo(() => {
           if (!result || typeof result !== "object") return result;
           const record2 = result;
-          const thread = args[0];
-          if (!thread || typeof thread !== "object" || !("threadKey" in thread) || !("threadType" in thread) || typeof record2.threadTitle !== "string" || !Array.isArray(record2.participantsAndContacts))
+          const thread2 = args[0];
+          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record2.threadTitle !== "string" || !Array.isArray(record2.participantsAndContacts))
             return result;
           try {
             let displayed = record2.threadTitle;
-            const group = typeof types?.isGroup === "function" ? types.isGroup(thread.threadType) === true : void 0;
+            const group = typeof types?.isGroup === "function" ? types.isGroup(thread2.threadType) === true : void 0;
             if (!showNicknames(mode, group)) {
               const pairs = record2.participantsAndContacts.map((pair) => {
                 if (!Array.isArray(pair)) return pair;
@@ -3189,13 +3189,13 @@
               });
               const computed = computeTitle(
                 intlList.CONJUNCTIONS?.NONE,
-                thread.threadType,
+                thread2.threadType,
                 pairs,
                 record2.actorId
               );
               if (typeof computed === "string") displayed = computed;
             }
-            const key = threadKey(thread.threadKey);
+            const key = threadKey(thread2.threadKey);
             if (typeof key === "string") titles.remember(key, record2.threadTitle, displayed);
             return displayed === record2.threadTitle ? result : { ...record2, threadTitle: displayed };
           } catch (_) {
@@ -4351,9 +4351,9 @@
     const scan = (root, force = false) => {
       if (!on()) return;
       if (root.nodeType === Node.ELEMENT_NODE) {
-        const element = root;
-        if (element.matches(VIDEO_SELECTOR)) suppress(element, force);
-        element.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
+        const element2 = root;
+        if (element2.matches(VIDEO_SELECTOR)) suppress(element2, force);
+        element2.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
       } else if (root === document) {
         document.querySelectorAll(VIDEO_SELECTOR).forEach((video) => suppress(video, force));
       }
@@ -5210,25 +5210,25 @@
         if (!event.isTrusted) return;
         if (!(event.target instanceof Element)) return;
         rememberRow(event.target);
-        const action = event.target.closest(
+        const action2 = event.target.closest(
           'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
         );
-        if (!action) return;
-        const label = action.getAttribute("aria-label") || action.getAttribute("title") || action.textContent || "";
+        if (!action2) return;
+        const label = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
         const nextMuted = muteStateAfterControlAction(
           label,
-          action.getAttribute("role"),
-          action.getAttribute("aria-checked")
+          action2.getAttribute("role"),
+          action2.getAttribute("aria-checked")
         );
         if (nextMuted === void 0) return;
-        const rowId = threadIdFromActionTarget(action);
+        const rowId = threadIdFromActionTarget(action2);
         const openId = threadIdFromHref(location.pathname) || "";
         const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
         const id = resolveMuteActionThreadId(
           rowId,
           openId,
           recentId,
-          !!action.closest('[role="main"], [role="complementary"], [role="dialog"]')
+          !!action2.closest('[role="main"], [role="complementary"], [role="dialog"]')
         );
         if (id) {
           mutedThreads.observe(id, nextMuted);
@@ -6527,10 +6527,10 @@
       const q = importModule("ReQL");
       const types = importModule("LSMessagingThreadTypeUtil");
       const key = i64.of_string(threadId);
-      const thread = await db.tables.threads.get(key);
-      if (!thread || typeof thread !== "object" || !("threadType" in thread)) return null;
-      const isGroup = types.isGroup(thread.threadType) === true;
-      if (!isGroup && types.isOneToOne(thread.threadType) !== true) return null;
+      const thread2 = await db.tables.threads.get(key);
+      if (!thread2 || typeof thread2 !== "object" || !("threadType" in thread2)) return null;
+      const isGroup = types.isGroup(thread2.threadType) === true;
+      if (!isGroup && types.isOneToOne(thread2.threadType) !== true) return null;
       const rows = await q.toArrayAsync(
         q.leftJoin(
           q.fromTableAscending(db.tables.participants).getKeyRange(key),
@@ -6566,7 +6566,7 @@
       }
       return {
         isGroup,
-        title: "threadName" in thread && typeof thread.threadName === "string" ? thread.threadName : "",
+        title: "threadName" in thread2 && typeof thread2.threadName === "string" ? thread2.threadName : "",
         participants
       };
     };
@@ -6625,32 +6625,32 @@
         if (!observedIds.has(id)) this.clearCandidates.delete(id);
       }
       let changed = false;
-      for (const thread of rows) {
-        if (thread.unread && thread.muted) {
-          this.clearCandidates.delete(thread.id);
-          if (!this.ids.has(thread.id)) {
-            this.ids.add(thread.id);
+      for (const thread2 of rows) {
+        if (thread2.unread && thread2.muted) {
+          this.clearCandidates.delete(thread2.id);
+          if (!this.ids.has(thread2.id)) {
+            this.ids.add(thread2.id);
             changed = true;
           }
           continue;
         }
-        if (thread.hydrated === false) {
-          this.clearCandidates.delete(thread.id);
+        if (thread2.hydrated === false) {
+          this.clearCandidates.delete(thread2.id);
           continue;
         }
-        if (!this.ids.has(thread.id)) {
-          this.clearCandidates.delete(thread.id);
+        if (!this.ids.has(thread2.id)) {
+          this.clearCandidates.delete(thread2.id);
           continue;
         }
-        const candidate = this.clearCandidates.get(thread.id);
+        const candidate = this.clearCandidates.get(thread2.id);
         if (candidate === void 0 || observedAt < candidate.since) {
-          this.clearCandidates.set(thread.id, { since: observedAt, observations: 1 });
+          this.clearCandidates.set(thread2.id, { since: observedAt, observations: 1 });
           continue;
         }
         candidate.observations += 1;
         if (observedAt - candidate.since >= MUTED_UNREAD_CLEAR_CONFIRM_MS && candidate.observations >= MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS) {
-          this.clearCandidates.delete(thread.id);
-          this.ids.delete(thread.id);
+          this.clearCandidates.delete(thread2.id);
+          this.ids.delete(thread2.id);
           changed = true;
         }
       }
@@ -6973,7 +6973,7 @@
       rowTitles.set(key, title);
       if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
     };
-    window.__carrierSenderAvatarStats = (thread, sender) => thread === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread, sender || "") };
+    window.__carrierSenderAvatarStats = (thread2, sender) => thread2 === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread2, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
     let currentPageRouteCandidates = () => [];
     const waitForPageMatchWhileFiltering = (signal) => {
@@ -7218,10 +7218,10 @@
     };
     const messageLinkCards = (body, threadPath) => {
       if (!/^https?:\/\/\S+$/i.test(body.trim())) return [];
-      const thread = threadPathId(threadPath || "");
-      const title = thread ? rowTitles.get(thread) : void 0;
-      const otherTitles = [...rowTitles].filter(([key]) => key !== thread).map(([, value]) => value);
-      const paneMatches = title && thread === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
+      const thread2 = threadPathId(threadPath || "");
+      const title = thread2 ? rowTitles.get(thread2) : void 0;
+      const otherTitles = [...rowTitles].filter(([key]) => key !== thread2).map(([, value]) => value);
+      const paneMatches = title && thread2 === threadIdFromHref(location.pathname) && paneShowsThread(title, otherTitles) === "yes";
       const log = paneMatches ? document.querySelector('[role="main"] [role="log"]') : null;
       return log ? notificationLinkCards(log) : [];
     };
@@ -7515,7 +7515,7 @@
           return;
         }
         const hiddenBeforeImages = settings.hide_notification_preview === true;
-        const [sender, thread, image, group] = hiddenBeforeImages ? ["", "", "", null] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2]);
+        const [sender, thread2, image, group] = hiddenBeforeImages ? ["", "", "", null] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2]);
         const presentation = notificationPresentation(
           nativeThreadTitles.displayed(
             conversation.key,
@@ -7524,7 +7524,7 @@
           ),
           conversation.body,
           conversation.isGroup,
-          { sender, thread }
+          { sender, thread: thread2 }
         );
         const { icon } = presentation;
         if (!hiddenBeforeImages && !icon && !image && conversation.isGroup) {
@@ -7856,12 +7856,12 @@
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
       const inspect2 = (node) => {
-        const element = node instanceof Element ? node : node.parentElement;
-        if (!element) return;
+        const element2 = node instanceof Element ? node : node.parentElement;
+        if (!element2) return;
         const links = /* @__PURE__ */ new Set();
-        const closest = element.closest('a[href*="/t/"]');
+        const closest = element2.closest('a[href*="/t/"]');
         if (closest) links.add(closest);
-        for (const link of element.querySelectorAll('a[href*="/t/"]')) {
+        for (const link of element2.querySelectorAll('a[href*="/t/"]')) {
           links.add(link);
         }
         for (const link of links) {
@@ -7941,30 +7941,126 @@
       return { action: "failure", phase };
     }
     if (phase === "inserted") {
-      if (!snapshot.draftMatches || !snapshot.sendAvailable) {
+      if (expired || !snapshot.draftMatches) {
         return { action: "failure", phase };
       }
+      if (!snapshot.sendAvailable) return { action: "wait", phase };
       return { action: "send", phase: "confirming" };
     }
     if (snapshot.composerEmpty) return { action: "success", phase };
     if (expired) return { action: "failure", phase };
     return { action: "wait", phase };
   }
-  var composerContainsReply = (content, reply) => reply.length > 0 && (content || "").includes(reply);
+  var composerContainsReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
+
+  // inject/src/messenger/lib/scheduled-composer.ts
+  var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
+  var findComposer = () => firstShown(COMPOSER_SELECTOR);
+  var composerText = (box) => box.innerText.replace(/\r\n/g, "\n");
+  function composerRegion(box) {
+    return box.closest('[role="region"], form');
+  }
+  function hasComposerMedia(box) {
+    const region = composerRegion(box);
+    if (!region) return true;
+    if (box.querySelector('img, video, [contenteditable="false"]')) return true;
+    for (const input of region.querySelectorAll('input[type="file"]')) {
+      if (input.files?.length) return true;
+    }
+    for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
+      if (!isShown(media)) continue;
+      const control = media.closest('button, [role="button"]');
+      if (control && /^(send|choose|attach)\b/i.test(control.getAttribute("aria-label") || ""))
+        continue;
+      return true;
+    }
+    return !!buttonByLabel(
+      ["remove attachment", "remove photo", "remove video", "remove file"],
+      region
+    );
+  }
+  function findSendButton(box) {
+    const region = composerRegion(box);
+    if (!region) return null;
+    for (const button of region.querySelectorAll(
+      'button[aria-label], [role="button"][aria-label]'
+    )) {
+      if (button.hasAttribute("data-carrier-schedule") || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+        continue;
+      const label = (button.getAttribute("aria-label") || "").toLowerCase();
+      if (label === "send" || label.includes("press enter to send") || label.includes("send message"))
+        return button;
+    }
+    return null;
+  }
+  function replaceComposerText(box, text) {
+    box.focus();
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return document.execCommand(text ? "insertText" : "delete", false, text);
+  }
+
+  // inject/src/messenger/lib/scheduled-send.ts
+  var SEND_GRACE_MS = 12e4;
+  var MAX_SCHEDULED_CHARS = 2e3;
+  function sendWindow(due, now) {
+    if (now < due) return "early";
+    return now <= due + SEND_GRACE_MS ? "due" : "missed";
+  }
+  function schedulePresets(now) {
+    const evening = new Date(now);
+    evening.setHours(18, 0, 0, 0);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return [
+      { label: "In 15 minutes", due: now + 15 * 6e4 },
+      { label: "In 1 hour", due: now + 60 * 6e4 },
+      ...evening.getTime() > now ? [{ label: "This evening", due: evening.getTime() }] : [],
+      { label: "Tomorrow morning", due: tomorrow.getTime() }
+    ];
+  }
+  function localScheduleTime(date, time) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+    const value = /* @__PURE__ */ new Date(`${date}T${time}:00`);
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    if (value.getFullYear() !== year || value.getMonth() + 1 !== month || value.getDate() !== day || value.getHours() !== hour || value.getMinutes() !== minute)
+      return null;
+    return value.getTime();
+  }
+  function localDateValue(time) {
+    const date = new Date(time);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(void 0, {
+    ...includeDate ? { month: "short", day: "numeric" } : {},
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(time);
+  var composerBusy = false;
+  async function withComposerDelivery(run) {
+    if (composerBusy) return void 0;
+    composerBusy = true;
+    try {
+      return await run();
+    } finally {
+      composerBusy = false;
+    }
+  }
 
   // inject/src/messenger/features/quick-reply.ts
   var POLL_MS = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
-  var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+  var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
   var currentThreadId = () => threadIdFromHref(location.pathname);
-  var composer = () => firstShown(COMPOSER_SELECTOR);
-  var sendButton = () => {
-    const root = document.querySelector('[role="main"]');
-    if (!root) return null;
-    return buttonByLabel(["press enter to send", "send message"], root);
-  };
+  var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
     carrierReplyResult(id, attempt, ok).catch(
       () => diag("quick-reply.ack", "reply acknowledgement emit failed")
@@ -7981,13 +8077,14 @@
     let phase = "waiting";
     while (true) {
       const box = composer();
-      const button = phase === "inserted" ? sendButton() : null;
+      if (box && hasComposerMedia(box)) return false;
+      const button = phase === "inserted" && box ? findSendButton(box) : null;
       const snapshot = {
         threadMatches: currentThreadId() === wantedThread,
         composerReady: box !== null,
-        draftMatches: composerContainsReply(box?.textContent || null, text),
+        draftMatches: composerContainsReply(box ? composerText(box) : null, text),
         sendAvailable: button !== null,
-        composerEmpty: !(box?.textContent || "").trim()
+        composerEmpty: !box || !composerText(box).trim()
       };
       const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
       phase = decision.phase;
@@ -8061,7 +8158,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void deliver(path, text).then((ok) => emitReplyResult(id, attempt, ok)).catch(() => {
+      void withComposerDelivery(() => deliver(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8072,7 +8169,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
         return;
       }
-      void preserveDraft(path, text).then((ok) => emitReplyResult(id, attempt, ok)).catch(() => {
+      void withComposerDelivery(() => preserveDraft(path, text)).then((ok) => emitReplyResult(id, attempt, ok === true)).catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);
       });
@@ -8150,6 +8247,551 @@ ${text}`)) {
     startPoll();
     setTimeout(push, 1500);
     setTimeout(push, 4e3);
+  }
+
+  // inject/src/messenger/features/scheduled-send.ts
+  var account = () => accountScopedStorageKey("schedule", document.cookie)?.split(":")[1] ?? null;
+  var thread = () => {
+    const id = threadIdFromHref(location.pathname);
+    return id ? `/t/${id}/` : null;
+  };
+  var pause2 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
+  async function deliverScheduledMessage(message, connectionReady = ready) {
+    if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
+      return "defer";
+    const existing = findComposer();
+    if (existing && (composerText(existing).trim() || hasComposerMedia(existing))) return "defer";
+    if (thread() !== message.thread && document.hasFocus() && document.activeElement?.matches("input, textarea"))
+      return "defer";
+    if (thread() !== message.thread) {
+      const link = [...document.querySelectorAll('a[href*="/t/"]')].find(
+        (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread)
+      );
+      if (!link) return "defer";
+      link.click();
+    }
+    const deadline = Math.min(message.due + SEND_GRACE_MS, Date.now() + 12e3);
+    let box = null;
+    let inserted = false;
+    let clicked = false;
+    let interrupted = false;
+    const onInput = (event) => {
+      if (event.isTrusted) interrupted = true;
+    };
+    document.addEventListener("pointerdown", onInput, true);
+    document.addEventListener("keydown", onInput, true);
+    try {
+      while (Date.now() <= deadline) {
+        if (interrupted || account() !== message.account || !connectionReady()) break;
+        const current = findComposer();
+        if (thread() !== message.thread) {
+          if (inserted) break;
+          await pause2();
+          continue;
+        }
+        if (!current || hasComposerMedia(current)) {
+          if (inserted) break;
+          await pause2();
+          continue;
+        }
+        if (!inserted) {
+          if (composerText(current).trim()) return "defer";
+          box = current;
+          if (!replaceComposerText(box, message.text)) break;
+          inserted = true;
+          await pause2();
+          continue;
+        }
+        if (current !== box || composerText(current) !== message.text) break;
+        const send = findSendButton(current);
+        if (!send) {
+          await pause2();
+          continue;
+        }
+        if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
+          break;
+        clicked = true;
+        send.click();
+        const confirmUntil = Date.now() + 5e3;
+        while (Date.now() < confirmUntil) {
+          if (thread() !== message.thread || account() !== message.account || !box.isConnected)
+            return "uncertain";
+          if (!composerText(box).trim()) return "sent";
+          await pause2();
+        }
+        return "uncertain";
+      }
+    } finally {
+      document.removeEventListener("pointerdown", onInput, true);
+      document.removeEventListener("keydown", onInput, true);
+      if (!clicked && inserted && box?.isConnected && thread() === message.thread && account() === message.account && composerText(box) === message.text)
+        replaceComposerText(box, "");
+    }
+    if (clicked) return "uncertain";
+    if (inserted && box?.isConnected && composerText(box).trim()) return "missed";
+    return sendWindow(message.due, Date.now()) === "missed" ? "missed" : "defer";
+  }
+  function element(tag, className, text) {
+    const el = document.createElement(tag);
+    el.className = className;
+    if (text !== void 0) el.textContent = text;
+    return el;
+  }
+  var action = (label, run, className = "carrier-schedule-action") => {
+    const button = element("button", className, label);
+    button.type = "button";
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      run();
+    });
+    return button;
+  };
+  function initScheduledSend() {
+    let rows = [];
+    let owner = null;
+    let polling = false;
+    let busy = false;
+    let panel = null;
+    let panelThread = null;
+    let editing = null;
+    let sourceBox = null;
+    let sourceText = "";
+    let button = null;
+    let emoji = null;
+    let cachedBox = null;
+    let framePending = false;
+    let canDeliver = false;
+    const close = (focus = false) => {
+      panel?.remove();
+      panel = null;
+      editing = null;
+      button?.setAttribute("aria-expanded", "false");
+      if (focus) button?.focus();
+    };
+    const request = async (operation) => {
+      const current = account();
+      if (!current) throw new Error("Sign in to schedule a message.");
+      const response = await carrierScheduledSend({ ...operation, account: current });
+      if (account() !== current) throw new Error("The signed-in account changed.");
+      if (response.error) throw new Error(response.error);
+      owner = current;
+      rows = response.items;
+      canDeliver = response.can_deliver;
+      ensureButton();
+      return response;
+    };
+    const failed = (error) => {
+      toast(error instanceof Error ? error.message : "Could not update scheduled messages.");
+      diag("scheduled-send.action", "schedule operation failed");
+    };
+    const warning = async () => {
+      if (document.hidden || !window.__carrierToast) return;
+      const missed = rows.filter(
+        (row) => (row.status === "missed" || row.status === "uncertain") && !row.toast_seen
+      );
+      if (!missed.length) return;
+      toast(
+        missed.some((row) => row.status === "uncertain") ? "⚠ Scheduled send could not be confirmed. It will not be retried. Open Schedule send to review." : "⚠ Scheduled message not sent: its time window passed. Open Schedule send to reschedule.",
+        void 0,
+        { warning: true }
+      );
+      for (const row of missed) await request({ op: "seen", id: row.id });
+    };
+    const positionPanel = () => {
+      if (!panel || !button) return;
+      const anchor = button.getBoundingClientRect();
+      panel.style.left = `${Math.max(8, Math.min(innerWidth - panel.offsetWidth - 8, anchor.right - panel.offsetWidth))}px`;
+      panel.style.bottom = `${Math.max(8, innerHeight - anchor.top + 10)}px`;
+      panel.style.maxHeight = `${Math.max(120, anchor.top - 20)}px`;
+    };
+    const syncColors = () => {
+      if (!button || !emoji) return;
+      const icon = emoji.querySelector("svg path") || emoji.querySelector("svg");
+      const fill = icon ? getComputedStyle(icon).fill : "";
+      const accent = fill && fill !== "none" ? fill : getComputedStyle(emoji).color;
+      button.style.color = accent;
+      if (!panel) return;
+      const root = getComputedStyle(document.documentElement);
+      const region = sourceBox && composerRegion(sourceBox);
+      const color = region ? getComputedStyle(region).color : root.getPropertyValue("--primary-text");
+      panel.style.setProperty("--schedule-accent", accent);
+      panel.style.setProperty("--schedule-text", color || "#e4e6eb");
+      panel.style.setProperty(
+        "--schedule-surface",
+        root.getPropertyValue("--card-background") || "#242526"
+      );
+      panel.style.setProperty(
+        "--schedule-muted",
+        root.getPropertyValue("--secondary-text") || "#aeb4bf"
+      );
+    };
+    const save = async (due) => {
+      if (busy) return;
+      const current = account();
+      if (!current || current !== owner || thread() !== panelThread) {
+        close();
+        return;
+      }
+      const text = editing?.text ?? sourceText;
+      if (!text.trim() || [...text].length > MAX_SCHEDULED_CHARS) {
+        toast("Use 1–2,000 characters for a scheduled message.");
+        return;
+      }
+      if (!editing && (!sourceBox?.isConnected || composerText(sourceBox) !== sourceText || hasComposerMedia(sourceBox))) {
+        toast("Your draft changed. Reopen Schedule send.");
+        close();
+        return;
+      }
+      if (due <= Date.now()) {
+        toast("Choose a future date and time.");
+        return;
+      }
+      busy = true;
+      const editingItem = editing;
+      const expectedBox = sourceBox;
+      const expectedThread = panelThread;
+      const expectedText = sourceText;
+      try {
+        const result = await request({
+          op: "save",
+          ...editingItem ? { id: editingItem.id } : {},
+          thread: editingItem?.thread ?? expectedThread ?? void 0,
+          text,
+          due
+        });
+        if (!result.saved) throw new Error("Message was not saved.");
+        if (!editingItem) {
+          const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current && composerText(expectedBox) === expectedText && !hasComposerMedia(expectedBox);
+          if (!unchanged || !expectedBox || !replaceComposerText(expectedBox, "") || composerText(expectedBox).trim()) {
+            await request({ op: "cancel", id: result.saved });
+            throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
+          }
+        }
+        await request({ op: "arm", id: result.saved });
+        close();
+        toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
+      } catch (error) {
+        failed(error);
+      } finally {
+        busy = false;
+      }
+    };
+    const customPicker = (container, due = schedulePresets(Date.now()).at(-1).due) => {
+      const fields = element("div", "carrier-schedule-fields");
+      const dateLabel = element("label", "", "Date");
+      const date = element("input", "");
+      date.type = "date";
+      date.value = localDateValue(due);
+      date.min = localDateValue(Date.now());
+      date.required = true;
+      const timeLabel = element("label", "", "Time (24h)");
+      const time = element("input", "");
+      time.type = "text";
+      time.inputMode = "numeric";
+      time.placeholder = "HH:mm";
+      time.pattern = "([01][0-9]|2[0-3]):[0-5][0-9]";
+      time.required = true;
+      const local = new Date(due);
+      time.value = `${String(local.getHours()).padStart(2, "0")}:${String(local.getMinutes()).padStart(2, "0")}`;
+      dateLabel.append(date);
+      timeLabel.append(time);
+      fields.append(dateLabel, timeLabel);
+      const confirm = action(
+        editing ? "Reschedule message" : "Schedule message",
+        () => {
+          if (!date.reportValidity() || !time.reportValidity()) return;
+          const value = localScheduleTime(date.value, time.value);
+          if (value === null) {
+            toast("Choose a valid local time in HH:mm format.");
+            return;
+          }
+          void save(value);
+        },
+        "carrier-schedule-primary"
+      );
+      container.append(fields, confirm);
+    };
+    const render = () => {
+      if (!panel) return;
+      panel.replaceChildren();
+      const heading = element("div", "carrier-schedule-heading");
+      heading.append(
+        element("h2", "", editing ? "Reschedule message" : "Schedule send"),
+        action("×", () => close(true), "carrier-schedule-close")
+      );
+      heading.querySelector("button")?.setAttribute("aria-label", "Close scheduling");
+      panel.append(heading);
+      if (editing) {
+        panel.append(element("p", "carrier-schedule-preview", editing.text));
+        if (editing.status === "uncertain")
+          panel.append(
+            element(
+              "p",
+              "carrier-schedule-warning",
+              "Check the conversation before rescheduling. Messenger may already have accepted this message."
+            )
+          );
+        customPicker(panel, Math.max(editing.due, Date.now() + 15 * 6e4));
+      } else if (sourceText.trim()) {
+        for (const preset of schedulePresets(Date.now())) {
+          const choice = action(
+            "",
+            () => {
+              const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
+              if (updated) void save(updated.due);
+            },
+            "carrier-schedule-preset"
+          );
+          choice.append(
+            element("span", "", preset.label),
+            element("span", "carrier-schedule-time", formatScheduleTime(preset.due))
+          );
+          panel.append(choice);
+        }
+        const details = element("details", "carrier-schedule-custom");
+        details.append(element("summary", "", "Choose date & time"));
+        customPicker(details);
+        details.addEventListener("toggle", positionPanel);
+        panel.append(details);
+      } else
+        panel.append(element("p", "carrier-schedule-note", "Write a text message to schedule it."));
+      panel.append(
+        element(
+          "p",
+          "carrier-schedule-note",
+          `${Intl.DateTimeFormat().resolvedOptions().timeZone} · 24-hour time`
+        ),
+        element(
+          "p",
+          "carrier-schedule-note carrier-schedule-divider",
+          "Sends automatically while Carrier is running and connected. Up to 2 minutes late; after that, it stays unsent and you’ll be warned."
+        )
+      );
+      if (rows.length && !editing) {
+        panel.append(element("h3", "carrier-schedule-divider", "Scheduled messages"));
+        for (const row of [...rows].sort((a, b) => a.due - b.due)) {
+          const item = element("div", "carrier-schedule-item");
+          const status = row.status === "missed" ? "Not sent" : row.status === "uncertain" ? "Send unconfirmed" : row.status === "sending" ? "Submitting…" : row.status === "draft" ? "Not scheduled" : "Scheduled";
+          item.append(
+            element(
+              "strong",
+              row.status === "missed" || row.status === "uncertain" ? "carrier-schedule-warning" : "",
+              `${status} · ${formatScheduleTime(row.due, true)}`
+            ),
+            element(
+              "small",
+              "carrier-schedule-note",
+              row.thread === thread() ? "This conversation" : "Another conversation"
+            ),
+            element("p", "carrier-schedule-preview", row.text)
+          );
+          const actions = element("div", "carrier-schedule-item-actions");
+          if (row.status !== "sending") {
+            actions.append(
+              action(row.status === "scheduled" ? "Edit time" : "Reschedule", () => {
+                editing = row;
+                render();
+              }),
+              action("Cancel", () => {
+                void request({ op: "cancel", id: row.id }).then(render).catch(failed);
+              })
+            );
+          }
+          actions.append(
+            action("Copy text", () => {
+              void navigator.clipboard.writeText(row.text).then(() => toast("Message copied")).catch(() => toast("Could not copy the message"));
+            })
+          );
+          item.append(actions);
+          panel.append(item);
+        }
+      }
+      syncColors();
+      positionPanel();
+    };
+    const open = async () => {
+      if (panel) {
+        close(true);
+        return;
+      }
+      if (window.__CARRIER_SETTINGS__?.multi_instance) {
+        toast("Scheduled sending is unavailable with multiple app instances enabled.");
+        return;
+      }
+      const box = findComposer();
+      if (!box || hasComposerMedia(box) || !thread()) return;
+      sourceBox = box;
+      sourceText = composerText(box);
+      panelThread = thread();
+      try {
+        await request({ op: "list" });
+      } catch (error) {
+        failed(error);
+        return;
+      }
+      if (findComposer() !== box || thread() !== panelThread || hasComposerMedia(box)) return;
+      panel = element("div", "carrier-schedule-panel");
+      panel.id = "carrier-schedule-panel";
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-label", "Schedule send");
+      document.body.append(panel);
+      button?.setAttribute("aria-expanded", "true");
+      render();
+      panel.querySelector("button")?.focus();
+    };
+    function ensureButton() {
+      const box = cachedBox?.isConnected && isShown(cachedBox) ? cachedBox : findComposer();
+      cachedBox = box;
+      const region = box && composerRegion(box);
+      if (owner && owner !== account()) {
+        rows = [];
+        owner = null;
+        close();
+      }
+      if (panel && (thread() !== panelThread || !box || hasComposerMedia(box))) close();
+      if (!box || !region || !thread() || hasComposerMedia(box)) {
+        button?.remove();
+        return;
+      }
+      const nextEmoji = emoji?.isConnected && region.contains(emoji) ? emoji : buttonByLabel(["choose an emoji", "emoji"], region);
+      if (!nextEmoji) {
+        button?.remove();
+        return;
+      }
+      emoji = nextEmoji;
+      let before = emoji;
+      while (before.parentElement && !before.parentElement.contains(box))
+        before = before.parentElement;
+      const parent = before.parentElement;
+      if (!parent || parent === region) {
+        button?.remove();
+        return;
+      }
+      if (!button) {
+        button = action(
+          "",
+          () => {
+            void open();
+          },
+          "carrier-schedule-button"
+        );
+        button.setAttribute("data-carrier-schedule", "");
+        button.setAttribute("aria-label", "Schedule send");
+        button.setAttribute("aria-haspopup", "dialog");
+        button.setAttribute("aria-expanded", "false");
+        button.setAttribute("aria-controls", "carrier-schedule-panel");
+        button.title = "Schedule send";
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
+      }
+      if (button.parentElement !== parent || button.nextElementSibling !== before)
+        parent.insertBefore(button, before);
+      button.dataset.queued = String(rows.length > 0);
+      button.disabled = !composerText(box).trim() && rows.length === 0;
+      button.title = rows.length ? `Schedule send · ${rows.length} saved` : "Schedule send";
+      syncColors();
+    }
+    const poll = async () => {
+      if (polling || busy || !account() || window.__CARRIER_SETTINGS__?.multi_instance) return;
+      polling = true;
+      try {
+        await request({ op: "list" });
+        await warning();
+        const due = rows.find(
+          (row) => row.status === "scheduled" && sendWindow(row.due, Date.now()) === "due"
+        );
+        if (!due || !canDeliver || panel || !ready()) return;
+        await withComposerDelivery(async () => {
+          const box = findComposer();
+          if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
+          if (thread() !== due.thread && document.hasFocus() && document.activeElement?.matches("input, textarea"))
+            return;
+          if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
+            (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
+          )) {
+            window.__carrierOpenThread?.(due.thread);
+            return;
+          }
+          const claimed = await request({ op: "claim", id: due.id });
+          if (claimed.claimed !== due.id) return;
+          const job = claimed.items.find((row) => row.id === due.id && row.status === "sending");
+          if (!job) return;
+          let outcome = "uncertain";
+          try {
+            outcome = await deliverScheduledMessage(job);
+          } finally {
+            if (account() === job.account) await request({ op: outcome, id: job.id, due: job.due });
+          }
+        });
+      } catch {
+        diag("scheduled-send.poll", "schedule check failed");
+      } finally {
+        polling = false;
+      }
+    };
+    const scheduleMount = () => {
+      if (framePending) return;
+      framePending = true;
+      requestAnimationFrame(() => {
+        framePending = false;
+        ensureButton();
+      });
+    };
+    const start = () => {
+      ensureButton();
+      new MutationObserver((records) => {
+        if (records.every(
+          (r) => r.target instanceof Element && (r.target.closest(".carrier-schedule-panel") || r.target === button) || r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every((n) => n === button)
+        ))
+          return;
+        scheduleMount();
+      }).observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "src", "aria-label", "aria-disabled"]
+      });
+      document.addEventListener("change", scheduleMount, true);
+      document.addEventListener(
+        "keydown",
+        (event) => {
+          if (event.key === "Escape" && panel) {
+            event.stopPropagation();
+            close(true);
+          }
+        },
+        true
+      );
+      document.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (panel && event.target instanceof Node && !panel.contains(event.target) && !button?.contains(event.target))
+            close();
+        },
+        true
+      );
+      window.addEventListener("resize", positionPanel);
+      window.addEventListener("online", () => {
+        void poll();
+      });
+      document.addEventListener("visibilitychange", () => {
+        void poll();
+      });
+      window.addEventListener("carrier:settings", scheduleMount);
+      new MutationObserver(scheduleMount).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "style"]
+      });
+      setInterval(() => {
+        scheduleMount();
+        void poll();
+      }, 5e3);
+      void poll();
+    };
+    if (document.readyState === "loading")
+      document.addEventListener("DOMContentLoaded", start, { once: true });
+    else start();
   }
 
   // inject/src/messenger/features/selector-health.ts
@@ -8403,7 +9045,7 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/share-intake.ts
-  var COMPOSER_SELECTOR2 = '[role="main"] div[role="textbox"][contenteditable="true"]';
+  var COMPOSER_SELECTOR3 = '[role="main"] div[role="textbox"][contenteditable="true"]';
   var COMPOSER_POLL_MS = 1e3;
   function attachToComposer(composer2, files) {
     try {
@@ -8438,7 +9080,7 @@ ${text}`)) {
         toast("Shared file expired");
         return true;
       }
-      const composer2 = firstShown(COMPOSER_SELECTOR2);
+      const composer2 = firstShown(COMPOSER_SELECTOR3);
       if (!composer2) return false;
       const { files, timer } = pending;
       const result = attachToComposer(composer2, files);
@@ -8859,7 +9501,7 @@ ${text}`)) {
           banner.appendChild(retry);
         }
         const protectedNow = !!window.__carrierInCall || [...document.querySelectorAll('[contenteditable="true"]')].some(
-          (element) => !!element.textContent?.trim()
+          (element2) => !!element2.textContent?.trim()
         );
         if (retry) {
           retry.hidden = !limited && !recoveryFailed;
@@ -9435,8 +10077,8 @@ ${text}`)) {
         ignoreMuted && knownMutedUnreads.size > 0,
         filteredUnreadBaseline
       );
-      const ready = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
-      if (n === null || n === 0 && !ready) {
+      const ready2 = conv ? conversations.ready : document.readyState === "complete" && (document.title || "").trim().length > 0;
+      if (n === null || n === 0 && !ready2) {
         if (isMac4 && rateLimitRemainingMs() > 0) setBadge(last ?? 0, force);
         return;
       }
@@ -9502,10 +10144,10 @@ ${text}`)) {
     const height = viewport.bottom - viewport.top;
     return width > 0 && height > 0 && visible.right - visible.left >= width * 0.75 && visible.bottom - visible.top >= height * 0.7;
   }
-  function isVisible(element) {
-    if (element.closest(HIDDEN)) return false;
-    const style = getComputedStyle(element);
-    const rect = element.getBoundingClientRect();
+  function isVisible(element2) {
+    if (element2.closest(HIDDEN)) return false;
+    const style = getComputedStyle(element2);
+    const rect = element2.getBoundingClientRect();
     return style.visibility === "visible" && rect.width > 0 && rect.height > 0;
   }
   function isMediaViewerDialog(dialog) {
@@ -9519,16 +10161,16 @@ ${text}`)) {
       const position = getComputedStyle(ancestor).position;
       if (position === "fixed" || position === "absolute") overlay = true;
     }
-    const owns = (element) => element.closest(DIALOG) === dialog;
+    const owns = (element2) => element2.closest(DIALOG) === dialog;
     excluded || (excluded = [...dialog.querySelectorAll('[role="navigation"], [contenteditable="true"]')].some(
       owns
     ));
     if (excluded || !overlay) return false;
     const media = [
       ...dialog.querySelectorAll("img, video")
-    ].filter((element) => {
-      if (!owns(element) || !isVisible(element)) return false;
-      const bounds = element.getBoundingClientRect();
+    ].filter((element2) => {
+      if (!owns(element2) || !isVisible(element2)) return false;
+      const bounds = element2.getBoundingClientRect();
       const visible = intersectImageClips(intersectImageClips(bounds, rect), viewport);
       const width = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
       const height = (visible.bottom - visible.top) / Math.min(rect.height, viewport.bottom);
@@ -9541,10 +10183,10 @@ ${text}`)) {
       excluded,
       hasMedia: media.length > 0,
       hasDownload: [...dialog.querySelectorAll("a[download]")].some(
-        (element) => owns(element) && isVisible(element)
+        (element2) => owns(element2) && isVisible(element2)
       ),
       hasVideoControls: media.some(
-        (element) => element instanceof HTMLVideoElement && element.controls
+        (element2) => element2 instanceof HTMLVideoElement && element2.controls
       )
     });
   }
@@ -9568,14 +10210,14 @@ ${text}`)) {
   var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control) => control.getBoundingClientRect()).filter(
     (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && rect.top < 96 && rect.right > 0 && rect.left < window.innerWidth
   );
-  var applyOffset = (element, controlTops, attr) => {
-    const currentOffset = Number.parseFloat(element.style.getPropertyValue(OFFSET)) || 0;
+  var applyOffset = (element2, controlTops, attr) => {
+    const currentOffset = Number.parseFloat(element2.style.getPropertyValue(OFFSET)) || 0;
     const offset = viewerControlOffset(controlTops, currentOffset);
     if (!offset) return false;
-    if (!element.hasAttribute(attr)) element.setAttribute(attr, "");
+    if (!element2.hasAttribute(attr)) element2.setAttribute(attr, "");
     const value = `${offset}px`;
-    if (element.style.getPropertyValue(OFFSET) !== value) {
-      element.style.setProperty(OFFSET, value);
+    if (element2.style.getPropertyValue(OFFSET) !== value) {
+      element2.style.setProperty(OFFSET, value);
     }
     return true;
   };
@@ -9638,18 +10280,18 @@ ${text}`)) {
           }
         }
       }
-      for (const element of previouslyMarked) {
-        if (markedControls.has(element)) continue;
-        element.removeAttribute(BANNER_ATTR);
-        element.removeAttribute(ACTIONS_ATTR);
-        element.style.removeProperty(OFFSET);
+      for (const element2 of previouslyMarked) {
+        if (markedControls.has(element2)) continue;
+        element2.removeAttribute(BANNER_ATTR);
+        element2.removeAttribute(ACTIONS_ATTR);
+        element2.style.removeProperty(OFFSET);
       }
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(refresh);
     };
     const resizeObserver = new ResizeObserver(schedule);
-    const affectsControls = (element) => !!element.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element.contains(control));
+    const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element2.contains(control));
     new MutationObserver((records) => {
       if (records.some(
         (record2) => record2.target instanceof Element && affectsControls(record2.target) || record2.type === "childList" && [...record2.addedNodes, ...record2.removedNodes].some(
@@ -9722,6 +10364,7 @@ ${text}`)) {
     initFeature("recent-threads", initRecentThreads);
     initFeature("thread-nav", initThreadNav);
     initFeature("quick-reply", initQuickReply);
+    initFeature("scheduled-send", initScheduledSend);
     initFeature("hide-names", initHideNames);
     initFeature("system-emoji", initSystemEmoji);
     initFeature("media-permissions", initMediaPermissionWarning);

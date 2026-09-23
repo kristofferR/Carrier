@@ -5,8 +5,10 @@ import {
   type QuickReplyPhase,
   type QuickReplySnapshot,
 } from "../lib/quick-reply";
+import { composerText, findSendButton, hasComposerMedia } from "../lib/scheduled-composer";
+import { withComposerDelivery } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
-import { buttonByLabel, firstShown } from "./conversation-actions";
+import { firstShown } from "./conversation-actions";
 
 const POLL_MS = 250;
 const DELIVERY_BUDGET_MS = 12_000;
@@ -19,12 +21,6 @@ const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS))
 const currentThreadId = () => threadIdFromHref(location.pathname);
 
 const composer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
-
-const sendButton = () => {
-  const root = document.querySelector('[role="main"]');
-  if (!root) return null;
-  return buttonByLabel(["press enter to send", "send message"], root);
-};
 
 const emitReplyResult = (id: number, attempt: number, ok: boolean) => {
   carrierReplyResult(id, attempt, ok).catch(() =>
@@ -55,13 +51,14 @@ async function deliver(path: string, text: string): Promise<boolean> {
   let phase: QuickReplyPhase = "waiting";
   while (true) {
     const box = composer();
-    const button = phase === "inserted" ? sendButton() : null;
+    if (box && hasComposerMedia(box)) return false;
+    const button = phase === "inserted" && box ? findSendButton(box) : null;
     const snapshot: QuickReplySnapshot = {
       threadMatches: currentThreadId() === wantedThread,
       composerReady: box !== null,
-      draftMatches: composerContainsReply(box?.textContent || null, text),
+      draftMatches: composerContainsReply(box ? composerText(box) : null, text),
       sendAvailable: button !== null,
-      composerEmpty: !(box?.textContent || "").trim(),
+      composerEmpty: !box || !composerText(box).trim(),
     };
     const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
     phase = decision.phase;
@@ -142,8 +139,8 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void deliver(path, text)
-      .then((ok) => emitReplyResult(id, attempt, ok))
+    void withComposerDelivery(() => deliver(path, text))
+      .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
         emitReplyResult(id, attempt, false);
@@ -162,8 +159,8 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void preserveDraft(path, text)
-      .then((ok) => emitReplyResult(id, attempt, ok))
+    void withComposerDelivery(() => preserveDraft(path, text))
+      .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);

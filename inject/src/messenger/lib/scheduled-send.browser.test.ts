@@ -1,0 +1,273 @@
+import { expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { build } from "esbuild";
+import type { initQuickReply } from "../features/quick-reply";
+import type { deliverScheduledMessage, initScheduledSend } from "../features/scheduled-send";
+import type { ScheduledMessage, ScheduleRequest, ScheduleResponse } from "./scheduled-send";
+
+const chromium = Bun.which("chromium") || Bun.which("google-chrome");
+
+test.skipIf(!chromium)(
+  "schedule composer auto-submits, expires safely, hides for media, and quick reply waits for React",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "carrier-scheduled-send-"));
+    try {
+      const bundle = await build({
+        stdin: {
+          contents: `
+      import { initQuickReply } from "../features/quick-reply";
+      import { initScheduledSend, deliverScheduledMessage } from "../features/scheduled-send";
+      (${fixtures.toString()})(initScheduledSend, deliverScheduledMessage, initQuickReply);
+    `,
+          resolveDir: import.meta.dir,
+        },
+        bundle: true,
+        write: false,
+      });
+      const file = join(directory, "index.html");
+      await writeFile(
+        file,
+        `<!doctype html><style>button,[role=button]{width:32px;height:32px} [contenteditable]{width:250px;min-height:30px} .row{display:flex} img,video{width:100px;height:70px}</style><body><main role="main"><div role="region" id="region"><div class="row"><div contenteditable="true" role="textbox" id="composer"></div><div id="emoji-wrapper"><div role="button" aria-label="Choose an emoji"><svg width="20" height="20"><path fill="rgb(0, 237, 136)" d="M0 0h20v20H0z"/></svg></div></div></div><button aria-label="Send a like"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"></button></div></main><pre id="result">RUNNING</pre><script>
+      var scheduleItems=[]; var replyResults=[]; var warnings=[]; var scheduleOps=[];
+      window.__carrierToast=(message)=>warnings.push(message);
+      window.__TAURI_INTERNALS__={invoke:async()=>{}};
+      var carrierScheduledSend=async function(request){
+        scheduleOps.push(request.op);
+        var saved=null;
+        if(request.op==='save') {
+          saved='saved-fixture';
+          scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
+        }
+        if(request.op==='arm') {
+          if(document.querySelector('#composer').innerText.trim()) throw new Error('armed before clearing composer');
+          scheduleItems.forEach(item=>{if(item.id===request.id)item.status='scheduled';});
+        }
+        if(request.op==='list') return {items:scheduleItems,claimed:null,saved:null,error:null,can_deliver:false};
+        if(request.op==='seen') {scheduleItems.forEach(item=>{if(item.id===request.id)item.toast_seen=true;});}
+        return {items:scheduleItems,claimed:null,saved:saved,error:null,can_deliver:false};
+      };
+      var carrierReplyResult=async(id,attempt,ok)=>{replyResults.push({id,attempt,ok});};
+      requestAnimationFrame=callback=>setTimeout(()=>callback(performance.now()),16);
+      ${bundle.outputFiles[0]!.text}
+      </script>`,
+      );
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: () => new Response(Bun.file(file)),
+      });
+      try {
+        const child = Bun.spawn(
+          [
+            chromium!,
+            "--headless",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-first-run",
+            `--user-data-dir=${join(directory, "profile")}`,
+            "--virtual-time-budget=20000",
+            "--dump-dom",
+            new URL("/messages/t/456/", server.url).href,
+          ],
+          { stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL" },
+        );
+        const [output, errors, exit] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect(exit, errors).toBe(0);
+        expect(output.match(/<pre id="result">([^<]+)/)?.[1]).toBe("PASS");
+      } finally {
+        await server.stop(true);
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  60_000,
+);
+
+async function fixtures(
+  init: typeof initScheduledSend,
+  deliver: typeof deliverScheduledMessage,
+  quickReply: typeof initQuickReply,
+) {
+  const result = document.querySelector("#result")!;
+  const box = document.querySelector<HTMLElement>("#composer")!;
+  const region = document.querySelector<HTMLElement>("#region")!;
+  const page = window as unknown as {
+    scheduleItems: ScheduledMessage[];
+    replyResults: { ok: boolean }[];
+    warnings: string[];
+    scheduleOps: string[];
+    carrierScheduledSend: (request: ScheduleRequest) => Promise<ScheduleResponse>;
+  };
+  const settle = (ms = 150) => new Promise((resolve) => setTimeout(resolve, ms));
+  const assert = (name: string, condition: boolean) => {
+    if (!condition) throw new Error(name);
+  };
+  let clicks = 0;
+  let delay = 400;
+  let changeBeforeSend: (() => void) | undefined;
+  const realNow = Date.now;
+  const clear = () => {
+    box.textContent = "";
+    document.querySelector("#send")?.remove();
+    box.blur();
+  };
+  box.addEventListener("input", () => {
+    if (!box.innerText.trim().trim()) return;
+    setTimeout(() => {
+      if (!box.innerText.trim().trim()) return;
+      changeBeforeSend?.();
+      if (document.querySelector("#send")) return;
+      const send = document.createElement("button");
+      send.id = "send";
+      send.setAttribute("aria-label", "Press Enter to send");
+      send.addEventListener("click", () => {
+        clicks++;
+        box.textContent = "";
+        send.remove();
+      });
+      region.append(send);
+    }, delay);
+  });
+  const message = (): ScheduledMessage => ({
+    id: "fixture",
+    account: "123",
+    thread: "/t/456/",
+    text: "Automatic test reply",
+    due: Date.now(),
+    status: "sending",
+    toast_seen: false,
+  });
+  try {
+    // biome-ignore lint/suspicious/noDocumentCookie: Mimic Messenger's account cookie in an isolated fixture.
+    document.cookie = "c_user=123; path=/";
+    init();
+    await settle();
+    const icon = () => document.querySelector<HTMLButtonElement>("[data-carrier-schedule]");
+    assert(
+      "clock is immediately left of the smiley wrapper",
+      icon()?.nextElementSibling?.id === "emoji-wrapper",
+    );
+    assert(
+      "clock inherits Messenger's icon color",
+      getComputedStyle(icon()!).color === "rgb(0, 237, 136)",
+    );
+    for (const tag of ["img", "video"] as const) {
+      const media = document.createElement(tag);
+      region.append(media);
+      await settle();
+      assert(`icon hidden for ${tag}`, !icon());
+      media.remove();
+      await settle();
+      assert(`icon restored after ${tag}`, !!icon());
+    }
+    const preview = document.createElement("button");
+    preview.setAttribute("aria-label", "Preview attachment");
+    preview.append(document.createElement("img"));
+    region.append(preview);
+    await settle();
+    assert("clickable attachment previews also hide the clock", !icon());
+    preview.remove();
+    await settle();
+    box.focus();
+    assert(
+      "online sends automatically even with the empty composer focused",
+      (await deliver(message(), () => true)) === "sent" && clicks === 1,
+    );
+    clear();
+    assert(
+      "offline never clicks send",
+      (await deliver(message(), () => false)) === "defer" && clicks === 1,
+    );
+    assert(
+      "late messages never enter composer",
+      (await deliver({ ...message(), due: Date.now() - 120_001 }, () => true)) === "defer" &&
+        !box.innerText.trim() &&
+        clicks === 1,
+    );
+    assert(
+      "another account cannot send",
+      (await deliver({ ...message(), account: "999" }, () => true)) === "defer" && clicks === 1,
+    );
+    box.textContent = "Existing draft";
+    assert(
+      "existing draft preserved",
+      (await deliver(message(), () => true)) === "defer" && box.innerText === "Existing draft",
+    );
+    clear();
+    const expiring = message();
+    changeBeforeSend = () => {
+      Date.now = () => expiring.due + 120_001;
+    };
+    assert(
+      "deadline rechecked after React render",
+      (await deliver(expiring, () => true)) === "missed" && clicks === 1 && !box.innerText.trim(),
+    );
+    Date.now = realNow;
+    changeBeforeSend = undefined;
+    clear();
+    let connected = true;
+    changeBeforeSend = () => {
+      connected = false;
+    };
+    assert(
+      "connection loss before click restores queue without submitting",
+      (await deliver(message(), () => connected)) === "defer" &&
+        clicks === 1 &&
+        !box.innerText.trim(),
+    );
+    changeBeforeSend = undefined;
+    clear();
+    quickReply();
+    delay = 600;
+    window.__carrierQuickReply?.("/t/456/", "Quick reply without Enter", 1, 1);
+    await settle(1600);
+    assert(
+      "quick reply waited for delayed control and sent",
+      page.replyResults.at(-1)?.ok === true && clicks === 2 && !box.innerText.trim(),
+    );
+    clear();
+    box.textContent = "Schedule UI test";
+    await settle();
+    icon()?.click();
+    await settle();
+    assert("quick choices open", document.querySelectorAll(".carrier-schedule-preset").length >= 3);
+    assert(
+      "24h field",
+      document.querySelector<HTMLInputElement>(".carrier-schedule-fields input[type=text]")
+        ?.value === "09:00",
+    );
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert("Escape closes", !document.querySelector(".carrier-schedule-panel"));
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+    await settle();
+    assert(
+      "scheduling durably saves, clears, then arms automatic delivery",
+      page.scheduleOps.indexOf("save") < page.scheduleOps.indexOf("arm") &&
+        page.scheduleItems[0]?.status === "scheduled" &&
+        !box.innerText.trim(),
+    );
+    page.scheduleItems = [{ ...message(), status: "missed", due: Date.now() - 120_001 }];
+    document.dispatchEvent(new Event("visibilitychange"));
+    await settle();
+    assert(
+      "missed sends warn on return and acknowledge the toast",
+      page.warnings.some((w) => w.includes("not sent")) &&
+        page.scheduleItems[0]?.toast_seen === true,
+    );
+    clear();
+    result.textContent = "PASS";
+  } catch (error) {
+    result.textContent = `FAIL: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    Date.now = realNow;
+  }
+}

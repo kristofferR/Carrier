@@ -64,11 +64,23 @@ describe("decideQuickReply", () => {
       phase: "confirming",
     });
   });
+
+  test("waits for React to render the send control, then sends without Enter", () => {
+    const inserted = { ...ready, draftMatches: true, composerEmpty: false };
+    expect(decideQuickReply("inserted", inserted, false).action).toBe("wait");
+    expect(decideQuickReply("inserted", { ...inserted, sendAvailable: true }, false).action).toBe(
+      "send",
+    );
+    expect(decideQuickReply("inserted", { ...inserted, sendAvailable: true }, true).action).toBe(
+      "failure",
+    );
+  });
 });
 
 describe("composerContainsReply", () => {
   test("verifies the inserted reply without normalizing its content", () => {
-    expect(composerContainsReply("hello there", "hello")).toBe(true);
+    expect(composerContainsReply("hello there", "hello there")).toBe(true);
+    expect(composerContainsReply("hello there", "hello")).toBe(false);
     expect(composerContainsReply("hello there", "HELLO")).toBe(false);
     expect(composerContainsReply(null, "hello")).toBe(false);
   });

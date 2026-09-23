@@ -1167,6 +1167,29 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     }}
     return carrierAuthorizedEmit('carrier:reply-result', {{ id: id, attempt: attempt, ok: ok }});
   }};
+  var carrierScheduledSend = function (payload) {{
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
+    var request = carrierNativeRequest();
+    var resultEvent = 'carrier:scheduled-send-result';
+    return new NativePromise(function (resolve, reject) {{
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [resultEvent, finish]);
+      }};
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request || typeof detail.data !== 'string') return;
+        var result = {{ request: request, data: detail.data }};
+        if (!await carrierVerifyResult(resultEvent, result, detail.signature)) return;
+        cleanup();
+        try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
+      }};
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Carrier to retry.')); }}, 15000);
+      nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
+      payload.request = request;
+      carrierAuthorizedEmit('carrier:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});
+    }});
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
