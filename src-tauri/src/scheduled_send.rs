@@ -175,12 +175,17 @@ impl Store {
                         thread,
                         text: text.into(),
                         due,
-                        status: Status::Draft,
+                        status: Status::Scheduled,
                         notified: false,
                         toast_seen: false,
                     };
                 } else {
-                    if items.len() >= MAX_ITEMS {
+                    if items
+                        .iter()
+                        .filter(|m| m.account == request.account)
+                        .count()
+                        >= MAX_ITEMS
+                    {
                         return Err("Remove an old scheduled message before adding another.".into());
                     }
                     items.push(Message {
@@ -498,6 +503,52 @@ mod tests {
         store.apply(&req, "main", 1_500).unwrap();
         req.op = "claim".into();
         assert_eq!(store.apply(&req, "main", 2_000).unwrap(), Some(saved));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn rescheduling_keeps_existing_message_armed_without_a_second_request() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("messages.json");
+        let mut store = Store::load(path.clone());
+        store.commit(vec![message()]).unwrap();
+        let req = Request {
+            request: "a".repeat(32),
+            op: "save".into(),
+            account: "123".into(),
+            id: Some("a".into()),
+            thread: Some("/t/456/".into()),
+            text: Some("hello".into()),
+            due: Some(2_000),
+        };
+        store.apply(&req, "main", 1_000).unwrap();
+        let reloaded = Store::load(path);
+        assert_eq!(reloaded.items[0].status, Status::Scheduled);
+        assert_eq!(reloaded.items[0].due, 2_000);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn schedule_limit_counts_only_the_current_account() {
+        let dir =
+            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+        let mut store = Store::load(dir.join("messages.json"));
+        let mut items = vec![message(); MAX_ITEMS];
+        for (index, item) in items.iter_mut().enumerate() {
+            item.id = index.to_string();
+        }
+        store.commit(items).unwrap();
+        let mut req = Request {
+            request: "a".repeat(32),
+            op: "save".into(),
+            account: "999".into(),
+            id: None,
+            thread: Some("/t/456/".into()),
+            text: Some("hello".into()),
+            due: Some(2_000),
+        };
+        store.apply(&req, "main", 1_000).unwrap();
+        req.account = "123".into();
+        assert!(store.apply(&req, "main", 1_000).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]

@@ -34,6 +34,9 @@ const thread = () => {
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 100));
 const ready = () =>
   scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
+const activeTextInput = () =>
+  document.hasFocus() &&
+  document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
 
 /** A native claim has already been persisted. Only "defer" may be retried, and
  * only when we can prove we never clicked Send or left inserted text behind. */
@@ -49,12 +52,7 @@ export async function deliverScheduledMessage(
     return "defer";
   const existing = findComposer();
   if (existing && (composerText(existing).trim() || hasComposerMedia(existing))) return "defer";
-  if (
-    thread() !== message.thread &&
-    document.hasFocus() &&
-    document.activeElement?.matches("input, textarea")
-  )
-    return "defer";
+  if (thread() !== message.thread && activeTextInput()) return "defer";
   if (thread() !== message.thread) {
     // A hard navigation discards the running claim. Prefer the existing SPA
     // row; navigation fallback is handled before claiming by the poller.
@@ -290,9 +288,9 @@ export function initScheduledSend() {
           throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
         }
       }
-      // Saving alone cannot send. Arm only after the durable copy exists and
-      // the composer has been cleared, including across lost bridge responses.
-      await request({ op: "arm", id: result.saved });
+      // New messages need a composer-clear handshake. Rescheduling an existing
+      // item is armed by the save itself.
+      if (!editingItem) await request({ op: "arm", id: result.saved });
       close();
       toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
     } catch (error) {
@@ -547,12 +545,7 @@ export function initScheduledSend() {
       await withComposerDelivery(async () => {
         const box = findComposer();
         if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-        if (
-          thread() !== due.thread &&
-          document.hasFocus() &&
-          document.activeElement?.matches("input, textarea")
-        )
-          return;
+        if (thread() !== due.thread && activeTextInput()) return;
         // Missing virtualized row requires a reload. Do it before claiming so
         // the fresh page can still claim the same job within its original window.
         if (

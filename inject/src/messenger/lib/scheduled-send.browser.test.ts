@@ -41,8 +41,12 @@ test.skipIf(!chromium)(
         scheduleOps.push(request.op);
         var saved=null;
         if(request.op==='save') {
-          saved='saved-fixture';
-          scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
+          saved=request.id || 'saved-fixture';
+          if(request.id) {
+            scheduleItems.forEach(item=>{if(item.id===request.id){item.due=request.due;item.status='scheduled';}});
+          } else {
+            scheduleItems.push({id:saved,account:request.account,thread:request.thread,text:request.text,due:request.due,status:'draft',toast_seen:false});
+          }
         }
         if(request.op==='arm') {
           if(document.querySelector('#composer').innerText.trim()) throw new Error('armed before clearing composer');
@@ -204,6 +208,21 @@ async function fixtures(
     await settle();
     clear();
     box.focus();
+    const otherThread = document.createElement("a");
+    otherThread.href = "/messages/t/999/";
+    let switched = false;
+    otherThread.addEventListener("click", (event) => {
+      event.preventDefault();
+      switched = true;
+    });
+    document.body.append(otherThread);
+    assert(
+      "focused empty composer prevents cross-thread delivery",
+      (await deliver({ ...message(), thread: "/t/999/" }, () => true)) === "defer" &&
+        !switched &&
+        clicks === 0,
+    );
+    otherThread.remove();
     assert(
       "online sends automatically even with the empty composer focused",
       (await deliver(message(), () => true)) === "sent" && clicks === 1,
@@ -323,6 +342,20 @@ async function fixtures(
         !box.innerText.trim(),
     );
     assert("empty composer stays hidden with queued messages", !icon());
+    box.textContent = "Another draft";
+    await settle();
+    icon()?.click();
+    await settle();
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    const opsBeforeReschedule = page.scheduleOps.length;
+    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    await settle();
+    assert(
+      "rescheduling arms on save without touching the current draft",
+      page.scheduleOps.slice(opsBeforeReschedule).join(",") === "save" &&
+        page.scheduleItems[0]?.status === "scheduled" &&
+        box.innerText === "Another draft",
+    );
     page.scheduleItems = [{ ...message(), status: "missed", due: Date.now() - 120_001 }];
     document.dispatchEvent(new Event("visibilitychange"));
     await settle();

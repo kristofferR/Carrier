@@ -8272,13 +8272,13 @@ ${text}`)) {
   };
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
+  var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   async function deliverScheduledMessage(message, connectionReady = ready) {
     if (!connectionReady() || account() !== message.account || sendWindow(message.due, Date.now()) !== "due")
       return "defer";
     const existing = findComposer();
     if (existing && (composerText(existing).trim() || hasComposerMedia(existing))) return "defer";
-    if (thread() !== message.thread && document.hasFocus() && document.activeElement?.matches("input, textarea"))
-      return "defer";
+    if (thread() !== message.thread && activeTextInput()) return "defer";
     if (thread() !== message.thread) {
       const link = [...document.querySelectorAll('a[href*="/t/"]')].find(
         (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(message.thread)
@@ -8472,7 +8472,7 @@ ${text}`)) {
             throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
           }
         }
-        await request({ op: "arm", id: result.saved });
+        if (!editingItem) await request({ op: "arm", id: result.saved });
         close();
         toast(`Message scheduled for ${formatScheduleTime(due, true)}. It will send automatically.`);
       } catch (error) {
@@ -8707,8 +8707,7 @@ ${text}`)) {
         await withComposerDelivery(async () => {
           const box = findComposer();
           if (box && (composerText(box).trim() || hasComposerMedia(box))) return;
-          if (thread() !== due.thread && document.hasFocus() && document.activeElement?.matches("input, textarea"))
-            return;
+          if (thread() !== due.thread && activeTextInput()) return;
           if (thread() !== due.thread && ![...document.querySelectorAll('a[href*="/t/"]')].some(
             (a) => threadIdFromHref(a.getAttribute("href")) === threadIdFromHref(due.thread)
           )) {
