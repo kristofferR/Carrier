@@ -30,7 +30,6 @@ import {
   notificationDedupeKey,
   notificationDeliveryDedupeKey,
   notificationPresentation,
-  notificationTextMatches,
   PageNotificationReceiptStore,
   type PageNotificationSignal,
   PendingPageNotificationStore,
@@ -38,6 +37,7 @@ import {
   READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  uniqueNotificationTitleMatch,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
@@ -372,6 +372,7 @@ export function initNotificationBridge() {
     suppressed?: { key: string; fingerprint: string; bodyHash?: string };
     dedupeKey?: string;
     signal?: PageNotificationSignal;
+    draft?: boolean;
   } => {
     // Row-first: pair only with a UNIQUE pending fallback. Two visible threads
     // with the same display text cannot be told apart from a Notification's
@@ -414,16 +415,11 @@ export function initNotificationBridge() {
     }
     // A draft hides the real preview, but the page Notification still names
     // the thread. Use a unique title match only to recover its route and mute
-    // state; never treat the draft text as a delivered message fingerprint.
+    // state; the real preview will consume a receipt after native emission.
     const candidates = currentPageRouteCandidates();
-    const matching = new Map(
-      candidates
-        .filter((row) => notificationTextMatches(title, body, row.title, row.body))
-        .map((row) => [row.key, row] as const),
-    );
-    const draft = matching.size === 1 ? [...matching.values()][0] : undefined;
+    const draft = uniqueNotificationTitleMatch(title, candidates);
     if (draft?.draft) {
-      return { threadPath: draft.threadPath, threadMuted: draft.muted };
+      return { threadPath: draft.threadPath, threadMuted: draft.muted, draft: true };
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
@@ -569,10 +565,13 @@ export function initNotificationBridge() {
         // copy — but a reload that lands during the avatar conversion (before
         // any banner exists) must leave no receipt, or the fallback would be
         // suppressed for a notification that was never shown. Likewise a
-        // signal a row already consumed during the conversion is delivered
-        // and done — a receipt written now would outlive it and swallow a
-        // later same-text message.
-        if (pageMatch.signal && !pageMatch.signal.matched) {
+        // signal a real row already consumed during the conversion is
+        // delivered and done. A draft supplied only a route, so it still
+        // needs the receipt when the real preview becomes visible.
+        if (
+          pageMatch.draft ||
+          (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft))
+        ) {
           pageNotificationReceipts.add(originalTitle, originalBody, id);
         }
         const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
@@ -1523,9 +1522,10 @@ export function initNotificationBridge() {
           conversation,
           detectedAt,
           PAGE_NOTIFICATION_RECOVERY_MS,
-          pageRouteCandidates,
+          pageRouteCandidates.map((row) => ({ ...row, body: "" })),
         );
         if (!signal) continue;
+        signal.matchedDraft = true;
         signal.threadPath = conversation.threadPath;
         signal.threadMuted = conversation.muted;
         if (signal.emitted && signal.nativeId !== undefined) {

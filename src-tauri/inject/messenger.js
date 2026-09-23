@@ -6659,6 +6659,15 @@
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
   }
+  function uniqueNotificationTitleMatch(title, rows) {
+    let match = null;
+    for (const row of rows) {
+      if (!notificationTextMatches(title, "", row.title, "")) continue;
+      if (match && match.key !== row.key) return null;
+      match = row;
+    }
+    return match;
+  }
 
   // inject/src/messenger/lib/notification-images.ts
   function notificationPhotoText(title, body, hasThumbnail) {
@@ -7223,12 +7232,9 @@
         };
       }
       const candidates = currentPageRouteCandidates();
-      const matching = new Map(
-        candidates.filter((row) => notificationTextMatches(title, body, row.title, row.body)).map((row) => [row.key, row])
-      );
-      const draft = matching.size === 1 ? [...matching.values()][0] : void 0;
+      const draft = uniqueNotificationTitleMatch(title, candidates);
       if (draft?.draft) {
-        return { threadPath: draft.threadPath, threadMuted: draft.muted };
+        return { threadPath: draft.threadPath, threadMuted: draft.muted, draft: true };
       }
       return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
@@ -7316,7 +7322,7 @@
             return;
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
-          if (pageMatch.signal && !pageMatch.signal.matched) {
+          if (pageMatch.draft || pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
             pageNotificationReceipts.add(originalTitle, originalBody, id);
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
@@ -7964,9 +7970,10 @@
             conversation,
             detectedAt,
             PAGE_NOTIFICATION_RECOVERY_MS,
-            pageRouteCandidates
+            pageRouteCandidates.map((row) => ({ ...row, body: "" }))
           );
           if (!signal) continue;
+          signal.matchedDraft = true;
           signal.threadPath = conversation.threadPath;
           signal.threadMuted = conversation.muted;
           if (signal.emitted && signal.nativeId !== void 0) {

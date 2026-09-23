@@ -93,6 +93,8 @@ export interface PageNotificationSignal extends NotificationText {
   nativeId?: number;
   /** Route learned while the async native notification emit is still pending. */
   threadPath?: string;
+  /** A draft supplied only the route; the real preview still needs a receipt. */
+  matchedDraft?: boolean;
   /**
    * Set once a conversation row consumed this signal. The async emitter checks
    * it before persisting a cross-reload receipt: a row-paired signal was
@@ -1455,4 +1457,18 @@ export function notificationTextMatches(
       matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) ||
       (sendersCompatible && matchesExactOrTruncated(page.message, row.message)))
   );
+}
+
+/** Route a draft only when its title identifies one visible conversation. */
+export function uniqueNotificationTitleMatch<Row extends NotificationText & { key: string }>(
+  title: string,
+  rows: Iterable<Row>,
+): Row | null {
+  let match: Row | null = null;
+  for (const row of rows) {
+    if (!notificationTextMatches(title, "", row.title, "")) continue;
+    if (match && match.key !== row.key) return null;
+    match = row;
+  }
+  return match;
 }

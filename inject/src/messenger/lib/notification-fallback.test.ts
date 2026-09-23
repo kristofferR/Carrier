@@ -18,6 +18,7 @@ import {
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  uniqueNotificationTitleMatch,
   waitForPageNotificationMatch,
 } from "./notification-fallback";
 
@@ -604,6 +605,17 @@ describe("NotifiedSignatureStore", () => {
 });
 
 describe("PageNotificationReceiptStore", () => {
+  test("keeps draft delivery evidence until its real preview appears after native dedupe", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage());
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    expect(receipts.consumeUniquelyMatching([], 32_000).size).toBe(0);
+    expect(
+      receipts
+        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_100)
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
+  });
+
   test("pairs a page notification after reload without persisting raw content", () => {
     const storage = memoryStorage();
     const title = "Project group with a deliberately long title that the row truncates later";
@@ -953,6 +965,17 @@ describe("PageNotificationQueue", () => {
 
     expect(queue.consumeMatching(draft, 1_100, 2_000, [draft])).toBe(signal);
     expect(signal.matched).toBe(true);
+  });
+
+  test("does not identify a draft by title when another row has a stale preview", () => {
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "Older message" };
+    expect(uniqueNotificationTitleMatch("Jane", [draft])).toBe(draft);
+    expect(uniqueNotificationTitleMatch("Jane", [draft, other])).toBeNull();
+
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft, { ...other, body: "" }])).toBeNull();
   });
 
   test("does not route by draft title when another conversation also matches", () => {
