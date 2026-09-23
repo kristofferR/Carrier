@@ -22,6 +22,9 @@ export function createSilentRecovery(options: {
   const nativeSetTimeout = window.setTimeout.bind(window);
   const nativeClearTimeout = window.clearTimeout.bind(window);
   const now = performance.now.bind(performance);
+  const wallNow = Date.now.bind(Date);
+  let lastTickAt = wallNow();
+  let restartRunningDeadline: (() => void) | undefined;
   let running = false;
   let runningTimedOut = false;
   let failed = false;
@@ -51,7 +54,14 @@ export function createSilentRecovery(options: {
     failed = value;
     window.dispatchEvent(new CustomEvent(SILENT_RECOVERY_EVENT, { detail: value }));
   };
+  const resetSettle = () => {
+    unhealthySince = undefined;
+    busySince = undefined;
+    budget.restartObservation(now());
+    if (running && !runningTimedOut) restartRunningDeadline?.();
+  };
   const tick = () => {
+    lastTickAt = wallNow();
     const currentScope = accountScope();
     if (currentScope !== scope) {
       scope = currentScope;
@@ -115,7 +125,15 @@ export function createSilentRecovery(options: {
     runningTimedOut = false;
     // A timeout cannot cancel Messenger's initialization. Keep running latched
     // until the actual promise settles, so no second bootstrap can race it.
-    const timeout = nativeSetTimeout(() => {
+    let timeout: number | undefined;
+    const expire = () => {
+      // This timer can be the first task after resume, before the health tick
+      // notices a suspension gap. Never spend the episode on time asleep.
+      const gap = wallNow() - lastTickAt;
+      if (gap > REALTIME_UNOBSERVED_SETTLE_MS || gap < 0) {
+        resetSettle();
+        return;
+      }
       runningTimedOut = true;
       if (launchEpoch !== scopeEpoch) {
         if (options.needsRecovery()) showFailure(true);
@@ -128,14 +146,21 @@ export function createSilentRecovery(options: {
         "sync.worker-recovery-timeout",
         `worker recovery did not settle phase=${workerRecovery.phase}; preserving the page`,
       );
-    }, SILENT_RECOVERY_TIMEOUT_MS);
+    };
+    restartRunningDeadline = () => {
+      nativeClearTimeout(timeout);
+      timeout = nativeSetTimeout(expire, SILENT_RECOVERY_TIMEOUT_MS);
+    };
+    restartRunningDeadline();
     void workerRecovery
       .recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
-        budget.attemptCount >= 2 && window.__CARRIER_SETTINGS__?.multi_instance === false,
+        budget.attemptCount >= 2 ||
+          (busySince !== undefined && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS),
       )
       .then((result) => {
         nativeClearTimeout(timeout);
+        restartRunningDeadline = undefined;
         running = false;
         runningTimedOut = false;
         if (launchEpoch !== scopeEpoch) {
@@ -181,6 +206,7 @@ export function createSilentRecovery(options: {
       })
       .catch(() => {
         nativeClearTimeout(timeout);
+        restartRunningDeadline = undefined;
         running = false;
         runningTimedOut = false;
         if (launchEpoch !== scopeEpoch) return;
@@ -198,10 +224,6 @@ export function createSilentRecovery(options: {
   });
   return {
     tick,
-    resetSettle: () => {
-      unhealthySince = undefined;
-      busySince = undefined;
-      budget.interruptHealthObservation();
-    },
+    resetSettle,
   };
 }

@@ -89,10 +89,18 @@ export class WorkerConnectionWatchdog {
   constructor(private readonly previouslyConnected = false) {}
 
   observe(connected: boolean | undefined, now: number, backendReady = false): boolean {
-    if (connected !== false) {
-      this.everConnected ||= connected === true;
+    if (connected === true) {
+      this.everConnected = true;
       this.disconnectedAt = null;
       return false;
+    }
+    const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
+    if (connected === undefined) {
+      // Losing an observation cannot undo a disconnect already seen. A new
+      // worker/account gets a new watchdog; only verified true clears this one.
+      if (this.disconnectedAt === null) return false;
+      this.disconnectedAt = Math.min(this.disconnectedAt, now);
+      return elapsed(now, this.disconnectedAt) >= grace;
     }
     if (!this.everConnected && !this.previouslyConnected && !backendReady) {
       this.disconnectedAt = null;
@@ -101,7 +109,6 @@ export class WorkerConnectionWatchdog {
     this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
     // A fresh document needs time to initialize the worker, even when an
     // earlier document established that this account uses encrypted sync.
-    const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
     return elapsed(now, this.disconnectedAt) >= grace;
   }
 }

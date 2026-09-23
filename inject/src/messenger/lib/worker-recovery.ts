@@ -1,3 +1,5 @@
+import { REALTIME_NEVER_CONNECTED_MS } from "./realtime-health";
+
 type Method = (this: unknown, ...args: unknown[]) => unknown;
 type ModuleLoader = (name: string) => unknown;
 
@@ -25,6 +27,7 @@ class InspectionTimeout extends Error {}
 type RecoveryPhase =
   | "idle"
   | "worker-status"
+  | "bridge-readiness"
   | "window-inventory"
   | "shared-shutdown"
   | "dedicated-termination"
@@ -64,10 +67,12 @@ export function hasSoleMessengerWindow(value: unknown): boolean {
 export class FacebookWorkerRecovery {
   private replay: (() => unknown) | undefined;
   private scope: string | undefined;
+  private setupStartedAt: number | undefined;
   private recovering = false;
   private readonly wrapped = new WeakSet<object>();
   private sharedBridgeRepair: { scope: string; id: string } | undefined;
-  private sharedRestartUsedScope: string | undefined;
+  private lifecycleRestartUsedScope: string | undefined;
+  private lifecycle: { callback: Method; scope: string | undefined } | undefined;
   private currentPhase: RecoveryPhase = "idle";
 
   get phase(): RecoveryPhase {
@@ -79,6 +84,36 @@ export class FacebookWorkerRecovery {
     private readonly accountScope: () => string | undefined,
     private readonly canRestartSharedWorker: () => Promise<boolean> = async () => false,
   ) {}
+
+  observeLifecycleExports(value: unknown): void {
+    const exports = record(value);
+    const register = method(exports, "setOnCloseForWorkerInstance");
+    if (!exports || !register || this.wrapped.has(register)) return;
+    const owner = this;
+    const wrapped = new Proxy(register, {
+      apply(target, receiver, args: unknown[]) {
+        const result = Reflect.apply(target, receiver, args);
+        try {
+          const callback = args[0];
+          owner.lifecycle =
+            result === undefined &&
+            args.length === 1 &&
+            typeof callback === "function" &&
+            callback.length === 3
+              ? { callback: callback as Method, scope: owner.accountScope() }
+              : undefined;
+          owner.setupStartedAt = performance.now();
+        } catch (_) {
+          owner.lifecycle = undefined;
+        }
+        return result;
+      },
+    });
+    try {
+      exports.setOnCloseForWorkerInstance = wrapped;
+      this.wrapped.add(wrapped);
+    } catch (_) {}
+  }
 
   observeSetupExports(value: unknown): void {
     const exports = record(value);
@@ -98,9 +133,11 @@ export class FacebookWorkerRecovery {
             const retryArgs = [...args];
             retryArgs[4] = "bridgeRecovery";
             owner.scope = owner.accountScope();
+            owner.setupStartedAt = performance.now();
             owner.replay = () => Reflect.apply(target, receiver, retryArgs);
           } catch (_) {
             owner.scope = undefined;
+            owner.setupStartedAt = undefined;
             owner.replay = undefined;
           }
         }
@@ -118,12 +155,12 @@ export class FacebookWorkerRecovery {
   /** A sustained verified connection starts a fresh escalation episode. */
   clearEscalation(): void {
     this.sharedBridgeRepair = undefined;
-    this.sharedRestartUsedScope = undefined;
+    this.lifecycleRestartUsedScope = undefined;
   }
 
   async recover(
     allowed: () => boolean = () => true,
-    restartShared = false,
+    escalate = false,
   ): Promise<WorkerRecoveryResult> {
     if (this.recovering) return "busy";
     this.recovering = true;
@@ -137,7 +174,8 @@ export class FacebookWorkerRecovery {
       }
       if (!startingScope) return "unsupported";
       if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = undefined;
-      if (this.sharedRestartUsedScope !== startingScope) this.sharedRestartUsedScope = undefined;
+      if (this.lifecycleRestartUsedScope !== startingScope)
+        this.lifecycleRestartUsedScope = undefined;
       const state = this.load("MAWWaitForBackendSetup");
       const settled = method(state, "isBackendSetupSettled");
       const inProgress = method(state, "isBackendSetupInProgress");
@@ -149,8 +187,30 @@ export class FacebookWorkerRecovery {
       if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
         return "unsupported";
       }
-      if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
+      const pendingSetup = inProgress.call(state) === true || settled.call(state) !== true;
+      if (pendingSetup && !escalate) return "busy";
+      const currentConnectionState = () =>
+        record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
+      const connectionState = pendingSetup ? currentConnectionState() : undefined;
+      const connected = method(connectionState, "isConnected");
+      const stillPendingAndDisconnected = () =>
+        inProgress.call(state) === true &&
+        settled.call(state) === false &&
+        currentConnectionState() === connectionState &&
+        connected?.call(connectionState) === false;
+      const stalledSetup =
+        pendingSetup &&
+        escalate &&
+        !!this.replay &&
+        this.scope === startingScope &&
+        this.setupStartedAt !== undefined &&
+        performance.now() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
+        stillPendingAndDisconnected();
+      if (pendingSetup && !stalledSetup) return "busy";
       const initialId = currentId.call(state);
+      if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
+        return "busy";
+      }
       const setup = initialId ? this.load("MAWSetupWorker") : undefined;
       const bridge = method(setup, "waitForWorkerSetup");
       const initialBridge = bridge?.call(setup);
@@ -181,7 +241,14 @@ export class FacebookWorkerRecovery {
       ) {
         return "unsupported";
       }
-      if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
+      if (stalledSetup) {
+        if (
+          !["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) ||
+          !stillPendingAndDisconnected()
+        ) {
+          return "busy";
+        }
+      } else if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
       const id = currentId.call(state);
       if (status.tag === "dedicated_exists") {
         if (
@@ -194,6 +261,39 @@ export class FacebookWorkerRecovery {
           replayScope !== startingScope
         ) {
           return "unsupported";
+        }
+        if (stalledSetup) {
+          const lifecycle = this.lifecycle;
+          if (
+            !lifecycle ||
+            lifecycle.scope !== startingScope ||
+            this.lifecycleRestartUsedScope === startingScope
+          )
+            return "busy";
+          this.currentPhase = "bridge-readiness";
+          const readyBridge = await inspect(() => initialBridge);
+          if (!method(readyBridge, "close")) return "unsupported";
+          if (
+            !allowed() ||
+            startingScope !== this.accountScope() ||
+            this.lifecycle !== lifecycle ||
+            this.replay !== replay ||
+            this.scope !== replayScope ||
+            currentId.call(state) !== id ||
+            bridge?.call(setup) !== initialBridge ||
+            !stillPendingAndDisconnected()
+          )
+            return "busy";
+          // The registered lifecycle closes this page's dedicated Worker and
+          // restarts it with Messenger's own closure, including pending setup.
+          this.lifecycleRestartUsedScope = startingScope;
+          this.currentPhase = "dedicated-termination";
+          Reflect.apply(lifecycle.callback, undefined, [
+            "carrier-sync-recovery",
+            id,
+            "carrier_recovery",
+          ]);
+          return "started";
         }
         const terminate = method(setup, "terminateDedicatedWorker");
         if (!terminate) return "unsupported";
@@ -228,20 +328,26 @@ export class FacebookWorkerRecovery {
       if (typeof id === "string" && id.length > 0) {
         if (status.tag === "dedicated_not_exists") return "unsupported";
         if (
-          restartShared &&
+          escalate &&
           status.tag === "shared_exists_and_connected" &&
           initialId === id &&
-          this.sharedBridgeRepair?.scope === startingScope &&
-          this.sharedBridgeRepair.id === id &&
-          this.sharedRestartUsedScope !== startingScope &&
+          (stalledSetup ||
+            (this.sharedBridgeRepair?.scope === startingScope &&
+              this.sharedBridgeRepair.id === id)) &&
+          this.lifecycleRestartUsedScope !== startingScope &&
           replay &&
           replayScope === startingScope &&
           initialBridge &&
           typeof record(initialBridge)?.then === "function" &&
           bridge?.call(setup) === initialBridge
         ) {
-          const shutdown = method(setup, "killSharedWorker");
-          if (!shutdown) return "unsupported";
+          if (stalledSetup) {
+            // The close listener waits for this bridge before restarting.
+            // A pending page-bridge setup cannot be rescued through that path.
+            this.currentPhase = "bridge-readiness";
+            const readyBridge = await inspect(() => initialBridge);
+            if (!method(readyBridge, "close")) return "unsupported";
+          }
           let soleWindow = false;
           try {
             this.currentPhase = "window-inventory";
@@ -257,21 +363,25 @@ export class FacebookWorkerRecovery {
             this.replay !== replay ||
             this.scope !== replayScope ||
             bridge?.call(setup) !== initialBridge ||
-            inProgress.call(state) === true ||
-            settled.call(state) !== true
+            (stalledSetup
+              ? !stillPendingAndDisconnected()
+              : inProgress.call(state) === true || settled.call(state) !== true)
           ) {
             return "busy";
           }
           if (soleWindow) {
+            const shutdown = method(setup, "killSharedWorker");
+            if (!shutdown) return "unsupported";
             // Messenger's own close listener resets and reinitializes the page.
             // Do not replay setup: shutdown is broadcast and its promise does
             // not certify that the old worker has exited.
-            this.sharedRestartUsedScope = startingScope;
+            this.lifecycleRestartUsedScope = startingScope;
             this.currentPhase = "shared-shutdown";
             await shutdown.call(setup, false, "carrier-sync-recovery");
             return "started";
           }
         }
+        if (stalledSetup) return "busy";
         const recovery = this.load("MAWWorkerWatchdogRecovery");
         const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
         if (typeof callback !== "function") return "unsupported";
@@ -344,8 +454,10 @@ export class SilentRecoveryBudget {
     return this.attempts;
   }
 
-  interruptHealthObservation(): void {
+  /** Resume with fresh observations, without refunding any attempted repair. */
+  restartObservation(now: number): void {
     this.healthySince = undefined;
+    if (this.activeUntil !== undefined) this.activeUntil = now + SILENT_RECOVERY_TIMEOUT_MS;
   }
 
   observe(healthy: boolean, now: number): void {

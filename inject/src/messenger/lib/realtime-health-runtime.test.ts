@@ -128,15 +128,15 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   now += REALTIME_CONNECT_GRACE_MS;
   await check();
   expect(tracker.status(now)).toBe("stale");
-  // Missing or changed internal APIs must fall back to existing health probes.
+  // Missing or changed APIs cannot clear a confirmed encrypted disconnect.
   moduleAvailable = false;
   await check();
-  expect(tracker.status(now)).toBe("ok");
+  expect(tracker.status(now)).toBe("stale");
   moduleAvailable = true;
   connected = "false";
   now += REALTIME_CONNECT_GRACE_MS;
   await check();
-  expect(tracker.status(now)).toBe("ok");
+  expect(tracker.status(now)).toBe("stale");
   connected = true;
   await check();
   expect(tracker.status(now)).toBe("ok");
@@ -416,4 +416,30 @@ test("a delayed RPC reply cannot extend the age of an earlier state notification
   expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
   await fixture.advance(8000);
   expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+});
+
+test("only fresh encrypted state or a new worker clears a confirmed disconnect", async () => {
+  const fixture = stateProbeFixture();
+  await fixture.probe();
+  fixture.deliver(false);
+  await fixture.probe();
+  await fixture.advance(15_000);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(15_000)).toBe(true);
+  fixture.setMode("missing");
+  fixture.deliver(true);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(15_000)).toBe(true);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  fixture.changeWorker();
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(15_000)).toBe(false);
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  await fixture.advance(90_000);
+  await fixture.probe();
+  expect(fixture.tracker.needsRecovery(105_000)).toBe(true);
+  fixture.setMode("normal");
+  fixture.changeAccount();
+  await fixture.probe();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
 });

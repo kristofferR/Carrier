@@ -209,6 +209,67 @@ async function runFixtures(
       restartFlags.join() === "false,true,false",
     );
 
+    const pendingFlags: boolean[] = [];
+    adapter.recover = async (_allowed, restartShared) => {
+      pendingFlags.push(restartShared === true);
+      return restartShared ? "started" : "busy";
+    };
+    const pendingRecovery = make({ needed: true, healthy: false });
+    pendingRecovery.tick();
+    await advance(15_000);
+    pendingRecovery.tick();
+    await flush();
+    await advance(29_999);
+    pendingRecovery.tick();
+    await flush();
+    assert(
+      "busy startup keeps its own grace before escalation",
+      pendingFlags.join() === "false,false",
+    );
+    await advance(1);
+    pendingRecovery.tick();
+    await flush();
+    assert(
+      "prolonged busy startup may request a guarded restart",
+      pendingFlags.join() === "false,false,true",
+    );
+
+    let sleepCalls = 0;
+    let finishSleepingAttempt: ((result: string) => void) | undefined;
+    adapter.recover = () => {
+      sleepCalls++;
+      return sleepCalls === 1
+        ? new Promise((resolve) => {
+            finishSleepingAttempt = resolve;
+          })
+        : Promise.resolve("started");
+    };
+    const sleepingRecovery = make({ needed: true, healthy: false });
+    let sleepFailure = false;
+    const onSleepFailure = (event: Event) => {
+      if ((event as CustomEvent<boolean>).detail) sleepFailure = true;
+    };
+    window.addEventListener(failureEvent, onSleepFailure);
+    sleepingRecovery.tick();
+    await advance(15_000);
+    sleepingRecovery.tick();
+    await flush();
+    await advance(5_000);
+    sleepingRecovery.resetSettle();
+    // Let the overdue timeout run before the first resumed health tick.
+    await advance(120_000);
+    assert("sleep does not exhaust a pending recovery", !sleepFailure && sleepCalls === 1);
+    sleepingRecovery.tick();
+    finishSleepingAttempt?.("failed");
+    await flush();
+    for (let i = 0; i < 10; i++) {
+      await advance(5_000);
+      sleepingRecovery.tick();
+      await flush();
+    }
+    assert("the remaining retry budget survives resume", sleepCalls === 2 && !sleepFailure);
+    window.removeEventListener(failureEvent, onSleepFailure);
+
     adapter.recover = () => {
       calls++;
       return new Promise(() => {});
@@ -225,8 +286,10 @@ async function runFixtures(
     assert("hung setup starts once", calls === 6);
     hungState.healthy = true;
     hungState.needed = false;
-    await advance(30_000);
-    hungRecovery.tick();
+    for (let i = 0; i < 6; i++) {
+      await advance(5_000);
+      hungRecovery.tick();
+    }
     hungState.healthy = false;
     hungState.needed = true;
     hungRecovery.tick();

@@ -15,8 +15,8 @@ connection, so a worker that answers heartbeats but never connects cannot look
 healthy forever. An uninitialized connection-state module alone does not arm it.
 An explicitly started backend setup also has a 90-second deadline to settle,
 independent of page MQTT traffic or availability of the encrypted bridge/state
-APIs. A setup that has not settled remains protected from competing initialization
-and surfaces manual recovery through the prolonged-busy path.
+APIs. A setup that has not settled remains protected from competing initialization;
+the guarded worker lifecycles below can rescue a stalled encrypted opening.
 Recovery waits another 15 seconds for fresh probes, including after wake.
 
 Carrier uses Messenger's existing worker lifecycle:
@@ -30,6 +30,18 @@ Carrier uses Messenger's existing worker lifecycle:
   setup promise and replay closure, and a settled backend. It is used at most
   once per unhealthy episode. Messenger's own close listener rebuilds the
   backend in the same document; Carrier does not race it with a second setup call.
+- A shared-worker bootstrap still pending after 90 seconds can use that same
+  shutdown route once the recovery controller has also observed 30 seconds
+  of busy state. It requires a captured same-account setup, a known shared-worker
+  identity, a strictly disconnected connection-state manager, and an already
+  resolved page bridge with a compatible `close` method. Bridge readiness has
+  its own eight-second read-only deadline. Account, worker ID, state-manager
+  identity, bridge promise, setup closure, and pending/disconnected state are
+  rechecked after inspection. The sole-window and other protection gates still
+  apply, and this spends the episode's one shared restart. Messenger's own close
+  listener owns replacement; Carrier never rejects or replays the pending setup.
+  A pending page bridge, unassigned worker ID, unknown
+  connection state, or multiple windows retains manual recovery.
 - If startup failed before assigning an ID and no shared worker exists, replay
   the original setup call. The document-start module interceptor retains its
   original arguments and callbacks in memory, scoped to the current account.
@@ -41,11 +53,22 @@ Carrier uses Messenger's existing worker lifecycle:
   exact `dedicated` ID, and successful termination. A failed dedicated startup
   with no worker can also replay setup without termination. Calls, drafts, and
   account changes retain the same protections as shared-worker recovery.
+- A pending dedicated bootstrap uses Messenger's registered
+  `setOnCloseForWorkerInstance` callback instead. That native callback closes the
+  page's Worker, resets backend/portal/creation state, and starts its own setup
+  closure. The document-start hook captures only the observed three-argument
+  callback ABI, scoped to the current account. As with shared startup, this
+  requires a 90-second-old strictly disconnected setup, a ready page bridge,
+  an unchanged lifecycle callback and setup closure, and all mutation guards.
+  The callback registration starts a new startup grace period even when
+  Messenger reinitializes internally. This consumes the episode's one lifecycle
+  restart; it does not require sole-window ownership because the dedicated
+  Worker belongs to this page.
 - A setup call that replaces the captured replay closure while an asynchronous
   worker-status check or dedicated termination is pending wins the race; Carrier
   will not replay either the old or new closure on that attempt.
 - Unknown module signatures, unsupported worker kinds, and account changes fail
-  open. Messenger's ongoing initialization is never reset underneath it.
+  open. Carrier never manually resets an unsettled initialization.
 
 There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
@@ -86,13 +109,22 @@ with no state delivery instead times out after eight seconds. Listeners are
 removed on success, failure, and timeout; late replies cannot launch fallback
 requests or certify a replaced worker. Page MQTT or an unavailable
 connection-state API cannot claim encrypted transport health or refund attempts.
+Once an encrypted disconnect has been observed, a missing or malformed state API
+cannot clear it or restart its grace period. It remains a fault until a fresh
+connected notification and RPC reply arrive, or a real account/worker-ID boundary
+starts new observation. Restoring only a cached `true` value is insufficient.
+A ready backend or remembered encrypted connection also starts a 90-second
+verification deadline while fresh proof is absent. Replacing a worker gives it
+new observation grace, but cached `true` and heartbeat-only fallback cannot
+leave it apparently healthy forever.
 A hung initialization
 keeps the single-flight guard even after its timeout; a second setup must not
 race it. If health briefly returns at that timeout and later fails again, the
 manual failure controls appear while the old setup is still pending. Successful
 invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks
-continue; a prolonged busy state offers manual recovery while awaiting setup.
+continue; a prolonged busy state enables guarded pending-startup escalation
+and otherwise offers manual recovery while awaiting setup.
 Content-free diagnostics distinguish inspection timeouts from pending setup or
 termination. A return to verified encrypted health records elapsed time since the
 observed failure and the number of recovery requests, scoped to this account.
@@ -110,6 +142,10 @@ On Linux and Windows, a health-timer gap longer than 15 seconds (or a backwards
 wall-clock jump) also resets this grace period before the next recovery tick.
 macOS uses its native power snapshots. Resetting the settle period discards the
 previous healthy-observation streak, so time asleep cannot replenish retries.
+It also restarts a pending recovery's observation deadline without refunding an
+attempt. The deadline callback itself checks for a health-tick gap, protecting
+the case where it runs before the first resumed interval. A suspended renderer
+therefore cannot exhaust all retries merely by delivering an overdue timeout.
 
 The native watchdog receives `managed` while a responsive page owns transport
 recovery. This pauses native transport reloads without claiming health or
@@ -292,8 +328,8 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   worker. Its bridge `close()` calls `terminate()` once, and the synced bridge
   inherits that implementation. Focused recovery tests cover replay order,
   changing worker bridges, account changes, failed termination, and a missing
-  dedicated worker. The installed Messenger session uses a **shared** worker,
-  so dedicated-worker restart has not been verified against a live account.
+  dedicated worker. A separate live test below exercises the native dedicated
+  lifecycle with unfinished setup.
 - With one healthy signed-in diagnostics window, call Messenger's own shared
   shutdown route once under the normal no-draft/no-call guards. Five seconds
   later the worker ID had changed, backend setup and encrypted connection were
@@ -307,6 +343,30 @@ Live tests used a diagnostics build and a separate persistent signed-in profile:
   causes no second repair. A fresh worker-state notification and RPC reply report
   connected, with backend setup ready and the same document and DOM root.
   No page module is replaced and no message is sent by this test.
+- Start the candidate diagnostics binary through a process-local CONNECT proxy
+  that forwards normal HTTPS traffic but accepts and stalls encrypted-chat TLS
+  tunnels. Three real connection-opening attempts remain pending; backend setup
+  is unsettled and encrypted connectivity is false. Allow new tunnels while
+  leaving those three existing attempts blocked. The new guarded startup path
+  invokes Messenger's close lifecycle automatically: its lifecycle record reports
+  exactly one `carrier-sync-recovery` restart, all three old tunnels close, and
+  one new encrypted-chat tunnel opens. By the 104-second observation the backend
+  is ready, the worker ID has changed once, fresh state delivery and RPC reply
+  confirm connectivity, and the document and DOM root are unchanged. The proxy
+  never decrypts TLS or records payloads. It affects only the candidate process;
+  the original diagnostics app is restored afterward. No message is sent.
+  This verifies an actual TLS/opening stall, not every later Noise-handshake,
+  database initialization, or browser-engine failure.
+- Repeat the CONNECT blackhole with Messenger's dedicated-worker selection
+  enabled only in the candidate page. Three real encrypted TLS attempts stay
+  blocked while backend setup is pending. Permit new connections without
+  releasing those attempts. By the 93-second observation Carrier has invoked
+  exactly one native lifecycle restart, all three blocked tunnels have closed,
+  and a new tunnel has connected. The dedicated bridge promise has changed,
+  backend setup is ready, and fresh connection-state delivery plus RPC reply
+  report connected. The document and DOM root remain unchanged. The temporary
+  gate override disappears when the candidate exits; the original diagnostics
+  app is restored and no message is sent.
 
 The final tests ran with one signed-in instance at a time. Running the original
 and copied profile together produced conflicting connectivity results, so it

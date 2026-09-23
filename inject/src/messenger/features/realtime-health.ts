@@ -123,11 +123,13 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     }
   };
   let connectionKey = accountKey();
+  let connectionWorkerId = workerId();
   let connectionRemembered = rememberedConnection(connectionKey);
   let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
   let workerProbePending = false;
   let workerDisconnected = false;
   let setupStartedAt: number | undefined;
+  let verificationStartedAt: number | undefined;
   let verified: { at: number; stillCurrent: () => boolean } | undefined;
   let stateRouteUnavailableFor: (() => boolean) | undefined;
   let probeIdentity:
@@ -223,8 +225,10 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         }
         // An older worker may answer the fallback heartbeat without exposing
         // encrypted state. That proves RPC reachability, not transport health.
-        if (connected === true) callbacks.onHealthy("worker");
-        else callbacks.onUnknown("worker");
+        if (connected === true) {
+          callbacks.onHealthy("worker");
+          checkConnection();
+        } else callbacks.onUnknown("worker");
       })
       .catch(() => {
         verified = undefined;
@@ -238,14 +242,21 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
         workerProbePending = false;
       });
   };
-  const check = () => {
+  const checkConnection = () => {
     const currentKey = accountKey();
-    if (currentKey !== connectionKey) {
+    const currentWorkerId = workerId();
+    const workerChanged =
+      typeof currentWorkerId === "string" &&
+      currentWorkerId.length > 0 &&
+      currentWorkerId !== connectionWorkerId;
+    if (currentKey !== connectionKey || workerChanged) {
       connectionKey = currentKey;
+      connectionWorkerId = currentWorkerId;
       connectionRemembered = rememberedConnection(connectionKey);
       workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
       workerDisconnected = false;
       setupStartedAt = undefined;
+      verificationStartedAt = undefined;
       verified = undefined;
       callbacks.onUnknown("worker-connection");
     }
@@ -265,21 +276,41 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     else setupStartedAt = undefined;
     const setupStale =
       setupStartedAt !== undefined && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
-    const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
-    const disconnected = setup === "failed" || setupStale || connectionStale;
+    const freshConnected =
+      connected === true &&
+      verified?.stillCurrent() === true &&
+      now() - verified.at < REALTIME_CONNECT_GRACE_MS;
+    if (freshConnected) verificationStartedAt = undefined;
+    else if (setup === "ready" || connectionRemembered) verificationStartedAt ??= now();
+    const verificationStale =
+      verificationStartedAt !== undefined &&
+      now() - verificationStartedAt >= REALTIME_NEVER_CONNECTED_MS;
+    const connectionStale = workerConnection.observe(
+      connected === true && !freshConnected ? undefined : connected,
+      Date.now(),
+      setup === "ready",
+    );
+    const disconnected = setup === "failed" || setupStale || connectionStale || verificationStale;
     if (disconnected !== workerDisconnected) {
       workerDisconnected = disconnected;
       if (disconnected) {
         diag(
           "sync.worker-disconnected",
-          setupStale
-            ? "encrypted backend setup did not settle"
-            : "encrypted-message connection stayed disconnected",
+          setup === "failed"
+            ? "encrypted backend setup failed"
+            : setupStale
+              ? "encrypted backend setup did not settle"
+              : verificationStale
+                ? "encrypted connection could not be verified"
+                : "encrypted-message connection stayed disconnected",
         );
       }
     }
     if (disconnected) callbacks.onStale("worker-connection");
     else callbacks.onUnknown("worker-connection");
+  };
+  const check = () => {
+    checkConnection();
     checkSockets();
     checkWorker();
   };

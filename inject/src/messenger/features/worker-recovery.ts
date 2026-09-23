@@ -16,7 +16,12 @@ export const workerRecovery = new FacebookWorkerRecovery(
       return false;
     }
     try {
-      return hasSoleMessengerWindow(await invoke("plugin:window|get_all_windows"));
+      const windows = await invoke("plugin:window|get_all_windows");
+      return (
+        window.__CARRIER_SETTINGS__?.multi_instance === false &&
+        typeof window.BroadcastChannel === "function" &&
+        hasSoleMessengerWindow(windows)
+      );
     } catch (_) {
       return false;
     }

@@ -223,17 +223,22 @@
       __publicField(this, "disconnectedAt", null);
     }
     observe(connected, now, backendReady = false) {
-      if (connected !== false) {
-        this.everConnected || (this.everConnected = connected === true);
+      if (connected === true) {
+        this.everConnected = true;
         this.disconnectedAt = null;
         return false;
+      }
+      const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
+      if (connected === void 0) {
+        if (this.disconnectedAt === null) return false;
+        this.disconnectedAt = Math.min(this.disconnectedAt, now);
+        return elapsed(now, this.disconnectedAt) >= grace;
       }
       if (!this.everConnected && !this.previouslyConnected && !backendReady) {
         this.disconnectedAt = null;
         return false;
       }
       this.disconnectedAt = Math.min(this.disconnectedAt ?? now, now);
-      const grace = this.everConnected ? REALTIME_CONNECT_GRACE_MS : REALTIME_NEVER_CONNECTED_MS;
       return elapsed(now, this.disconnectedAt) >= grace;
     }
   };
@@ -461,14 +466,40 @@
       __publicField(this, "canRestartSharedWorker", canRestartSharedWorker);
       __publicField(this, "replay");
       __publicField(this, "scope");
+      __publicField(this, "setupStartedAt");
       __publicField(this, "recovering", false);
       __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
       __publicField(this, "sharedBridgeRepair");
-      __publicField(this, "sharedRestartUsedScope");
+      __publicField(this, "lifecycleRestartUsedScope");
+      __publicField(this, "lifecycle");
       __publicField(this, "currentPhase", "idle");
     }
     get phase() {
       return this.currentPhase;
+    }
+    observeLifecycleExports(value) {
+      const exports = record(value);
+      const register = method(exports, "setOnCloseForWorkerInstance");
+      if (!exports || !register || this.wrapped.has(register)) return;
+      const owner = this;
+      const wrapped = new Proxy(register, {
+        apply(target, receiver, args) {
+          const result = Reflect.apply(target, receiver, args);
+          try {
+            const callback = args[0];
+            owner.lifecycle = result === void 0 && args.length === 1 && typeof callback === "function" && callback.length === 3 ? { callback, scope: owner.accountScope() } : void 0;
+            owner.setupStartedAt = performance.now();
+          } catch (_) {
+            owner.lifecycle = void 0;
+          }
+          return result;
+        }
+      });
+      try {
+        exports.setOnCloseForWorkerInstance = wrapped;
+        this.wrapped.add(wrapped);
+      } catch (_) {
+      }
     }
     observeSetupExports(value) {
       const exports = record(value);
@@ -482,9 +513,11 @@
               const retryArgs = [...args];
               retryArgs[4] = "bridgeRecovery";
               owner.scope = owner.accountScope();
+              owner.setupStartedAt = performance.now();
               owner.replay = () => Reflect.apply(target, receiver, retryArgs);
             } catch (_) {
               owner.scope = void 0;
+              owner.setupStartedAt = void 0;
               owner.replay = void 0;
             }
           }
@@ -500,9 +533,9 @@
     /** A sustained verified connection starts a fresh escalation episode. */
     clearEscalation() {
       this.sharedBridgeRepair = void 0;
-      this.sharedRestartUsedScope = void 0;
+      this.lifecycleRestartUsedScope = void 0;
     }
-    async recover(allowed = () => true, restartShared = false) {
+    async recover(allowed = () => true, escalate = false) {
       if (this.recovering) return "busy";
       this.recovering = true;
       try {
@@ -515,7 +548,8 @@
         }
         if (!startingScope) return "unsupported";
         if (this.sharedBridgeRepair?.scope !== startingScope) this.sharedBridgeRepair = void 0;
-        if (this.sharedRestartUsedScope !== startingScope) this.sharedRestartUsedScope = void 0;
+        if (this.lifecycleRestartUsedScope !== startingScope)
+          this.lifecycleRestartUsedScope = void 0;
         const state2 = this.load("MAWWaitForBackendSetup");
         const settled = method(state2, "isBackendSetupSettled");
         const inProgress = method(state2, "isBackendSetupInProgress");
@@ -527,8 +561,18 @@
         if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
           return "unsupported";
         }
-        if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
+        const pendingSetup = inProgress.call(state2) === true || settled.call(state2) !== true;
+        if (pendingSetup && !escalate) return "busy";
+        const currentConnectionState = () => record(this.load("WACommsConnectionState"))?.WACommsConnectionState;
+        const connectionState = pendingSetup ? currentConnectionState() : void 0;
+        const connected = method(connectionState, "isConnected");
+        const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
+        const stalledSetup = pendingSetup && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && performance.now() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
+        if (pendingSetup && !stalledSetup) return "busy";
         const initialId = currentId.call(state2);
+        if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
+          return "busy";
+        }
         const setup = initialId ? this.load("MAWSetupWorker") : void 0;
         const bridge = method(setup, "waitForWorkerSetup");
         const initialBridge = bridge?.call(setup);
@@ -548,11 +592,33 @@
         ].includes(String(status.tag))) {
           return "unsupported";
         }
-        if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
+        if (stalledSetup) {
+          if (!["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) || !stillPendingAndDisconnected()) {
+            return "busy";
+          }
+        } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
         if (status.tag === "dedicated_exists") {
           if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
             return "unsupported";
+          }
+          if (stalledSetup) {
+            const lifecycle = this.lifecycle;
+            if (!lifecycle || lifecycle.scope !== startingScope || this.lifecycleRestartUsedScope === startingScope)
+              return "busy";
+            this.currentPhase = "bridge-readiness";
+            const readyBridge = await inspect(() => initialBridge);
+            if (!method(readyBridge, "close")) return "unsupported";
+            if (!allowed() || startingScope !== this.accountScope() || this.lifecycle !== lifecycle || this.replay !== replay || this.scope !== replayScope || currentId.call(state2) !== id || bridge?.call(setup) !== initialBridge || !stillPendingAndDisconnected())
+              return "busy";
+            this.lifecycleRestartUsedScope = startingScope;
+            this.currentPhase = "dedicated-termination";
+            Reflect.apply(lifecycle.callback, void 0, [
+              "carrier-sync-recovery",
+              id,
+              "carrier_recovery"
+            ]);
+            return "started";
           }
           const terminate = method(setup, "terminateDedicatedWorker");
           if (!terminate) return "unsupported";
@@ -575,9 +641,12 @@
         }
         if (typeof id === "string" && id.length > 0) {
           if (status.tag === "dedicated_not_exists") return "unsupported";
-          if (restartShared && status.tag === "shared_exists_and_connected" && initialId === id && this.sharedBridgeRepair?.scope === startingScope && this.sharedBridgeRepair.id === id && this.sharedRestartUsedScope !== startingScope && replay && replayScope === startingScope && initialBridge && typeof record(initialBridge)?.then === "function" && bridge?.call(setup) === initialBridge) {
-            const shutdown = method(setup, "killSharedWorker");
-            if (!shutdown) return "unsupported";
+          if (escalate && status.tag === "shared_exists_and_connected" && initialId === id && (stalledSetup || this.sharedBridgeRepair?.scope === startingScope && this.sharedBridgeRepair.id === id) && this.lifecycleRestartUsedScope !== startingScope && replay && replayScope === startingScope && initialBridge && typeof record(initialBridge)?.then === "function" && bridge?.call(setup) === initialBridge) {
+            if (stalledSetup) {
+              this.currentPhase = "bridge-readiness";
+              const readyBridge = await inspect(() => initialBridge);
+              if (!method(readyBridge, "close")) return "unsupported";
+            }
             let soleWindow = false;
             try {
               this.currentPhase = "window-inventory";
@@ -585,16 +654,19 @@
             } catch (error) {
               if (error instanceof InspectionTimeout) throw error;
             }
-            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || inProgress.call(state2) === true || settled.call(state2) !== true) {
+            if (!allowed() || startingScope !== this.accountScope() || currentId.call(state2) !== id || this.replay !== replay || this.scope !== replayScope || bridge?.call(setup) !== initialBridge || (stalledSetup ? !stillPendingAndDisconnected() : inProgress.call(state2) === true || settled.call(state2) !== true)) {
               return "busy";
             }
             if (soleWindow) {
-              this.sharedRestartUsedScope = startingScope;
+              const shutdown = method(setup, "killSharedWorker");
+              if (!shutdown) return "unsupported";
+              this.lifecycleRestartUsedScope = startingScope;
               this.currentPhase = "shared-shutdown";
               await shutdown.call(setup, false, "carrier-sync-recovery");
               return "started";
             }
           }
+          if (stalledSetup) return "busy";
           const recovery = this.load("MAWWorkerWatchdogRecovery");
           const callback = method(recovery, "getWorkerRecoveryForWatchdog")?.call(recovery);
           if (typeof callback !== "function") return "unsupported";
@@ -646,8 +718,10 @@
     get attemptCount() {
       return this.attempts;
     }
-    interruptHealthObservation() {
+    /** Resume with fresh observations, without refunding any attempted repair. */
+    restartObservation(now) {
       this.healthySince = void 0;
+      if (this.activeUntil !== void 0) this.activeUntil = now + SILENT_RECOVERY_TIMEOUT_MS;
     }
     observe(healthy, now) {
       if (healthy) {
@@ -1066,11 +1140,13 @@
       }
     };
     let connectionKey = accountKey();
+    let connectionWorkerId = workerId();
     let connectionRemembered = rememberedConnection(connectionKey);
     let workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
     let workerProbePending = false;
     let workerDisconnected = false;
     let setupStartedAt;
+    let verificationStartedAt;
     let verified;
     let stateRouteUnavailableFor;
     let probeIdentity;
@@ -1134,8 +1210,10 @@
         if (connected === true && account && typeof id === "string" && id.length > 0 && observation?.receivedAt !== void 0) {
           verified = { at: observation.receivedAt, stillCurrent };
         }
-        if (connected === true) callbacks.onHealthy("worker");
-        else callbacks.onUnknown("worker");
+        if (connected === true) {
+          callbacks.onHealthy("worker");
+          checkConnection();
+        } else callbacks.onUnknown("worker");
       }).catch(() => {
         verified = void 0;
         if (!stillCurrent()) callbacks.onUnknown("worker");
@@ -1147,14 +1225,18 @@
         workerProbePending = false;
       });
     };
-    const check = () => {
+    const checkConnection = () => {
       const currentKey = accountKey();
-      if (currentKey !== connectionKey) {
+      const currentWorkerId = workerId();
+      const workerChanged = typeof currentWorkerId === "string" && currentWorkerId.length > 0 && currentWorkerId !== connectionWorkerId;
+      if (currentKey !== connectionKey || workerChanged) {
         connectionKey = currentKey;
+        connectionWorkerId = currentWorkerId;
         connectionRemembered = rememberedConnection(connectionKey);
         workerConnection = new WorkerConnectionWatchdog(connectionRemembered);
         workerDisconnected = false;
         setupStartedAt = void 0;
+        verificationStartedAt = void 0;
         verified = void 0;
         callbacks.onUnknown("worker-connection");
       }
@@ -1170,19 +1252,30 @@
       if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
       else setupStartedAt = void 0;
       const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
-      const connectionStale = workerConnection.observe(connected, Date.now(), setup === "ready");
-      const disconnected = setup === "failed" || setupStale || connectionStale;
+      const freshConnected = connected === true && verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS;
+      if (freshConnected) verificationStartedAt = void 0;
+      else if (setup === "ready" || connectionRemembered) verificationStartedAt ?? (verificationStartedAt = now());
+      const verificationStale = verificationStartedAt !== void 0 && now() - verificationStartedAt >= REALTIME_NEVER_CONNECTED_MS;
+      const connectionStale = workerConnection.observe(
+        connected === true && !freshConnected ? void 0 : connected,
+        Date.now(),
+        setup === "ready"
+      );
+      const disconnected = setup === "failed" || setupStale || connectionStale || verificationStale;
       if (disconnected !== workerDisconnected) {
         workerDisconnected = disconnected;
         if (disconnected) {
           diag(
             "sync.worker-disconnected",
-            setupStale ? "encrypted backend setup did not settle" : "encrypted-message connection stayed disconnected"
+            setup === "failed" ? "encrypted backend setup failed" : setupStale ? "encrypted backend setup did not settle" : verificationStale ? "encrypted connection could not be verified" : "encrypted-message connection stayed disconnected"
           );
         }
       }
       if (disconnected) callbacks.onStale("worker-connection");
       else callbacks.onUnknown("worker-connection");
+    };
+    const check = () => {
+      checkConnection();
       checkSockets();
       checkWorker();
     };
@@ -1237,7 +1330,8 @@
         return false;
       }
       try {
-        return hasSoleMessengerWindow(await invoke("plugin:window|get_all_windows"));
+        const windows = await invoke("plugin:window|get_all_windows");
+        return window.__CARRIER_SETTINGS__?.multi_instance === false && typeof window.BroadcastChannel === "function" && hasSoleMessengerWindow(windows);
       } catch (_) {
         return false;
       }
@@ -1251,6 +1345,9 @@
     const nativeSetTimeout3 = window.setTimeout.bind(window);
     const nativeClearTimeout2 = window.clearTimeout.bind(window);
     const now = performance.now.bind(performance);
+    const wallNow = Date.now.bind(Date);
+    let lastTickAt = wallNow();
+    let restartRunningDeadline;
     let running = false;
     let runningTimedOut = false;
     let failed = false;
@@ -1280,7 +1377,14 @@
       failed = value;
       window.dispatchEvent(new CustomEvent(SILENT_RECOVERY_EVENT, { detail: value }));
     };
+    const resetSettle = () => {
+      unhealthySince = void 0;
+      busySince = void 0;
+      budget.restartObservation(now());
+      if (running && !runningTimedOut) restartRunningDeadline?.();
+    };
     const tick = () => {
+      lastTickAt = wallNow();
       const currentScope = accountScope();
       if (currentScope !== scope) {
         scope = currentScope;
@@ -1338,7 +1442,13 @@
       running = true;
       outageRequests++;
       runningTimedOut = false;
-      const timeout = nativeSetTimeout3(() => {
+      let timeout;
+      const expire = () => {
+        const gap = wallNow() - lastTickAt;
+        if (gap > REALTIME_UNOBSERVED_SETTLE_MS || gap < 0) {
+          resetSettle();
+          return;
+        }
         runningTimedOut = true;
         if (launchEpoch !== scopeEpoch) {
           if (options.needsRecovery()) showFailure(true);
@@ -1351,12 +1461,18 @@
           "sync.worker-recovery-timeout",
           `worker recovery did not settle phase=${workerRecovery.phase}; preserving the page`
         );
-      }, SILENT_RECOVERY_TIMEOUT_MS);
+      };
+      restartRunningDeadline = () => {
+        nativeClearTimeout2(timeout);
+        timeout = nativeSetTimeout3(expire, SILENT_RECOVERY_TIMEOUT_MS);
+      };
+      restartRunningDeadline();
       void workerRecovery.recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
-        budget.attemptCount >= 2 && window.__CARRIER_SETTINGS__?.multi_instance === false
+        budget.attemptCount >= 2 || busySince !== void 0 && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS
       ).then((result) => {
         nativeClearTimeout2(timeout);
+        restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
         if (launchEpoch !== scopeEpoch) {
@@ -1397,6 +1513,7 @@
         options.check();
       }).catch(() => {
         nativeClearTimeout2(timeout);
+        restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
         if (launchEpoch !== scopeEpoch) return;
@@ -1414,11 +1531,7 @@
     });
     return {
       tick,
-      resetSettle: () => {
-        unhealthySince = void 0;
-        busySince = void 0;
-        budget.interruptHealthObservation();
-      }
+      resetSettle
     };
   }
 
@@ -3100,11 +3213,11 @@
     }
     return result;
   }
-  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger) {
+  function wrapFactory(moduleName, factory, shouldBlockTelemetry, onFTSRestoreSync, onFacebookError, onWorkerSetup, onProcessingLogger, onWorkerLifecycle) {
     const wrapped = function(...factoryArgs) {
       const result = Reflect.apply(factory, this, factoryArgs);
-      if (moduleName === "MAWSetupWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
-        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : onProcessingLogger;
+      if (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
+        const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : moduleName === "MAWWebWorkerSingleton" ? onWorkerLifecycle : onProcessingLogger;
         for (const candidate of [result, ...factoryArgs.slice(-2)]) {
           try {
             observe(candidate);
@@ -3139,12 +3252,13 @@
   }, onFacebookError = () => {
   }, onWorkerSetup = () => {
   }, onProcessingLogger = () => {
+  }, onWorkerLifecycle = () => {
   }) {
     return new Proxy(define, {
       apply(target, thisArg, args) {
         const moduleName = args[0];
         const factory = args[2];
-        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
+        if (typeof moduleName === "string" && typeof factory === "function" && (moduleName === "MAWSetupWorker" || moduleName === "MAWWebWorkerSingleton" || moduleName === "MAWBridgeUIEventQueueQPLLogger" || moduleName === "ErrorPubSub" || NULL_COMPONENT_MODULES.has(moduleName) || TELEMETRY_MODULES.has(moduleName) || BACKGROUND_SERVICE_MODULES.has(moduleName))) {
           args[2] = wrapFactory(
             moduleName,
             factory,
@@ -3152,7 +3266,8 @@
             onFTSRestoreSync,
             onFacebookError,
             onWorkerSetup,
-            onProcessingLogger
+            onProcessingLogger,
+            onWorkerLifecycle
           );
         }
         return Reflect.apply(target, thisArg, args);
@@ -3237,7 +3352,8 @@
           if (isFacebookRateLimitError(error)) reportRateLimit("graphql-1675004");
         },
         (exports) => workerRecovery.observeSetupExports(exports),
-        (exports) => syncProcessing.observeLogger(exports)
+        (exports) => syncProcessing.observeLogger(exports),
+        (exports) => workerRecovery.observeLifecycleExports(exports)
       );
       wrappedDefines.add(wrapped);
       return wrapped;

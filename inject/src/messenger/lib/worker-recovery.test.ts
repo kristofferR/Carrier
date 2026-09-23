@@ -160,6 +160,186 @@ function deadlineFixture(canRestartSharedWorker?: () => Promise<boolean>) {
 }
 
 describe("recovery inspection deadlines", () => {
+  function stalledSetup(canRestartSharedWorker?: () => Promise<boolean>) {
+    const value = deadlineFixture(canRestartSharedWorker);
+    const { f } = value;
+    f.setup.getOrSetupWorker(...f.args);
+    f.modules.WACommsConnectionState = {
+      WACommsConnectionState: {
+        connected: false,
+        isConnected() {
+          return this.connected;
+        },
+      },
+    };
+    f.currentId = "shared-worker";
+    f.status = "shared_exists_and_connected";
+    f.inProgress = true;
+    f.settled = false;
+    f.bridgePromise = Promise.resolve({ close() {} });
+    return value;
+  }
+
+  function stalledDedicated() {
+    const value = stalledSetup(async () => false);
+    const { f } = value;
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    const calls: unknown[][] = [];
+    const lifecycle = {
+      setOnCloseForWorkerInstance(_callback: unknown) {},
+    };
+    const callback = (reason: unknown, id: unknown, type: unknown) => {
+      calls.push([reason, id, type]);
+    };
+    f.recovery.observeLifecycleExports(lifecycle);
+    lifecycle.setOnCloseForWorkerInstance(callback);
+    return { ...value, lifecycle, callback, calls };
+  }
+
+  test("pending dedicated setup restarts through its registered native lifecycle once", async () => {
+    const { f, advance, calls } = stalledDedicated();
+    advance(89_999);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    advance(1);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "carrier_recovery"]]);
+    expect(f.terminationCalls).toHaveLength(0);
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+    expect(f.setupCalls).toHaveLength(1);
+    expect(f.resets).toBe(0);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    expect(calls).toHaveLength(1);
+  });
+
+  test("native lifecycle registration starts a fresh pending-setup grace period", async () => {
+    const { f, advance, lifecycle, callback, calls } = stalledDedicated();
+    advance(90_000);
+    lifecycle.setOnCloseForWorkerInstance(callback);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    advance(90_000);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(calls).toHaveLength(1);
+  });
+
+  for (const change of [
+    "callback",
+    "account",
+    "bridge",
+    "connected",
+    "settled",
+    "allowed",
+  ] as const) {
+    test(`a ${change} change while awaiting the dedicated bridge prevents restart`, async () => {
+      const { f, advance, lifecycle, callback, calls } = stalledDedicated();
+      const bridge = Promise.withResolvers<unknown>();
+      f.bridgePromise = bridge.promise;
+      advance(90_000);
+      let allowed = true;
+      const attempt = f.recovery.recover(() => allowed, true);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      if (change === "callback") lifecycle.setOnCloseForWorkerInstance(callback);
+      else if (change === "account") f.account = "another-account";
+      else if (change === "bridge") f.bridgePromise = Promise.resolve({ close() {} });
+      else if (change === "connected") {
+        const module = f.modules.WACommsConnectionState as {
+          WACommsConnectionState: { connected: boolean };
+        };
+        module.WACommsConnectionState.connected = true;
+      } else if (change === "settled") f.settled = true;
+      else allowed = false;
+      bridge.resolve({ close() {} });
+      expect(await attempt).toBe("busy");
+      expect(calls).toHaveLength(0);
+    });
+  }
+
+  test("an overdue dedicated bridge cannot invoke the captured lifecycle", async () => {
+    const { f, advance, calls } = stalledDedicated();
+    const bridge = Promise.withResolvers<unknown>();
+    f.bridgePromise = bridge.promise;
+    advance(90_000);
+    const attempt = f.recovery.recover(() => true, true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    advance(8_000);
+    expect(await attempt).toBe("inspection-timeout");
+    bridge.resolve({ close() {} });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(calls).toHaveLength(0);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+  });
+
+  test("unknown lifecycle callback shapes disable pending dedicated recovery", async () => {
+    const { f, advance, lifecycle, calls } = stalledDedicated();
+    lifecycle.setOnCloseForWorkerInstance(() => {});
+    advance(90_000);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("only an old disconnected startup with a ready bridge can use shared shutdown", async () => {
+    const { f, advance } = stalledSetup();
+    advance(89_999);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    advance(1);
+    expect(await f.recovery.recover()).toBe("busy");
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+    expect(f.setupCalls).toHaveLength(1);
+    expect(f.resets).toBe(0);
+    expect(f.watchdogCalls).toHaveLength(0);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+  });
+
+  test("a pending page bridge cannot restart the worker or consume the shutdown allowance", async () => {
+    const { f, advance } = stalledSetup();
+    const bridge = Promise.withResolvers<unknown>();
+    f.bridgePromise = bridge.promise;
+    advance(90_000);
+    const attempt = f.recovery.recover(() => true, true);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    advance(8_000);
+    expect(await attempt).toBe("inspection-timeout");
+    bridge.resolve({ close() {} });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+    expect(await f.recovery.recover(() => true, true)).toBe("started");
+    expect(f.sharedShutdownCalls).toHaveLength(1);
+  });
+
+  test("pending startup is left alone when shared ownership cannot be established", async () => {
+    const { f, advance } = stalledSetup(async () => false);
+    advance(90_000);
+    expect(await f.recovery.recover(() => true, true)).toBe("busy");
+    expect(f.sharedShutdownCalls).toHaveLength(0);
+    expect(f.watchdogCalls).toHaveLength(0);
+  });
+
+  for (const change of ["connected", "state", "account", "bridge", "settled"] as const) {
+    test(`a ${change} change during inventory prevents pending-startup shutdown`, async () => {
+      const { f, advance } = stalledSetup(async () => {
+        if (change === "connected") {
+          const module = f.modules.WACommsConnectionState as {
+            WACommsConnectionState: { connected: boolean };
+          };
+          module.WACommsConnectionState.connected = true;
+        } else if (change === "state") {
+          f.modules.WACommsConnectionState = {
+            WACommsConnectionState: { isConnected: () => false },
+          };
+        } else if (change === "account") f.account = "another-account";
+        else if (change === "bridge") f.bridgePromise = Promise.resolve({ close() {} });
+        else f.settled = true;
+        return true;
+      });
+      advance(90_000);
+      expect(await f.recovery.recover(() => true, true)).toBe("busy");
+      expect(f.sharedShutdownCalls).toHaveLength(0);
+      expect(f.watchdogCalls).toHaveLength(0);
+    });
+  }
+
   test("a hung status query expires; its late result cannot mutate a later attempt", async () => {
     const { f, advance, timers } = deadlineFixture();
     f.currentId = "worker";
@@ -247,39 +427,43 @@ describe("Messenger worker recovery", () => {
     expect(hasSoleMessengerWindow(undefined)).toBe(false);
   });
 
-  test("intercepts the real factory ABI without inspecting dependency exports", () => {
-    let factory: ((...args: unknown[]) => unknown) | undefined;
-    const define: FacebookModuleDefine = (_name, _deps, value) => {
-      factory = value as typeof factory;
-    };
-    const observed: unknown[] = [];
-    const intercept = createFacebookModuleDefineInterceptor(
-      define,
-      () => false,
-      undefined,
-      undefined,
-      (value) => observed.push(value),
-    );
-    const dependency = { getOrSetupWorker() {} };
-    const exports = { getOrSetupWorker() {} };
-    function original(
-      _global: unknown,
-      _require: unknown,
-      _import: unknown,
-      _requireDefault: unknown,
-      _dependency: unknown,
-      _module: unknown,
-      output: unknown,
-    ) {
-      Object.assign(output as object, exports);
-    }
-    intercept("MAWSetupWorker", [], original);
-    expect(factory?.length).toBe(original.length);
-    const output = {};
-    factory?.({}, {}, {}, {}, dependency, { exports: output }, output);
-    expect(observed).toContain(output);
-    expect(observed).not.toContain(dependency);
-  });
+  for (const moduleName of ["MAWSetupWorker", "MAWWebWorkerSingleton"]) {
+    test(`intercepts ${moduleName} without inspecting dependency exports`, () => {
+      let factory: ((...args: unknown[]) => unknown) | undefined;
+      const define: FacebookModuleDefine = (_name, _deps, value) => {
+        factory = value as typeof factory;
+      };
+      const observed: unknown[] = [];
+      const intercept = createFacebookModuleDefineInterceptor(
+        define,
+        () => false,
+        undefined,
+        undefined,
+        moduleName === "MAWSetupWorker" ? (value) => observed.push(value) : undefined,
+        undefined,
+        moduleName === "MAWWebWorkerSingleton" ? (value) => observed.push(value) : undefined,
+      );
+      const dependency = { getOrSetupWorker() {} };
+      const exports = { getOrSetupWorker() {} };
+      function original(
+        _global: unknown,
+        _require: unknown,
+        _import: unknown,
+        _requireDefault: unknown,
+        _dependency: unknown,
+        _module: unknown,
+        output: unknown,
+      ) {
+        Object.assign(output as object, exports);
+      }
+      intercept(moduleName, [], original);
+      expect(factory?.length).toBe(original.length);
+      const output = {};
+      factory?.({}, {}, {}, {}, dependency, { exports: output }, output);
+      expect(observed).toContain(output);
+      expect(observed).not.toContain(dependency);
+    });
+  }
 
   test("retries a failed bootstrap using exactly the original callbacks and receiver", async () => {
     const f = fixture();
@@ -627,12 +811,23 @@ describe("Messenger worker recovery", () => {
 });
 
 describe("silent recovery budget", () => {
+  test("resuming observation preserves attempts and gives probes a new window", () => {
+    const b = new SilentRecoveryBudget();
+    expect(b.start(0)).toBe(true);
+    b.restartObservation(100_000);
+    b.observe(false, 100_001);
+    expect(b.start(100_001)).toBe(false);
+    b.observe(false, 130_000);
+    expect(b.start(144_999)).toBe(false);
+    expect(b.start(145_000)).toBe(true);
+    expect(b.attemptCount).toBe(2);
+  });
   test("unobserved time across suspend cannot replenish the retry budget", () => {
     const b = new SilentRecoveryBudget();
     b.giveUp();
     b.observe(true, 0);
     b.observe(true, 55_000);
-    b.interruptHealthObservation();
+    b.restartObservation(3_600_000);
     b.observe(true, 3_600_000);
     expect(b.exhausted).toBe(true);
     b.observe(true, 3_659_999);

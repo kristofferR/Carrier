@@ -292,11 +292,21 @@ function wrapFactory(
   onFacebookError: (error: unknown) => void,
   onWorkerSetup: (exports: unknown) => void,
   onProcessingLogger: (exports: unknown) => void,
+  onWorkerLifecycle: (exports: unknown) => void,
 ): FacebookModuleFactory {
   const wrapped = function (this: unknown, ...factoryArgs: unknown[]) {
     const result = Reflect.apply(factory, this, factoryArgs);
-    if (moduleName === "MAWSetupWorker" || moduleName === "MAWBridgeUIEventQueueQPLLogger") {
-      const observe = moduleName === "MAWSetupWorker" ? onWorkerSetup : onProcessingLogger;
+    if (
+      moduleName === "MAWSetupWorker" ||
+      moduleName === "MAWWebWorkerSingleton" ||
+      moduleName === "MAWBridgeUIEventQueueQPLLogger"
+    ) {
+      const observe =
+        moduleName === "MAWSetupWorker"
+          ? onWorkerSetup
+          : moduleName === "MAWWebWorkerSingleton"
+            ? onWorkerLifecycle
+            : onProcessingLogger;
       for (const candidate of [result, ...factoryArgs.slice(-2)]) {
         try {
           observe(candidate);
@@ -340,6 +350,7 @@ export function createFacebookModuleDefineInterceptor(
   onFacebookError: (error: unknown) => void = () => {},
   onWorkerSetup: (exports: unknown) => void = () => {},
   onProcessingLogger: (exports: unknown) => void = () => {},
+  onWorkerLifecycle: (exports: unknown) => void = () => {},
 ): FacebookModuleDefine {
   return new Proxy(define, {
     apply(target, thisArg, args: unknown[]) {
@@ -349,6 +360,7 @@ export function createFacebookModuleDefineInterceptor(
         typeof moduleName === "string" &&
         typeof factory === "function" &&
         (moduleName === "MAWSetupWorker" ||
+          moduleName === "MAWWebWorkerSingleton" ||
           moduleName === "MAWBridgeUIEventQueueQPLLogger" ||
           moduleName === "ErrorPubSub" ||
           NULL_COMPONENT_MODULES.has(moduleName) ||
@@ -363,6 +375,7 @@ export function createFacebookModuleDefineInterceptor(
           onFacebookError,
           onWorkerSetup,
           onProcessingLogger,
+          onWorkerLifecycle,
         );
       }
       return Reflect.apply(target, thisArg, args);
