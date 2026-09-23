@@ -309,5 +309,5 @@ jobs:
               ((.body // "") | test("^Carrier debug ready\\nCommit: [0-9a-f]{40}$")))] |
               sort_by(.id) | reverse | .[2:] | .[].tag_name' |
             while IFS= read -r tag; do
-              gh release delete "$tag" --yes --cleanup-tag
+              gh release delete "$tag" --yes
             done

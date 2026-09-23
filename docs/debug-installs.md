@@ -23,7 +23,7 @@ to authenticated repository access and are never published. The public release
 workflow cannot start its platform builds until this draft is complete. A manual
 `debug.yml` run builds an unreleased main commit without starting public builds.
 After a debug draft is complete, CI keeps the two newest completed debug drafts
-and deletes older ones with their tags. Public releases are unaffected.
+and deletes older ones. Public releases are unaffected.
 
 The personal updater downloads only completed debug drafts whose source commit
 also passed main CI and remains on main. It verifies the manifest's GitHub
