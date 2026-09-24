@@ -605,6 +605,35 @@ describe("NotifiedSignatureStore", () => {
 });
 
 describe("PageNotificationReceiptStore", () => {
+  test("bounds unresolved draft receipts across reloads", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    for (let id = 1; id <= 25; id++) {
+      receipts.add("Jane", `Message ${id}`, id, 1_000);
+      receipts.retainForDraft(id, "1");
+    }
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    expect(JSON.parse(storage.getItem("__carrier_page_notification_receipts__")!)).toHaveLength(20);
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Message 1" }, 2_000),
+    ).toBeNull();
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Message 25" }, 2_000),
+    ).toEqual({ nativeId: 25 });
+  });
+
+  test("expires a draft receipt when no real preview ever appears", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const afterExpiry = 1_000 + 24 * 60 * 60 * 1_000 + 1;
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, afterExpiry);
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, afterExpiry),
+    ).toBeNull();
+  });
+
   test("keeps a draft receipt when later notifications exceed the ordinary receipt limit", () => {
     const storage = memoryStorage();
     const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);

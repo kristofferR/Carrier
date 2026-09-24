@@ -6096,6 +6096,7 @@
   var BODY_PREFIX_LIMIT = 240;
   var PAGE_RECEIPT_LIMIT = 20;
   var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
+  var DRAFT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1e3;
   var receiptMatch = (receipt) => ({
     nativeId: receipt.nativeId,
     ...receipt.nativeDelivery === void 0 ? {} : { nativeDelivery: receipt.nativeDelivery },
@@ -6267,24 +6268,27 @@
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && (candidate.draftThread !== void 0 || now - candidate.at <= this.ttlMs)) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && now - candidate.at <= (candidate.draftThread === void 0 ? this.ttlMs : DRAFT_RECEIPT_TTL_MS)) {
               this.receipts.push(candidate);
             }
           }
         }
       } catch (_) {
       }
-      this.trimOrdinaryReceipts();
+      this.trimReceipts();
       this.persist();
     }
-    trimOrdinaryReceipts() {
+    trimReceipts() {
       let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
-      for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT; ) {
-        if (this.receipts[index].draftThread) {
-          index++;
-        } else {
+      let drafts = this.receipts.length - ordinary;
+      for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT || drafts > PAGE_RECEIPT_LIMIT; ) {
+        const draft = Boolean(this.receipts[index].draftThread);
+        if ((draft ? drafts : ordinary) > PAGE_RECEIPT_LIMIT) {
           this.receipts.splice(index, 1);
-          ordinary--;
+          if (draft) drafts--;
+          else ordinary--;
+        } else {
+          index++;
         }
       }
     }
@@ -6298,7 +6302,8 @@
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const age = now - this.receipts[index].at;
-        if (age < 0 || age > this.ttlMs && !this.receipts[index].draftThread) {
+        const ttl = this.receipts[index].draftThread ? DRAFT_RECEIPT_TTL_MS : this.ttlMs;
+        if (age < 0 || age > ttl) {
           this.receipts.splice(index, 1);
           changed = true;
         }
@@ -6308,7 +6313,7 @@
     add(title, body, nativeId, at = Date.now()) {
       this.prune(at);
       this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
-      this.trimOrdinaryReceipts();
+      this.trimReceipts();
       this.persist();
     }
     recordDelivery(nativeId, delivery) {
@@ -6321,6 +6326,7 @@
       const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
       if (!receipt) return;
       receipt.draftThread = hashText(threadKey);
+      this.trimReceipts();
       this.persist();
     }
     retainSuppressedDraft(nativeId, threadKey) {
@@ -6328,6 +6334,7 @@
       if (!receipt) return;
       receipt.draftThread = hashText(threadKey);
       receipt.suppressedDraft = true;
+      this.trimReceipts();
       this.persist();
     }
     retireDraftsWithDifferentPreview(rows, now = Date.now()) {

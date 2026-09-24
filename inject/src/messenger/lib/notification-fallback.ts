@@ -584,6 +584,7 @@ const TITLE_PREFIX_LIMIT = 80;
 const BODY_PREFIX_LIMIT = 240;
 const PAGE_RECEIPT_LIMIT = 20;
 export const PAGE_NOTIFICATION_RECEIPT_TTL_MS = 120_000;
+const DRAFT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1_000;
 
 interface OpaqueTextIdentity {
   length: number;
@@ -851,14 +852,17 @@ export class PageNotificationReceiptStore {
   private readonly receipts: PageNotificationReceipt[] = [];
   private readonly draftMismatches = new StableMismatchTracker(1_000);
 
-  private trimOrdinaryReceipts(): void {
+  private trimReceipts(): void {
     let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
-    for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT; ) {
-      if (this.receipts[index]!.draftThread) {
-        index++;
-      } else {
+    let drafts = this.receipts.length - ordinary;
+    for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT || drafts > PAGE_RECEIPT_LIMIT; ) {
+      const draft = Boolean(this.receipts[index]!.draftThread);
+      if ((draft ? drafts : ordinary) > PAGE_RECEIPT_LIMIT) {
         this.receipts.splice(index, 1);
-        ordinary--;
+        if (draft) drafts--;
+        else ordinary--;
+      } else {
+        index++;
       }
     }
   }
@@ -891,14 +895,15 @@ export class PageNotificationReceiptStore {
             (candidate.suppressedDraft === undefined ||
               (candidate.suppressedDraft === true && candidate.draftThread !== undefined)) &&
             now - candidate.at >= 0 &&
-            (candidate.draftThread !== undefined || now - candidate.at <= this.ttlMs)
+            now - candidate.at <=
+              (candidate.draftThread === undefined ? this.ttlMs : DRAFT_RECEIPT_TTL_MS)
           ) {
             this.receipts.push(candidate as PageNotificationReceipt);
           }
         }
       }
     } catch (_) {}
-    this.trimOrdinaryReceipts();
+    this.trimReceipts();
     this.persist();
   }
 
@@ -912,7 +917,8 @@ export class PageNotificationReceiptStore {
     let changed = false;
     for (let index = this.receipts.length - 1; index >= 0; index--) {
       const age = now - this.receipts[index]!.at;
-      if (age < 0 || (age > this.ttlMs && !this.receipts[index]!.draftThread)) {
+      const ttl = this.receipts[index]!.draftThread ? DRAFT_RECEIPT_TTL_MS : this.ttlMs;
+      if (age < 0 || age > ttl) {
         this.receipts.splice(index, 1);
         changed = true;
       }
@@ -923,7 +929,7 @@ export class PageNotificationReceiptStore {
   add(title: string, body: string, nativeId: number, at = Date.now()): void {
     this.prune(at);
     this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
-    this.trimOrdinaryReceipts();
+    this.trimReceipts();
     this.persist();
   }
 
@@ -938,6 +944,7 @@ export class PageNotificationReceiptStore {
     const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
     if (!receipt) return;
     receipt.draftThread = hashText(threadKey);
+    this.trimReceipts();
     this.persist();
   }
 
@@ -946,6 +953,7 @@ export class PageNotificationReceiptStore {
     if (!receipt) return;
     receipt.draftThread = hashText(threadKey);
     receipt.suppressedDraft = true;
+    this.trimReceipts();
     this.persist();
   }
 
