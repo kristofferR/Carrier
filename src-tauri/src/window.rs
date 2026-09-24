@@ -157,7 +157,12 @@ fn build_app_window_with_render_budget(
         // cross-origin fbsbx.com frame. Keep this origin-scoped audio script
         // separate so privileged Carrier code remains main-frame-only.
         .initialization_script_for_all_frames(audio_init_script())
-        .initialization_script(init_script(settings, watchdog_id, &download_reveal_token))
+        .initialization_script(init_script(
+            settings,
+            watchdog_id,
+            &download_reveal_token,
+            app.state::<AppState>().scheduled_send_available,
+        ))
         .on_page_load(move |window, payload| match payload.event() {
             tauri::webview::PageLoadEvent::Started => {
                 page_load_watchdog.navigation_started();
@@ -864,7 +869,12 @@ fn audio_init_script() -> &'static str {
     INJECT_WEB_AUDIO_IDLE
 }
 
-fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &str) -> String {
+fn init_script(
+    settings: &Settings,
+    watchdog_id: u64,
+    download_reveal_token: &str,
+    scheduled_send_available: bool,
+) -> String {
     let platform = match std::env::consts::OS {
         "macos" => "macos",
         "windows" => "windows",
@@ -897,6 +907,7 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
   }}
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
+  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};
 
   // Import the per-window secret as a non-extractable key. Only signed request
   // data crosses Tauri's page-visible serializer, so a hostile inherited
@@ -1167,6 +1178,29 @@ fn init_script(settings: &Settings, watchdog_id: u64, download_reveal_token: &st
     }}
     return carrierAuthorizedEmit('carrier:reply-result', {{ id: id, attempt: attempt, ok: ok }});
   }};
+  var carrierScheduledSend = function (payload) {{
+    if (!carrierAuthorizedEmit || !carrierVerifyResult) return NativePromise.reject(new Error('native bridge unavailable'));
+    var request = carrierNativeRequest();
+    var resultEvent = 'carrier:scheduled-send-result';
+    return new NativePromise(function (resolve, reject) {{
+      var cleanup = function () {{
+        nativeClearTimeout(timeout);
+        nativeReflectApply(nativeWindowRemoveEventListener, window, [resultEvent, finish]);
+      }};
+      var finish = async function (event) {{
+        var detail = event && event.detail;
+        if (!detail || detail.request !== request || typeof detail.data !== 'string') return;
+        var result = {{ request: request, data: detail.data }};
+        if (!await carrierVerifyResult(resultEvent, result, detail.signature)) return;
+        cleanup();
+        try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
+      }};
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Carrier to retry.')); }}, 15000);
+      nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
+      payload.request = request;
+      carrierAuthorizedEmit('carrier:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});
+    }});
+  }};
 
   // Prefer settings cached in localStorage (written by apply_settings on every
   // change) over this baked-in snapshot, so an in-session settings change
@@ -1410,8 +1444,13 @@ mod tests {
 
     #[test]
     fn init_script_waits_for_webview2_document_element() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
         assert!(script.contains("window.__CARRIER_HEARTBEAT_ID__ = 42;"));
+        assert!(script.contains("window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = true;"));
+        assert!(
+            init_script(&Settings::default(), 42, "test-reveal-token", false)
+                .contains("window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = false;")
+        );
         assert!(script.contains("test-reveal-token"));
         assert!(script.contains("if (window.top !== window.self) return;"));
         assert!(script.contains("if (!document.documentElement) return false;"));
@@ -1443,7 +1482,7 @@ mod tests {
 
     #[test]
     fn privileged_bridges_emit_signed_payloads_instead_of_raw_tokens() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("name: 'HMAC', hash: 'SHA-256'"));
         assert!(script.contains("false, ['sign', 'verify']"));
@@ -1459,7 +1498,7 @@ mod tests {
 
     #[test]
     fn native_call_factory_waits_for_the_authenticated_result() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script
             .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];"));
@@ -1474,7 +1513,7 @@ mod tests {
 
     #[test]
     fn quick_reply_results_use_the_authenticated_emit_bridge() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("return carrierAuthorizedEmit('carrier:reply-result'"));
         assert!(script.contains("carrierReplyResult(id, attempt, ok)"));
@@ -1482,7 +1521,7 @@ mod tests {
 
     #[test]
     fn copy_image_bridge_goes_through_the_native_call_factory() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("'carrier:copy-image', 'copied'"));
         assert!(script.contains("data_url: dataUrl, action: action"));
@@ -1491,7 +1530,7 @@ mod tests {
 
     #[test]
     fn share_download_bridge_goes_through_the_native_call_factory() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("carrier:claim-context-action"));
         assert!(script.contains("carrier:prepare-download"));
@@ -1503,7 +1542,7 @@ mod tests {
 
     #[test]
     fn choose_download_bridge_goes_through_the_native_call_factory() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("'carrier:choose-download', 'chosen'"));
         assert!(script.contains("{ url: url, name: name }, true, 'cancelled'"));
@@ -1514,7 +1553,7 @@ mod tests {
 
     #[test]
     fn context_menu_bridge_goes_through_the_native_call_factory() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
         assert!(script.contains("'carrier:context-menu', 'shown'"));
         assert!(script.contains("{ items: items }, true"));
@@ -1524,7 +1563,7 @@ mod tests {
     #[cfg(all(feature = "mcp", debug_assertions))]
     #[test]
     fn mcp_init_script_can_inspect_the_local_connectivity_screen() {
-        let script = init_script(&Settings::default(), 42, "test-reveal-token");
+        let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
         let local_branch = script
             .find("if (carrierHost === 'tauri.localhost')")
             .unwrap();

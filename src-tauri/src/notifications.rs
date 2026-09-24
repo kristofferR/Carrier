@@ -1263,6 +1263,8 @@ fn linux_notification_owner(
 const MAX_QUICK_REPLY_CHARS: usize = 2_000;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const QUICK_REPLY_DRAFT_TIMEOUT: Duration = Duration::from_secs(45);
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_PENDING_PAGE_REPLIES: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1498,7 +1500,12 @@ fn register_pending_page_reply(
         thread_path.to_string(),
         text.to_string(),
         mode,
-        Instant::now() + QUICK_REPLY_ACK_TIMEOUT,
+        Instant::now()
+            + match mode {
+                PendingReplyMode::Send => QUICK_REPLY_ACK_TIMEOUT,
+                // A fallback can wait behind scheduled delivery before navigation.
+                PendingReplyMode::Draft => QUICK_REPLY_DRAFT_TIMEOUT,
+            },
     );
 }
 
@@ -2269,6 +2276,55 @@ fn activate_notification(
             let _ = w.eval(script);
         }
     });
+}
+
+/// Delivery warnings are operational alerts, independent of muted incoming
+/// chats. Fixed copy never exposes the account, recipient, or message text.
+pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
+    let title = "Scheduled message needs attention";
+    let body = "A scheduled message was missed or its send could not be confirmed. Carrier will not retry it. Open Schedule send to review.";
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        deliver_notification_macos(
+            title,
+            body,
+            0,
+            None,
+            false,
+            MacNotificationOptions::default(),
+        );
+    }
+    #[cfg(target_os = "windows")]
+    crate::windows::toast::deliver_notification_windows(
+        app,
+        crate::windows::toast::WindowsToastOptions {
+            title: title.into(),
+            body: body.into(),
+            avatar: None,
+            image: None,
+            sound: false,
+            native_id: 0,
+            page_id: None,
+            thread_path: None,
+            reply_eligible: false,
+            is_sync_alert: true,
+        },
+    );
+    #[cfg(target_os = "linux")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            show_linux_notification(title, body, None, false, false, move |(response, token)| {
+                if matches!(
+                    response,
+                    LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
+                ) {
+                    activate_notification(app, 0, None, None, token);
+                }
+            })
+        });
+    }
 }
 
 #[cfg(test)]

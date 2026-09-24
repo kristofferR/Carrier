@@ -1,30 +1,40 @@
 import { diag } from "../bridge";
 import {
   composerContainsReply,
+  composerIncludesReply,
   decideQuickReply,
   type QuickReplyPhase,
   type QuickReplySnapshot,
 } from "../lib/quick-reply";
+import {
+  composerControls,
+  composerText,
+  findSendButton,
+  hasComposerMedia,
+} from "../lib/scheduled-composer";
+import { withComposerDelivery, withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
-import { buttonByLabel, firstShown } from "./conversation-actions";
+import { firstShown } from "./conversation-actions";
 
 const POLL_MS = 250;
 const DELIVERY_BUDGET_MS = 12_000;
 const MAX_REPLY_CHARS = 2_000;
 const COMPOSER_SELECTOR =
   '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+const insertedReplies = new Map<number, { path: string; text: string }>();
+interface ReplyAttempt {
+  attempt: number;
+  cancelled: boolean;
+  clicked: boolean;
+  sent: boolean;
+}
+const replyAttempts = new Map<number, ReplyAttempt>();
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 
 const currentThreadId = () => threadIdFromHref(location.pathname);
 
 const composer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
-
-const sendButton = () => {
-  const root = document.querySelector('[role="main"]');
-  if (!root) return null;
-  return buttonByLabel(["press enter to send", "send message"], root);
-};
 
 const emitReplyResult = (id: number, attempt: number, ok: boolean) => {
   carrierReplyResult(id, attempt, ok).catch(() =>
@@ -41,7 +51,12 @@ const validRequest = (path: string, text: string, id: number, attempt: number) =
   Number.isSafeInteger(attempt) &&
   attempt > 0;
 
-async function deliver(path: string, text: string): Promise<boolean> {
+async function deliver(
+  path: string,
+  text: string,
+  id: number,
+  state: ReplyAttempt,
+): Promise<boolean> {
   const wantedThread = threadPathId(path);
   if (
     !wantedThread ||
@@ -53,46 +68,85 @@ async function deliver(path: string, text: string): Promise<boolean> {
 
   const deadline = Date.now() + DELIVERY_BUDGET_MS;
   let phase: QuickReplyPhase = "waiting";
-  while (true) {
+  let controls = new Map<HTMLElement, string>();
+  let manualSubmitted = false;
+  const onKeydown = (event: KeyboardEvent) => {
+    if (
+      event.isTrusted &&
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      phase === "inserted" &&
+      composer()?.contains(event.target as Node)
+    )
+      manualSubmitted = true;
+  };
+  const onClick = (event: MouseEvent) => {
     const box = composer();
-    const button = phase === "inserted" ? sendButton() : null;
-    const snapshot: QuickReplySnapshot = {
-      threadMatches: currentThreadId() === wantedThread,
-      composerReady: box !== null,
-      draftMatches: composerContainsReply(box?.textContent || null, text),
-      sendAvailable: button !== null,
-      composerEmpty: !(box?.textContent || "").trim(),
-    };
-    const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
-    phase = decision.phase;
+    if (
+      event.isTrusted &&
+      phase === "inserted" &&
+      box &&
+      event.target instanceof Node &&
+      findSendButton(box, controls)?.contains(event.target)
+    )
+      manualSubmitted = true;
+  };
+  document.addEventListener("keydown", onKeydown, true);
+  document.addEventListener("click", onClick, true);
+  try {
+    while (true) {
+      if (state.cancelled) return false;
+      const box = composer();
+      if (box && hasComposerMedia(box)) return false;
+      const button = phase === "inserted" && box ? findSendButton(box, controls) : null;
+      const snapshot: QuickReplySnapshot = {
+        threadMatches: currentThreadId() === wantedThread,
+        composerReady: box !== null,
+        draftMatches: composerContainsReply(box ? composerText(box) : null, text),
+        sendAvailable: button !== null,
+        composerEmpty: !box || !composerText(box).trim(),
+        manualSubmitted,
+      };
+      const decision = decideQuickReply(phase, snapshot, Date.now() >= deadline);
+      phase = decision.phase;
 
-    switch (decision.action) {
-      case "wait":
-        await pause();
-        break;
-      case "insert": {
-        if (!box) return false;
-        box.focus();
-        if (!document.execCommand("insertText", false, text)) {
-          diag("quick-reply.insert", "composer rejected insertText");
-          return false;
+      switch (decision.action) {
+        case "wait":
+          await pause();
+          break;
+        case "insert": {
+          if (!box) return false;
+          controls = composerControls(box);
+          box.focus();
+          if (!document.execCommand("insertText", false, text)) {
+            diag("quick-reply.insert", "composer rejected insertText");
+            return false;
+          }
+          insertedReplies.set(id, { path, text });
+          break;
         }
-        break;
+        case "send":
+          if (state.cancelled) return false;
+          state.clicked = true;
+          button?.click();
+          await pause();
+          break;
+        case "success":
+          insertedReplies.delete(id);
+          return true;
+        case "failure":
+          diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
+          return false;
       }
-      case "send":
-        button?.click();
-        await pause();
-        break;
-      case "success":
-        return true;
-      case "failure":
-        diag("quick-reply.delivery", `reply flow stopped in ${phase}`);
-        return false;
     }
+  } finally {
+    document.removeEventListener("keydown", onKeydown, true);
+    document.removeEventListener("click", onClick, true);
   }
 }
 
-async function preserveDraft(path: string, text: string): Promise<boolean> {
+async function preserveDraft(path: string, text: string, id: number): Promise<boolean> {
   const wantedThread = threadPathId(path);
   if (
     !wantedThread ||
@@ -106,11 +160,19 @@ async function preserveDraft(path: string, text: string): Promise<boolean> {
     if (currentThreadId() === wantedThread && box) {
       box.focus();
       if (!text) return true;
-      if (composerContainsReply(box.textContent, text)) return true;
+      const inserted = insertedReplies.get(id);
+      const current = composerText(box);
+      if (
+        composerContainsReply(current, text) ||
+        (inserted?.path === path && inserted.text === text && composerIncludesReply(current, text))
+      ) {
+        insertedReplies.delete(id);
+        return true;
+      }
       // This fallback never sends automatically. Preserve both pieces when a
       // draft already exists instead of acknowledging and dropping the native
       // reply that brought the user here.
-      if ((box.textContent || "").trim()) {
+      if (current.trim()) {
         const selection = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(box);
@@ -121,12 +183,14 @@ async function preserveDraft(path: string, text: string): Promise<boolean> {
           diag("quick-reply.draft", "fallback append failed");
           return false;
         }
+        insertedReplies.delete(id);
         return true;
       }
       if (!document.execCommand("insertText", false, text)) {
         diag("quick-reply.draft", "fallback insertText failed");
         return false;
       }
+      insertedReplies.delete(id);
       return true;
     }
     await pause();
@@ -142,8 +206,17 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void deliver(path, text)
-      .then((ok) => emitReplyResult(id, attempt, ok))
+    const previous = replyAttempts.get(id);
+    if (previous && previous.attempt >= attempt) return;
+    const state: ReplyAttempt = { attempt, cancelled: false, clicked: false, sent: false };
+    replyAttempts.set(id, state);
+    if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value!);
+    void withComposerDelivery(async () => {
+      const ok = await deliver(path, text, id, state);
+      state.sent = ok;
+      return ok;
+    })
+      .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.exception", "reply flow raised an exception");
         emitReplyResult(id, attempt, false);
@@ -162,8 +235,22 @@ export function initQuickReply() {
       emitReplyResult(id, attempt, false);
       return;
     }
-    void preserveDraft(path, text)
-      .then((ok) => emitReplyResult(id, attempt, ok))
+    let state = replyAttempts.get(id);
+    if (state && state.attempt > attempt) return;
+    if (!state || state.attempt < attempt) {
+      if (state) {
+        state.cancelled = true;
+        state.attempt = attempt;
+      } else {
+        state = { attempt, cancelled: true, clicked: false, sent: false };
+        replyAttempts.set(id, state);
+        if (replyAttempts.size > 128) replyAttempts.delete(replyAttempts.keys().next().value!);
+      }
+    }
+    void withComposerDeliveryWhenAvailable(() =>
+      state?.clicked || state?.sent ? Promise.resolve(true) : preserveDraft(path, text, id),
+    )
+      .then((ok) => emitReplyResult(id, attempt, ok === true))
       .catch(() => {
         diag("quick-reply.draft", "fallback draft flow raised an exception");
         emitReplyResult(id, attempt, false);

@@ -40,6 +40,7 @@ mod menu;
 mod notifications;
 mod preflight;
 mod render_recovery;
+mod scheduled_send;
 mod settings;
 mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
@@ -1015,11 +1016,12 @@ pub fn run() {
     );
     #[cfg(not(all(feature = "mcp", debug_assertions)))]
     let mcp_socket_override: Option<std::path::PathBuf> = None;
-    if should_enforce_single_instance(
+    let single_instance = should_enforce_single_instance(
         initial.multi_instance,
         cfg!(all(feature = "mcp", debug_assertions)),
         is_isolated_mcp_socket(mcp_socket_override.as_deref()),
-    ) {
+    );
+    if single_instance {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(action) = cli::parse_launch_action(argv) {
                 actions::run_app_action(app, action);
@@ -1102,6 +1104,7 @@ pub fn run() {
         )
         .manage(AppState {
             settings: Mutex::new(initial.clone()),
+            scheduled_send_available: single_instance,
             settings_worker: tokio::sync::Mutex::new(()),
             tray: Mutex::new(None),
             next_window: AtomicUsize::new(2),
@@ -1971,7 +1974,7 @@ pub fn run() {
         })
         .build(app_context())
         .expect("error while building Carrier")
-        .run(|app, event| {
+        .run(move |app, event| {
             // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
             // Re-render on the native scale event even when Messenger is idle
             // and therefore not emitting the unread fallback refresh.
@@ -2001,6 +2004,9 @@ pub fn run() {
                     install_dock_menu_provider();
                     macos::power::observe_system_sleep(app);
                 }
+                // Expired schedules can notify immediately. Start after native
+                // notification setup, including on a cold macOS launch.
+                scheduled_send::install(app, single_instance);
             }
 
             #[cfg(target_os = "linux")]

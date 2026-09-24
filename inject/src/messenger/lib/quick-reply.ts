@@ -6,6 +6,7 @@ export interface QuickReplySnapshot {
   draftMatches: boolean;
   sendAvailable: boolean;
   composerEmpty: boolean;
+  manualSubmitted: boolean;
 }
 
 export type QuickReplyDecision =
@@ -42,9 +43,15 @@ export function decideQuickReply(
   }
 
   if (phase === "inserted") {
-    if (!snapshot.draftMatches || !snapshot.sendAvailable) {
+    if (snapshot.manualSubmitted) {
+      if (snapshot.composerEmpty) return { action: "success", phase: "confirming" };
+      return expired ? { action: "failure", phase } : { action: "wait", phase };
+    }
+    if (expired || !snapshot.draftMatches) {
       return { action: "failure", phase };
     }
+    // Lexical updates the draft before React mounts/enables its send control.
+    if (!snapshot.sendAvailable) return { action: "wait", phase };
     return { action: "send", phase: "confirming" };
   }
 
@@ -54,4 +61,7 @@ export function decideQuickReply(
 }
 
 export const composerContainsReply = (content: string | null, reply: string): boolean =>
-  reply.length > 0 && (content || "").includes(reply);
+  reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
+
+export const composerIncludesReply = (content: string | null, reply: string): boolean =>
+  reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));

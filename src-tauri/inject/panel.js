@@ -105,12 +105,15 @@
       carrierRevealDownload(action.url)?.catch?.(() => {
       });
     });
-    const showToast = (msg, nextAction) => {
+    const showToast = (msg, nextAction, options) => {
       if (!mounted) {
         document.body.appendChild(toastEl);
         mounted = true;
       }
       action = nextAction;
+      toastEl.setAttribute("role", options?.warning ? "alert" : "status");
+      toastEl.setAttribute("aria-live", options?.warning ? "assertive" : "polite");
+      toastEl.style.border = options?.warning ? "1px solid #b58130" : "none";
       message.textContent = msg;
       toastEl.replaceChildren(message);
       toastEl.style.pointerEvents = action ? "auto" : "none";
@@ -134,7 +137,7 @@
             action = void 0;
           }, 250);
         },
-        action ? 6e3 : 2600
+        options?.warning ? 8e3 : action ? 6e3 : 2600
       );
     };
     Object.defineProperty(window, "__carrierToast", {
