@@ -8814,9 +8814,21 @@ ${text}`)) {
         if (!editingItem || recoveredDraft) {
           const textToClear = recoveredDraft ? editingItem?.text ?? "" : expectedText;
           const unchanged = expectedBox?.isConnected && thread() === expectedThread && account() === current && composerText(expectedBox) === textToClear && !hasComposerMedia(expectedBox);
-          if (!unchanged || !expectedBox || !replaceComposerText(expectedBox, "") || composerText(expectedBox).trim()) {
+          if (!unchanged || !expectedBox) {
             if (!editingItem) await request({ op: "cancel", id: result.saved });
-            throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
+            throw new Error("Your draft changed. The message was not scheduled.");
+          }
+          const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
+          replaceComposerText(expectedBox, "");
+          for (let attempt = 0; attempt < 10; attempt++) {
+            await pause2();
+            if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
+          }
+          if (!sameComposer() || composerText(expectedBox).trim()) {
+            close();
+            throw new Error(
+              "Draft clearing could not be confirmed. Your message is saved but not scheduled."
+            );
           }
         }
         if (!editingItem || recoveredDraft) {

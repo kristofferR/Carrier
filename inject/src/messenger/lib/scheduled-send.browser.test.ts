@@ -456,10 +456,19 @@ async function fixtures(
     assert("Escape closes", !document.querySelector(".carrier-schedule-panel"));
     icon()?.click();
     await settle();
+    const nativeExecCommand = document.execCommand.bind(document);
+    document.execCommand = (command, showUI, value) => {
+      if (command === "delete") {
+        setTimeout(() => nativeExecCommand(command, showUI, value), 50);
+        return true;
+      }
+      return nativeExecCommand(command, showUI, value);
+    };
     document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
-    await settle();
+    await settle(250);
+    document.execCommand = nativeExecCommand;
     assert(
-      "scheduling durably saves, clears, then arms automatic delivery",
+      "scheduling waits for the editor to clear before arming automatic delivery",
       page.scheduleOps.indexOf("save") < page.scheduleOps.indexOf("arm") &&
         page.scheduleItems[0]?.status === "scheduled" &&
         !box.innerText.trim(),
@@ -631,6 +640,40 @@ async function fixtures(
         !box.innerText.trim() &&
         page.warnings.some((warning) => warning.includes("Message scheduled for")),
     );
+    page.loseArmReply = false;
+    for (const interruption of ["unchanged", "edited", "navigated"] as const) {
+      clear();
+      page.scheduleItems = [];
+      box.textContent = "Keep this unscheduled draft";
+      await settle();
+      icon()?.click();
+      await settle();
+      const opsBeforeClear = page.scheduleOps.length;
+      document.execCommand = (command, showUI, value) => {
+        if (command !== "delete") return nativeExecCommand(command, showUI, value);
+        if (interruption !== "unchanged")
+          setTimeout(() => {
+            if (interruption === "edited") box.textContent = "User edited the draft";
+            else {
+              nativeExecCommand(command, showUI, value);
+              history.pushState(null, "", "/messages/t/999/");
+            }
+          }, 50);
+        return false;
+      };
+      document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+      await settle(1_200);
+      document.execCommand = nativeExecCommand;
+      assert(
+        `${interruption} clear preserves the saved copy without arming or cancelling`,
+        page.scheduleItems[0]?.status === "draft" &&
+          page.scheduleItems[0]?.text === "Keep this unscheduled draft" &&
+          !page.scheduleOps.slice(opsBeforeClear).some((op) => op === "arm" || op === "cancel"),
+      );
+      if (interruption === "edited")
+        assert("intervening user edit is preserved", box.innerText === "User edited the draft");
+      history.replaceState(null, "", "/messages/t/456/");
+    }
     clear();
     result.textContent = "PASS";
   } catch (error) {

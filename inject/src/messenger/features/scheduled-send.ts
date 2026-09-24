@@ -359,14 +359,28 @@ export function initScheduledSend() {
           account() === current &&
           composerText(expectedBox) === textToClear &&
           !hasComposerMedia(expectedBox);
-        if (
-          !unchanged ||
-          !expectedBox ||
-          !replaceComposerText(expectedBox, "") ||
-          composerText(expectedBox).trim()
-        ) {
+        if (!unchanged || !expectedBox) {
           if (!editingItem) await request({ op: "cancel", id: result.saved });
-          throw new Error("Draft changed or could not be cleared. The message was not scheduled.");
+          throw new Error("Your draft changed. The message was not scheduled.");
+        }
+        const sameComposer = () =>
+          expectedBox.isConnected &&
+          findComposer() === expectedBox &&
+          thread() === expectedThread &&
+          account() === current &&
+          !hasComposerMedia(expectedBox);
+        replaceComposerText(expectedBox, "");
+        // Messenger applies editor changes asynchronously, after execCommand returns.
+        for (let attempt = 0; attempt < 10; attempt++) {
+          await pause();
+          if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
+        }
+        if (!sameComposer() || composerText(expectedBox).trim()) {
+          // Keep the saved copy unarmed if the editor's outcome is uncertain.
+          close();
+          throw new Error(
+            "Draft clearing could not be confirmed. Your message is saved but not scheduled.",
+          );
         }
       }
       // Recovered drafts also need the composer-clear handshake before arming.
