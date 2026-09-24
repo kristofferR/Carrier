@@ -16,6 +16,9 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
     state: unknown = null,
     loadCount = 0;
   let effect: () => (() => void) | undefined = () => undefined;
+  const owner = { current: {} };
+  let layoutIndex = 0;
+  const layoutCleanups: (() => void)[] = [];
   const react = {
     createElement: (component: unknown, props: unknown) => ({ component, props }),
     useSyncExternalStore: (_subscribe: unknown, snapshot: () => NicknameMode) => snapshot(),
@@ -25,7 +28,13 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
         state = next;
       },
     ],
-    useLayoutEffect: (commit: () => void) => commit(),
+    useRef: () => owner,
+    useLayoutEffect: (commit: () => undefined | (() => void)) => {
+      const index = layoutIndex++;
+      layoutCleanups[index]?.();
+      const cleanup = commit();
+      layoutCleanups[index] = typeof cleanup === "function" ? cleanup : () => {};
+    },
     useEffect: (next: typeof effect) => {
       effect = next;
     },
@@ -54,8 +63,10 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
     snippetRaw: "vault:Captain: hello Captain 🙂",
     thread: { threadKey: "123" },
   });
-  const render = (input: unknown = props) =>
-    exports.default(input) as { component: unknown; props: { snippetRaw: string } };
+  const render = (input: unknown = props) => {
+    layoutIndex = 0;
+    return exports.default(input) as { component: unknown; props: { snippetRaw: string } };
+  };
   expect(render().props).toBe(props);
   effect();
   await Promise.resolve();
@@ -76,8 +87,12 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
   expect(loadCount).toBe(2);
   mode = "off";
   expect(render({ ...props, isDraftMessage: true }).props.snippetRaw).toBe(props.snippetRaw);
+  expect(prefixes.isDraft("123", "Captain: hello Captain 🙂")).toBe(false);
   expect(prefixes.original("123", "Alex: draft")).toBe("Alex: draft");
-  expect(render({ ...props, snippetRaw: "New message" }).props.snippetRaw).toBe("New message");
+  expect(render({ ...props, snippetRaw: "Draft: ready for review" }).props.snippetRaw).toBe(
+    "Draft: ready for review",
+  );
+  expect(prefixes.isDraft("123", "Captain: hello Captain 🙂")).toBe(false);
   expect(props.snippetRaw).toBe("vault:Captain: hello Captain 🙂");
   // A late read from the previous conversation must not update a reused row.
   render();
@@ -86,6 +101,27 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
   cleanup?.();
   await Promise.resolve();
   expect(state).toBeNull();
+});
+
+test("draft state follows the mounted preview when a thread has duplicate rows", () => {
+  const prefixes = new NativeSnippetPrefixes();
+  const draft = {};
+  const real = {};
+  prefixes.rememberDraft("123", draft, "Draft: reply", true);
+  prefixes.rememberDraft("123", real, "Incoming message", false);
+  expect(prefixes.isDraft("123", "Draft: reply")).toBe(true);
+  prefixes.rememberDraft("123", draft, "ready for review", true);
+  expect(prefixes.isDraft("123", "Utkast: ready for review")).toBe(true);
+  expect(prefixes.isDraft("123", "Draft:")).toBe(true);
+  expect(prefixes.isDraft("123", "Utkast:")).toBe(true);
+  prefixes.rememberDraft("123", draft, "hello", true);
+  expect(prefixes.isDraft("123", "hello")).toBe(false);
+  expect(prefixes.isDraft("123", "Alice: hello")).toBe(false);
+  expect(prefixes.isDraft("123", "Nachricht: different message")).toBe(false);
+  expect(prefixes.isDraft("123", "Incoming message")).toBe(false);
+  prefixes.rememberDraft("123", draft, "Incoming message", false);
+  expect(prefixes.isDraft("123", "Draft: reply")).toBe(false);
+  expect(prefixes.isDraft("123", "Draft:")).toBe(false);
 });
 
 test("sidebar settings preserve notification identity before preview truncation and emoji rendering", () => {

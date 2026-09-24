@@ -3535,6 +3535,31 @@
   var NativeSnippetPrefixes = class {
     constructor() {
       __publicField(this, "entries", /* @__PURE__ */ new Map());
+      __publicField(this, "drafts", /* @__PURE__ */ new Map());
+    }
+    rememberDraft(thread2, owner, snippet, draft) {
+      if (!/^\d+$/.test(thread2)) return;
+      if (!draft) return this.forgetDraft(thread2, owner);
+      const entries = this.drafts.get(thread2) ?? /* @__PURE__ */ new Map();
+      entries.set(owner, snippet.replace(/\s+/g, " ").trim());
+      this.drafts.set(thread2, entries);
+    }
+    forgetDraft(thread2, owner) {
+      const entries = this.drafts.get(thread2);
+      entries?.delete(owner);
+      if (entries?.size === 0) this.drafts.delete(thread2);
+    }
+    isDraft(thread2, body) {
+      const preview = body.replace(/\s+/g, " ").trim();
+      const drafts = this.drafts.get(thread2);
+      if (!drafts?.size) return false;
+      const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
+      if (!label) return false;
+      if (preview === label.trim()) return true;
+      return [...drafts.values()].some((snippet) => {
+        if (snippet.slice(0, 240) === preview) return true;
+        return `${label}${snippet}`.slice(0, 240) === preview;
+      });
     }
     remember(thread2, original, displayed) {
       this.entries.delete(thread2);
@@ -3561,14 +3586,15 @@
     const react = importModule("react");
     const i64 = importModule("I64");
     const vault = importModule("ReStoreVaulting");
-    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
+    if (typeof react?.createElement !== "function" || typeof react.useSyncExternalStore !== "function" || typeof react.useState !== "function" || typeof react.useRef !== "function" || typeof react.useEffect !== "function" || typeof react.useLayoutEffect !== "function" || typeof i64?.to_string !== "function" || typeof vault?.maybeUnvault !== "function")
       return;
-    const { createElement, useSyncExternalStore, useState, useEffect, useLayoutEffect } = react;
+    const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react;
     const { to_string: threadKey } = i64;
     const { maybeUnvault } = vault;
     const component = function CarrierNicknameSnippet(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
+      const owner = useRef({}).current;
       const record2 = props && typeof props === "object" ? props : {};
       const thread2 = record2.thread;
       let key = "", snippet = "";
@@ -3606,6 +3632,10 @@
       useLayoutEffect(() => {
         prefixes.remember(key, originalPrefix, displayedPrefix);
       }, [key, originalPrefix, displayedPrefix]);
+      useLayoutEffect(() => {
+        prefixes.rememberDraft(key, owner, snippet, draft);
+        return () => prefixes.forgetDraft(key, owner);
+      }, [key, owner, snippet, draft]);
       return createElement(
         original,
         displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
@@ -6070,7 +6100,12 @@
   var BODY_PREFIX_LIMIT = 240;
   var PAGE_RECEIPT_LIMIT = 20;
   var PAGE_NOTIFICATION_RECEIPT_TTL_MS = 12e4;
-  var receiptMatch = (receipt) => receipt.nativeDelivery === void 0 ? { nativeId: receipt.nativeId } : { nativeId: receipt.nativeId, nativeDelivery: receipt.nativeDelivery };
+  var DRAFT_RECEIPT_TTL_MS = 24 * 60 * 60 * 1e3;
+  var receiptMatch = (receipt) => ({
+    nativeId: receipt.nativeId,
+    ...receipt.nativeDelivery === void 0 ? {} : { nativeDelivery: receipt.nativeDelivery },
+    ...receipt.suppressedDraft ? { suppressedDraft: true } : {}
+  });
   var opaqueTextIdentity = (value, prefixLimit) => {
     const prefixes = [];
     const lastPrefix = Math.min(value.length - 1, prefixLimit);
@@ -6100,6 +6135,9 @@
   };
   var opaqueNotificationMatches = (left, right) => {
     if (!opaqueTextMatches(left.title, right.title)) return false;
+    return opaqueNotificationBodyMatches(left, right);
+  };
+  var opaqueNotificationBodyMatches = (left, right) => {
     if (left.body.length === 0 || right.body.length === 0) return true;
     if (opaqueTextMatches(left.body, right.body)) return true;
     const sendersCompatible = left.sender === null || right.sender === null || left.sender === right.sender;
@@ -6227,23 +6265,36 @@
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
       __publicField(this, "receipts", []);
+      __publicField(this, "draftMismatches", new StableMismatchTracker(1e3));
       try {
         const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
         if (Array.isArray(parsed)) {
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && now - candidate.at <= (candidate.draftThread === void 0 ? this.ttlMs : DRAFT_RECEIPT_TTL_MS)) {
               this.receipts.push(candidate);
             }
           }
         }
       } catch (_) {
       }
-      if (this.receipts.length > PAGE_RECEIPT_LIMIT) {
-        this.receipts.splice(0, this.receipts.length - PAGE_RECEIPT_LIMIT);
-      }
+      this.trimReceipts();
       this.persist();
+    }
+    trimReceipts() {
+      let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
+      let drafts = this.receipts.length - ordinary;
+      for (let index = 0; ordinary > PAGE_RECEIPT_LIMIT || drafts > PAGE_RECEIPT_LIMIT; ) {
+        const draft = Boolean(this.receipts[index].draftThread);
+        if ((draft ? drafts : ordinary) > PAGE_RECEIPT_LIMIT) {
+          this.receipts.splice(index, 1);
+          if (draft) drafts--;
+          else ordinary--;
+        } else {
+          index++;
+        }
+      }
     }
     persist() {
       try {
@@ -6255,17 +6306,23 @@
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const age = now - this.receipts[index].at;
-        if (age < 0 || age > this.ttlMs) {
+        const ttl = this.receipts[index].draftThread ? DRAFT_RECEIPT_TTL_MS : this.ttlMs;
+        if (age < 0 || age > ttl) {
           this.receipts.splice(index, 1);
           changed = true;
         }
       }
       if (changed) this.persist();
     }
-    add(title, body, nativeId, at = Date.now()) {
+    add(title, body, nativeId, at = Date.now(), draft) {
       this.prune(at);
-      this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
-      if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
+      this.receipts.push({
+        at,
+        nativeId,
+        identity: opaqueNotificationIdentity(title, body),
+        ...draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }
+      });
+      this.trimReceipts();
       this.persist();
     }
     recordDelivery(nativeId, delivery) {
@@ -6274,13 +6331,57 @@
       receipt.nativeDelivery = delivery;
       this.persist();
     }
+    retainForDraft(nativeId, threadKey) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.draftThread = hashText(threadKey);
+      this.trimReceipts();
+      this.persist();
+    }
+    retainSuppressedDraft(nativeId, threadKey) {
+      const receipt = this.receipts.find((candidate) => candidate.nativeId === nativeId);
+      if (!receipt) return;
+      receipt.draftThread = hashText(threadKey);
+      receipt.suppressedDraft = true;
+      this.trimReceipts();
+      this.persist();
+    }
+    retireDraftsWithDifferentPreview(rows, now = Date.now()) {
+      this.prune(now);
+      const previews = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        const key = hashText(row.key);
+        const identities = previews.get(key) ?? [];
+        identities.push(opaqueNotificationIdentity(row.title, row.body));
+        previews.set(key, identities);
+      }
+      const mismatches = [];
+      for (const receipt of this.receipts) {
+        if (!receipt.draftThread) continue;
+        const identities = previews.get(receipt.draftThread);
+        if (!identities?.length || identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity)) || identities.some((identity) => identity.body.full !== identities[0].body.full))
+          continue;
+        mismatches.push([`${receipt.at}:${receipt.nativeId}`, identities[0].body.full]);
+      }
+      const observation = this.draftMismatches.observe(mismatches, now);
+      if (!observation.recovered.length) return observation.confirmInMs;
+      const retired = new Set(observation.recovered);
+      const remaining = this.receipts.filter(
+        (receipt) => !retired.has(`${receipt.at}:${receipt.nativeId}`)
+      );
+      this.receipts.splice(0, this.receipts.length, ...remaining);
+      this.persist();
+      return observation.confirmInMs;
+    }
     consumeMatching(row, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return null;
       const identity = opaqueNotificationIdentity(row.title, row.body);
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
-        if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
+        if (!(receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)))
+          continue;
         this.receipts.splice(index, 1);
         this.persist();
         return receiptMatch(receipt);
@@ -6295,7 +6396,7 @@
      * ambiguous receipt is DROPPED instead: Messenger virtualizes the list, so
      * waiting for a unique match could just as well settle it onto the wrong
      * twin once the other scrolls away. Duplicate anchors for one thread count
-     * as a single row.
+     * as a single row. A draft receipt also requires its known thread key.
      */
     consumeUniquelyMatching(rows, now = Date.now()) {
       this.prune(now);
@@ -6303,24 +6404,33 @@
       if (!this.receipts.length) return consumed;
       const identities = /* @__PURE__ */ new Map();
       for (const row of rows) {
-        if (!identities.has(row.key)) {
-          identities.set(row.key, opaqueNotificationIdentity(row.title, row.body));
-        }
+        const matches = identities.get(row.key) ?? [];
+        matches.push(opaqueNotificationIdentity(row.title, row.body));
+        identities.set(row.key, matches);
       }
       const remove = [];
       for (let index = 0; index < this.receipts.length; index++) {
         const receipt = this.receipts[index];
         let match = null;
         let ambiguous = false;
-        for (const [key, identity] of identities) {
-          if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
+        let defer = false;
+        for (const [key, candidates] of identities) {
+          if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
+          if (!candidates.some(
+            (identity) => receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)
+          ))
+            continue;
+          if (candidates.some((identity) => identity.body.full !== candidates[0].body.full)) {
+            if (receipt.draftThread) defer = true;
+            else ambiguous = true;
+          }
           if (match !== null && match !== key) {
             ambiguous = true;
             break;
           }
           match = key;
         }
-        if (match === null) continue;
+        if (match === null || defer) continue;
         remove.push(index);
         if (ambiguous || consumed.has(match)) continue;
         consumed.set(match, receiptMatch(receipt));
@@ -6336,17 +6446,23 @@
      * that message's only notification. This drops even when an unread twin
      * shares the text — the receipt's true thread is unknowable then, and a
      * duplicate fallback (absorbed by the native dedupe) beats misrouting the
-     * click or marking the wrong thread delivered.
+     * click or marking the wrong thread delivered. Draft receipts have a known
+     * thread, so only that row can retire them.
      */
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      const read = [...readRows].map((row) => ({
+        key: row.key ? hashText(row.key) : null,
+        identity: opaqueNotificationIdentity(row.title, row.body)
+      }));
       if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
-        if (!read.some((identity) => opaqueNotificationMatches(receipt.identity, identity))) {
+        if (!read.some(
+          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
+        )) {
           continue;
         }
         this.receipts.splice(index, 1);
@@ -6413,6 +6529,34 @@
       signal.settleMatch?.();
       return signal;
     }
+    /** A unique draft title can route every concurrent signal for that thread. */
+    consumeMatchingDraft(row, rowChangeAt, matchWindowMs, candidateRows) {
+      const candidates = [...candidateRows];
+      const matched = [];
+      for (let index = this.signals.length - 1; index >= 0; index--) {
+        const signal = this.signals[index];
+        const age = rowChangeAt - signal.at;
+        if (age > matchWindowMs) {
+          this.signals.splice(index, 1);
+          continue;
+        }
+        if (age < 0 || signal.draftTitleAmbiguous || !notificationTextMatches(signal.title, "", row.title, ""))
+          continue;
+        const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+        if (unique?.key !== row.key) {
+          if (!unique) {
+            if (signal.suppressedBeforeMatch) signal.draftTitleAmbiguous = true;
+            else this.signals.splice(index, 1);
+          }
+          continue;
+        }
+        this.signals.splice(index, 1);
+        signal.matched = true;
+        signal.settleMatch?.();
+        matched.push(signal);
+      }
+      return matched.reverse();
+    }
     discard(signal) {
       const index = this.signals.indexOf(signal);
       if (index !== -1) this.signals.splice(index, 1);
@@ -6448,6 +6592,9 @@
     }
     consumePageForRow(row, rowChangeAt, matchWindowMs, candidateRows) {
       return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+    }
+    consumePagesForDraft(row, rowChangeAt, matchWindowMs, candidateRows) {
+      return this.pages.consumeMatchingDraft(row, rowChangeAt, matchWindowMs, candidateRows);
     }
     discardPage(signal) {
       this.pages.discard(signal);
@@ -6645,6 +6792,15 @@
     const row = splitGroupSender(normalizedRowBody);
     const sendersCompatible = page.sender === null || row.sender === null || page.sender === row.sender;
     return titlesMatch && (!normalizedPageBody || !normalizedRowBody || matchesExactOrTruncated(normalizedPageBody, normalizedRowBody) || sendersCompatible && matchesExactOrTruncated(page.message, row.message));
+  }
+  function uniqueNotificationTitleMatch(title, rows) {
+    let match = null;
+    for (const row of rows) {
+      if (!notificationTextMatches(title, "", row.title, "")) continue;
+      if (match && match.key !== row.key) return null;
+      match = row;
+    }
+    return match;
   }
 
   // inject/src/messenger/lib/notification-images.ts
@@ -7160,6 +7316,14 @@
     };
     window.__carrierSenderAvatarStats = (thread2, sender) => thread2 === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread2, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
+    const cancelFallbackForDraftReceipt = (threadId, body) => {
+      if (!body) return;
+      const pending = notificationCorrelations.getRow(threadId);
+      if (!pending || pending.confirmedRepeat || !notificationTextMatches("", body, "", pending.body))
+        return;
+      clearTimeout(pending.timer);
+      notificationCorrelations.removeRow(threadId);
+    };
     let currentPageRouteCandidates = () => [];
     const waitForPageMatchWhileFiltering = (signal) => {
       const cancel = new AbortController();
@@ -7219,6 +7383,21 @@
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const retainSuppressedDraft = (id) => {
+        const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
+        if (!pageMatch.signal?.matchedDraft || !threadId) return;
+        pageNotificationReceipts.add(
+          String(title || "Messenger"),
+          String(opts.body || ""),
+          id,
+          Date.now(),
+          {
+            threadKey: threadId,
+            suppressed: true
+          }
+        );
+        cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
+      };
       if (!s.mute_notifications) {
         const hidePreviewAtConstruction = s.hide_notification_preview === true;
         const originalTitle = String(title || "Messenger");
@@ -7255,13 +7434,13 @@
         ]).then(([icon, , image, group]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
-          if (signal) notificationCorrelations.discardPage(signal);
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
           if (deliverySettings.mute_notifications === true) {
             pendingPageNotifications.remove(id);
           }
           if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
             diag("notify.unresolved", "page notification had no correlated thread identity");
+            if (signal) notificationCorrelations.discardPage(signal);
             return;
           }
           pendingPageNotifications.remove(id);
@@ -7277,6 +7456,8 @@
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
           if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
+            retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
               notifiedStore.markSuppressed(
@@ -7295,8 +7476,18 @@
             return;
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
-          if (pageMatch.signal && !pageMatch.signal.matched) {
-            pageNotificationReceipts.add(originalTitle, originalBody, id);
+          if (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
+            const draftThread = pageMatch.signal?.matchedDraft && threadId ? threadId : void 0;
+            pageNotificationReceipts.add(
+              originalTitle,
+              originalBody,
+              id,
+              Date.now(),
+              draftThread ? { threadKey: draftThread } : void 0
+            );
+            if (draftThread) {
+              cancelFallbackForDraftReceipt(draftThread, originalBody);
+            }
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
           const named = notificationNames(
@@ -7353,7 +7544,7 @@
             pageMatch.deliver.bodyHash
           );
         }
-        if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+        if (pageMatch.signal) pageMatch.signal.suppressedBeforeMatch = true;
       }
       try {
         window.__carrierOnNotification?.();
@@ -7544,6 +7735,7 @@
         displayTitle: text.title,
         body: text.body,
         displayBody,
+        draft: nativeSnippetPrefixes.isDraft(id, displayBody),
         // Every face the row draws, in render order. A photo-less group renders
         // several member images side by side, and no individual one of them is a
         // valid thread icon — taking just the first labelled every message in
@@ -7558,7 +7750,10 @@
         muted
       };
     };
-    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter((conversation) => Boolean(conversation?.body.length)).map(({ key, title, body }) => ({ key, title, body }));
+    currentPageRouteCandidates = () => chatRows().map(conversationFromLink).filter((conversation) => conversation !== null).map((conversation) => ({
+      ...conversation,
+      body: conversation.draft ? "" : conversation.body
+    }));
     function pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates) {
       const pageSignal = notificationCorrelations.consumePageForRow(
         conversation,
@@ -7575,6 +7770,10 @@
       const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
+      if (pageSignal.suppressedBeforeMatch) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        return true;
+      }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
       if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
       if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
@@ -7805,6 +8004,7 @@
     const readCandidates = /* @__PURE__ */ new Map();
     let lastScanAt = 0;
     const MAX_MUTATION_GRACE_MS = 9e4;
+    const rowMutationAt = /* @__PURE__ */ new Map();
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -7825,7 +8025,7 @@
         const observed = links.map(conversationFromLink).filter((conversation) => conversation !== null);
         for (const conversation of observed) rememberRowTitle(conversation.key, conversation.title);
         const conversations = observed.filter(
-          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body)
+          (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft
         );
         const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
         const notifyKeys = new Set(
@@ -7845,7 +8045,11 @@
           listHydrated
         );
         const hydrated = conversations.filter(({ body }) => body.length > 0);
-        const routeCandidates = observed.filter(({ body }) => body.length > 0);
+        const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
+        const pageRouteCandidates = observed.map((conversation) => ({
+          ...conversation,
+          body: conversation.draft ? "" : conversation.body
+        }));
         const hydratedReadKeys = new Set(
           listHydrated ? observed.filter(({ unread }) => !unread).map(({ key }) => key) : []
         );
@@ -7890,7 +8094,7 @@
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
-            observed.filter(({ body }) => body.length > 0).map(({ key }) => key),
+            routeCandidates.map(({ key }) => key),
             readObservedKeys,
             readTransitions
           )
@@ -7917,16 +8121,52 @@
         }
         for (const key of pendingArrivalKeys) {
           const row = observed.find((conversation) => conversation.key === key);
-          if (row && !conversations.some((conversation) => conversation.key === key)) {
+          if (row && (!row.unread || isOwnMessagePreview(row.body))) {
             pendingArrivalKeys.delete(key);
           }
         }
         pageNotificationReceipts.discardReadMatches(
-          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
           detectedAt
         );
         pendingPageNotifications.discardReadMatches(
-          observed.filter(({ unread, body }) => !unread && body.length > 0),
+          observed.filter(({ unread, body, draft }) => !unread && body.length > 0 && !draft),
+          detectedAt
+        );
+        for (const conversation of pageRouteCandidates) {
+          if (!conversation.draft) continue;
+          const mutationAt = rowMutationAt.get(conversation.key);
+          if (mutationAt === void 0 || detectedAt - mutationAt > PAGE_NOTIFICATION_RECOVERY_MS)
+            continue;
+          rowMutationAt.delete(conversation.key);
+          const signals = notificationCorrelations.consumePagesForDraft(
+            conversation,
+            mutationAt,
+            PAGE_NOTIFICATION_RECOVERY_MS,
+            pageRouteCandidates.map((row) => ({ ...row, body: "" }))
+          );
+          for (const signal of signals) {
+            if (signal.suppressedBeforeMatch) {
+              pageNotificationReceipts.add(signal.title, signal.body, ++notifySeq, detectedAt, {
+                threadKey: conversation.key,
+                suppressed: true
+              });
+              cancelFallbackForDraftReceipt(conversation.key, signal.body);
+              continue;
+            }
+            signal.matchedDraft = true;
+            signal.threadPath = conversation.threadPath;
+            signal.threadMuted = conversation.muted;
+            if (signal.nativeId !== void 0) {
+              pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
+            }
+            if (signal.emitted && signal.nativeId !== void 0) {
+              updateNotificationRoute(signal.nativeId, conversation.threadPath);
+            }
+          }
+        }
+        const draftConfirmInMs = pageNotificationReceipts.retireDraftsWithDifferentPreview(
+          observed.filter(({ body, draft }) => body.length > 0 && !draft),
           detectedAt
         );
         const pageReceipts = pageNotificationReceipts.consumeUniquelyMatching(hydrated, detectedAt);
@@ -7997,9 +8237,14 @@
             const pending = notificationCorrelations.getRow(conversation.key);
             if (pending) clearTimeout(pending.timer);
             notificationCorrelations.removeRow(conversation.key);
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
-            updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
-            reconciliation = "matched";
+            if (pageReceipt.suppressedDraft) {
+              notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+              changed.delete(conversation.key);
+            } else {
+              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
+            }
+            reconciliation = pageReceipt.suppressedDraft ? "suppressed" : "matched";
           }
           if (reconciliation === "repeated") {
             confirmedRepeats.add(conversation.key);
@@ -8025,11 +8270,9 @@
         const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
         clearTimeout(mismatchConfirmationTimer);
         mismatchConfirmationTimer = void 0;
-        if (mismatchObservation.confirmInMs !== null) {
-          mismatchConfirmationTimer = setTimeout(
-            scanUnreadConversations,
-            Math.max(1, mismatchObservation.confirmInMs)
-          );
+        const confirmInMs = draftConfirmInMs === null ? mismatchObservation.confirmInMs : mismatchObservation.confirmInMs === null ? draftConfirmInMs : Math.min(draftConfirmInMs, mismatchObservation.confirmInMs);
+        if (confirmInMs !== null) {
+          mismatchConfirmationTimer = setTimeout(scanUnreadConversations, Math.max(1, confirmInMs));
         }
         const recovered = mismatchObservation.recovered;
         if (recovered.length) {
@@ -8066,6 +8309,7 @@
     let scanScheduled = false;
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
+      const mutatedRows = /* @__PURE__ */ new Set();
       const inspect2 = (node) => {
         const element2 = node instanceof Element ? node : node.parentElement;
         if (!element2) return;
@@ -8080,11 +8324,37 @@
           if (key) changedKeys.add(key);
         }
       };
+      const inspectMutatedRow = (node) => {
+        const element2 = node instanceof Element ? node : node.parentElement;
+        if (!element2) return;
+        const link = element2.closest('a[href*="/t/"]');
+        if (link) {
+          const key2 = threadIdFromHref(link.getAttribute("href"));
+          if (key2) mutatedRows.add(key2);
+          return;
+        }
+        const row = element2.closest('[role="row"]');
+        if (!row) return;
+        const links = row.querySelectorAll('a[href*="/t/"]');
+        if (links.length !== 1) return;
+        const key = threadIdFromHref(links[0].getAttribute("href"));
+        if (key) mutatedRows.add(key);
+      };
       for (const record2 of records) {
         inspect2(record2.target);
-        for (const node of record2.addedNodes) inspect2(node);
+        inspectMutatedRow(record2.target);
+        for (const node of record2.addedNodes) {
+          inspect2(node);
+          inspectMutatedRow(node);
+        }
       }
-      unreadArrivals.markRowsChanged(changedKeys, Date.now());
+      const changedAt = Date.now();
+      unreadArrivals.markRowsChanged(changedKeys, changedAt);
+      for (const key of mutatedRows) {
+        rowMutationAt.delete(key);
+        rowMutationAt.set(key, changedAt);
+      }
+      while (rowMutationAt.size > 300) rowMutationAt.delete(rowMutationAt.keys().next().value);
       if (scanScheduled) return;
       scanScheduled = true;
       setTimeout(() => {

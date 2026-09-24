@@ -18,6 +18,7 @@ import {
   STABLE_READ_MS,
   StableMismatchTracker,
   UnreadArrivalTracker,
+  uniqueNotificationTitleMatch,
   waitForPageNotificationMatch,
 } from "./notification-fallback";
 
@@ -146,6 +147,25 @@ describe("ConversationNotificationTracker", () => {
         { key: "2", signature: "first message" },
       ]),
     ).toEqual(["1"]);
+  });
+
+  test("ignores a draft without losing the previous message signature", () => {
+    const tracker = new ConversationNotificationTracker();
+    const message = [{ key: "1", signature: "Earlier message" }];
+    expect(tracker.observe(message, ["1"])).toEqual([]);
+    // A draft row is omitted from both inputs by the notification scanner.
+    expect(tracker.observe([], [])).toEqual([]);
+    expect(tracker.observe(message, ["1"])).toEqual([]);
+    expect(tracker.observe([{ key: "1", signature: "New message" }], ["1"])).toEqual(["1"]);
+  });
+
+  test("confirms a read draft without tracking its preview as a message", () => {
+    const tracker = new ConversationNotificationTracker();
+    const message = [{ key: "1", signature: "Earlier message" }];
+    tracker.observe(message, ["1"]);
+    // The draft is omitted from content inputs, but the row remains read.
+    expect(tracker.observe([], [], ["1"])).toEqual([]);
+    expect(tracker.observe(message, ["1"])).toEqual(["1"]);
   });
 
   test("keeps virtualized rows but forgets rows observed as no longer unread", () => {
@@ -585,6 +605,172 @@ describe("NotifiedSignatureStore", () => {
 });
 
 describe("PageNotificationReceiptStore", () => {
+  test("classifies a known draft before trimming ordinary receipts", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    for (let id = 1; id <= 20; id++) {
+      receipts.add(`Other ${id}`, `Message ${id}`, id, 1_000);
+    }
+    receipts.add("Jane", "Incoming message", 21, 1_000, { threadKey: "1" });
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    expect(reloaded.consumeMatching({ title: "Other 1", body: "Message 1" }, 2_000)).toEqual({
+      nativeId: 1,
+    });
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, 2_000),
+    ).toEqual({ nativeId: 21 });
+  });
+
+  test("bounds unresolved draft receipts across reloads", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    for (let id = 1; id <= 25; id++) {
+      receipts.add("Jane", `Message ${id}`, id, 1_000);
+      receipts.retainForDraft(id, "1");
+    }
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    expect(JSON.parse(storage.getItem("__carrier_page_notification_receipts__")!)).toHaveLength(20);
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Message 1" }, 2_000),
+    ).toBeNull();
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Message 25" }, 2_000),
+    ).toEqual({ nativeId: 25 });
+  });
+
+  test("expires a draft receipt when no real preview ever appears", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const afterExpiry = 1_000 + 24 * 60 * 60 * 1_000 + 1;
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, afterExpiry);
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, afterExpiry),
+    ).toBeNull();
+  });
+
+  test("keeps a draft receipt when later notifications exceed the ordinary receipt limit", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    for (let id = 43; id < 70; id++) receipts.add(`Other ${id}`, `Message ${id}`, id, 1_000);
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 32_000);
+    expect(
+      reloaded
+        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_000)
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
+  });
+
+  test("keeps draft delivery evidence until its real preview appears after native dedupe", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    expect(receipts.consumeUniquelyMatching([], 32_000).size).toBe(0);
+    receipts.discardReadMatches([{ key: "2", title: "Jane", body: "Incoming message" }], 32_100);
+    expect(
+      new PageNotificationReceiptStore(
+        storage,
+        undefined,
+        undefined,
+        1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+      )
+        .consumeUniquelyMatching(
+          [
+            { key: "2", title: "Jane", body: "Incoming message" },
+            { key: "1", title: "Jane", body: "Incoming message" },
+          ],
+          1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+        )
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
+  });
+
+  test("retires a draft receipt when its thread shows a different real preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Earlier message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    receipts.retireDraftsWithDifferentPreview(
+      [{ key: "1", title: "Jane", body: "Different message" }],
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+    );
+    receipts.retireDraftsWithDifferentPreview(
+      [{ key: "1", title: "Jane", body: "Different message" }],
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1_001,
+    );
+    expect(
+      receipts.consumeMatching(
+        { key: "1", title: "Jane", body: "Earlier message" },
+        1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+      ),
+    ).toBeNull();
+  });
+
+  test("keeps a draft receipt through a transient older preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    expect(
+      receipts.retireDraftsWithDifferentPreview(
+        [{ key: "1", title: "Jane", body: "Older cached message" }],
+        32_000,
+      ),
+    ).toBe(1_000);
+    expect(
+      receipts.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, 32_100),
+    ).toEqual({ nativeId: 42 });
+  });
+
+  test("keeps a draft receipt when duplicate anchors disagree about the preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const rows = [
+      { key: "1", title: "Jane", body: "Incoming message" },
+      { key: "1", title: "Jane", body: "Stale message" },
+    ];
+    receipts.retireDraftsWithDifferentPreview(rows, 32_000);
+    expect(receipts.consumeUniquelyMatching(rows, 32_000).size).toBe(0);
+    expect(
+      receipts
+        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_100)
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
+  });
+
+  test("matches a draft receipt after the thread title changes", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Old name", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    const rows = [{ key: "1", title: "New name", body: "Incoming message" }];
+    receipts.retireDraftsWithDifferentPreview(rows, 32_000);
+    expect(receipts.consumeUniquelyMatching(rows, 32_000).get("1")).toEqual({ nativeId: 42 });
+  });
+
+  test("retains a muted draft until its real preview can be marked suppressed", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainSuppressedDraft(42, "1");
+    const reloaded = new PageNotificationReceiptStore(
+      storage,
+      undefined,
+      undefined,
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+    );
+    expect(
+      reloaded
+        .consumeUniquelyMatching(
+          [{ key: "1", title: "Jane", body: "Incoming message" }],
+          1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
+        )
+        .get("1"),
+    ).toEqual({ nativeId: 42, suppressedDraft: true });
+  });
+
   test("pairs a page notification after reload without persisting raw content", () => {
     const storage = memoryStorage();
     const title = "Project group with a deliberately long title that the row truncates later";
@@ -696,6 +882,22 @@ describe("PageNotificationReceiptStore", () => {
       1_100,
     );
     expect(consumed.get("1")).toEqual({ nativeId: 42 });
+  });
+
+  test("drops a receipt when duplicate anchors disagree about the preview", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "Older message", 42, 1_000);
+
+    expect(
+      store.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Older message" },
+          { key: "1", title: "Jane", body: "Newer message" },
+        ],
+        1_100,
+      ).size,
+    ).toBe(0);
+    expect(store.consumeMatching({ title: "Jane", body: "Older message" }, 1_200)).toBeNull();
   });
 
   test("expires old and future-dated receipts across reloads", () => {
@@ -925,6 +1127,77 @@ describe("PageNotificationQueue", () => {
     const row = { key: "1", title: "Jane", body: "Same" };
 
     expect(queue.consumeMatching(row, 1_100, 2_000, [row, row])).not.toBeNull();
+  });
+
+  test("routes a page notification through a unique draft without matching draft text", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft])).toBe(signal);
+    expect(signal.matched).toBe(true);
+  });
+
+  test("routes concurrent page signals through one uniquely titled draft", () => {
+    const queue = new PageNotificationQueue();
+    const first = queue.add({ at: 1_000, title: "Jane", body: "First" });
+    const second = queue.add({ at: 1_050, title: "Jane", body: "Second" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft])).toEqual([first, second]);
+    expect(first.matched).toBe(true);
+    expect(second.matched).toBe(true);
+  });
+
+  test("does not route a signal through a draft mutated before its notification", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_200, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft])).toEqual([]);
+    expect(signal.matched).toBeUndefined();
+    expect(
+      queue.consumeMatching({ ...draft, body: "Incoming message" }, 1_300, 2_000, [
+        { ...draft, body: "Incoming message" },
+      ]),
+    ).toBe(signal);
+  });
+
+  test("does not identify a draft by title when another row has a stale preview", () => {
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "Older message" };
+    expect(uniqueNotificationTitleMatch("Jane", [draft])).toBe(draft);
+    expect(uniqueNotificationTitleMatch("Jane", [draft, other])).toBeNull();
+
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft, { ...other, body: "" }])).toBeNull();
+  });
+
+  test("does not route by draft title when another conversation also matches", () => {
+    const queue = new PageNotificationQueue();
+    queue.add({ at: 1_000, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "Incoming message" };
+
+    expect(queue.consumeMatching(draft, 1_100, 2_000, [draft, other])).toBeNull();
+  });
+
+  test("keeps a muted signal with an ambiguous draft title for its real preview", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({
+      at: 1_000,
+      title: "Jane",
+      body: "Incoming message",
+      suppressedBeforeMatch: true,
+    });
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft, other])).toEqual([]);
+    expect(queue.consumeMatchingDraft(draft, 1_200, 2_000, [draft])).toEqual([]);
+    const real = { key: "2", title: "Jane", body: "Incoming message" };
+    expect(queue.consumeMatching(real, 1_300, 2_000, [real])).toBe(signal);
   });
 
   test("refuses a signal whose only candidate is a different conversation", () => {
