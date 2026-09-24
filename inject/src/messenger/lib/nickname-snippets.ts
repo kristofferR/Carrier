@@ -29,15 +29,14 @@ export class NativeSnippetPrefixes {
     const preview = body.replace(/\s+/g, " ").trim();
     const drafts = this.drafts.get(thread);
     if (!drafts?.size) return false;
+    const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
+    if (!label) return false;
     // The row scraper can see only Messenger's label while the composer still
     // holds the draft text. The mounted draft state disambiguates that label.
-    if (/^(?:Draft|Utkast):$/iu.test(preview)) return true;
+    if (preview === label.trim()) return true;
     return [...drafts.values()].some((snippet) => {
       if (snippet.slice(0, 240) === preview) return true;
-      // A generic colon prefix can also be a group sender ("Alice: hello").
-      // Match only known draft labels when Messenger renders one separately.
-      const label = /^(?:Draft|Utkast): /iu.exec(preview)?.[0];
-      return label !== undefined && `${label}${snippet}`.slice(0, 240) === preview;
+      return `${label}${snippet}`.slice(0, 240) === preview;
     });
   }
 

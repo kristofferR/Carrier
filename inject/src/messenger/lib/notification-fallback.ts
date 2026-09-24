@@ -95,6 +95,8 @@ export interface PageNotificationSignal extends NotificationText {
   threadPath?: string;
   /** A draft supplied only the route; the real preview still needs a receipt. */
   matchedDraft?: boolean;
+  /** Global mute handled this page notification before a row identified its thread. */
+  suppressedBeforeMatch?: boolean;
   /**
    * Set once a conversation row consumed this signal. The async emitter checks
    * it before persisting a cross-reload receipt: a row-paired signal was

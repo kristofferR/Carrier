@@ -3553,11 +3553,12 @@
       const preview = body.replace(/\s+/g, " ").trim();
       const drafts = this.drafts.get(thread2);
       if (!drafts?.size) return false;
-      if (/^(?:Draft|Utkast):$/iu.test(preview)) return true;
+      const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
+      if (!label) return false;
+      if (preview === label.trim()) return true;
       return [...drafts.values()].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
-        const label = /^(?:Draft|Utkast): /iu.exec(preview)?.[0];
-        return label !== void 0 && `${label}${snippet}`.slice(0, 240) === preview;
+        return `${label}${snippet}`.slice(0, 240) === preview;
       });
     }
     remember(thread2, original, displayed) {
@@ -7539,7 +7540,7 @@
             pageMatch.deliver.bodyHash
           );
         }
-        if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+        if (pageMatch.signal) pageMatch.signal.suppressedBeforeMatch = true;
       }
       try {
         window.__carrierOnNotification?.();
@@ -7765,6 +7766,10 @@
       const bodyHash = notificationDedupeKey("", conversation.body);
       const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
+      if (pageSignal.suppressedBeforeMatch) {
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        return true;
+      }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
       if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
       if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
@@ -8132,6 +8137,14 @@
             pageRouteCandidates.map((row) => ({ ...row, body: "" }))
           );
           for (const signal of signals) {
+            if (signal.suppressedBeforeMatch) {
+              pageNotificationReceipts.add(signal.title, signal.body, ++notifySeq, detectedAt, {
+                threadKey: conversation.key,
+                suppressed: true
+              });
+              cancelFallbackForDraftReceipt(conversation.key, signal.body);
+              continue;
+            }
             signal.matchedDraft = true;
             signal.threadPath = conversation.threadPath;
             signal.threadMuted = conversation.muted;

@@ -688,7 +688,9 @@ export function initNotificationBridge() {
           pageMatch.deliver.bodyHash,
         );
       }
-      if (pageMatch.signal) notificationCorrelations.discardPage(pageMatch.signal);
+      // Keep an unresolved page signal long enough for the queued row scan to
+      // identify its thread. Its mute decision must survive a later unmute.
+      if (pageMatch.signal) pageMatch.signal.suppressedBeforeMatch = true;
     }
     // Recheck transport and processing after new-message activity. Receiving a
     // notification alone does not prove a stalled view or justify a reload.
@@ -1049,6 +1051,10 @@ export function initNotificationBridge() {
     const bodyHash = notificationDedupeKey("", conversation.body);
     const previous = notificationCorrelations.removeRow(conversation.key);
     if (previous) clearTimeout(previous.timer);
+    if (pageSignal.suppressedBeforeMatch) {
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+      return true;
+    }
     pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
     // The page's async avatar conversion may still be in flight. Give that
     // pending path the same fresh identity so it remains paired with this row
@@ -1562,6 +1568,14 @@ export function initNotificationBridge() {
           pageRouteCandidates.map((row) => ({ ...row, body: "" })),
         );
         for (const signal of signals) {
+          if (signal.suppressedBeforeMatch) {
+            pageNotificationReceipts.add(signal.title, signal.body, ++notifySeq, detectedAt, {
+              threadKey: conversation.key,
+              suppressed: true,
+            });
+            cancelFallbackForDraftReceipt(conversation.key, signal.body);
+            continue;
+          }
           signal.matchedDraft = true;
           signal.threadPath = conversation.threadPath;
           signal.threadMuted = conversation.muted;

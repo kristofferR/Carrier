@@ -87,7 +87,7 @@ test("vaulted sidebar prefixes follow scope without mutating messages or saved d
   expect(loadCount).toBe(2);
   mode = "off";
   expect(render({ ...props, isDraftMessage: true }).props.snippetRaw).toBe(props.snippetRaw);
-  expect(prefixes.isDraft("123", "Captain: hello Captain 🙂")).toBe(true);
+  expect(prefixes.isDraft("123", "Captain: hello Captain 🙂")).toBe(false);
   expect(prefixes.original("123", "Alex: draft")).toBe("Alex: draft");
   expect(render({ ...props, snippetRaw: "Draft: ready for review" }).props.snippetRaw).toBe(
     "Draft: ready for review",
@@ -115,6 +115,7 @@ test("draft state follows the mounted preview when a thread has duplicate rows",
   expect(prefixes.isDraft("123", "Draft:")).toBe(true);
   expect(prefixes.isDraft("123", "Utkast:")).toBe(true);
   prefixes.rememberDraft("123", draft, "hello", true);
+  expect(prefixes.isDraft("123", "hello")).toBe(false);
   expect(prefixes.isDraft("123", "Alice: hello")).toBe(false);
   expect(prefixes.isDraft("123", "Nachricht: different message")).toBe(false);
   expect(prefixes.isDraft("123", "Incoming message")).toBe(false);
