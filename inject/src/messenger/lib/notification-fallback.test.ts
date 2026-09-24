@@ -733,7 +733,12 @@ describe("PageNotificationReceiptStore", () => {
       { key: "1", title: "Jane", body: "Stale message" },
     ];
     receipts.retireDraftsWithDifferentPreview(rows, 32_000);
-    expect(receipts.consumeUniquelyMatching(rows, 32_000).get("1")).toEqual({ nativeId: 42 });
+    expect(receipts.consumeUniquelyMatching(rows, 32_000).size).toBe(0);
+    expect(
+      receipts
+        .consumeUniquelyMatching([{ key: "1", title: "Jane", body: "Incoming message" }], 32_100)
+        .get("1"),
+    ).toEqual({ nativeId: 42 });
   });
 
   test("matches a draft receipt after the thread title changes", () => {
@@ -877,6 +882,22 @@ describe("PageNotificationReceiptStore", () => {
       1_100,
     );
     expect(consumed.get("1")).toEqual({ nativeId: 42 });
+  });
+
+  test("drops a receipt when duplicate anchors disagree about the preview", () => {
+    const store = new PageNotificationReceiptStore(memoryStorage());
+    store.add("Jane", "Older message", 42, 1_000);
+
+    expect(
+      store.consumeUniquelyMatching(
+        [
+          { key: "1", title: "Jane", body: "Older message" },
+          { key: "1", title: "Jane", body: "Newer message" },
+        ],
+        1_100,
+      ).size,
+    ).toBe(0);
+    expect(store.consumeMatching({ title: "Jane", body: "Older message" }, 1_200)).toBeNull();
   });
 
   test("expires old and future-dated receipts across reloads", () => {
@@ -1160,6 +1181,23 @@ describe("PageNotificationQueue", () => {
     const other = { key: "2", title: "Jane", body: "Incoming message" };
 
     expect(queue.consumeMatching(draft, 1_100, 2_000, [draft, other])).toBeNull();
+  });
+
+  test("keeps a muted signal with an ambiguous draft title for its real preview", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({
+      at: 1_000,
+      title: "Jane",
+      body: "Incoming message",
+      suppressedBeforeMatch: true,
+    });
+    const draft = { key: "1", title: "Jane", body: "" };
+    const other = { key: "2", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft, other])).toEqual([]);
+    expect(queue.consumeMatchingDraft(draft, 1_200, 2_000, [draft])).toEqual([]);
+    const real = { key: "2", title: "Jane", body: "Incoming message" };
+    expect(queue.consumeMatching(real, 1_300, 2_000, [real])).toBe(signal);
   });
 
   test("refuses a signal whose only candidate is a different conversation", () => {

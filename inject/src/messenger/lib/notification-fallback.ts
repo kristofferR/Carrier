@@ -97,6 +97,8 @@ export interface PageNotificationSignal extends NotificationText {
   matchedDraft?: boolean;
   /** Global mute handled this page notification before a row identified its thread. */
   suppressedBeforeMatch?: boolean;
+  /** An ambiguous title must never later route this signal through a draft. */
+  draftTitleAmbiguous?: boolean;
   /**
    * Set once a conversation row consumed this signal. The async emitter checks
    * it before persisting a cross-reload receipt: a row-paired signal was
@@ -1059,6 +1061,7 @@ export class PageNotificationReceiptStore {
       const receipt = this.receipts[index]!;
       let match: string | null = null;
       let ambiguous = false;
+      let defer = false;
       for (const [key, candidates] of identities) {
         if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
         if (
@@ -1069,13 +1072,19 @@ export class PageNotificationReceiptStore {
           )
         )
           continue;
+        // Two anchors for one thread can briefly show different messages.
+        // Matching either one must not mark the other as delivered.
+        if (candidates.some((identity) => identity.body.full !== candidates[0]!.body.full)) {
+          if (receipt.draftThread) defer = true;
+          else ambiguous = true;
+        }
         if (match !== null && match !== key) {
           ambiguous = true;
           break;
         }
         match = key;
       }
-      if (match === null) continue;
+      if (match === null || defer) continue;
       remove.push(index);
       // Ambiguous, or a newer duplicate for an already-consumed row: dropped,
       // not consumed — the fallback path takes over and the native 30s
@@ -1215,10 +1224,20 @@ export class PageNotificationQueue {
         this.signals.splice(index, 1);
         continue;
       }
-      if (age < 0 || !notificationTextMatches(signal.title, "", row.title, "")) continue;
+      if (
+        age < 0 ||
+        signal.draftTitleAmbiguous ||
+        !notificationTextMatches(signal.title, "", row.title, "")
+      )
+        continue;
       const unique = uniqueNotificationTitleMatch(signal.title, candidates);
       if (unique?.key !== row.key) {
-        if (!unique) this.signals.splice(index, 1);
+        if (!unique) {
+          // Global mute needs this signal when the real preview eventually
+          // disambiguates it. Never reuse a later unique draft title instead.
+          if (signal.suppressedBeforeMatch) signal.draftTitleAmbiguous = true;
+          else this.signals.splice(index, 1);
+        }
         continue;
       }
       this.signals.splice(index, 1);

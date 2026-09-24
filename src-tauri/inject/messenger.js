@@ -6413,19 +6413,24 @@
         const receipt = this.receipts[index];
         let match = null;
         let ambiguous = false;
+        let defer = false;
         for (const [key, candidates] of identities) {
           if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
           if (!candidates.some(
             (identity) => receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)
           ))
             continue;
+          if (candidates.some((identity) => identity.body.full !== candidates[0].body.full)) {
+            if (receipt.draftThread) defer = true;
+            else ambiguous = true;
+          }
           if (match !== null && match !== key) {
             ambiguous = true;
             break;
           }
           match = key;
         }
-        if (match === null) continue;
+        if (match === null || defer) continue;
         remove.push(index);
         if (ambiguous || consumed.has(match)) continue;
         consumed.set(match, receiptMatch(receipt));
@@ -6535,10 +6540,14 @@
           this.signals.splice(index, 1);
           continue;
         }
-        if (age < 0 || !notificationTextMatches(signal.title, "", row.title, "")) continue;
+        if (age < 0 || signal.draftTitleAmbiguous || !notificationTextMatches(signal.title, "", row.title, ""))
+          continue;
         const unique = uniqueNotificationTitleMatch(signal.title, candidates);
         if (unique?.key !== row.key) {
-          if (!unique) this.signals.splice(index, 1);
+          if (!unique) {
+            if (signal.suppressedBeforeMatch) signal.draftTitleAmbiguous = true;
+            else this.signals.splice(index, 1);
+          }
           continue;
         }
         this.signals.splice(index, 1);
