@@ -400,7 +400,10 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
   background: var(--schedule-surface);
   color: var(--schedule-text);
   box-shadow: 0 8px 28px #0004;
-  font: 13px/1.45 -apple-system, system-ui, sans-serif;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 20px;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-user-select: none;
@@ -417,7 +420,7 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
   outline: 2px solid var(--schedule-accent, currentColor); outline-offset: 2px;
 }
 .carrier-schedule-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 8px; }
-.carrier-schedule-heading h2 { font: inherit; font-weight: 650; font-size: 15px; margin: 0; }
+.carrier-schedule-heading h2 { font: inherit; font-weight: 600; font-size: 17px; margin: 0; }
 /* Messenger gives headings their own light-theme color, even in dark mode. */
 .carrier-schedule-panel :is(h2, h3) { color: var(--schedule-text); }
 .carrier-schedule-close { display: grid; place-items: center; flex: 0 0 28px; border: 0; background: transparent; color: var(--schedule-muted); border-radius: 50%; width: 28px; height: 28px; padding: 0; }
@@ -428,17 +431,17 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
 .carrier-schedule-custom { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); margin-top: 5px; }
 .carrier-schedule-custom summary { padding: 13px 8px; cursor: pointer; }
 .carrier-schedule-fields { display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; padding: 7px 4px; }
-.carrier-schedule-fields label { color: var(--schedule-muted); font-size: 12px; min-width: 0; }
-.carrier-schedule-fields input { display: block; width: 100%; min-width: 0; padding: 8px 7px; margin-top: 5px; border: 1px solid color-mix(in srgb, var(--schedule-text) 20%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--schedule-text) 5%, var(--schedule-surface)); color: var(--schedule-text); }
-.carrier-schedule-primary { width: 100%; margin-top: 10px; border: 1px solid var(--schedule-accent); border-radius: 8px; padding: 10px; font-weight: 650 !important; background: color-mix(in srgb, var(--schedule-accent) 15%, var(--schedule-surface)); color: var(--schedule-text); }
+.carrier-schedule-fields label { color: var(--schedule-muted); font-size: 13px; line-height: 16px; min-width: 0; }
+.carrier-schedule-panel .carrier-schedule-fields input { display: block; width: 100%; min-width: 0; padding: 8px 7px; margin-top: 5px; border: 1px solid color-mix(in srgb, var(--schedule-text) 20%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--schedule-text) 5%, var(--schedule-surface)); color: var(--schedule-text); font-size: 15px; line-height: 20px; }
+.carrier-schedule-panel .carrier-schedule-primary { width: 100%; margin-top: 10px; border: 1px solid var(--schedule-accent); border-radius: 8px; padding: 10px; font-weight: 600; background: color-mix(in srgb, var(--schedule-accent) 15%, var(--schedule-surface)); color: var(--schedule-text); }
 .carrier-schedule-primary:hover { background: color-mix(in srgb, var(--schedule-accent) 25%, var(--schedule-surface)); }
-.carrier-schedule-note { color: var(--schedule-muted); font-size: 11px; margin: 12px 5px 0; display: block; }
+.carrier-schedule-note { color: var(--schedule-muted); font-size: 13px; line-height: 16px; margin: 12px 5px 0; display: block; }
 .carrier-schedule-divider { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 14%, transparent); padding-top: 12px; }
-.carrier-schedule-panel h3 { font: inherit; font-weight: 650; margin: 14px 5px 8px; }
+.carrier-schedule-panel h3 { font: inherit; font-weight: 600; margin: 14px 5px 8px; }
 .carrier-schedule-item { border-top: 1px solid color-mix(in srgb, var(--schedule-text) 10%, transparent); padding: 12px 4px; }
-.carrier-schedule-item strong { font-size: 12px; }
+.carrier-schedule-item strong { font-weight: 600; }
 .carrier-schedule-item .carrier-schedule-note { margin: 4px 0; }
-.carrier-schedule-preview { background: color-mix(in srgb, var(--schedule-text) 5%, transparent); border-radius: 7px; padding: 10px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow-y: auto; }
+.carrier-schedule-preview { background: color-mix(in srgb, var(--schedule-text) 5%, transparent); border-radius: 7px; padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow-y: auto; }
 .carrier-schedule-item-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.carrier-schedule-action { border: 0; background: transparent; color: var(--schedule-accent); padding: 4px 0; font-size: 12px !important; }
+.carrier-schedule-action { border: 0; background: transparent; color: var(--schedule-accent); padding: 4px 0; }
 .carrier-schedule-warning { color: var(--warning, #e09a32); }
