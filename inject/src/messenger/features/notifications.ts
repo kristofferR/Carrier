@@ -451,8 +451,8 @@ export function initNotificationBridge() {
     );
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
     const retainSuppressedDraft = (id: number) => {
-      const threadId = threadPathId(pageMatch.threadPath || "");
-      if (!pageMatch.draft || !threadId) return;
+      const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
+      if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
       pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
       pageNotificationReceipts.retainSuppressedDraft(id, threadId);
       cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
@@ -1540,24 +1540,25 @@ export function initNotificationBridge() {
       );
       for (const conversation of pageRouteCandidates) {
         if (!conversation.draft) continue;
-        const signal = notificationCorrelations.consumePageForRow(
+        const signals = notificationCorrelations.consumePagesForDraft(
           conversation,
           detectedAt,
           PAGE_NOTIFICATION_RECOVERY_MS,
           pageRouteCandidates.map((row) => ({ ...row, body: "" })),
         );
-        if (!signal) continue;
-        signal.matchedDraft = true;
-        signal.threadPath = conversation.threadPath;
-        signal.threadMuted = conversation.muted;
-        if (signal.nativeId !== undefined) {
-          pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
-        }
-        if (signal.emitted && signal.nativeId !== undefined) {
-          updateNotificationRoute(signal.nativeId, conversation.threadPath);
+        for (const signal of signals) {
+          signal.matchedDraft = true;
+          signal.threadPath = conversation.threadPath;
+          signal.threadMuted = conversation.muted;
+          if (signal.nativeId !== undefined) {
+            pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
+          }
+          if (signal.emitted && signal.nativeId !== undefined) {
+            updateNotificationRoute(signal.nativeId, conversation.threadPath);
+          }
         }
       }
-      pageNotificationReceipts.retireDraftsWithDifferentPreview(
+      const draftConfirmInMs = pageNotificationReceipts.retireDraftsWithDifferentPreview(
         observed.filter(({ body, draft }) => body.length > 0 && !draft),
         detectedAt,
       );
@@ -1726,11 +1727,14 @@ export function initNotificationBridge() {
       const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
       clearTimeout(mismatchConfirmationTimer);
       mismatchConfirmationTimer = undefined;
-      if (mismatchObservation.confirmInMs !== null) {
-        mismatchConfirmationTimer = setTimeout(
-          scanUnreadConversations,
-          Math.max(1, mismatchObservation.confirmInMs),
-        );
+      const confirmInMs =
+        draftConfirmInMs === null
+          ? mismatchObservation.confirmInMs
+          : mismatchObservation.confirmInMs === null
+            ? draftConfirmInMs
+            : Math.min(draftConfirmInMs, mismatchObservation.confirmInMs);
+      if (confirmInMs !== null) {
+        mismatchConfirmationTimer = setTimeout(scanUnreadConversations, Math.max(1, confirmInMs));
       }
       const recovered = mismatchObservation.recovered;
       if (recovered.length) {

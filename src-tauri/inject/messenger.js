@@ -3553,7 +3553,7 @@
       const preview = body.replace(/\s+/g, " ").trim();
       return [...this.drafts.get(thread)?.values() ?? []].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
-        const label = /^[^:]{1,40}: /u.exec(preview)?.[0];
+        const label = /^(?:Draft|Utkast): /iu.exec(preview)?.[0];
         return label !== void 0 && `${label}${snippet}`.slice(0, 240) === preview;
       });
     }
@@ -6260,6 +6260,7 @@
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
       __publicField(this, "receipts", []);
+      __publicField(this, "draftMismatches", new StableMismatchTracker(1e3));
       try {
         const parsed = JSON.parse(this.storage?.getItem(this.storageKey) || "[]");
         if (Array.isArray(parsed)) {
@@ -6338,14 +6339,23 @@
         identities.push(opaqueNotificationIdentity(row.title, row.body));
         previews.set(key, identities);
       }
-      const remaining = this.receipts.filter((receipt) => {
-        if (!receipt.draftThread) return true;
+      const mismatches = [];
+      for (const receipt of this.receipts) {
+        if (!receipt.draftThread) continue;
         const identities = previews.get(receipt.draftThread);
-        return !identities || identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity));
-      });
-      if (remaining.length === this.receipts.length) return;
+        if (!identities?.length || identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity)) || identities.some((identity) => identity.body.full !== identities[0].body.full))
+          continue;
+        mismatches.push([`${receipt.at}:${receipt.nativeId}`, identities[0].body.full]);
+      }
+      const observation = this.draftMismatches.observe(mismatches, now);
+      if (!observation.recovered.length) return observation.confirmInMs;
+      const retired = new Set(observation.recovered);
+      const remaining = this.receipts.filter(
+        (receipt) => !retired.has(`${receipt.at}:${receipt.nativeId}`)
+      );
       this.receipts.splice(0, this.receipts.length, ...remaining);
       this.persist();
+      return observation.confirmInMs;
     }
     consumeMatching(row, now = Date.now()) {
       this.prune(now);
@@ -6498,6 +6508,30 @@
       signal.settleMatch?.();
       return signal;
     }
+    /** A unique draft title can route every concurrent signal for that thread. */
+    consumeMatchingDraft(row, rowChangeAt, matchWindowMs, candidateRows) {
+      const candidates = [...candidateRows];
+      const matched = [];
+      for (let index = this.signals.length - 1; index >= 0; index--) {
+        const signal = this.signals[index];
+        const age = rowChangeAt - signal.at;
+        if (age > matchWindowMs) {
+          this.signals.splice(index, 1);
+          continue;
+        }
+        if (age < 0 || !notificationTextMatches(signal.title, "", row.title, "")) continue;
+        const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+        if (unique?.key !== row.key) {
+          if (!unique) this.signals.splice(index, 1);
+          continue;
+        }
+        this.signals.splice(index, 1);
+        signal.matched = true;
+        signal.settleMatch?.();
+        matched.push(signal);
+      }
+      return matched.reverse();
+    }
     discard(signal) {
       const index = this.signals.indexOf(signal);
       if (index !== -1) this.signals.splice(index, 1);
@@ -6533,6 +6567,9 @@
     }
     consumePageForRow(row, rowChangeAt, matchWindowMs, candidateRows) {
       return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+    }
+    consumePagesForDraft(row, rowChangeAt, matchWindowMs, candidateRows) {
+      return this.pages.consumeMatchingDraft(row, rowChangeAt, matchWindowMs, candidateRows);
     }
     discardPage(signal) {
       this.pages.discard(signal);
@@ -7327,8 +7364,8 @@
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       const retainSuppressedDraft = (id) => {
-        const threadId = threadPathId(pageMatch.threadPath || "");
-        if (!pageMatch.draft || !threadId) return;
+        const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
+        if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
         pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
         pageNotificationReceipts.retainSuppressedDraft(id, threadId);
         cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
@@ -8059,24 +8096,25 @@
         );
         for (const conversation of pageRouteCandidates) {
           if (!conversation.draft) continue;
-          const signal = notificationCorrelations.consumePageForRow(
+          const signals = notificationCorrelations.consumePagesForDraft(
             conversation,
             detectedAt,
             PAGE_NOTIFICATION_RECOVERY_MS,
             pageRouteCandidates.map((row) => ({ ...row, body: "" }))
           );
-          if (!signal) continue;
-          signal.matchedDraft = true;
-          signal.threadPath = conversation.threadPath;
-          signal.threadMuted = conversation.muted;
-          if (signal.nativeId !== void 0) {
-            pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
-          }
-          if (signal.emitted && signal.nativeId !== void 0) {
-            updateNotificationRoute(signal.nativeId, conversation.threadPath);
+          for (const signal of signals) {
+            signal.matchedDraft = true;
+            signal.threadPath = conversation.threadPath;
+            signal.threadMuted = conversation.muted;
+            if (signal.nativeId !== void 0) {
+              pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
+            }
+            if (signal.emitted && signal.nativeId !== void 0) {
+              updateNotificationRoute(signal.nativeId, conversation.threadPath);
+            }
           }
         }
-        pageNotificationReceipts.retireDraftsWithDifferentPreview(
+        const draftConfirmInMs = pageNotificationReceipts.retireDraftsWithDifferentPreview(
           observed.filter(({ body, draft }) => body.length > 0 && !draft),
           detectedAt
         );
@@ -8181,11 +8219,9 @@
         const mismatchObservation = mismatchTracker.observe(mismatches, detectedAt);
         clearTimeout(mismatchConfirmationTimer);
         mismatchConfirmationTimer = void 0;
-        if (mismatchObservation.confirmInMs !== null) {
-          mismatchConfirmationTimer = setTimeout(
-            scanUnreadConversations,
-            Math.max(1, mismatchObservation.confirmInMs)
-          );
+        const confirmInMs = draftConfirmInMs === null ? mismatchObservation.confirmInMs : mismatchObservation.confirmInMs === null ? draftConfirmInMs : Math.min(draftConfirmInMs, mismatchObservation.confirmInMs);
+        if (confirmInMs !== null) {
+          mismatchConfirmationTimer = setTimeout(scanUnreadConversations, Math.max(1, confirmInMs));
         }
         const recovered = mismatchObservation.recovered;
         if (recovered.length) {

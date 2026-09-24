@@ -29,9 +29,9 @@ export class NativeSnippetPrefixes {
     const preview = body.replace(/\s+/g, " ").trim();
     return [...(this.drafts.get(thread)?.values() ?? [])].some((snippet) => {
       if (snippet.slice(0, 240) === preview) return true;
-      // Messenger renders the draft label separately from snippetRaw, and
-      // localizes it. Match the label's shape against this owner's snippet.
-      const label = /^[^:]{1,40}: /u.exec(preview)?.[0];
+      // A generic colon prefix can also be a group sender ("Alice: hello").
+      // Match only known draft labels when Messenger renders one separately.
+      const label = /^(?:Draft|Utkast): /iu.exec(preview)?.[0];
       return label !== undefined && `${label}${snippet}`.slice(0, 240) === preview;
     });
   }

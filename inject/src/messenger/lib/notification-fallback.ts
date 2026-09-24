@@ -849,6 +849,7 @@ export class PendingPageNotificationStore {
  */
 export class PageNotificationReceiptStore {
   private readonly receipts: PageNotificationReceipt[] = [];
+  private readonly draftMismatches = new StableMismatchTracker(1_000);
 
   private trimOrdinaryReceipts(): void {
     let ordinary = this.receipts.filter((receipt) => !receipt.draftThread).length;
@@ -951,7 +952,7 @@ export class PageNotificationReceiptStore {
   retireDraftsWithDifferentPreview(
     rows: Iterable<NotificationText & { key: string }>,
     now = Date.now(),
-  ): void {
+  ): number | null {
     this.prune(now);
     const previews = new Map<string, OpaqueNotificationIdentity[]>();
     for (const row of rows) {
@@ -960,17 +961,27 @@ export class PageNotificationReceiptStore {
       identities.push(opaqueNotificationIdentity(row.title, row.body));
       previews.set(key, identities);
     }
-    const remaining = this.receipts.filter((receipt) => {
-      if (!receipt.draftThread) return true;
+    const mismatches: [string, string][] = [];
+    for (const receipt of this.receipts) {
+      if (!receipt.draftThread) continue;
       const identities = previews.get(receipt.draftThread);
-      return (
-        !identities ||
-        identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity))
-      );
-    });
-    if (remaining.length === this.receipts.length) return;
+      if (
+        !identities?.length ||
+        identities.some((identity) => opaqueNotificationBodyMatches(receipt.identity, identity)) ||
+        identities.some((identity) => identity.body.full !== identities[0]!.body.full)
+      )
+        continue;
+      mismatches.push([`${receipt.at}:${receipt.nativeId}`, identities[0]!.body.full]);
+    }
+    const observation = this.draftMismatches.observe(mismatches, now);
+    if (!observation.recovered.length) return observation.confirmInMs;
+    const retired = new Set(observation.recovered);
+    const remaining = this.receipts.filter(
+      (receipt) => !retired.has(`${receipt.at}:${receipt.nativeId}`),
+    );
     this.receipts.splice(0, this.receipts.length, ...remaining);
     this.persist();
+    return observation.confirmInMs;
   }
 
   consumeMatching(
@@ -1167,6 +1178,36 @@ export class PageNotificationQueue {
     return signal;
   }
 
+  /** A unique draft title can route every concurrent signal for that thread. */
+  consumeMatchingDraft(
+    row: NotificationText & { key: string },
+    rowChangeAt: number,
+    matchWindowMs: number,
+    candidateRows: Iterable<NotificationText & { key: string }>,
+  ): PageNotificationSignal[] {
+    const candidates = [...candidateRows];
+    const matched: PageNotificationSignal[] = [];
+    for (let index = this.signals.length - 1; index >= 0; index--) {
+      const signal = this.signals[index]!;
+      const age = rowChangeAt - signal.at;
+      if (age > matchWindowMs) {
+        this.signals.splice(index, 1);
+        continue;
+      }
+      if (age < 0 || !notificationTextMatches(signal.title, "", row.title, "")) continue;
+      const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+      if (unique?.key !== row.key) {
+        if (!unique) this.signals.splice(index, 1);
+        continue;
+      }
+      this.signals.splice(index, 1);
+      signal.matched = true;
+      signal.settleMatch?.();
+      matched.push(signal);
+    }
+    return matched.reverse();
+  }
+
   discard(signal: PageNotificationSignal): void {
     const index = this.signals.indexOf(signal);
     if (index !== -1) this.signals.splice(index, 1);
@@ -1229,6 +1270,15 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     candidateRows?: Iterable<NotificationText & { key: string }>,
   ): PageNotificationSignal | null {
     return this.pages.consumeMatching(row, rowChangeAt, matchWindowMs, candidateRows);
+  }
+
+  consumePagesForDraft(
+    row: NotificationText & { key: string },
+    rowChangeAt: number,
+    matchWindowMs: number,
+    candidateRows: Iterable<NotificationText & { key: string }>,
+  ): PageNotificationSignal[] {
+    return this.pages.consumeMatchingDraft(row, rowChangeAt, matchWindowMs, candidateRows);
   }
 
   discardPage(signal: PageNotificationSignal): void {

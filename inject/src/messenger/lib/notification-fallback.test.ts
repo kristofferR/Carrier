@@ -652,12 +652,31 @@ describe("PageNotificationReceiptStore", () => {
       [{ key: "1", title: "Jane", body: "Different message" }],
       1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
     );
+    receipts.retireDraftsWithDifferentPreview(
+      [{ key: "1", title: "Jane", body: "Different message" }],
+      1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1_001,
+    );
     expect(
       receipts.consumeMatching(
         { key: "1", title: "Jane", body: "Earlier message" },
         1_000 + PAGE_NOTIFICATION_RECEIPT_TTL_MS + 1,
       ),
     ).toBeNull();
+  });
+
+  test("keeps a draft receipt through a transient older preview", () => {
+    const receipts = new PageNotificationReceiptStore(memoryStorage(), undefined, undefined, 1_000);
+    receipts.add("Jane", "Incoming message", 42, 1_000);
+    receipts.retainForDraft(42, "1");
+    expect(
+      receipts.retireDraftsWithDifferentPreview(
+        [{ key: "1", title: "Jane", body: "Older cached message" }],
+        32_000,
+      ),
+    ).toBe(1_000);
+    expect(
+      receipts.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, 32_100),
+    ).toEqual({ nativeId: 42 });
   });
 
   test("keeps a draft receipt when duplicate anchors disagree about the preview", () => {
@@ -1051,6 +1070,17 @@ describe("PageNotificationQueue", () => {
 
     expect(queue.consumeMatching(draft, 1_100, 2_000, [draft])).toBe(signal);
     expect(signal.matched).toBe(true);
+  });
+
+  test("routes concurrent page signals through one uniquely titled draft", () => {
+    const queue = new PageNotificationQueue();
+    const first = queue.add({ at: 1_000, title: "Jane", body: "First" });
+    const second = queue.add({ at: 1_050, title: "Jane", body: "Second" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft])).toEqual([first, second]);
+    expect(first.matched).toBe(true);
+    expect(second.matched).toBe(true);
   });
 
   test("does not identify a draft by title when another row has a stale preview", () => {
