@@ -1128,6 +1128,20 @@ describe("PageNotificationQueue", () => {
     expect(second.matched).toBe(true);
   });
 
+  test("does not route a signal through a draft mutated before its notification", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_200, title: "Jane", body: "Incoming message" });
+    const draft = { key: "1", title: "Jane", body: "" };
+
+    expect(queue.consumeMatchingDraft(draft, 1_100, 2_000, [draft])).toEqual([]);
+    expect(signal.matched).toBeUndefined();
+    expect(
+      queue.consumeMatching({ ...draft, body: "Incoming message" }, 1_300, 2_000, [
+        { ...draft, body: "Incoming message" },
+      ]),
+    ).toBe(signal);
+  });
+
   test("does not identify a draft by title when another row has a stale preview", () => {
     const draft = { key: "1", title: "Jane", body: "" };
     const other = { key: "2", title: "Jane", body: "Older message" };

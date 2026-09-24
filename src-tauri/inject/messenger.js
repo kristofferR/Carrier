@@ -7995,6 +7995,7 @@
     const readCandidates = /* @__PURE__ */ new Map();
     let lastScanAt = 0;
     const MAX_MUTATION_GRACE_MS = 9e4;
+    const rowMutationAt = /* @__PURE__ */ new Map();
     const scanUnreadConversations = () => {
       if (scanRunning) {
         scanPending = true;
@@ -8124,10 +8125,14 @@
           detectedAt
         );
         for (const conversation of pageRouteCandidates) {
-          if (!conversation.draft || !changed.has(conversation.key)) continue;
+          if (!conversation.draft) continue;
+          const mutationAt = rowMutationAt.get(conversation.key);
+          if (mutationAt === void 0 || detectedAt - mutationAt > PAGE_NOTIFICATION_RECOVERY_MS)
+            continue;
+          rowMutationAt.delete(conversation.key);
           const signals = notificationCorrelations.consumePagesForDraft(
             conversation,
-            detectedAt,
+            mutationAt,
             PAGE_NOTIFICATION_RECOVERY_MS,
             pageRouteCandidates.map((row) => ({ ...row, body: "" }))
           );
@@ -8313,7 +8318,13 @@
         inspect2(record2.target);
         for (const node of record2.addedNodes) inspect2(node);
       }
-      unreadArrivals.markRowsChanged(changedKeys, Date.now());
+      const changedAt = Date.now();
+      unreadArrivals.markRowsChanged(changedKeys, changedAt);
+      for (const key of changedKeys) {
+        rowMutationAt.delete(key);
+        rowMutationAt.set(key, changedAt);
+      }
+      while (rowMutationAt.size > 300) rowMutationAt.delete(rowMutationAt.keys().next().value);
       if (scanScheduled) return;
       scanScheduled = true;
       setTimeout(() => {

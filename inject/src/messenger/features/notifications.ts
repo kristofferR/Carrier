@@ -1362,6 +1362,7 @@ export function initNotificationBridge() {
   // suspend cannot attribute a count increase to hours-old churn.
   let lastScanAt = 0;
   const MAX_MUTATION_GRACE_MS = 90_000;
+  const rowMutationAt = new Map<string, number>();
   const scanUnreadConversations = () => {
     if (scanRunning) {
       scanPending = true;
@@ -1546,12 +1547,17 @@ export function initNotificationBridge() {
         detectedAt,
       );
       for (const conversation of pageRouteCandidates) {
-        // A pre-existing draft with a matching title is not evidence that the
-        // page notification belongs to it. Wait for this row's own arrival.
-        if (!conversation.draft || !changed.has(conversation.key)) continue;
+        if (!conversation.draft) continue;
+        // The draft has no message text to correlate. A title alone cannot
+        // route a page notification; require this row to have mutated after
+        // the page signal was queued, then apply the unique-title check.
+        const mutationAt = rowMutationAt.get(conversation.key);
+        if (mutationAt === undefined || detectedAt - mutationAt > PAGE_NOTIFICATION_RECOVERY_MS)
+          continue;
+        rowMutationAt.delete(conversation.key);
         const signals = notificationCorrelations.consumePagesForDraft(
           conversation,
-          detectedAt,
+          mutationAt,
           PAGE_NOTIFICATION_RECOVERY_MS,
           pageRouteCandidates.map((row) => ({ ...row, body: "" })),
         );
@@ -1813,7 +1819,13 @@ export function initNotificationBridge() {
       inspect(record.target);
       for (const node of record.addedNodes) inspect(node);
     }
-    unreadArrivals.markRowsChanged(changedKeys, Date.now());
+    const changedAt = Date.now();
+    unreadArrivals.markRowsChanged(changedKeys, changedAt);
+    for (const key of changedKeys) {
+      rowMutationAt.delete(key);
+      rowMutationAt.set(key, changedAt);
+    }
+    while (rowMutationAt.size > 300) rowMutationAt.delete(rowMutationAt.keys().next().value!);
     if (scanScheduled) return;
     scanScheduled = true;
     setTimeout(() => {
