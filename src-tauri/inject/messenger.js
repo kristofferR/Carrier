@@ -3551,7 +3551,10 @@
     }
     isDraft(thread2, body) {
       const preview = body.replace(/\s+/g, " ").trim();
-      return [...this.drafts.get(thread2)?.values() ?? []].some((snippet) => {
+      const drafts = this.drafts.get(thread2);
+      if (!drafts?.size) return false;
+      if (/^(?:Draft|Utkast):$/iu.test(preview)) return true;
+      return [...drafts.values()].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
         const label = /^(?:Draft|Utkast): /iu.exec(preview)?.[0];
         return label !== void 0 && `${label}${snippet}`.slice(0, 240) === preview;

@@ -27,7 +27,12 @@ export class NativeSnippetPrefixes {
 
   isDraft(thread: string, body: string) {
     const preview = body.replace(/\s+/g, " ").trim();
-    return [...(this.drafts.get(thread)?.values() ?? [])].some((snippet) => {
+    const drafts = this.drafts.get(thread);
+    if (!drafts?.size) return false;
+    // The row scraper can see only Messenger's label while the composer still
+    // holds the draft text. The mounted draft state disambiguates that label.
+    if (/^(?:Draft|Utkast):$/iu.test(preview)) return true;
+    return [...drafts.values()].some((snippet) => {
       if (snippet.slice(0, 240) === preview) return true;
       // A generic colon prefix can also be a group sender ("Alice: hello").
       // Match only known draft labels when Messenger renders one separately.
