@@ -38,7 +38,6 @@ import {
   READ_TRANSITION_MIN_OBSERVATIONS,
   StableMismatchTracker,
   UnreadArrivalTracker,
-  uniqueNotificationTitleMatch,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
@@ -381,7 +380,6 @@ export function initNotificationBridge() {
     suppressed?: { key: string; fingerprint: string; bodyHash?: string };
     dedupeKey?: string;
     signal?: PageNotificationSignal;
-    draft?: boolean;
   } => {
     // Row-first: pair only with a UNIQUE pending fallback. Two visible threads
     // with the same display text cannot be told apart from a Notification's
@@ -422,14 +420,6 @@ export function initNotificationBridge() {
         dedupeKey: match.dedupeKey,
       };
     }
-    // A draft hides the real preview, but the page Notification still names
-    // the thread. Use a unique title match only to recover its route and mute
-    // state; the real preview will consume a receipt after native emission.
-    const candidates = currentPageRouteCandidates();
-    const draft = uniqueNotificationTitleMatch(title, candidates);
-    if (draft?.draft) {
-      return { threadPath: draft.threadPath, threadMuted: draft.muted, draft: true };
-    }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
     return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
@@ -452,7 +442,7 @@ export function initNotificationBridge() {
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
     const retainSuppressedDraft = (id: number) => {
       const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
-      if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
+      if (!pageMatch.signal?.matchedDraft || !threadId) return;
       pageNotificationReceipts.add(
         String(title || "Messenger"),
         String(opts.body || ""),
@@ -594,12 +584,8 @@ export function initNotificationBridge() {
         // signal a real row already consumed during the conversion is
         // delivered and done. A draft supplied only a route, so it still
         // needs the receipt when the real preview becomes visible.
-        if (
-          pageMatch.draft ||
-          (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft))
-        ) {
-          const draftThread =
-            (pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId ? threadId : undefined;
+        if (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
+          const draftThread = pageMatch.signal?.matchedDraft && threadId ? threadId : undefined;
           pageNotificationReceipts.add(
             originalTitle,
             originalBody,
@@ -678,7 +664,6 @@ export function initNotificationBridge() {
         }
       });
     } else {
-      if (pageMatch.draft) retainSuppressedDraft(++notifySeq);
       if (
         pageMatch.deliver &&
         notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
@@ -1561,7 +1546,9 @@ export function initNotificationBridge() {
         detectedAt,
       );
       for (const conversation of pageRouteCandidates) {
-        if (!conversation.draft) continue;
+        // A pre-existing draft with a matching title is not evidence that the
+        // page notification belongs to it. Wait for this row's own arrival.
+        if (!conversation.draft || !changed.has(conversation.key)) continue;
         const signals = notificationCorrelations.consumePagesForDraft(
           conversation,
           detectedAt,

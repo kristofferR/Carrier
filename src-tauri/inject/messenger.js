@@ -7364,11 +7364,6 @@
           dedupeKey: match.dedupeKey
         };
       }
-      const candidates = currentPageRouteCandidates();
-      const draft = uniqueNotificationTitleMatch(title, candidates);
-      if (draft?.draft) {
-        return { threadPath: draft.threadPath, threadMuted: draft.muted, draft: true };
-      }
       return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
     };
     function CarrierNotification(title, options = {}) {
@@ -7381,7 +7376,7 @@
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       const retainSuppressedDraft = (id) => {
         const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
-        if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
+        if (!pageMatch.signal?.matchedDraft || !threadId) return;
         pageNotificationReceipts.add(
           String(title || "Messenger"),
           String(opts.body || ""),
@@ -7472,8 +7467,8 @@
             return;
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
-          if (pageMatch.draft || pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
-            const draftThread = (pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId ? threadId : void 0;
+          if (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
+            const draftThread = pageMatch.signal?.matchedDraft && threadId ? threadId : void 0;
             pageNotificationReceipts.add(
               originalTitle,
               originalBody,
@@ -7533,7 +7528,6 @@
           }
         });
       } else {
-        if (pageMatch.draft) retainSuppressedDraft(++notifySeq);
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
           notifiedStore.markSuppressed(
             pageMatch.deliver.key,
@@ -8130,7 +8124,7 @@
           detectedAt
         );
         for (const conversation of pageRouteCandidates) {
-          if (!conversation.draft) continue;
+          if (!conversation.draft || !changed.has(conversation.key)) continue;
           const signals = notificationCorrelations.consumePagesForDraft(
             conversation,
             detectedAt,
