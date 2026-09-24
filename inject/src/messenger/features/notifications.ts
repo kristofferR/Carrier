@@ -453,8 +453,16 @@ export function initNotificationBridge() {
     const retainSuppressedDraft = (id: number) => {
       const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
       if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
-      pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
-      pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+      pageNotificationReceipts.add(
+        String(title || "Messenger"),
+        String(opts.body || ""),
+        id,
+        Date.now(),
+        {
+          threadKey: threadId,
+          suppressed: true,
+        },
+      );
       cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
     };
     // Surface every new-message notification Facebook fires — even while
@@ -589,10 +597,17 @@ export function initNotificationBridge() {
           pageMatch.draft ||
           (pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft))
         ) {
-          pageNotificationReceipts.add(originalTitle, originalBody, id);
-          if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
-            pageNotificationReceipts.retainForDraft(id, threadId);
-            cancelFallbackForDraftReceipt(threadId, originalBody);
+          const draftThread =
+            (pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId ? threadId : undefined;
+          pageNotificationReceipts.add(
+            originalTitle,
+            originalBody,
+            id,
+            Date.now(),
+            draftThread ? { threadKey: draftThread } : undefined,
+          );
+          if (draftThread) {
+            cancelFallbackForDraftReceipt(draftThread, originalBody);
           }
         }
         const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");

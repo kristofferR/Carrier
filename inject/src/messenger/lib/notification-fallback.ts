@@ -926,9 +926,20 @@ export class PageNotificationReceiptStore {
     if (changed) this.persist();
   }
 
-  add(title: string, body: string, nativeId: number, at = Date.now()): void {
+  add(
+    title: string,
+    body: string,
+    nativeId: number,
+    at = Date.now(),
+    draft?: { threadKey: string; suppressed?: boolean },
+  ): void {
     this.prune(at);
-    this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
+    this.receipts.push({
+      at,
+      nativeId,
+      identity: opaqueNotificationIdentity(title, body),
+      ...(draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }),
+    });
     this.trimReceipts();
     this.persist();
   }

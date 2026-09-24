@@ -605,6 +605,22 @@ describe("NotifiedSignatureStore", () => {
 });
 
 describe("PageNotificationReceiptStore", () => {
+  test("classifies a known draft before trimming ordinary receipts", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    for (let id = 1; id <= 20; id++) {
+      receipts.add(`Other ${id}`, `Message ${id}`, id, 1_000);
+    }
+    receipts.add("Jane", "Incoming message", 21, 1_000, { threadKey: "1" });
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    expect(reloaded.consumeMatching({ title: "Other 1", body: "Message 1" }, 2_000)).toEqual({
+      nativeId: 1,
+    });
+    expect(
+      reloaded.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, 2_000),
+    ).toEqual({ nativeId: 21 });
+  });
+
   test("bounds unresolved draft receipts across reloads", () => {
     const storage = memoryStorage();
     const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);

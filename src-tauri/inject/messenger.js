@@ -6313,9 +6313,14 @@
       }
       if (changed) this.persist();
     }
-    add(title, body, nativeId, at = Date.now()) {
+    add(title, body, nativeId, at = Date.now(), draft) {
       this.prune(at);
-      this.receipts.push({ at, nativeId, identity: opaqueNotificationIdentity(title, body) });
+      this.receipts.push({
+        at,
+        nativeId,
+        identity: opaqueNotificationIdentity(title, body),
+        ...draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }
+      });
       this.trimReceipts();
       this.persist();
     }
@@ -7376,8 +7381,16 @@
       const retainSuppressedDraft = (id) => {
         const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
         if (!(pageMatch.draft || pageMatch.signal?.matchedDraft) || !threadId) return;
-        pageNotificationReceipts.add(String(title || "Messenger"), String(opts.body || ""), id);
-        pageNotificationReceipts.retainSuppressedDraft(id, threadId);
+        pageNotificationReceipts.add(
+          String(title || "Messenger"),
+          String(opts.body || ""),
+          id,
+          Date.now(),
+          {
+            threadKey: threadId,
+            suppressed: true
+          }
+        );
         cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
       };
       if (!s.mute_notifications) {
@@ -7458,10 +7471,16 @@
           }
           const hidePreview = deliverySettings.hide_notification_preview === true;
           if (pageMatch.draft || pageMatch.signal && (!pageMatch.signal.matched || pageMatch.signal.matchedDraft)) {
-            pageNotificationReceipts.add(originalTitle, originalBody, id);
-            if ((pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId) {
-              pageNotificationReceipts.retainForDraft(id, threadId);
-              cancelFallbackForDraftReceipt(threadId, originalBody);
+            const draftThread = (pageMatch.draft || pageMatch.signal?.matchedDraft) && threadId ? threadId : void 0;
+            pageNotificationReceipts.add(
+              originalTitle,
+              originalBody,
+              id,
+              Date.now(),
+              draftThread ? { threadKey: draftThread } : void 0
+            );
+            if (draftThread) {
+              cancelFallbackForDraftReceipt(draftThread, originalBody);
             }
           }
           const displayTitle = nativeThreadTitles.displayed(threadId || "", originalTitle, "");
