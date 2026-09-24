@@ -1801,6 +1801,7 @@ export function initNotificationBridge() {
   let scanScheduled = false;
   const scheduleScan = (records: MutationRecord[] = []) => {
     const changedKeys = new Set<string>();
+    const mutatedRows = new Set<string>();
     const inspect = (node: Node) => {
       const element = node instanceof Element ? node : node.parentElement;
       if (!element) return;
@@ -1815,13 +1816,35 @@ export function initNotificationBridge() {
         if (key) changedKeys.add(key);
       }
     };
+    const inspectMutatedRow = (node: Node) => {
+      const element = node instanceof Element ? node : node.parentElement;
+      if (!element) return;
+      const link = element.closest<HTMLAnchorElement>('a[href*="/t/"]');
+      if (link) {
+        const key = threadIdFromHref(link.getAttribute("href"));
+        if (key) mutatedRows.add(key);
+        return;
+      }
+      // A row wrapper can own the changed node without the anchor being an
+      // ancestor. Never expand a grid target into all of its visible rows.
+      const row = element.closest('[role="row"]');
+      if (!row) return;
+      const links = row.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]');
+      if (links.length !== 1) return;
+      const key = threadIdFromHref(links[0]!.getAttribute("href"));
+      if (key) mutatedRows.add(key);
+    };
     for (const record of records) {
       inspect(record.target);
-      for (const node of record.addedNodes) inspect(node);
+      inspectMutatedRow(record.target);
+      for (const node of record.addedNodes) {
+        inspect(node);
+        inspectMutatedRow(node);
+      }
     }
     const changedAt = Date.now();
     unreadArrivals.markRowsChanged(changedKeys, changedAt);
-    for (const key of changedKeys) {
+    for (const key of mutatedRows) {
       rowMutationAt.delete(key);
       rowMutationAt.set(key, changedAt);
     }

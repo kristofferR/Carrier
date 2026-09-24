@@ -8300,6 +8300,7 @@
     let scanScheduled = false;
     const scheduleScan = (records = []) => {
       const changedKeys = /* @__PURE__ */ new Set();
+      const mutatedRows = /* @__PURE__ */ new Set();
       const inspect2 = (node) => {
         const element2 = node instanceof Element ? node : node.parentElement;
         if (!element2) return;
@@ -8314,13 +8315,33 @@
           if (key) changedKeys.add(key);
         }
       };
+      const inspectMutatedRow = (node) => {
+        const element2 = node instanceof Element ? node : node.parentElement;
+        if (!element2) return;
+        const link = element2.closest('a[href*="/t/"]');
+        if (link) {
+          const key2 = threadIdFromHref(link.getAttribute("href"));
+          if (key2) mutatedRows.add(key2);
+          return;
+        }
+        const row = element2.closest('[role="row"]');
+        if (!row) return;
+        const links = row.querySelectorAll('a[href*="/t/"]');
+        if (links.length !== 1) return;
+        const key = threadIdFromHref(links[0].getAttribute("href"));
+        if (key) mutatedRows.add(key);
+      };
       for (const record2 of records) {
         inspect2(record2.target);
-        for (const node of record2.addedNodes) inspect2(node);
+        inspectMutatedRow(record2.target);
+        for (const node of record2.addedNodes) {
+          inspect2(node);
+          inspectMutatedRow(node);
+        }
       }
       const changedAt = Date.now();
       unreadArrivals.markRowsChanged(changedKeys, changedAt);
-      for (const key of changedKeys) {
+      for (const key of mutatedRows) {
         rowMutationAt.delete(key);
         rowMutationAt.set(key, changedAt);
       }
