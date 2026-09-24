@@ -76,6 +76,8 @@ cryptographically verified updates.
 ## Why Carrier?
 
 - **Just your conversations** — no Feed, Reels, Marketplace, or browser tabs.
+- **[Schedule messages](docs/scheduled-sending.md)** — send texts at a chosen date
+  and time. Carrier must be running and connected.
 - **Small by design** — one system WebView instead of a bundled browser engine.
 - **Real desktop notifications** — including background delivery, notification
   sound controls, muted notifications, and hidden previews.
