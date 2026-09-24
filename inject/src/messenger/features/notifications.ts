@@ -530,7 +530,6 @@ export function initNotificationBridge() {
       ]).then(([icon, , image, group]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
-        if (signal) notificationCorrelations.discardPage(signal);
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
         // A delivery-boundary global mute is final for this logical page
         // notification. Do not let its cross-reload receipt revive it after
@@ -544,6 +543,7 @@ export function initNotificationBridge() {
           // muted, so fail closed while muted filtering is enabled. A later
           // row mutation still takes the ordinary routed fallback path.
           diag("notify.unresolved", "page notification had no correlated thread identity");
+          if (signal) notificationCorrelations.discardPage(signal);
           return;
         }
         pendingPageNotifications.remove(id);
@@ -561,6 +561,7 @@ export function initNotificationBridge() {
           ? mutedThreads.isMuted(threadId)
           : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
         if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+          if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
           retainSuppressedDraft(id);
           const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
           if (

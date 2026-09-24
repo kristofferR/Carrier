@@ -7430,13 +7430,13 @@
         ]).then(([icon, , image, group]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
-          if (signal) notificationCorrelations.discardPage(signal);
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
           if (deliverySettings.mute_notifications === true) {
             pendingPageNotifications.remove(id);
           }
           if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
             diag("notify.unresolved", "page notification had no correlated thread identity");
+            if (signal) notificationCorrelations.discardPage(signal);
             return;
           }
           pendingPageNotifications.remove(id);
@@ -7452,6 +7452,7 @@
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
           if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+            if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
             retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
