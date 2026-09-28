@@ -244,7 +244,25 @@ async function runFixtures(
     assert("error copy in chat content does not trigger recovery", reports.at(-1) === "ok");
     errorDialog.setAttribute("role", "dialog");
     await tick();
+    assert("matching English text alone cannot trigger recovery", reports.at(-1) === "ok");
+    function exceptionComponent() {}
+    const exception = { type: exceptionComponent, memoizedProps: { errorCode: 1357004 } };
+    modules["FDSCometExceptionDialogImpl.react"] = exceptionComponent;
+    modules.ReactDOM = {
+      __DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE: {
+        Events: [
+          (element: Element) =>
+            element === errorDialog ? { stateNode: element, return: exception } : null,
+        ],
+      },
+    };
+    await tick();
     assert("fatal dialog overrides healthy transport", reports.at(-1) === "error");
+    errorDialog.querySelector("h2")!.textContent = "Beklager, noe gikk galt";
+    errorDialog.querySelector("p")!.textContent =
+      "Prøv å lukke nettleservinduet og åpne det igjen.";
+    await tick();
+    assert("translated dialog uses the same error code", reports.at(-1) === "error");
     composer.textContent = "Keep my draft";
     await tick();
     assert("fatal dialog retains draft protection", reports.at(-1) === "error" && protectedReport);
@@ -280,11 +298,19 @@ async function runFixtures(
     await tick();
     assert("inaccessible old dialog ignored", reports.at(-1) === "ok");
     errorHost.removeAttribute("aria-hidden");
-    errorDialog.querySelector("p")!.textContent = "Please try again later.";
+    exception.memoizedProps.errorCode = 999;
     await tick();
-    assert("generic error dialog is not fatal", reports.at(-1) === "ok");
-    errorDialog.querySelector("p")!.textContent =
-      "Please try closing and re-opening your browser window.";
+    assert("unrelated exception code is not fatal", reports.at(-1) === "ok");
+    exception.memoizedProps.errorCode = 1357004;
+    modules["FDSCometExceptionDialogImpl.react"] = () => {};
+    await tick();
+    assert("unrelated component with the same code is ignored", reports.at(-1) === "ok");
+    modules["FDSCometExceptionDialogImpl.react"] = exceptionComponent;
+    const reactDOM = modules.ReactDOM;
+    modules.ReactDOM = {};
+    await tick();
+    assert("changed React API retains manual recovery", reports.at(-1) === "ok");
+    modules.ReactDOM = reactDOM;
     errorDialog.setAttribute("role", "alertdialog");
     await tick();
     assert("fatal alertdialog is recognized too", reports.at(-1) === "error");

@@ -193,8 +193,32 @@
   };
 
   // inject/src/messenger/lib/facebook-error-dialog.ts
+  var RELOAD_ERROR_CODE = 1357004;
+  function isReloadException(dialog) {
+    try {
+      const facebookRequire = window.require;
+      const component = facebookRequire?.("FDSCometExceptionDialogImpl.react");
+      if (typeof component !== "function") return false;
+      const reactDOM = facebookRequire?.("ReactDOM");
+      const events = reactDOM?.__DOM_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE?.Events;
+      if (!Array.isArray(events) || typeof events[0] !== "function") return false;
+      let fiber = events[0](dialog);
+      if (!fiber || typeof fiber !== "object" || !("stateNode" in fiber) || fiber.stateNode !== dialog) {
+        return false;
+      }
+      for (let depth = 0; fiber && typeof fiber === "object" && depth < 80; depth++) {
+        const node = fiber;
+        if (node.type === component) {
+          const props = node.memoizedProps;
+          return !!props && typeof props === "object" && "errorCode" in props && props.errorCode === RELOAD_ERROR_CODE;
+        }
+        fiber = node.return;
+      }
+    } catch (_) {
+    }
+    return false;
+  }
   function hasFacebookReloadDialog() {
-    const normalize = (text) => text.replace(/\s+/g, " ").trim();
     for (const dialog of document.querySelectorAll(
       '[role="dialog"], [role="alertdialog"]'
     )) {
@@ -210,13 +234,7 @@
           break;
         }
       }
-      if (hidden) continue;
-      const hasTitle = [...dialog.querySelectorAll('h1, h2, h3, [role="heading"]')].some(
-        (heading) => /^Sorry, something went wrong\.?$/.test(normalize(heading.innerText))
-      );
-      if (hasTitle && normalize(dialog.innerText).includes("Please try closing and re-opening your browser window.")) {
-        return true;
-      }
+      if (!hidden && isReloadException(dialog)) return true;
     }
     return false;
   }
