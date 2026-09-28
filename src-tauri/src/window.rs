@@ -779,13 +779,17 @@ pub(crate) fn recreate_themed_windows(app: &tauri::AppHandle) {
             .webview_windows()
             .into_iter()
             .filter(|(label, _)| label != "settings")
-            .map(|(label, window)| {
+            .filter_map(|(label, window)| {
                 let geometry = window.outer_position().ok().zip(window.inner_size().ok());
                 crate::webview_watchdog::realtime_window_replacing(&label);
-                if window.destroy().is_err() {
-                    crate::webview_watchdog::realtime_window_rebuild_failed(&label);
+                if let Err(error) = window.destroy() {
+                    crate::webview_watchdog::realtime_window_replacement_failed(&label);
+                    log::warn!(
+                        "failed to destroy Messenger webview {label} for theme change: {error}"
+                    );
+                    return None;
                 }
-                (label, geometry)
+                Some((label, geometry))
             })
             .collect();
         if !targets.is_empty() {

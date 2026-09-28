@@ -2079,6 +2079,7 @@ mod tests {
         budget.window_installed("main", 2);
         budget.window_replacing("main");
         budget.replacement_failed("main");
+        assert_eq!(budget.claim("main", 2), RealtimeRecreateClaim::Exhausted);
         budget.window_destroyed("main", 2);
         assert_eq!(budget.claim("main", 3), RealtimeRecreateClaim::Granted);
     }
