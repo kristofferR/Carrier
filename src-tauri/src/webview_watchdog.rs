@@ -262,6 +262,16 @@ impl RealtimeRecreateBudget {
         }
     }
 
+    fn rebuild_failed(&mut self, label: &str) {
+        if self
+            .rebuilding
+            .as_ref()
+            .is_some_and(|(rebuilt_label, _)| rebuilt_label == label)
+        {
+            self.refund();
+        }
+    }
+
     fn window_destroyed(&mut self, label: &str, id: u64) {
         if self.replacement_being_recreated == Some(id) {
             self.replacement_being_recreated = None;
@@ -343,6 +353,13 @@ pub(crate) fn realtime_window_replacement_failed(label: &str) {
         .lock()
         .unwrap()
         .replacement_failed(label);
+}
+
+pub(crate) fn realtime_window_rebuild_failed(label: &str) {
+    REALTIME_RECREATE_BUDGET
+        .lock()
+        .unwrap()
+        .rebuild_failed(label);
 }
 
 #[derive(Debug, Deserialize)]
@@ -2064,6 +2081,22 @@ mod tests {
         budget.replacement_failed("main");
         budget.window_destroyed("main", 2);
         assert_eq!(budget.claim("main", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn failed_rebuild_refunds_only_its_window_claim() {
+        let mut budget = RealtimeRecreateBudget::default();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("main", 2);
+        budget.window_replacing("main");
+        budget.window_destroyed("main", 2);
+        budget.rebuild_failed("other");
+        assert_eq!(
+            budget.claim("other", 3),
+            RealtimeRecreateClaim::WaitingForOtherWindow
+        );
+        budget.rebuild_failed("main");
+        assert_eq!(budget.claim("other", 3), RealtimeRecreateClaim::Granted);
     }
 
     #[test]

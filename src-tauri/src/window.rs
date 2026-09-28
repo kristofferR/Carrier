@@ -731,6 +731,7 @@ pub(crate) fn recreate_messenger_window(
             // Frame recovery is bounded to this window. Restarting the entire
             // app would reset its budget and discard drafts in other windows.
             log::error!("failed to construct replacement Messenger window {label}; automatic frame recovery stopped, reopen Carrier from the tray or relaunch manually");
+            crate::webview_watchdog::realtime_window_rebuild_failed(&label);
             app.state::<AppState>()
                 .recreating
                 .store(false, Ordering::SeqCst);
@@ -744,6 +745,7 @@ pub(crate) fn recreate_messenger_window(
             "failed to rebuild blank Messenger webview {label} after \
              {MAX_BUILD_ATTEMPTS} attempts; restarting Carrier"
         );
+        crate::webview_watchdog::realtime_window_rebuild_failed(&label);
         app.restart();
     });
     true
@@ -781,7 +783,7 @@ pub(crate) fn recreate_themed_windows(app: &tauri::AppHandle) {
                 let geometry = window.outer_position().ok().zip(window.inner_size().ok());
                 crate::webview_watchdog::realtime_window_replacing(&label);
                 if window.destroy().is_err() {
-                    crate::webview_watchdog::realtime_window_replacement_failed(&label);
+                    crate::webview_watchdog::realtime_window_rebuild_failed(&label);
                 }
                 (label, geometry)
             })
@@ -802,6 +804,8 @@ pub(crate) fn recreate_themed_windows(app: &tauri::AppHandle) {
                         let _ = window.set_position(tauri::Position::Physical(pos));
                         let _ = window.set_size(tauri::Size::Physical(size));
                     }
+                } else {
+                    crate::webview_watchdog::realtime_window_rebuild_failed(&label);
                 }
             }
         }
