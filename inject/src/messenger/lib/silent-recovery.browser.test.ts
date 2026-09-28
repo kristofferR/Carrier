@@ -294,6 +294,22 @@ async function runFixtures(
       assert(`hidden fatal dialog ignored (${style})`, reports.at(-1) === "ok");
     }
     errorHost.removeAttribute("style");
+    errorHost.style.cssText =
+      "position:fixed;top:10px;left:10px;width:10px;height:10px;overflow:hidden";
+    errorDialog.style.cssText = "position:fixed;top:40px;left:40px;width:200px;height:80px";
+    await tick();
+    assert("viewport-fixed fatal dialog escapes ancestor clip", reports.at(-1) === "error");
+    errorHost.style.transform = "translateZ(0)";
+    await tick();
+    assert("fixed dialog within clipped containing block is ignored", reports.at(-1) === "ok");
+    errorHost.style.removeProperty("transform");
+    for (const offset of ["left:20px", "top:20px"]) {
+      errorDialog.style.cssText = `position:relative;${offset}`;
+      await tick();
+      assert(`overflow-clipped fatal dialog ignored (${offset})`, reports.at(-1) === "ok");
+    }
+    errorDialog.removeAttribute("style");
+    errorHost.removeAttribute("style");
     errorHost.setAttribute("aria-hidden", "true");
     await tick();
     assert("inaccessible old dialog ignored", reports.at(-1) === "ok");

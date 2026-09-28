@@ -60,6 +60,11 @@ export function hasFacebookReloadDialog(): boolean {
       continue;
     }
     let hidden = false;
+    let left = Math.max(rect.left, 0);
+    let right = Math.min(rect.right, innerWidth);
+    let top = Math.max(rect.top, 0);
+    let bottom = Math.min(rect.bottom, innerHeight);
+    let fixedToViewport = false;
     for (let el: HTMLElement | null = dialog; el; el = el.parentElement) {
       const style = getComputedStyle(el);
       if (
@@ -73,6 +78,22 @@ export function hasFacebookReloadDialog(): boolean {
         hidden = true;
         break;
       }
+      if (el !== dialog && !fixedToViewport) {
+        const bounds = el.getBoundingClientRect();
+        if (style.overflowX !== "visible") {
+          left = Math.max(left, bounds.left);
+          right = Math.min(right, bounds.right);
+        }
+        if (style.overflowY !== "visible") {
+          top = Math.max(top, bounds.top);
+          bottom = Math.min(bottom, bounds.bottom);
+        }
+        if (left >= right || top >= bottom) {
+          hidden = true;
+          break;
+        }
+      }
+      if (style.position === "fixed" && el.offsetParent === null) fixedToViewport = true;
     }
     if (!hidden && isReloadException(dialog)) return true;
   }
