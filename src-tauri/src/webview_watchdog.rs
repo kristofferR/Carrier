@@ -5,7 +5,7 @@
 //! process and reloads a Messenger window when its content-free heartbeat stops.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -154,16 +154,57 @@ fn rate_limit_account(value: Option<&str>) -> &str {
 }
 
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
-// Survives window recreation (which builds a fresh watchdog); reset to zero
-// whenever any heartbeat proves the realtime transport healthy.
-static REALTIME_RECREATES: AtomicU32 = AtomicU32::new(0);
-
-/// Refund a claimed realtime rebuild that never actually happened. Saturating:
-/// an Ok heartbeat may have reset the counter to zero in the meantime.
-fn refund_realtime_recreate() {
-    let _ = REALTIME_RECREATES.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-        Some(n.saturating_sub(1))
+// Survives window recreation (which builds a fresh watchdog). A new document
+// must stay healthy before it can replenish the rebuild budget.
+static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
+    Mutex::new(RealtimeRecreateBudget {
+        attempts: 0,
+        healthy_since: None,
     });
+
+#[derive(Default)]
+struct RealtimeRecreateBudget {
+    attempts: u32,
+    healthy_since: Option<(u64, Instant)>,
+}
+
+impl RealtimeRecreateBudget {
+    fn claim(&mut self) -> bool {
+        if self.attempts >= REALTIME_RECREATE_LIMIT {
+            return false;
+        }
+        self.attempts += 1;
+        self.healthy_since = None;
+        true
+    }
+
+    fn refund(&mut self) {
+        self.attempts = self.attempts.saturating_sub(1);
+        self.healthy_since = None;
+    }
+
+    fn observe(&mut self, id: u64, now: Instant, healthy: bool) {
+        if self.attempts == 0 || !healthy {
+            self.healthy_since = None;
+            return;
+        }
+        let since = match self.healthy_since {
+            Some((healthy_id, since)) if healthy_id == id => since,
+            _ => {
+                self.healthy_since = Some((id, now));
+                now
+            }
+        };
+        if now.duration_since(since) >= REALTIME_ERROR_CLEAR_TIMEOUT {
+            self.attempts = 0;
+            self.healthy_since = None;
+        }
+    }
+}
+
+/// Refund a claimed realtime rebuild that never actually happened.
+fn refund_realtime_recreate() {
+    REALTIME_RECREATE_BUDGET.lock().unwrap().refund();
 }
 
 #[derive(Debug, Deserialize)]
@@ -591,8 +632,13 @@ impl WebviewWatchdog {
                 payload.realtime,
             );
             drop(state);
-            if payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down {
-                REALTIME_RECREATES.store(0, Ordering::Relaxed);
+            let healthy = payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down;
+            REALTIME_RECREATE_BUDGET.lock().unwrap().observe(
+                watchdog_id,
+                Instant::now(),
+                healthy,
+            );
+            if healthy {
                 // A healthy sibling cannot announce recovery while this
                 // account is cooling down. The gate pairs watchdog notices.
                 crate::notifications::show_sync_alert(
@@ -953,11 +999,7 @@ impl WebviewWatchdog {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
                                     // pass a separate check-then-increment.
-                                    let claimed = REALTIME_RECREATES
-                                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                                            (n < REALTIME_RECREATE_LIMIT).then_some(n + 1)
-                                        })
-                                        .is_ok();
+                                    let claimed = REALTIME_RECREATE_BUDGET.lock().unwrap().claim();
                                     if !claimed {
                                         recovery_coordinator()
                                             .lock()
@@ -1770,6 +1812,24 @@ mod tests {
             state.action(Duration::from_secs(135)),
             WatchdogAction::ReloadRealtime
         );
+    }
+
+    #[test]
+    fn transient_health_after_rebuild_does_not_refund_global_budget() {
+        let mut budget = RealtimeRecreateBudget::default();
+        let start = Instant::now();
+        assert!(budget.claim());
+
+        budget.observe(1, start + Duration::from_secs(5), true);
+        budget.observe(1, start + Duration::from_secs(15), true);
+        budget.observe(1, start + Duration::from_secs(20), false);
+        assert!(!budget.claim());
+
+        budget.observe(1, start + Duration::from_secs(25), true);
+        budget.observe(2, start + Duration::from_secs(80), true);
+        assert!(!budget.claim());
+        budget.observe(2, start + Duration::from_secs(140), true);
+        assert!(budget.claim());
     }
 
     #[test]
