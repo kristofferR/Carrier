@@ -160,6 +160,7 @@ static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
     Mutex::new(RealtimeRecreateBudget {
         attempts: 0,
         rebuilding: None,
+        replacement_id: None,
         healthy_since: None,
         last_healthy_at: None,
     });
@@ -168,25 +169,66 @@ static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
 struct RealtimeRecreateBudget {
     attempts: u32,
     rebuilding: Option<(String, u64)>,
+    replacement_id: Option<u64>,
     healthy_since: Option<(u64, Instant)>,
     last_healthy_at: Option<Instant>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RealtimeRecreateClaim {
+    Granted,
+    WaitingForOtherWindow,
+    Exhausted,
+}
+
 impl RealtimeRecreateBudget {
-    fn claim(&mut self, label: &str, id: u64) -> bool {
+    fn claim(&mut self, label: &str, id: u64) -> RealtimeRecreateClaim {
         if self.attempts >= REALTIME_RECREATE_LIMIT {
-            return false;
+            return if self
+                .rebuilding
+                .as_ref()
+                .is_some_and(|(rebuilt_label, _)| rebuilt_label != label)
+            {
+                RealtimeRecreateClaim::WaitingForOtherWindow
+            } else {
+                RealtimeRecreateClaim::Exhausted
+            };
         }
         self.attempts += 1;
         self.rebuilding = Some((label.to_owned(), id));
+        self.replacement_id = None;
         self.healthy_since = None;
         self.last_healthy_at = None;
-        true
+        RealtimeRecreateClaim::Granted
     }
 
     fn refund(&mut self) {
         self.attempts = self.attempts.saturating_sub(1);
         self.rebuilding = None;
+        self.replacement_id = None;
+        self.healthy_since = None;
+        self.last_healthy_at = None;
+    }
+
+    fn window_installed(&mut self, label: &str, id: u64) {
+        if self
+            .rebuilding
+            .as_ref()
+            .is_some_and(|(rebuilt_label, old_id)| rebuilt_label == label && id != *old_id)
+        {
+            self.replacement_id = Some(id);
+        }
+    }
+
+    fn window_destroyed(&mut self, label: &str, id: u64) {
+        if self.rebuilding.as_ref().is_some_and(|(rebuilt_label, _)| {
+            rebuilt_label == label && self.replacement_id == Some(id)
+        }) {
+            self.refund();
+        }
+    }
+
+    fn pause_confirmation(&mut self) {
         self.healthy_since = None;
         self.last_healthy_at = None;
     }
@@ -223,6 +265,7 @@ impl RealtimeRecreateBudget {
         if now.duration_since(since) >= REALTIME_ERROR_CLEAR_TIMEOUT {
             self.attempts = 0;
             self.rebuilding = None;
+            self.replacement_id = None;
             self.healthy_since = None;
             self.last_healthy_at = None;
             return true;
@@ -519,6 +562,7 @@ impl WatchdogState {
         self.missing_content_since = None;
         self.realtime_bad_since = None;
         self.realtime_error_page = false;
+        self.error_clear_since = None;
     }
 
     fn blank_reload_started(&mut self, now: Duration) {
@@ -605,6 +649,10 @@ impl WebviewWatchdog {
     /// macOS theme change rebuilds a window under the same label.
     pub(crate) fn install(&self, window: &WebviewWindow) {
         let watchdog_id = self.id;
+        REALTIME_RECREATE_BUDGET
+            .lock()
+            .unwrap()
+            .window_installed(window.label(), watchdog_id);
         let started_at = self.started_at;
         let heartbeat_state = Arc::clone(&self.state);
         let listener_window = window.clone();
@@ -712,9 +760,14 @@ impl WebviewWatchdog {
         let alive = Arc::new(AtomicBool::new(true));
         let window_alive = Arc::clone(&alive);
         let focus_state = Arc::clone(&self.state);
+        let destroyed_label = window.label().to_owned();
         window.on_window_event(move |event| {
             if matches!(event, WindowEvent::Destroyed) {
                 window_alive.store(false, Ordering::Release);
+                REALTIME_RECREATE_BUDGET
+                    .lock()
+                    .unwrap()
+                    .window_destroyed(&destroyed_label, watchdog_id);
             }
             if matches!(event, WindowEvent::Focused(_)) {
                 focus_state
@@ -757,6 +810,10 @@ impl WebviewWatchdog {
                     if current_generation != resume_generation {
                         resume_generation = current_generation;
                         state.lock().unwrap().system_resumed(started_at.elapsed());
+                        REALTIME_RECREATE_BUDGET
+                            .lock()
+                            .unwrap()
+                            .pause_confirmation();
                     }
                 }
 
@@ -1030,15 +1087,19 @@ impl WebviewWatchdog {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
                                     // pass a separate check-then-increment.
-                                    let claimed = REALTIME_RECREATE_BUDGET
+                                    let claim = REALTIME_RECREATE_BUDGET
                                         .lock()
                                         .unwrap()
                                         .claim(&label, watchdog_id);
-                                    if !claimed {
+                                    if claim != RealtimeRecreateClaim::Granted {
                                         recovery_coordinator()
                                             .lock()
                                             .unwrap()
                                             .refund(&account, permit);
+                                        if claim == RealtimeRecreateClaim::WaitingForOtherWindow {
+                                            next_recovery_attempt = now + REACHABILITY_RETRY;
+                                            continue;
+                                        }
                                         state.lock().unwrap().realtime_recovery_exhausted();
                                         log::warn!(
                                             "Messenger webview {label} realtime transport still dead after rebuilding; giving up automated recovery until it reports healthy"
@@ -1854,26 +1915,29 @@ mod tests {
     fn transient_health_after_rebuild_does_not_refund_global_budget() {
         let mut budget = RealtimeRecreateBudget::default();
         let start = Instant::now();
-        assert!(budget.claim("main", 1));
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
 
         assert!(!budget.observe("main", 2, start + Duration::from_secs(5), true));
         assert!(!budget.observe("main", 2, start + Duration::from_secs(15), true));
         assert!(!budget.observe("main", 2, start + Duration::from_secs(20), false));
-        assert!(!budget.claim("other", 3));
+        assert_eq!(
+            budget.claim("other", 3),
+            RealtimeRecreateClaim::WaitingForOtherWindow
+        );
 
         for second in (25..=80).step_by(5) {
             assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
             assert!(!budget.observe("other", 3, start + Duration::from_secs(second), true));
         }
         assert!(budget.observe("main", 2, start + Duration::from_secs(85), true));
-        assert!(budget.claim("other", 3));
+        assert_eq!(budget.claim("other", 3), RealtimeRecreateClaim::Granted);
     }
 
     #[test]
     fn rebuild_confirmation_requires_active_heartbeats_from_replacement() {
         let mut budget = RealtimeRecreateBudget::default();
         let start = Instant::now();
-        assert!(budget.claim("main", 1));
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
 
         assert!(!budget.observe("main", 1, start, true));
         assert!(!budget.observe("other", 3, start + Duration::from_secs(60), true));
@@ -1884,6 +1948,63 @@ mod tests {
             assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
         }
         assert!(budget.observe("main", 2, start + Duration::from_secs(190), true));
+    }
+
+    #[test]
+    fn closing_replacement_refunds_only_its_rebuild_claim() {
+        let mut budget = RealtimeRecreateBudget::default();
+        assert_eq!(budget.claim("win-1", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("win-1", 2);
+        budget.window_destroyed("win-1", 1);
+        budget.window_destroyed("win-2", 2);
+        assert_eq!(budget.attempts, 1);
+
+        budget.window_destroyed("win-1", 2);
+        assert_eq!(budget.claim("win-2", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn another_window_waits_for_rebuild_confirmation_without_being_exhausted() {
+        let mut budget = RealtimeRecreateBudget::default();
+        let mut other = WatchdogState {
+            realtime_reloads: REALTIME_RELOAD_LIMIT,
+            ..WatchdogState::default()
+        };
+        feed_realtime(&mut other, 0, 120, RealtimeSignal::Never);
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        assert_eq!(
+            budget.claim("win-1", 3),
+            RealtimeRecreateClaim::WaitingForOtherWindow
+        );
+        assert_eq!(
+            other.action(Duration::from_secs(120)),
+            WatchdogAction::RecreateRealtime
+        );
+
+        let start = Instant::now();
+        for second in (0..=60).step_by(5) {
+            budget.observe("main", 2, start + Duration::from_secs(second), true);
+        }
+        assert_eq!(budget.claim("win-1", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn resume_restarts_reload_and_rebuild_health_confirmation() {
+        let mut state = WatchdogState::default();
+        feed_realtime(&mut state, 0, 15, RealtimeSignal::Error);
+        state.realtime_reload_started(Duration::from_secs(15));
+        feed_realtime(&mut state, 20, 25, RealtimeSignal::Ok);
+        state.system_resumed(Duration::from_secs(80));
+        feed_realtime(&mut state, 85, 85, RealtimeSignal::Ok);
+        assert_eq!(state.realtime_reloads, 1);
+        assert!(state.error_reload_pending);
+
+        let mut budget = RealtimeRecreateBudget::default();
+        let start = Instant::now();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        assert!(!budget.observe("main", 2, start, true));
+        budget.pause_confirmation();
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(65), true));
     }
 
     #[test]
