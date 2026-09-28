@@ -119,6 +119,7 @@ async function runFixtures(
   Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
   const connectionListeners = new Set<(value: unknown) => void>();
   const reports: string[] = [];
+  let protectedReport = false;
   const setup = {
     getOrSetupWorker(..._args: unknown[]) {
       recoveries++;
@@ -166,9 +167,12 @@ async function runFixtures(
     __TAURI_INTERNALS__: {
       invoke: async (
         _command: string,
-        args: { event?: string; payload?: { realtime?: string } },
+        args: { event?: string; payload?: { realtime?: string; protected?: boolean } },
       ) => {
-        if (args?.payload?.realtime) reports.push(args.payload.realtime);
+        if (args?.payload?.realtime) {
+          reports.push(args.payload.realtime);
+          protectedReport = args.payload.protected === true;
+        }
       },
     },
   });
@@ -232,6 +236,66 @@ async function runFixtures(
       "healthy lifecycle events do not mutate the worker",
       recoveries === 1 && performance.timeOrigin === origin,
     );
+    const errorHost = document.createElement("div");
+    errorHost.innerHTML = `<div><h2>Sorry, something went wrong</h2><p>Please try closing and re-opening your browser window.</p><button>OK</button></div>`;
+    document.body.appendChild(errorHost);
+    const errorDialog = errorHost.firstElementChild as HTMLElement;
+    await tick();
+    assert("error copy in chat content does not trigger recovery", reports.at(-1) === "ok");
+    errorDialog.setAttribute("role", "dialog");
+    await tick();
+    assert("fatal dialog overrides healthy transport", reports.at(-1) === "error");
+    composer.textContent = "Keep my draft";
+    await tick();
+    assert("fatal dialog retains draft protection", reports.at(-1) === "error" && protectedReport);
+    composer.textContent = "";
+    window.__carrierInCall = true;
+    await tick();
+    assert("fatal dialog retains call protection", reports.at(-1) === "error" && protectedReport);
+    window.__carrierInCall = false;
+    online = false;
+    window.dispatchEvent(new Event("offline"));
+    await tick();
+    assert("offline error waits for network restoration", reports.at(-1) === "pending");
+    online = true;
+    window.dispatchEvent(new Event("online"));
+    await tick();
+    assert("restored network reports fatal error", reports.at(-1) === "error");
+    for (const style of [
+      "display:none",
+      "visibility:hidden",
+      "opacity:0",
+      "content-visibility:hidden",
+      "position:fixed;top:100vh",
+      "position:fixed;left:100vw",
+      "position:fixed;bottom:100vh",
+      "position:fixed;right:100vw",
+    ]) {
+      errorHost.setAttribute("style", style);
+      await tick();
+      assert(`hidden fatal dialog ignored (${style})`, reports.at(-1) === "ok");
+    }
+    errorHost.removeAttribute("style");
+    errorHost.setAttribute("aria-hidden", "true");
+    await tick();
+    assert("inaccessible old dialog ignored", reports.at(-1) === "ok");
+    errorHost.removeAttribute("aria-hidden");
+    errorDialog.querySelector("p")!.textContent = "Please try again later.";
+    await tick();
+    assert("generic error dialog is not fatal", reports.at(-1) === "ok");
+    errorDialog.querySelector("p")!.textContent =
+      "Please try closing and re-opening your browser window.";
+    errorDialog.setAttribute("role", "alertdialog");
+    await tick();
+    assert("fatal alertdialog is recognized too", reports.at(-1) === "error");
+    history.replaceState(null, "", "/login");
+    await tick();
+    assert("login flow is not automatically recovered", reports.at(-1) === "pending");
+    history.replaceState(null, "", "/messages");
+    errorHost.remove();
+    await tick();
+    assert("dismissed error returns to verified health", reports.at(-1) === "ok");
+    assert("fatal dialog never invokes worker repair", recoveries === 1);
     connected = successful = false;
     supported = false;
     for (let i = 0; i < 10; i++) await tick();

@@ -1,7 +1,7 @@
 /* --------------------------- Sync recovery ---------------------------- */
 // Messenger's live sync can stall inside a system WebView. Native heartbeats
 // detect a suspended renderer. Responsive pages repair their worker in place;
-// only an explicit reload or the server rate-limit flow navigates this page.
+// confirmed fatal error UI still uses the native reload/rebuild ladder.
 
 import { diag, invoke } from "../bridge";
 import {
@@ -10,6 +10,7 @@ import {
   PowerStateTracker,
   type ScheduledRefreshReason,
 } from "../lib/auto-refresh";
+import { hasFacebookReloadDialog } from "../lib/facebook-error-dialog";
 import {
   looksLikeFacebookErrorPage,
   REALTIME_UNOBSERVED_SETTLE_MS,
@@ -87,17 +88,20 @@ export function initAutoRefresh() {
   const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
   const onFacebookErrorPage = () => {
     try {
-      return looksLikeFacebookErrorPage({
-        hasBackLink: !!document.getElementById("back"),
-        hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
-        elementCount: document.getElementsByTagName("*").length,
-      });
+      return (
+        hasFacebookReloadDialog() ||
+        looksLikeFacebookErrorPage({
+          hasBackLink: !!document.getElementById("back"),
+          hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
+          elementCount: document.getElementsByTagName("*").length,
+        })
+      );
     } catch (_) {
       return false;
     }
   };
   const realtimeStatus = () => {
-    if (systemSleeping || rateLimitRemainingMs() > 0) return "pending";
+    if (systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0) return "pending";
     if (!isMessengerContentPath(location.pathname)) return "pending";
     if (onFacebookErrorPage()) return "error";
     return realtimeRecovery.status(Date.now());

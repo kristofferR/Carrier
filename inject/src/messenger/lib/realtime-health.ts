@@ -37,8 +37,8 @@ export type RealtimeHealthSource = "socket" | "worker" | "worker-connection";
  * "never" flags a page whose realtime transport has not connected once since
  * load — the state where both health sources are mute and only the native
  * side (which can check DNS and rebuild the webview) can still recover.
- * "error" flags Facebook's static error document, which is unambiguous the
- * moment it renders and gets a much faster native recovery ladder.
+ * "error" flags Facebook's static error document or confirmed reload dialog,
+ * which gets a much faster native recovery ladder.
  */
 export type RealtimeStatus = "ok" | "pending" | "stale" | "never" | "error";
 

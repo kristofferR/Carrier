@@ -192,6 +192,35 @@
     return next === "rate-limit-manual" || pending !== "manual" || next === "manual";
   };
 
+  // inject/src/messenger/lib/facebook-error-dialog.ts
+  function hasFacebookReloadDialog() {
+    const normalize = (text) => text.replace(/\s+/g, " ").trim();
+    for (const dialog of document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"]'
+    )) {
+      const rect = dialog.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) {
+        continue;
+      }
+      let hidden = false;
+      for (let el = dialog; el; el = el.parentElement) {
+        const style = getComputedStyle(el);
+        if (el.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.contentVisibility === "hidden" || Number(style.opacity) === 0) {
+          hidden = true;
+          break;
+        }
+      }
+      if (hidden) continue;
+      const hasTitle = [...dialog.querySelectorAll('h1, h2, h3, [role="heading"]')].some(
+        (heading) => /^Sorry, something went wrong\.?$/.test(normalize(heading.innerText))
+      );
+      if (hasTitle && normalize(dialog.innerText).includes("Please try closing and re-opening your browser window.")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // inject/src/messenger/lib/realtime-health.ts
   var REALTIME_CONNECT_GRACE_MS = 15e3;
   var REALTIME_SILENCE_MS = 9e4;
@@ -1754,7 +1783,7 @@
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
-        return looksLikeFacebookErrorPage({
+        return hasFacebookReloadDialog() || looksLikeFacebookErrorPage({
           hasBackLink: !!document.getElementById("back"),
           hasIconImage: document.getElementById("icon") instanceof HTMLImageElement,
           elementCount: document.getElementsByTagName("*").length
@@ -1764,7 +1793,7 @@
       }
     };
     const realtimeStatus = () => {
-      if (systemSleeping || rateLimitRemainingMs() > 0) return "pending";
+      if (systemSleeping || !navigator.onLine || rateLimitRemainingMs() > 0) return "pending";
       if (!isMessengerContentPath(location.pathname)) return "pending";
       if (onFacebookErrorPage()) return "error";
       return realtimeRecovery.status(Date.now());

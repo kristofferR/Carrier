@@ -4,6 +4,16 @@ Responsive Messenger pages repair the messaging worker without navigation.
 Focus, visibility, wake, notifications, and going online trigger health checks;
 they are no longer reasons to periodically reload the page.
 
+The fatal “Sorry, something went wrong” dialog asking to close and re-open the
+browser instead uses native error recovery, even if the worker still reports
+healthy. Carrier recognizes the visible English dialog by its heading and exact
+restart instruction, never by searching chat messages. After 15 seconds of error
+heartbeats it reloads; if the error persists, it can rebuild the webview once.
+Existing draft, call, sleep, network, rate-limit, and Hold Failures guards apply.
+Hidden dialogs, unrelated errors, and unrecognized translations do not trigger
+this path. Healthy transport can reset the retry budget only after the dialog
+has gone away.
+
 ## Detection and recovery
 
 The encrypted connection state and worker heartbeat are authoritative. A healthy

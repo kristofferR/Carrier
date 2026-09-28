@@ -372,7 +372,7 @@ impl WatchdogState {
                 self.unresponsive_action()
             };
         }
-        // Facebook's static error page is a certainty, not a suspicion: confirm
+        // Facebook's fatal error UI is a certainty, not a suspicion: confirm
         // briefly, spend one reload, then go straight to a rebuild.
         let (bad_timeout, reload_limit) = if self.realtime_error_page {
             (REALTIME_ERROR_TIMEOUT, REALTIME_ERROR_RELOAD_LIMIT)
