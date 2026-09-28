@@ -533,6 +533,21 @@ describe("Messenger worker recovery", () => {
     expect(f.watchdogCalls).toHaveLength(0);
   });
 
+  test("reports a failed recovery when backend reset throws", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    const error = new Error("reset failed");
+    f.modules.MAWWaitForBackendSetup = {
+      ...(f.modules.MAWWaitForBackendSetup as object),
+      resetBackendSetup: () => {
+        throw error;
+      },
+    };
+    expect(await f.recovery.recover()).toBe("failed");
+    expect(f.rejected).toEqual([error]);
+    expect(f.setupCalls).toHaveLength(1);
+  });
+
   test("uses Messenger's existing callback for a worker that had an identity", async () => {
     const f = fixture();
     f.currentId = "worker";

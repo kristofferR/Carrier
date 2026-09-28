@@ -732,7 +732,7 @@
           }
         } catch (error) {
           reject.call(state2, error);
-          return "started";
+          return "failed";
         }
         return this.startSetup(replay, (error) => reject.call(state2, error));
       } catch (error) {
@@ -1492,6 +1492,8 @@
       if (running && runningTimedOut) showFailure(true);
       if (budget.exhausted) showFailure(true);
       if (running || options.blocked(manualRequested) || !budget.start(now())) return;
+      const failedBeforeAttempt = failed;
+      showFailure(false);
       const manual = manualRequested;
       const launchEpoch = scopeEpoch;
       manualRequested = false;
@@ -1557,6 +1559,7 @@
             "no compatible worker recovery; preserving the page"
           );
         }
+        if (failedBeforeAttempt && result !== "started") showFailure(true);
         if (result === "failed") {
           diag(
             "sync.worker-recovery-failed",
@@ -1816,7 +1819,8 @@
     let silentRecoveryFailed = false;
     const realtimeReport = () => {
       const status = realtimeStatus();
-      return ["stale", "never"].includes(status) && !silentRecoveryFailed ? "managed" : status;
+      const workerMutationPending = workerRecovery.phase === "dedicated-termination" || workerRecovery.phase === "shared-shutdown";
+      return ["stale", "never"].includes(status) && (!silentRecoveryFailed || workerMutationPending) ? "managed" : status;
     };
     const emitHeartbeat = (requestRateLimitRetry = false) => {
       if (typeof heartbeatId !== "number") return;

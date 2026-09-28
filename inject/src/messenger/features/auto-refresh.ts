@@ -29,6 +29,7 @@ import {
 import { monitorRealtimeHealth } from "./realtime-health";
 import { createSilentRecovery } from "./silent-recovery";
 import { sampleSyncProcessing } from "./sync-processing";
+import { workerRecovery } from "./worker-recovery";
 
 export function initAutoRefresh() {
   // Capture these at document start, before Facebook wraps the scheduling APIs.
@@ -149,7 +150,14 @@ export function initAutoRefresh() {
   let silentRecoveryFailed = false;
   const realtimeReport = () => {
     const status = realtimeStatus();
-    return ["stale", "never"].includes(status) && !silentRecoveryFailed ? "managed" : status;
+    // An overdue termination or shutdown can still mutate Messenger's worker.
+    // Keep native reload behind that operation until its promise settles.
+    const workerMutationPending =
+      workerRecovery.phase === "dedicated-termination" ||
+      workerRecovery.phase === "shared-shutdown";
+    return ["stale", "never"].includes(status) && (!silentRecoveryFailed || workerMutationPending)
+      ? "managed"
+      : status;
   };
   const emitHeartbeat = (requestRateLimitRetry = false) => {
     if (typeof heartbeatId !== "number") return;

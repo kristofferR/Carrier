@@ -117,6 +117,8 @@ export function createSilentRecovery(options: {
     if (running && runningTimedOut) showFailure(true);
     if (budget.exhausted) showFailure(true);
     if (running || options.blocked(manualRequested) || !budget.start(now())) return;
+    const failedBeforeAttempt = failed;
+    showFailure(false);
     const manual = manualRequested;
     const launchEpoch = scopeEpoch;
     manualRequested = false;
@@ -192,6 +194,7 @@ export function createSilentRecovery(options: {
             "no compatible worker recovery; preserving the page",
           );
         }
+        if (failedBeforeAttempt && result !== "started") showFailure(true);
         if (result === "failed") {
           diag(
             "sync.worker-recovery-failed",

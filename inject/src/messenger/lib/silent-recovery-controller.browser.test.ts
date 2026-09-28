@@ -296,6 +296,39 @@ async function runFixtures(
     await advance(15_000);
     hungRecovery.tick();
     assert("later failure surfaces while old setup remains single-flight", surfaced && calls === 6);
+
+    let online = true;
+    Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
+    let recoveryResult = "unsupported";
+    let busyAttempts = 0;
+    adapter.recover = async () => {
+      busyAttempts++;
+      return recoveryResult;
+    };
+    const busyRecovery = make({ needed: true, healthy: false });
+    let failure = false;
+    const failureChanges: boolean[] = [];
+    window.addEventListener(failureEvent, (event) => {
+      failure = (event as CustomEvent<boolean>).detail;
+      failureChanges.push(failure);
+    });
+    busyRecovery.tick();
+    await advance(15_000);
+    busyRecovery.tick();
+    await flush();
+    assert("unavailable repair hands transport to native", failure);
+    online = false;
+    window.dispatchEvent(new Event("offline"));
+    online = true;
+    window.dispatchEvent(new Event("online"));
+    recoveryResult = "busy";
+    await advance(15_000);
+    busyRecovery.tick();
+    await flush();
+    assert(
+      "busy network-restoration retry retains native handoff",
+      busyAttempts === 2 && failure && failureChanges.join() === "true,false,true",
+    );
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

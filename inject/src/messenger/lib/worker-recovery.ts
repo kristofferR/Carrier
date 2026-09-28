@@ -485,7 +485,7 @@ export class FacebookWorkerRecovery {
         }
       } catch (error) {
         reject.call(state, error);
-        return "started";
+        return "failed";
       }
       return this.startSetup(replay, (error) => reject.call(state, error));
     } catch (error) {
