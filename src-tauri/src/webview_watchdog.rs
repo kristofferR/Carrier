@@ -161,6 +161,7 @@ static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
         attempts: 0,
         rebuilding: None,
         replacement_id: None,
+        replacement_exhausted: false,
         healthy_since: None,
         last_healthy_at: None,
     });
@@ -170,6 +171,7 @@ struct RealtimeRecreateBudget {
     attempts: u32,
     rebuilding: Option<(String, u64)>,
     replacement_id: Option<u64>,
+    replacement_exhausted: bool,
     healthy_since: Option<(u64, Instant)>,
     last_healthy_at: Option<Instant>,
 }
@@ -184,10 +186,19 @@ enum RealtimeRecreateClaim {
 impl RealtimeRecreateBudget {
     fn claim(&mut self, label: &str, id: u64) -> RealtimeRecreateClaim {
         if self.attempts >= REALTIME_RECREATE_LIMIT {
+            if self
+                .rebuilding
+                .as_ref()
+                .is_some_and(|(rebuilt_label, _)| rebuilt_label == label)
+                && self.replacement_id == Some(id)
+            {
+                self.replacement_exhausted = true;
+            }
             return if self
                 .rebuilding
                 .as_ref()
                 .is_some_and(|(rebuilt_label, _)| rebuilt_label != label)
+                && !self.replacement_exhausted
             {
                 RealtimeRecreateClaim::WaitingForOtherWindow
             } else {
@@ -197,6 +208,7 @@ impl RealtimeRecreateBudget {
         self.attempts += 1;
         self.rebuilding = Some((label.to_owned(), id));
         self.replacement_id = None;
+        self.replacement_exhausted = false;
         self.healthy_since = None;
         self.last_healthy_at = None;
         RealtimeRecreateClaim::Granted
@@ -206,6 +218,7 @@ impl RealtimeRecreateBudget {
         self.attempts = self.attempts.saturating_sub(1);
         self.rebuilding = None;
         self.replacement_id = None;
+        self.replacement_exhausted = false;
         self.healthy_since = None;
         self.last_healthy_at = None;
     }
@@ -228,6 +241,7 @@ impl RealtimeRecreateBudget {
         }
     }
 
+    #[cfg(any(test, target_os = "macos"))]
     fn pause_confirmation(&mut self) {
         self.healthy_since = None;
         self.last_healthy_at = None;
@@ -266,6 +280,7 @@ impl RealtimeRecreateBudget {
             self.attempts = 0;
             self.rebuilding = None;
             self.replacement_id = None;
+            self.replacement_exhausted = false;
             self.healthy_since = None;
             self.last_healthy_at = None;
             return true;
@@ -1986,6 +2001,26 @@ mod tests {
             budget.observe("main", 2, start + Duration::from_secs(second), true);
         }
         assert_eq!(budget.claim("win-1", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn replacement_exhaustion_releases_waiting_windows_without_losing_health_confirmation() {
+        let mut budget = RealtimeRecreateBudget::default();
+        let start = Instant::now();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("main", 2);
+        assert_eq!(
+            budget.claim("other", 3),
+            RealtimeRecreateClaim::WaitingForOtherWindow
+        );
+        assert_eq!(budget.claim("main", 2), RealtimeRecreateClaim::Exhausted);
+        assert_eq!(budget.claim("other", 3), RealtimeRecreateClaim::Exhausted);
+
+        for second in (0..60).step_by(5) {
+            assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
+        }
+        assert!(budget.observe("main", 2, start + Duration::from_secs(60), true));
+        assert_eq!(budget.claim("other", 3), RealtimeRecreateClaim::Granted);
     }
 
     #[test]
