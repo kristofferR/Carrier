@@ -159,46 +159,75 @@ static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
 static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
     Mutex::new(RealtimeRecreateBudget {
         attempts: 0,
+        rebuilding: None,
         healthy_since: None,
+        last_healthy_at: None,
     });
 
 #[derive(Default)]
 struct RealtimeRecreateBudget {
     attempts: u32,
+    rebuilding: Option<(String, u64)>,
     healthy_since: Option<(u64, Instant)>,
+    last_healthy_at: Option<Instant>,
 }
 
 impl RealtimeRecreateBudget {
-    fn claim(&mut self) -> bool {
+    fn claim(&mut self, label: &str, id: u64) -> bool {
         if self.attempts >= REALTIME_RECREATE_LIMIT {
             return false;
         }
         self.attempts += 1;
+        self.rebuilding = Some((label.to_owned(), id));
         self.healthy_since = None;
+        self.last_healthy_at = None;
         true
     }
 
     fn refund(&mut self) {
         self.attempts = self.attempts.saturating_sub(1);
+        self.rebuilding = None;
         self.healthy_since = None;
+        self.last_healthy_at = None;
     }
 
-    fn observe(&mut self, id: u64, now: Instant, healthy: bool) {
-        if self.attempts == 0 || !healthy {
-            self.healthy_since = None;
-            return;
+    /// Only the replacement of the rebuilt window can confirm that rebuild.
+    /// Other windows may keep reporting healthy throughout the failed episode.
+    fn observe(&mut self, label: &str, id: u64, now: Instant, healthy: bool) -> bool {
+        if self.attempts == 0 {
+            return true;
         }
-        let since = match self.healthy_since {
-            Some((healthy_id, since)) if healthy_id == id => since,
-            _ => {
-                self.healthy_since = Some((id, now));
-                now
-            }
-        };
+        if !self
+            .rebuilding
+            .as_ref()
+            .is_some_and(|(rebuilt_label, old_id)| rebuilt_label == label && id != *old_id)
+        {
+            return false;
+        }
+        if !healthy {
+            self.healthy_since = None;
+            self.last_healthy_at = None;
+            return false;
+        }
+        if self
+            .healthy_since
+            .is_none_or(|(healthy_id, _)| healthy_id != id)
+            || self.last_healthy_at.is_none_or(|last| {
+                now.saturating_duration_since(last) >= REALTIME_HEARTBEAT_GAP_RESET
+            })
+        {
+            self.healthy_since = Some((id, now));
+        }
+        self.last_healthy_at = Some(now);
+        let since = self.healthy_since.map_or(now, |(_, since)| since);
         if now.duration_since(since) >= REALTIME_ERROR_CLEAR_TIMEOUT {
             self.attempts = 0;
+            self.rebuilding = None;
             self.healthy_since = None;
+            self.last_healthy_at = None;
+            return true;
         }
+        false
     }
 }
 
@@ -631,14 +660,16 @@ impl WebviewWatchdog {
                 payload.content_present,
                 payload.realtime,
             );
+            let reload_recovered = !state.error_reload_pending;
             drop(state);
             let healthy = payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down;
-            REALTIME_RECREATE_BUDGET.lock().unwrap().observe(
+            let rebuild_recovered = REALTIME_RECREATE_BUDGET.lock().unwrap().observe(
+                listener_window.label(),
                 watchdog_id,
                 Instant::now(),
                 healthy,
             );
-            if healthy {
+            if healthy && reload_recovered && rebuild_recovered {
                 // A healthy sibling cannot announce recovery while this
                 // account is cooling down. The gate pairs watchdog notices.
                 crate::notifications::show_sync_alert(
@@ -999,7 +1030,10 @@ impl WebviewWatchdog {
                                     // One atomic claim of the rebuild budget:
                                     // concurrent window watchdogs must not both
                                     // pass a separate check-then-increment.
-                                    let claimed = REALTIME_RECREATE_BUDGET.lock().unwrap().claim();
+                                    let claimed = REALTIME_RECREATE_BUDGET
+                                        .lock()
+                                        .unwrap()
+                                        .claim(&label, watchdog_id);
                                     if !claimed {
                                         recovery_coordinator()
                                             .lock()
@@ -1797,6 +1831,7 @@ mod tests {
 
         feed_realtime(&mut state, 20, 30, RealtimeSignal::Ok);
         assert_eq!(state.realtime_reloads, 1);
+        assert!(state.error_reload_pending);
         feed_realtime(&mut state, 35, 50, RealtimeSignal::Error);
         assert_eq!(
             state.action(Duration::from_secs(50)),
@@ -1807,6 +1842,7 @@ mod tests {
         assert_eq!(state.realtime_reloads, 1);
         feed_realtime(&mut state, 115, 115, RealtimeSignal::Ok);
         assert_eq!(state.realtime_reloads, 0);
+        assert!(!state.error_reload_pending);
         feed_realtime(&mut state, 120, 135, RealtimeSignal::Error);
         assert_eq!(
             state.action(Duration::from_secs(135)),
@@ -1818,18 +1854,36 @@ mod tests {
     fn transient_health_after_rebuild_does_not_refund_global_budget() {
         let mut budget = RealtimeRecreateBudget::default();
         let start = Instant::now();
-        assert!(budget.claim());
+        assert!(budget.claim("main", 1));
 
-        budget.observe(1, start + Duration::from_secs(5), true);
-        budget.observe(1, start + Duration::from_secs(15), true);
-        budget.observe(1, start + Duration::from_secs(20), false);
-        assert!(!budget.claim());
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(5), true));
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(15), true));
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(20), false));
+        assert!(!budget.claim("other", 3));
 
-        budget.observe(1, start + Duration::from_secs(25), true);
-        budget.observe(2, start + Duration::from_secs(80), true);
-        assert!(!budget.claim());
-        budget.observe(2, start + Duration::from_secs(140), true);
-        assert!(budget.claim());
+        for second in (25..=80).step_by(5) {
+            assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
+            assert!(!budget.observe("other", 3, start + Duration::from_secs(second), true));
+        }
+        assert!(budget.observe("main", 2, start + Duration::from_secs(85), true));
+        assert!(budget.claim("other", 3));
+    }
+
+    #[test]
+    fn rebuild_confirmation_requires_active_heartbeats_from_replacement() {
+        let mut budget = RealtimeRecreateBudget::default();
+        let start = Instant::now();
+        assert!(budget.claim("main", 1));
+
+        assert!(!budget.observe("main", 1, start, true));
+        assert!(!budget.observe("other", 3, start + Duration::from_secs(60), true));
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(65), true));
+        // Sleep cannot turn the first response into a confirmed recovery.
+        assert!(!budget.observe("main", 2, start + Duration::from_secs(130), true));
+        for second in (135..190).step_by(5) {
+            assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
+        }
+        assert!(budget.observe("main", 2, start + Duration::from_secs(190), true));
     }
 
     #[test]
