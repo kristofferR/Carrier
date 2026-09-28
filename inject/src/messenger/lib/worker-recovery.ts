@@ -80,9 +80,40 @@ export class FacebookWorkerRecovery {
     | { scope: string; replay: () => unknown; state: unknown; setup: unknown }
     | undefined;
   private currentPhase: RecoveryPhase = "idle";
+  private lastPhase: RecoveryPhase = "idle";
+  /** Carrier's own replayed setup, which can stay pending indefinitely. */
+  private ownSetup: object | undefined;
 
   get phase(): RecoveryPhase {
     return this.currentPhase;
+  }
+
+  /** The last phase the previous recovery attempt reached. */
+  get previousPhase(): RecoveryPhase {
+    return this.lastPhase;
+  }
+
+  /**
+   * Replay setup without holding the recovery guard across it: a hung setup
+   * must still be rescuable by the guarded stalled-setup restarts. While it is
+   * pending, `ownSetup` keeps every other path from starting a competing one.
+   */
+  private startSetup(replay: () => unknown, reject: (error: unknown) => void): "started" {
+    const token = {};
+    this.ownSetup = token;
+    this.setupStartedAt = nativeNow();
+    this.currentPhase = "setup";
+    void (async () => replay())()
+      .catch((error: unknown) => {
+        // The normal caller does this after a failed setup, so queued bridge
+        // operations reject instead of hanging. A superseded setup must not
+        // fail Messenger's replacement.
+        if (this.ownSetup === token) reject(error);
+      })
+      .finally(() => {
+        if (this.ownSetup === token) this.ownSetup = undefined;
+      });
+    return "started";
   }
 
   constructor(
@@ -133,6 +164,8 @@ export class FacebookWorkerRecovery {
         owner.scope = undefined;
         owner.setupStartedAt = undefined;
         owner.pausedDedicatedSetup = undefined;
+        // Messenger's own newer setup supersedes any replay Carrier started.
+        owner.ownSetup = undefined;
         // Current MAWSetupWorker ABI: vault, bridge, two lifecycle callbacks,
         // reason, error callback, optional EB state. Unknown shapes fail open.
         if (
@@ -237,6 +270,8 @@ export class FacebookWorkerRecovery {
         nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
         stillPendingAndDisconnected();
       if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
+      // Only a guarded restart may act while Carrier's own setup is pending.
+      if (this.ownSetup && !stalledSetup) return "busy";
       const initialId = currentId.call(state);
       if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
         return "busy";
@@ -276,13 +311,7 @@ export class FacebookWorkerRecovery {
         // Carrier already stopped this exact dedicated worker, but a protection
         // gate deferred setup. Resume only after a fresh no-worker inspection.
         this.pausedDedicatedSetup = undefined;
-        this.currentPhase = "setup";
-        try {
-          await paused.replay();
-        } catch (error) {
-          reject.call(state, error);
-        }
-        return "started";
+        return this.startSetup(paused.replay, (error) => reject.call(state, error));
       }
       if (stalledSetup) {
         if (
@@ -330,6 +359,7 @@ export class FacebookWorkerRecovery {
           // The registered lifecycle closes this page's dedicated Worker and
           // restarts it with Messenger's own closure, including pending setup.
           this.lifecycleRestartUsedScope = startingScope;
+          this.ownSetup = undefined;
           this.currentPhase = "dedicated-termination";
           Reflect.apply(lifecycle.callback, undefined, [
             "carrier-sync-recovery",
@@ -364,13 +394,7 @@ export class FacebookWorkerRecovery {
           this.pausedDedicatedSetup = { scope: startingScope, replay, state, setup };
           return "busy";
         }
-        try {
-          this.currentPhase = "setup";
-          await replay();
-        } catch (error) {
-          reject.call(state, error);
-        }
-        return "started";
+        return this.startSetup(replay, (error) => reject.call(state, error));
       }
       if (typeof id === "string" && id.length > 0) {
         if (status.tag === "dedicated_not_exists") return "unsupported";
@@ -423,6 +447,7 @@ export class FacebookWorkerRecovery {
             // Do not replay setup: shutdown is broadcast and its promise does
             // not certify that the old worker has exited.
             this.lifecycleRestartUsedScope = startingScope;
+            this.ownSetup = undefined;
             this.currentPhase = "shared-shutdown";
             await shutdown.call(setup, false, "carrier-sync-recovery");
             return "started";
@@ -458,20 +483,18 @@ export class FacebookWorkerRecovery {
         ) {
           return "busy";
         }
-        this.currentPhase = "setup";
-        await replay();
       } catch (error) {
-        // The normal caller does this after a failed setup. Preserve that
-        // contract so queued bridge operations reject instead of hanging.
         reject.call(state, error);
+        return "started";
       }
-      return "started";
+      return this.startSetup(replay, (error) => reject.call(state, error));
     } catch (error) {
       if (error instanceof InspectionTimeout) return "inspection-timeout";
       // Known missing or changed APIs return unsupported above. An operation
       // that exists but throws may recover on a later bounded attempt.
       return "failed";
     } finally {
+      this.lastPhase = this.currentPhase;
       this.currentPhase = "idle";
       this.recovering = false;
     }

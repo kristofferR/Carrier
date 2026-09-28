@@ -123,8 +123,9 @@ export function createSilentRecovery(options: {
     running = true;
     outageRequests++;
     runningTimedOut = false;
-    // A timeout cannot cancel Messenger's initialization. Keep running latched
-    // until the actual promise settles, so no second bootstrap can race it.
+    // A timeout cannot cancel a worker termination or shutdown. Keep running
+    // latched until the actual promise settles, so no second repair races it.
+    // Replayed setup returns at once; the adapter guards it while pending.
     let timeout: number | undefined;
     const expire = () => {
       // This timer can be the first task after resume, before the health tick
@@ -177,7 +178,10 @@ export function createSilentRecovery(options: {
           busySince = undefined;
           if (result === "started") {
             showFailure(false);
-            diag("sync.worker-recovery", "started Messenger worker recovery without navigation");
+            diag(
+              "sync.worker-recovery",
+              `started Messenger worker recovery without navigation via=${workerRecovery.previousPhase}`,
+            );
           }
         }
         if (result === "unsupported" && !options.isHealthy()) {

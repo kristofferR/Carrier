@@ -477,9 +477,33 @@
       __publicField(this, "lifecycle");
       __publicField(this, "pausedDedicatedSetup");
       __publicField(this, "currentPhase", "idle");
+      __publicField(this, "lastPhase", "idle");
+      /** Carrier's own replayed setup, which can stay pending indefinitely. */
+      __publicField(this, "ownSetup");
     }
     get phase() {
       return this.currentPhase;
+    }
+    /** The last phase the previous recovery attempt reached. */
+    get previousPhase() {
+      return this.lastPhase;
+    }
+    /**
+     * Replay setup without holding the recovery guard across it: a hung setup
+     * must still be rescuable by the guarded stalled-setup restarts. While it is
+     * pending, `ownSetup` keeps every other path from starting a competing one.
+     */
+    startSetup(replay, reject) {
+      const token = {};
+      this.ownSetup = token;
+      this.setupStartedAt = nativeNow();
+      this.currentPhase = "setup";
+      void (async () => replay())().catch((error) => {
+        if (this.ownSetup === token) reject(error);
+      }).finally(() => {
+        if (this.ownSetup === token) this.ownSetup = void 0;
+      });
+      return "started";
     }
     observeLifecycleExports(value) {
       const exports = record(value);
@@ -517,6 +541,7 @@
           owner.scope = void 0;
           owner.setupStartedAt = void 0;
           owner.pausedDedicatedSetup = void 0;
+          owner.ownSetup = void 0;
           if (record(args[0]) && [1, 2, 3, 5].every((index) => typeof args[index] === "function") && typeof args[4] === "string") {
             try {
               const retryArgs = [...args];
@@ -585,6 +610,7 @@
         const stillPendingAndDisconnected = () => inProgress.call(state2) === true && settled.call(state2) === false && currentConnectionState() === connectionState && connected?.call(connectionState) === false;
         const stalledSetup = pendingSetup && !resumingDedicated && escalate && !!this.replay && this.scope === startingScope && this.setupStartedAt !== void 0 && nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS && stillPendingAndDisconnected();
         if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
+        if (this.ownSetup && !stalledSetup) return "busy";
         const initialId = currentId.call(state2);
         if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
           return "busy";
@@ -611,13 +637,7 @@
         if (resumingDedicated && paused) {
           if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
           this.pausedDedicatedSetup = void 0;
-          this.currentPhase = "setup";
-          try {
-            await paused.replay();
-          } catch (error) {
-            reject.call(state2, error);
-          }
-          return "started";
+          return this.startSetup(paused.replay, (error) => reject.call(state2, error));
         }
         if (stalledSetup) {
           if (!["shared_exists_and_connected", "dedicated_exists"].includes(String(status.tag)) || !stillPendingAndDisconnected()) {
@@ -639,6 +659,7 @@
             if (!allowed() || startingScope !== this.accountScope() || this.lifecycle !== lifecycle || this.replay !== replay || this.scope !== replayScope || currentId.call(state2) !== id || bridge?.call(setup) !== initialBridge || !stillPendingAndDisconnected())
               return "busy";
             this.lifecycleRestartUsedScope = startingScope;
+            this.ownSetup = void 0;
             this.currentPhase = "dedicated-termination";
             Reflect.apply(lifecycle.callback, void 0, [
               "carrier-sync-recovery",
@@ -662,13 +683,7 @@
             this.pausedDedicatedSetup = { scope: startingScope, replay, state: state2, setup };
             return "busy";
           }
-          try {
-            this.currentPhase = "setup";
-            await replay();
-          } catch (error) {
-            reject.call(state2, error);
-          }
-          return "started";
+          return this.startSetup(replay, (error) => reject.call(state2, error));
         }
         if (typeof id === "string" && id.length > 0) {
           if (status.tag === "dedicated_not_exists") return "unsupported";
@@ -692,6 +707,7 @@
               const shutdown = method(setup, "killSharedWorker");
               if (!shutdown) return "unsupported";
               this.lifecycleRestartUsedScope = startingScope;
+              this.ownSetup = void 0;
               this.currentPhase = "shared-shutdown";
               await shutdown.call(setup, false, "carrier-sync-recovery");
               return "started";
@@ -714,16 +730,16 @@
           if (this.replay !== replay || this.scope !== replayScope || inProgress.call(state2) === true || currentId.call(state2) != null) {
             return "busy";
           }
-          this.currentPhase = "setup";
-          await replay();
         } catch (error) {
           reject.call(state2, error);
+          return "started";
         }
-        return "started";
+        return this.startSetup(replay, (error) => reject.call(state2, error));
       } catch (error) {
         if (error instanceof InspectionTimeout) return "inspection-timeout";
         return "failed";
       } finally {
+        this.lastPhase = this.currentPhase;
         this.currentPhase = "idle";
         this.recovering = false;
       }
@@ -1527,7 +1543,10 @@
           busySince = void 0;
           if (result === "started") {
             showFailure(false);
-            diag("sync.worker-recovery", "started Messenger worker recovery without navigation");
+            diag(
+              "sync.worker-recovery",
+              `started Messenger worker recovery without navigation via=${workerRecovery.previousPhase}`
+            );
           }
         }
         if (result === "unsupported" && !options.isHealthy()) {
@@ -1794,6 +1813,11 @@
       return false;
     };
     let rateLimitRetryGrantUntil = 0;
+    let silentRecoveryFailed = false;
+    const realtimeReport = () => {
+      const status = realtimeStatus();
+      return ["stale", "never"].includes(status) && !silentRecoveryFailed ? "managed" : status;
+    };
     const emitHeartbeat = (requestRateLimitRetry = false) => {
       if (typeof heartbeatId !== "number") return;
       const protectedNow = heartbeatProtection();
@@ -1817,8 +1841,9 @@
             content_page: isMessengerContentPath(location.pathname)
           },
           // Native supervision still owns unresponsive/blank/error pages. It
-          // must not race a responsive page's non-navigating worker recovery.
-          realtime: ["stale", "never"].includes(realtimeStatus()) ? "managed" : realtimeStatus(),
+          // must not race a responsive page's non-navigating worker recovery,
+          // but takes the transport back as a last resort once that fails.
+          realtime: realtimeReport(),
           rate_limit_ms: rateLimitRemainingMs(),
           rate_limit_account: rateLimitAccountScope(),
           rate_limit_retry: requestRateLimitRetry
@@ -1978,6 +2003,10 @@
     window.__carrierOnNotification = noteLifecycle;
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual"));
     window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
+    window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
+      silentRecoveryFailed = event.detail === true;
+      emitHeartbeat();
+    });
     let waitingForRateLimit = rateLimitRemainingMs() > 0;
     window.addEventListener(RATE_LIMIT_EVENT, (event) => {
       if (!hasRateLimitEpisode()) {

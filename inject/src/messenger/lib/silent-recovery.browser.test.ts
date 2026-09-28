@@ -243,6 +243,10 @@ async function runFixtures(
           "Reconnect,Reload",
     );
     assert("failed recovery leaves page in place", performance.timeOrigin === origin);
+    assert(
+      "failed recovery hands the transport back to native supervision",
+      ["stale", "never"].includes(reports.at(-1) ?? ""),
+    );
     supported = true;
     window.__CARRIER_SETTINGS__ = { hold_failures: true };
     window.dispatchEvent(new Event("carrier:sync-recovery-retry"));
@@ -276,7 +280,7 @@ async function runFixtures(
     for (let i = 0; i < 20; i++) await tick();
     assert(
       "heartbeat-only fallback does not certify encrypted transport",
-      reports.at(-1) === "managed",
+      ["managed", "stale", "never"].includes(reports.at(-1) ?? ""),
     );
     assert("hold prevents mutation while transport proof is unavailable", recoveries === 3);
     // Replenish the episode, then age every health source while recovery is held.

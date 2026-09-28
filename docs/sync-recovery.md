@@ -86,8 +86,9 @@ deadline using timers captured before Facebook wraps page scheduling APIs.
 Expiry abandons the observation and releases Carrier's recovery
 invocation for its remaining bounded retries. Late query results cannot reach a
 mutation, and elapsed time is checked again on response in case suspension
-delayed the timeout task. This deadline is deliberately not applied to setup or
-termination: abandoning those operations could leave two initializations racing.
+delayed the timeout task. This deadline is deliberately not applied to
+termination: abandoning it could leave two initializations racing. A replayed
+setup returns immediately instead of holding the recovery invocation.
 Even a brief verified-health sample that ends an observation window preserves
 the next-attempt backoff if connectivity drops again. Account switches start a
 new budget and connection history, without racing an old in-flight setup.
@@ -134,10 +135,12 @@ A ready backend or remembered encrypted connection also starts a 90-second
 verification deadline while fresh proof is absent. Replacing a worker gives it
 new observation grace, but cached `true` and heartbeat-only fallback cannot
 leave it apparently healthy forever.
-A hung initialization
-keeps the single-flight guard even after its timeout; a second setup must not
-race it. If health briefly returns at that timeout and later fails again, the
-manual failure controls appear while the old setup is still pending. Successful
+A replayed setup that
+never settles (observed 2026-09-28 after a long macOS sleep) keeps its own
+single-flight marker: until it settles, or Messenger starts a newer setup, no
+path may replay, terminate, or reset. Only the guarded pending-startup restarts
+above may act on it, with a fresh 90-second grace period from the replay; they
+supersede it, so its late rejection cannot fail the replacement. Successful
 invocation alone is not proof of a working connection.
 An already busy Messenger does not spend a repair attempt. Readiness checks
 continue; a prolonged busy state enables guarded pending-startup escalation
@@ -150,8 +153,9 @@ server blackout or message-delivery delay. A recovered sample still needs the
 normal sustained-health period before replenishing the retry budget.
 
 Calls, drafts, offline state, sleep, rate limiting, and **Hold Failures** prevent
-automatic worker mutation. Exhausted or unsupported recovery leaves the page
-in place and offers **Reconnect** and **Reload**. Reload preserves the existing
+automatic worker mutation. Exhausted or unsupported recovery keeps the page
+in place and offers **Reconnect** and **Reload**, then hands the transport back
+to native supervision (below). Reload preserves the existing
 draft/call and rate-limit protections. Server rate-limit recovery still follows
 its separately coordinated cooldown. Sleep and wake reset the 15-second stale
 settle timer before any new mutation.
@@ -166,7 +170,11 @@ therefore cannot exhaust all retries merely by delivering an overdue timeout.
 
 The native watchdog receives `managed` while a responsive page owns transport
 recovery. This pauses native transport reloads without claiming health or
-refunding its recovery budget. Blank pages, static errors, and unresponsive
+refunding its recovery budget. Once in-place recovery reports failure, the page
+reports the real `stale`/`never` status again, so the native realtime ladder
+(reload after two minutes, then one webview rebuild) is the last resort.
+Draft, call, and Hold Failures protection still apply; **Reconnect** returns
+ownership to the page. Blank pages, static errors, and unresponsive
 renderers retain native supervision.
 
 ## Linux HTTP/2 pool stall
