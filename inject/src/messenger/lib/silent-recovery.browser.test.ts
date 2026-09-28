@@ -300,8 +300,11 @@ async function runFixtures(
     await tick();
     assert("viewport-fixed fatal dialog escapes ancestor clip", reports.at(-1) === "error");
     errorHost.style.transform = "translateZ(0)";
+    // WKWebView can report null even with a transformed fixed containing block.
+    Object.defineProperty(errorDialog, "offsetParent", { configurable: true, get: () => null });
     await tick();
     assert("fixed dialog within clipped containing block is ignored", reports.at(-1) === "ok");
+    Reflect.deleteProperty(errorDialog, "offsetParent");
     errorHost.style.removeProperty("transform");
     errorHost.style.cssText = "position:relative;left:10px;top:10px;width:10px;height:10px";
     const overflowWrapper = document.createElement("div");

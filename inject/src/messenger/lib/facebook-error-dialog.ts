@@ -67,8 +67,26 @@ export function hasFacebookReloadDialog(): boolean {
     const position = getComputedStyle(dialog).position;
     // Positioned descendants can escape overflow ancestors below their
     // containing block; clipping starts at the block itself.
-    const containingBlock =
-      position === "absolute" || position === "fixed" ? dialog.offsetParent : undefined;
+    let containingBlock: HTMLElement | null | undefined;
+    if (position === "absolute") {
+      containingBlock = dialog.offsetParent as HTMLElement | null;
+    } else if (position === "fixed") {
+      containingBlock = null;
+      for (let ancestor = dialog.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        if (
+          style.transform !== "none" ||
+          style.perspective !== "none" ||
+          style.filter !== "none" ||
+          (!!style.backdropFilter && style.backdropFilter !== "none") ||
+          /\b(transform|perspective|filter|backdrop-filter)\b/.test(style.willChange) ||
+          /\b(layout|paint|strict|content)\b/.test(style.contain)
+        ) {
+          containingBlock = ancestor;
+          break;
+        }
+      }
+    }
     let clipsPositionedDialog = containingBlock === undefined;
     for (let el: HTMLElement | null = dialog; el; el = el.parentElement) {
       const style = getComputedStyle(el);

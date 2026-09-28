@@ -232,7 +232,19 @@
       let top = Math.max(rect.top, 0);
       let bottom = Math.min(rect.bottom, innerHeight);
       const position = getComputedStyle(dialog).position;
-      const containingBlock = position === "absolute" || position === "fixed" ? dialog.offsetParent : void 0;
+      let containingBlock;
+      if (position === "absolute") {
+        containingBlock = dialog.offsetParent;
+      } else if (position === "fixed") {
+        containingBlock = null;
+        for (let ancestor = dialog.parentElement; ancestor; ancestor = ancestor.parentElement) {
+          const style = getComputedStyle(ancestor);
+          if (style.transform !== "none" || style.perspective !== "none" || style.filter !== "none" || !!style.backdropFilter && style.backdropFilter !== "none" || /\b(transform|perspective|filter|backdrop-filter)\b/.test(style.willChange) || /\b(layout|paint|strict|content)\b/.test(style.contain)) {
+            containingBlock = ancestor;
+            break;
+          }
+        }
+      }
       let clipsPositionedDialog = containingBlock === void 0;
       for (let el = dialog; el; el = el.parentElement) {
         const style = getComputedStyle(el);

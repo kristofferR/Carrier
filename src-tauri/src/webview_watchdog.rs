@@ -161,6 +161,7 @@ static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
         attempts: 0,
         rebuilding: None,
         replacement_id: None,
+        replacement_being_recreated: None,
         replacement_exhausted: false,
         healthy_since: None,
         last_healthy_at: None,
@@ -171,6 +172,8 @@ struct RealtimeRecreateBudget {
     attempts: u32,
     rebuilding: Option<(String, u64)>,
     replacement_id: Option<u64>,
+    // Destroying this generation is part of an automatic replacement, not a close.
+    replacement_being_recreated: Option<u64>,
     replacement_exhausted: bool,
     healthy_since: Option<(u64, Instant)>,
     last_healthy_at: Option<Instant>,
@@ -212,6 +215,7 @@ impl RealtimeRecreateBudget {
         self.attempts += 1;
         self.rebuilding = Some((label.to_owned(), id));
         self.replacement_id = None;
+        self.replacement_being_recreated = None;
         self.replacement_exhausted = false;
         self.healthy_since = None;
         self.last_healthy_at = None;
@@ -222,6 +226,7 @@ impl RealtimeRecreateBudget {
         self.attempts = self.attempts.saturating_sub(1);
         self.rebuilding = None;
         self.replacement_id = None;
+        self.replacement_being_recreated = None;
         self.replacement_exhausted = false;
         self.healthy_since = None;
         self.last_healthy_at = None;
@@ -237,7 +242,34 @@ impl RealtimeRecreateBudget {
         }
     }
 
+    fn window_replacing(&mut self, label: &str) {
+        if self
+            .rebuilding
+            .as_ref()
+            .is_some_and(|(rebuilt_label, _)| rebuilt_label == label)
+        {
+            self.replacement_being_recreated = self.replacement_id;
+        }
+    }
+
+    fn replacement_failed(&mut self, label: &str) {
+        if self
+            .rebuilding
+            .as_ref()
+            .is_some_and(|(rebuilt_label, _)| rebuilt_label == label)
+        {
+            self.replacement_being_recreated = None;
+        }
+    }
+
     fn window_destroyed(&mut self, label: &str, id: u64) {
+        if self.replacement_being_recreated == Some(id) {
+            self.replacement_being_recreated = None;
+            if self.replacement_id == Some(id) {
+                self.replacement_id = None;
+            }
+            return;
+        }
         if self.rebuilding.as_ref().is_some_and(|(rebuilt_label, _)| {
             rebuilt_label == label && self.replacement_id == Some(id)
         }) {
@@ -284,6 +316,7 @@ impl RealtimeRecreateBudget {
             self.attempts = 0;
             self.rebuilding = None;
             self.replacement_id = None;
+            self.replacement_being_recreated = None;
             self.replacement_exhausted = false;
             self.healthy_since = None;
             self.last_healthy_at = None;
@@ -296,6 +329,20 @@ impl RealtimeRecreateBudget {
 /// Refund a claimed realtime rebuild that never actually happened.
 fn refund_realtime_recreate() {
     REALTIME_RECREATE_BUDGET.lock().unwrap().refund();
+}
+
+pub(crate) fn realtime_window_replacing(label: &str) {
+    REALTIME_RECREATE_BUDGET
+        .lock()
+        .unwrap()
+        .window_replacing(label);
+}
+
+pub(crate) fn realtime_window_replacement_failed(label: &str) {
+    REALTIME_RECREATE_BUDGET
+        .lock()
+        .unwrap()
+        .replacement_failed(label);
 }
 
 #[derive(Debug, Deserialize)]
@@ -1984,6 +2031,51 @@ mod tests {
 
         budget.window_destroyed("win-1", 2);
         assert_eq!(budget.claim("win-2", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn automatic_replacement_keeps_rebuild_claim_until_successor_is_healthy() {
+        let mut budget = RealtimeRecreateBudget::default();
+        let start = Instant::now();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("main", 2);
+        budget.window_replacing("main");
+        budget.window_destroyed("main", 2);
+        budget.window_installed("main", 3);
+        assert_eq!(budget.claim("main", 3), RealtimeRecreateClaim::Exhausted);
+        budget.window_replacing("main");
+        budget.window_destroyed("main", 3);
+        budget.window_installed("main", 4);
+        assert_eq!(budget.claim("main", 4), RealtimeRecreateClaim::Exhausted);
+
+        for second in (0..60).step_by(5) {
+            assert!(!budget.observe("main", 4, start + Duration::from_secs(second), true));
+        }
+        assert!(budget.observe("main", 4, start + Duration::from_secs(60), true));
+        assert_eq!(budget.claim("main", 4), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn failed_automatic_replacement_still_refunds_on_close() {
+        let mut budget = RealtimeRecreateBudget::default();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("main", 2);
+        budget.window_replacing("main");
+        budget.replacement_failed("main");
+        budget.window_destroyed("main", 2);
+        assert_eq!(budget.claim("main", 3), RealtimeRecreateClaim::Granted);
+    }
+
+    #[test]
+    fn late_old_destroy_does_not_discard_new_replacement() {
+        let mut budget = RealtimeRecreateBudget::default();
+        assert_eq!(budget.claim("main", 1), RealtimeRecreateClaim::Granted);
+        budget.window_installed("main", 2);
+        budget.window_replacing("main");
+        budget.window_installed("main", 3);
+        budget.window_destroyed("main", 2);
+        budget.window_destroyed("main", 3);
+        assert_eq!(budget.claim("main", 4), RealtimeRecreateClaim::Granted);
     }
 
     #[test]
