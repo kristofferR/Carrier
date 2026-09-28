@@ -303,6 +303,22 @@ async function runFixtures(
     await tick();
     assert("fixed dialog within clipped containing block is ignored", reports.at(-1) === "ok");
     errorHost.style.removeProperty("transform");
+    errorHost.style.cssText = "position:relative;left:10px;top:10px;width:10px;height:10px";
+    const overflowWrapper = document.createElement("div");
+    overflowWrapper.style.cssText = "width:10px;height:10px;overflow:hidden";
+    errorHost.appendChild(overflowWrapper);
+    overflowWrapper.appendChild(errorDialog);
+    errorDialog.style.cssText = "position:absolute;left:30px;top:30px;width:200px;height:80px";
+    assert("dialog is positioned against outer host", errorDialog.offsetParent === errorHost);
+    await tick();
+    assert("absolute dialog escapes intervening overflow", reports.at(-1) === "error");
+    errorHost.style.overflow = "hidden";
+    await tick();
+    assert("containing block clips absolute dialog", reports.at(-1) === "ok");
+    errorHost.appendChild(errorDialog);
+    overflowWrapper.remove();
+    errorHost.style.cssText =
+      "position:fixed;top:10px;left:10px;width:10px;height:10px;overflow:hidden";
     for (const offset of ["left:20px", "top:20px"]) {
       errorDialog.style.cssText = `position:relative;${offset}`;
       await tick();

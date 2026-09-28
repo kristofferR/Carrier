@@ -57,6 +57,8 @@ const REALTIME_ERROR_TIMEOUT: Duration = Duration::from_secs(15);
 /// ...and a single reload attempt: if a reload already came back to the same
 /// error page, rebuilding the webview is the next useful step.
 const REALTIME_ERROR_RELOAD_LIMIT: u32 = 1;
+/// A healthy worker may briefly answer before the fatal dialog remounts.
+const REALTIME_ERROR_CLEAR_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Cooldowns and probe slots are shared even when another renderer is frozen.
 // Account keys stay local and are never logged.
@@ -264,6 +266,8 @@ struct WatchdogState {
     realtime_error_page: bool,
     realtime_reloads: u32,
     realtime_exhausted: bool,
+    error_reload_pending: bool,
+    error_clear_since: Option<Duration>,
     render: RenderRecovery,
 }
 
@@ -282,6 +286,7 @@ impl WatchdogState {
             .is_some_and(|last| now.saturating_sub(last) >= REALTIME_HEARTBEAT_GAP_RESET)
         {
             self.realtime_bad_since = None;
+            self.error_clear_since = None;
         }
         self.last_heartbeat_at = Some(now);
         self.unresponsive_reload_attempted = false;
@@ -301,19 +306,29 @@ impl WatchdogState {
         self.realtime_error_page = matches!(realtime, Some(RealtimeSignal::Error));
         match realtime {
             // A proven-healthy transport ends the episode: the reload budget
-            // and the give-up latch re-arm in full.
+            // and the give-up latch re-arm once a reloaded fatal dialog has
+            // stayed away long enough to establish recovery.
             Some(RealtimeSignal::Ok) => {
                 self.realtime_bad_since = None;
-                self.realtime_reloads = 0;
-                self.realtime_exhausted = false;
+                let recovered = !self.error_reload_pending
+                    || now.saturating_sub(*self.error_clear_since.get_or_insert(now))
+                        >= REALTIME_ERROR_CLEAR_TIMEOUT;
+                if recovered {
+                    self.realtime_reloads = 0;
+                    self.realtime_exhausted = false;
+                    self.error_reload_pending = false;
+                    self.error_clear_since = None;
+                }
             }
             Some(RealtimeSignal::Stale | RealtimeSignal::Never | RealtimeSignal::Error) => {
+                self.error_clear_since = None;
                 self.realtime_bad_since.get_or_insert(now);
             }
             // "pending" pauses the timer without refunding the reload budget —
             // a reload into a still-broken page must not reset escalation.
             Some(RealtimeSignal::Pending | RealtimeSignal::Managed | RealtimeSignal::Unknown)
             | None => {
+                self.error_clear_since = None;
                 self.realtime_bad_since = None;
             }
         }
@@ -443,6 +458,8 @@ impl WatchdogState {
     }
 
     fn realtime_reload_started(&mut self, now: Duration) {
+        self.error_reload_pending |= self.realtime_error_page;
+        self.error_clear_since = None;
         self.realtime_reloads += 1;
         self.realtime_bad_since = None;
         self.navigation_started(now);
@@ -465,6 +482,8 @@ impl WatchdogState {
         self.realtime_error_page = false;
         self.realtime_reloads = 0;
         self.realtime_exhausted = false;
+        self.error_reload_pending = false;
+        self.error_clear_since = None;
     }
 }
 
@@ -1725,6 +1744,31 @@ mod tests {
         assert_eq!(
             state.action(Duration::from_secs(40)),
             WatchdogAction::RecreateRealtime
+        );
+    }
+
+    #[test]
+    fn transient_health_before_fatal_dialog_remount_preserves_escalation() {
+        let mut state = WatchdogState::default();
+        feed_realtime(&mut state, 0, 15, RealtimeSignal::Error);
+        state.realtime_reload_started(Duration::from_secs(15));
+
+        feed_realtime(&mut state, 20, 30, RealtimeSignal::Ok);
+        assert_eq!(state.realtime_reloads, 1);
+        feed_realtime(&mut state, 35, 50, RealtimeSignal::Error);
+        assert_eq!(
+            state.action(Duration::from_secs(50)),
+            WatchdogAction::RecreateRealtime
+        );
+
+        feed_realtime(&mut state, 55, 110, RealtimeSignal::Ok);
+        assert_eq!(state.realtime_reloads, 1);
+        feed_realtime(&mut state, 115, 115, RealtimeSignal::Ok);
+        assert_eq!(state.realtime_reloads, 0);
+        feed_realtime(&mut state, 120, 135, RealtimeSignal::Error);
+        assert_eq!(
+            state.action(Duration::from_secs(135)),
+            WatchdogAction::ReloadRealtime
         );
     }
 

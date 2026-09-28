@@ -17,7 +17,8 @@ Hidden or offscreen dialogs and unrelated error codes do not trigger this path.
 The inspected React build stores host fibers in a WeakMap exposed through its
 internal Events accessor. Missing or changed module/accessor shapes leave manual
 recovery available; traversal is bounded and never invokes a React component.
-Healthy transport can reset the retry budget only after the dialog has gone away.
+Healthy transport resets the retry budget after the dialog has stayed away for
+60 seconds following a fatal-error reload.
 
 ## Detection and recovery
 

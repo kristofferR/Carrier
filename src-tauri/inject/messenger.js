@@ -231,14 +231,17 @@
       let right = Math.min(rect.right, innerWidth);
       let top = Math.max(rect.top, 0);
       let bottom = Math.min(rect.bottom, innerHeight);
-      let fixedToViewport = false;
+      const position = getComputedStyle(dialog).position;
+      const containingBlock = position === "absolute" || position === "fixed" ? dialog.offsetParent : void 0;
+      let clipsPositionedDialog = containingBlock === void 0;
       for (let el = dialog; el; el = el.parentElement) {
         const style = getComputedStyle(el);
         if (el.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" || style.contentVisibility === "hidden" || Number(style.opacity) === 0) {
           hidden = true;
           break;
         }
-        if (el !== dialog && !fixedToViewport) {
+        if (el === containingBlock) clipsPositionedDialog = true;
+        if (el !== dialog && clipsPositionedDialog) {
           const bounds = el.getBoundingClientRect();
           if (style.overflowX !== "visible") {
             left = Math.max(left, bounds.left);
@@ -253,7 +256,6 @@
             break;
           }
         }
-        if (style.position === "fixed" && el.offsetParent === null) fixedToViewport = true;
       }
       if (!hidden && isReloadException(dialog)) return true;
     }

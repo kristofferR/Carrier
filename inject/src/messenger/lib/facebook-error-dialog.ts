@@ -64,7 +64,12 @@ export function hasFacebookReloadDialog(): boolean {
     let right = Math.min(rect.right, innerWidth);
     let top = Math.max(rect.top, 0);
     let bottom = Math.min(rect.bottom, innerHeight);
-    let fixedToViewport = false;
+    const position = getComputedStyle(dialog).position;
+    // Positioned descendants can escape overflow ancestors below their
+    // containing block; clipping starts at the block itself.
+    const containingBlock =
+      position === "absolute" || position === "fixed" ? dialog.offsetParent : undefined;
+    let clipsPositionedDialog = containingBlock === undefined;
     for (let el: HTMLElement | null = dialog; el; el = el.parentElement) {
       const style = getComputedStyle(el);
       if (
@@ -78,7 +83,8 @@ export function hasFacebookReloadDialog(): boolean {
         hidden = true;
         break;
       }
-      if (el !== dialog && !fixedToViewport) {
+      if (el === containingBlock) clipsPositionedDialog = true;
+      if (el !== dialog && clipsPositionedDialog) {
         const bounds = el.getBoundingClientRect();
         if (style.overflowX !== "visible") {
           left = Math.max(left, bounds.left);
@@ -93,7 +99,6 @@ export function hasFacebookReloadDialog(): boolean {
           break;
         }
       }
-      if (style.position === "fixed" && el.offsetParent === null) fixedToViewport = true;
     }
     if (!hidden && isReloadException(dialog)) return true;
   }
