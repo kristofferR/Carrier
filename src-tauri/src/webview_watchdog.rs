@@ -180,6 +180,7 @@ struct RealtimeRecreateBudget {
 enum RealtimeRecreateClaim {
     Granted,
     WaitingForOtherWindow,
+    WaitingForRecovery,
     Exhausted,
 }
 
@@ -198,9 +199,12 @@ impl RealtimeRecreateBudget {
                 .rebuilding
                 .as_ref()
                 .is_some_and(|(rebuilt_label, _)| rebuilt_label != label)
-                && !self.replacement_exhausted
             {
-                RealtimeRecreateClaim::WaitingForOtherWindow
+                if self.replacement_exhausted {
+                    RealtimeRecreateClaim::WaitingForRecovery
+                } else {
+                    RealtimeRecreateClaim::WaitingForOtherWindow
+                }
             } else {
                 RealtimeRecreateClaim::Exhausted
             };
@@ -1111,7 +1115,11 @@ impl WebviewWatchdog {
                                             .lock()
                                             .unwrap()
                                             .refund(&account, permit);
-                                        if claim == RealtimeRecreateClaim::WaitingForOtherWindow {
+                                        if matches!(
+                                            claim,
+                                            RealtimeRecreateClaim::WaitingForOtherWindow
+                                                | RealtimeRecreateClaim::WaitingForRecovery
+                                        ) {
                                             next_recovery_attempt = now + REACHABILITY_RETRY;
                                             continue;
                                         }
@@ -2014,7 +2022,10 @@ mod tests {
             RealtimeRecreateClaim::WaitingForOtherWindow
         );
         assert_eq!(budget.claim("main", 2), RealtimeRecreateClaim::Exhausted);
-        assert_eq!(budget.claim("other", 3), RealtimeRecreateClaim::Exhausted);
+        assert_eq!(
+            budget.claim("other", 3),
+            RealtimeRecreateClaim::WaitingForRecovery
+        );
 
         for second in (0..60).step_by(5) {
             assert!(!budget.observe("main", 2, start + Duration::from_secs(second), true));
