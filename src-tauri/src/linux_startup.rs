@@ -1,6 +1,7 @@
 //! GTK/WebKit environment defaults, applied before either library starts.
 
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 fn should_default_to_http1(force_http1: Option<OsString>, allow_http2: Option<OsString>) -> bool {
     force_http1.is_none() && allow_http2.as_deref() != Some(std::ffi::OsStr::new("1"))
@@ -51,10 +52,35 @@ fn environment_defaults(
 
 #[cfg(target_os = "linux")]
 const NVDEC_DEMOTION: &str = concat!(
-    "nvh264dec:MARGINAL,nvh265dec:MARGINAL,nvav1dec:MARGINAL,nvvp8dec:MARGINAL,",
-    "nvvp9dec:MARGINAL,nvjpegdec:MARGINAL,nvmpegvideodec:MARGINAL,",
-    "nvmpeg2videodec:MARGINAL,nvmpeg4videodec:MARGINAL",
+    "nvh264dec:NONE,nvh265dec:NONE,nvav1dec:NONE,nvvp8dec:NONE,nvvp9dec:NONE,",
+    "nvjpegdec:NONE,nvmpegvideodec:NONE,nvmpeg2videodec:NONE,nvmpeg4videodec:NONE",
 );
+
+/// Where GStreamer looks for plugins: the extra path plus the system path,
+/// which replaces the distribution defaults when set (as AppImage does).
+fn gstreamer_plugin_dirs(env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let paths = |keys: [&str; 2]| {
+        keys.into_iter()
+            .find_map(&env)
+            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+    };
+    let mut dirs = paths(["GST_PLUGIN_PATH_1_0", "GST_PLUGIN_PATH"]).unwrap_or_default();
+    dirs.extend(
+        paths(["GST_PLUGIN_SYSTEM_PATH_1_0", "GST_PLUGIN_SYSTEM_PATH"]).unwrap_or_else(|| {
+            [
+                "/usr/lib",
+                "/usr/lib64",
+                "/usr/lib/x86_64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+                "/usr/local/lib",
+            ]
+            .into_iter()
+            .map(|lib| Path::new(lib).join("gstreamer-1.0"))
+            .collect()
+        }),
+    );
+    dirs
+}
 
 #[cfg(target_os = "linux")]
 pub(crate) fn configure() {
@@ -67,12 +93,16 @@ pub(crate) fn configure() {
     ) {
         std::env::set_var("SOUP_FORCE_HTTP1", "1");
     }
-    // GStreamer ranks NVDEC above libav, so any Messenger clip, even paused
-    // offscreen, gave the web process a CUDA context: about 60 MB RAM and
-    // 420 MiB VRAM per pipeline. Software decoding is cheap at chat sizes;
-    // MARGINAL keeps NVDEC as the fallback when no libav decoder exists.
-    // Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
-    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() {
+    // Any NVDEC decoder WebKit can autoplug makes the web process load CUDA
+    // for Messenger clips, even paused offscreen ones: about 100 MB RAM and
+    // 400 MiB VRAM. Only NONE avoids it, which removes NVDEC entirely, so do it
+    // only when libav can decode instead. Software decoding is cheap at chat
+    // sizes. Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
+    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none()
+        && gstreamer_plugin_dirs(|key| std::env::var_os(key))
+            .iter()
+            .any(|dir| dir.join("libgstlibav.so").is_file())
+    {
         std::env::set_var("GST_PLUGIN_FEATURE_RANK", NVDEC_DEMOTION);
     }
     // Called first in run(), before Tauri, GTK, WebKit, or worker threads start.
@@ -94,6 +124,31 @@ mod tests {
         for value in ["", "0", "1"] {
             assert!(!should_default_to_http1(Some(value.into()), None));
         }
+    }
+
+    #[test]
+    fn gstreamer_system_path_replaces_distribution_defaults() {
+        let dirs = |values: &[(&str, &str)]| {
+            gstreamer_plugin_dirs(|key| {
+                values
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| OsString::from(value))
+            })
+        };
+        assert!(dirs(&[]).contains(&PathBuf::from("/usr/lib/gstreamer-1.0")));
+        assert_eq!(
+            dirs(&[
+                ("GST_PLUGIN_PATH", "/extra"),
+                ("GST_PLUGIN_SYSTEM_PATH_1_0", "/appdir/a:/appdir/b"),
+                ("GST_PLUGIN_SYSTEM_PATH", "/ignored"),
+            ]),
+            [
+                PathBuf::from("/extra"),
+                PathBuf::from("/appdir/a"),
+                PathBuf::from("/appdir/b")
+            ]
+        );
     }
 
     fn defaults(values: &[(&str, &str)]) -> Vec<(&'static str, &'static str)> {
