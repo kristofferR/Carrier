@@ -326,8 +326,10 @@ async function runFixtures(
     busyRecovery.tick();
     await flush();
     assert(
+      // Clearing failure per attempt would report "managed" every tick and
+      // keep resetting the native reload deadline.
       "busy network-restoration retry retains native handoff",
-      busyAttempts === 2 && failure && failureChanges.join() === "true,false,true",
+      busyAttempts === 2 && failure && failureChanges.join() === "true",
     );
     result.textContent = "PASS";
   } catch (error) {
