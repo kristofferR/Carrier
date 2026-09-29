@@ -1324,12 +1324,13 @@ async fn recycle_idle_renderer(
     };
     #[cfg(target_os = "macos")]
     let resume_generation = crate::macos::power::resume_generation();
+    // Hold Failures does not apply: only a healthy page is ever restarted, so
+    // there is no failure to preserve.
     let account = state.lock().unwrap().rate_limit_account.clone();
-    if hold_failures(window)
-        || recovery_coordinator()
-            .lock()
-            .unwrap()
-            .blocked(&account, RecoveryTime::now())
+    if recovery_coordinator()
+        .lock()
+        .unwrap()
+        .blocked(&account, RecoveryTime::now())
         || !window.url().is_ok_and(|url| is_messenger_content_url(&url))
     {
         return;
