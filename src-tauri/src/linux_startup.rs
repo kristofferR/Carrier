@@ -50,6 +50,13 @@ fn environment_defaults(
 }
 
 #[cfg(target_os = "linux")]
+const NVDEC_DEMOTION: &str = concat!(
+    "nvh264dec:MARGINAL,nvh265dec:MARGINAL,nvav1dec:MARGINAL,nvvp8dec:MARGINAL,",
+    "nvvp9dec:MARGINAL,nvjpegdec:MARGINAL,nvmpegvideodec:MARGINAL,",
+    "nvmpeg2videodec:MARGINAL,nvmpeg4videodec:MARGINAL",
+);
+
+#[cfg(target_os = "linux")]
 pub(crate) fn configure() {
     // libsoup 3.6.6's HTTP/2 pool stalled on Messenger with all six connections
     // in CLOSE-WAIT, blocking worker startup too. HTTP/1.1 avoids that failure.
@@ -59,6 +66,14 @@ pub(crate) fn configure() {
         std::env::var_os("CARRIER_LINUX_HTTP2"),
     ) {
         std::env::set_var("SOUP_FORCE_HTTP1", "1");
+    }
+    // GStreamer ranks NVDEC above libav, so any Messenger clip, even paused
+    // offscreen, gave the web process a CUDA context: about 60 MB RAM and
+    // 420 MiB VRAM per pipeline. Software decoding is cheap at chat sizes;
+    // MARGINAL keeps NVDEC as the fallback when no libav decoder exists.
+    // Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
+    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() {
+        std::env::set_var("GST_PLUGIN_FEATURE_RANK", NVDEC_DEMOTION);
     }
     // Called first in run(), before Tauri, GTK, WebKit, or worker threads start.
     for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
