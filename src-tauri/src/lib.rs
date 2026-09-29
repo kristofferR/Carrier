@@ -40,6 +40,7 @@ mod menu;
 mod notifications;
 mod preflight;
 mod render_recovery;
+mod renderer_memory;
 mod scheduled_send;
 mod settings;
 mod tray;

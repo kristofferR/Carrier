@@ -17,6 +17,7 @@ use crate::render_recovery::{
     RenderAction, RenderHeartbeat, RenderRecovery, RenderRecoveryBudget, RenderSignal,
     RenderWindowState,
 };
+use crate::renderer_memory::RendererMemory;
 use crate::url_rules::{is_messenger_content_url, is_messenger_web_url};
 use crate::MESSENGER_DNS_TIMEOUT;
 
@@ -465,6 +466,7 @@ struct WatchdogState {
     error_reload_pending: bool,
     error_clear_since: Option<Duration>,
     render: RenderRecovery,
+    memory: RendererMemory,
 }
 
 impl WatchdogState {
@@ -610,6 +612,7 @@ impl WatchdogState {
     fn navigation_started(&mut self, now: Duration) {
         self.navigation_started_at = Some(now);
         self.render.pause(now);
+        self.memory.pause();
     }
 
     fn unresponsive_action(&self) -> WatchdogAction {
@@ -668,6 +671,7 @@ impl WatchdogState {
     }
 
     fn disarm(&mut self) {
+        self.memory.pause();
         self.last_heartbeat_at = None;
         self.system_resumed_at = None;
         self.navigation_started_at = None;
@@ -791,9 +795,17 @@ impl WebviewWatchdog {
                 payload.content_present,
                 payload.realtime,
             );
+            let healthy = payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down;
+            match &payload.render {
+                Some(render) if render.content_page => state.memory.heartbeat(
+                    started_at.elapsed(),
+                    render.document_epoch_ms,
+                    healthy && !payload.protected && payload.rate_limit_ms.unwrap_or(0) == 0,
+                ),
+                _ => state.memory.pause(),
+            }
             let reload_recovered = !state.error_reload_pending;
             drop(state);
-            let healthy = payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down;
             let rebuild_recovered = REALTIME_RECREATE_BUDGET.lock().unwrap().observe(
                 listener_window.label(),
                 watchdog_id,
@@ -919,10 +931,19 @@ impl WebviewWatchdog {
                     state
                         .render
                         .window_changed(started_at.elapsed(), native_window);
+                    state.memory.window(
+                        started_at.elapsed(),
+                        native_window.visible,
+                        native_window.focused,
+                    );
                     state.action(started_at.elapsed())
                 };
                 match action {
-                    WatchdogAction::None | WatchdogAction::Protected => {
+                    WatchdogAction::None => {
+                        held_reported = false;
+                        recycle_idle_renderer(&watchdog_window, &state, started_at, &label).await;
+                    }
+                    WatchdogAction::Protected => {
                         held_reported = false;
                     }
                     WatchdogAction::RenderExhausted => {
@@ -1272,6 +1293,84 @@ impl WebviewWatchdog {
             watchdog_window.unlisten(listener_id);
         });
     }
+}
+
+/// Restart a healthy, idle renderer that has grown well past its settled size.
+/// Unlike recovery this is optional, so any doubt skips it until a later tick.
+async fn recycle_idle_renderer(
+    window: &WebviewWindow,
+    state: &Mutex<WatchdogState>,
+    started_at: Instant,
+    label: &str,
+) {
+    if !state
+        .lock()
+        .unwrap()
+        .memory
+        .wants_sample(started_at.elapsed())
+    {
+        return;
+    }
+    let Some(footprint) = crate::renderer_memory::footprint(window).await else {
+        return;
+    };
+    let Some(baseline) = state
+        .lock()
+        .unwrap()
+        .memory
+        .sampled(started_at.elapsed(), footprint)
+    else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    let resume_generation = crate::macos::power::resume_generation();
+    let account = state.lock().unwrap().rate_limit_account.clone();
+    if hold_failures(window)
+        || recovery_coordinator()
+            .lock()
+            .unwrap()
+            .blocked(&account, RecoveryTime::now())
+        || !window.url().is_ok_and(|url| is_messenger_content_url(&url))
+    {
+        return;
+    }
+    // A reload while Facebook is unreachable strands WebKit on its error page.
+    let reachable = matches!(
+        tokio::time::timeout(
+            MESSENGER_DNS_TIMEOUT,
+            tauri::async_runtime::spawn_blocking(messenger_dns_preflight)
+        )
+        .await,
+        Ok(Ok(Ok(())))
+    );
+    #[cfg(target_os = "macos")]
+    if crate::macos::power::is_system_sleeping()
+        || crate::macos::power::resume_generation() != resume_generation
+    {
+        return;
+    }
+    if !reachable {
+        return;
+    }
+    {
+        let native_window = render_window_state(window);
+        let now = started_at.elapsed();
+        let mut state = state.lock().unwrap();
+        // A draft, call, focus, or recovery may have arrived during DNS.
+        state
+            .memory
+            .window(now, native_window.visible, native_window.focused);
+        if state.action(now) != WatchdogAction::None || !state.memory.ready(now) {
+            return;
+        }
+        state.navigation_started(now);
+    }
+    log::info!(
+        "Messenger renderer {label} grew from {} to {} MiB while idle; restarting it to release memory",
+        baseline / (1024 * 1024),
+        footprint / (1024 * 1024),
+    );
+    crate::renderer_memory::restart(window);
 }
 
 fn render_window_state(window: &WebviewWindow) -> RenderWindowState {
