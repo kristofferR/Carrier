@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { build } from "esbuild";
 import type { initQuickReply } from "../features/quick-reply";
 import type { deliverScheduledMessage, initScheduledSend } from "../features/scheduled-send";
+import type { hasComposerDraft } from "./scheduled-composer";
 import type { ScheduledMessage, ScheduleRequest, ScheduleResponse } from "./scheduled-send";
 
 const chromium =
@@ -22,7 +23,8 @@ test.skipIf(!chromium)(
           contents: `
       import { initQuickReply } from "../features/quick-reply";
       import { initScheduledSend, deliverScheduledMessage } from "../features/scheduled-send";
-      (${fixtures.toString()})(initScheduledSend, deliverScheduledMessage, initQuickReply);
+      import { hasComposerDraft } from "./scheduled-composer";
+      (${fixtures.toString()})(initScheduledSend, deliverScheduledMessage, initQuickReply, hasComposerDraft);
     `,
           resolveDir: import.meta.dir,
         },
@@ -111,6 +113,7 @@ async function fixtures(
   init: typeof initScheduledSend,
   deliver: typeof deliverScheduledMessage,
   quickReply: typeof initQuickReply,
+  hasDraft: typeof hasComposerDraft,
 ) {
   const result = document.querySelector("#result")!;
   const box = document.querySelector<HTMLElement>("#composer")!;
@@ -166,6 +169,31 @@ async function fixtures(
     toast_seen: false,
   });
   try {
+    assert("empty composer and toolbar icons allow recovery", !hasDraft());
+    box.textContent = "Draft";
+    assert("text draft protects recovery", hasDraft());
+    clear();
+    for (const tag of ["img", "video"] as const) {
+      const media = document.createElement(tag);
+      region.append(media);
+      assert(`captionless ${tag} protects recovery`, hasDraft());
+      media.remove();
+    }
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["attachment"], "fixture.txt"));
+    fileInput.files = transfer.files;
+    region.append(fileInput);
+    assert("captionless file protects recovery", hasDraft());
+    fileInput.remove();
+    const removeAttachment = document.createElement("button");
+    removeAttachment.setAttribute("aria-label", "Remove attachment");
+    region.append(removeAttachment);
+    assert("attachment removal control protects recovery", hasDraft());
+    removeAttachment.remove();
+    assert("removing attachments allows recovery", !hasDraft());
+
     // biome-ignore lint/suspicious/noDocumentCookie: Mimic Messenger's account cookie in an isolated fixture.
     document.cookie = "c_user=123; path=/";
     init();

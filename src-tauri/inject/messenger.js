@@ -490,6 +490,188 @@
     }
   };
 
+  // inject/src/messenger/features/conversation-actions.ts
+  function isShown(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+  function firstShown(sel, root) {
+    for (const el of (root || document).querySelectorAll(sel)) if (isShown(el)) return el;
+    return null;
+  }
+  function buttonByLabel(needles, root) {
+    for (const el of (root || document).querySelectorAll(
+      '[role="button"][aria-label], button[aria-label]'
+    )) {
+      if (!isShown(el)) continue;
+      const label = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (needles.some((n) => label.includes(n))) return el;
+    }
+    return null;
+  }
+  function chatRows() {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const a of document.querySelectorAll(
+      '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'
+    )) {
+      const href = a.getAttribute("href");
+      if (!href || seen.has(href)) continue;
+      const r = a.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      seen.add(href);
+      out.push(a);
+    }
+    return out;
+  }
+  function stepConversation(delta) {
+    const rows = chatRows();
+    if (!rows.length) return;
+    const m = location.pathname.match(/\/t\/([^/]+)/);
+    const idx = m ? rows.findIndex((a) => (a.getAttribute("href") || "").includes(`/t/${m[1]}`)) : -1;
+    const nextIdx = idx === -1 ? delta > 0 ? 0 : rows.length - 1 : (idx + delta + rows.length) % rows.length;
+    rows[nextIdx]?.click();
+  }
+  function focusChatSearch() {
+    const input = firstShown('[role="navigation"] input[type="search"]') || firstShown('input[type="search"]');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    return !!input;
+  }
+  function focusComposer() {
+    const box = firstShown('[role="main"] [contenteditable="true"][role="textbox"]') || firstShown('[contenteditable="true"][data-lexical-editor="true"]');
+    box?.focus();
+    return !!box;
+  }
+  function searchInConvoButton() {
+    const root = document.querySelector('[role="main"]');
+    if (!root) return null;
+    for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
+      if (!isShown(el)) continue;
+      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
+      if (label === "search" || label === "search in conversation") return el;
+    }
+    return null;
+  }
+  function searchInConversation() {
+    window.__carrierWakeSearchIndex?.();
+    const btn = searchInConvoButton();
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    if (typeof window.__carrierToggleInfo !== "function" || !window.__carrierToggleInfo())
+      return false;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const b = searchInConvoButton();
+      if (b) {
+        clearInterval(timer);
+        b.click();
+      } else if (++tries >= 40) {
+        clearInterval(timer);
+      }
+    }, 50);
+    return true;
+  }
+  function clickComposerButton(needles) {
+    const root = document.querySelector('[role="main"]');
+    const btn = root && buttonByLabel(needles, root);
+    btn?.click();
+    return !!btn;
+  }
+  var openEmojiPicker = () => clickComposerButton(["choose an emoji"]);
+  var openGifPicker = () => clickComposerButton(["choose a gif"]);
+  var attachFiles = () => clickComposerButton(["attach a photo or video", "attach a file"]);
+  function newConversation() {
+    const link = firstShown('a[href*="/messages/new"]');
+    if (link) {
+      link.click();
+      return true;
+    }
+    const btn = buttonByLabel(["new message"]);
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    location.assign("/messages/new/");
+    return true;
+  }
+
+  // inject/src/messenger/lib/scheduled-composer.ts
+  var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
+  var findComposer = () => firstShown(COMPOSER_SELECTOR);
+  var composerText = (box) => box.innerText.replace(/\r\n/g, "\n");
+  function composerRegion(box) {
+    return box.closest('[role="region"], form');
+  }
+  function hasComposerMedia(box) {
+    const region = composerRegion(box);
+    if (!region) return true;
+    if (box.querySelector('img, video, [contenteditable="false"]')) return true;
+    for (const input of region.querySelectorAll('input[type="file"]')) {
+      if (input.files?.length) return true;
+    }
+    for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
+      if (!isShown(media)) continue;
+      const control = media.closest('button, [role="button"]');
+      const bounds = control?.getBoundingClientRect();
+      const zoom = Math.min(
+        2,
+        Math.max(0.3, (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100)
+      );
+      if (media.tagName === "IMG" && control && bounds && bounds.width / zoom <= 48 && bounds.height / zoom <= 48 && !control.closest('[contenteditable="true"]'))
+        continue;
+      return true;
+    }
+    return !!buttonByLabel(
+      ["remove attachment", "remove photo", "remove video", "remove file"],
+      region
+    );
+  }
+  function hasComposerDraft() {
+    for (const box of document.querySelectorAll('[contenteditable="true"]')) {
+      if ((box.textContent || "").trim()) return true;
+      if (box.matches(COMPOSER_SELECTOR) && hasComposerMedia(box)) return true;
+    }
+    return false;
+  }
+  function composerControls(box) {
+    const region = composerRegion(box);
+    const controls = /* @__PURE__ */ new Map();
+    if (!region) return controls;
+    for (const button of region.querySelectorAll('button, [role="button"]')) {
+      if (button.hasAttribute("data-carrier-schedule")) continue;
+      controls.set(button, `${button.getAttribute("aria-label") ?? ""}
+${button.innerHTML}`);
+    }
+    return controls;
+  }
+  function findSendButton(box, before) {
+    const region = composerRegion(box);
+    if (!region) return null;
+    const changed = [];
+    for (const button of region.querySelectorAll('button, [role="button"]')) {
+      if (button.hasAttribute("data-carrier-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+        continue;
+      if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
+${button.innerHTML}`)
+        changed.push(button);
+    }
+    return changed.length === 1 ? changed[0] ?? null : null;
+  }
+  function replaceComposerText(box, text) {
+    box.focus();
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return document.execCommand(text ? "insertText" : "delete", false, text);
+  }
+
   // inject/src/messenger/lib/threads.ts
   function threadIdFromHref(href) {
     const m = (href || "").match(/\/t\/(\d+)/);
@@ -1835,15 +2017,6 @@
       clearTimeout(timer);
       timer = void 0;
     };
-    const composerHasText = () => {
-      try {
-        for (const el of document.querySelectorAll('[contenteditable="true"]')) {
-          if ((el.textContent || "").trim().length > 0) return true;
-        }
-      } catch (_) {
-      }
-      return false;
-    };
     const heartbeatId = window.__CARRIER_HEARTBEAT_ID__;
     try {
       delete window.__CARRIER_HEARTBEAT_ID__;
@@ -1851,7 +2024,7 @@
       window.__CARRIER_HEARTBEAT_ID__ = void 0;
     }
     let lastHeartbeatProtection;
-    const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+    const heartbeatProtection = () => hasComposerDraft() || !!window.__carrierInCall;
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
@@ -1970,7 +2143,7 @@
         clearPending();
         return;
       }
-      if (composerHasText() || window.__carrierInCall) {
+      if (heartbeatProtection()) {
         timer = setTimeout(maybeReload, 8e3);
         return;
       }
@@ -7142,116 +7315,6 @@
     return ignoresMuted && !conversationListTrustworthy ? previousFilteredCount : unreadConversations;
   }
 
-  // inject/src/messenger/features/conversation-actions.ts
-  function isShown(el) {
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  }
-  function firstShown(sel, root) {
-    for (const el of (root || document).querySelectorAll(sel)) if (isShown(el)) return el;
-    return null;
-  }
-  function buttonByLabel(needles, root) {
-    for (const el of (root || document).querySelectorAll(
-      '[role="button"][aria-label], button[aria-label]'
-    )) {
-      if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (needles.some((n) => label.includes(n))) return el;
-    }
-    return null;
-  }
-  function chatRows() {
-    const seen = /* @__PURE__ */ new Set();
-    const out = [];
-    for (const a of document.querySelectorAll(
-      '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'
-    )) {
-      const href = a.getAttribute("href");
-      if (!href || seen.has(href)) continue;
-      const r = a.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) continue;
-      seen.add(href);
-      out.push(a);
-    }
-    return out;
-  }
-  function stepConversation(delta) {
-    const rows = chatRows();
-    if (!rows.length) return;
-    const m = location.pathname.match(/\/t\/([^/]+)/);
-    const idx = m ? rows.findIndex((a) => (a.getAttribute("href") || "").includes(`/t/${m[1]}`)) : -1;
-    const nextIdx = idx === -1 ? delta > 0 ? 0 : rows.length - 1 : (idx + delta + rows.length) % rows.length;
-    rows[nextIdx]?.click();
-  }
-  function focusChatSearch() {
-    const input = firstShown('[role="navigation"] input[type="search"]') || firstShown('input[type="search"]');
-    if (input) {
-      input.focus();
-      input.select();
-    }
-    return !!input;
-  }
-  function focusComposer() {
-    const box = firstShown('[role="main"] [contenteditable="true"][role="textbox"]') || firstShown('[contenteditable="true"][data-lexical-editor="true"]');
-    box?.focus();
-    return !!box;
-  }
-  function searchInConvoButton() {
-    const root = document.querySelector('[role="main"]');
-    if (!root) return null;
-    for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
-      if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
-      if (label === "search" || label === "search in conversation") return el;
-    }
-    return null;
-  }
-  function searchInConversation() {
-    window.__carrierWakeSearchIndex?.();
-    const btn = searchInConvoButton();
-    if (btn) {
-      btn.click();
-      return true;
-    }
-    if (typeof window.__carrierToggleInfo !== "function" || !window.__carrierToggleInfo())
-      return false;
-    let tries = 0;
-    const timer = setInterval(() => {
-      const b = searchInConvoButton();
-      if (b) {
-        clearInterval(timer);
-        b.click();
-      } else if (++tries >= 40) {
-        clearInterval(timer);
-      }
-    }, 50);
-    return true;
-  }
-  function clickComposerButton(needles) {
-    const root = document.querySelector('[role="main"]');
-    const btn = root && buttonByLabel(needles, root);
-    btn?.click();
-    return !!btn;
-  }
-  var openEmojiPicker = () => clickComposerButton(["choose an emoji"]);
-  var openGifPicker = () => clickComposerButton(["choose a gif"]);
-  var attachFiles = () => clickComposerButton(["attach a photo or video", "attach a file"]);
-  function newConversation() {
-    const link = firstShown('a[href*="/messages/new"]');
-    if (link) {
-      link.click();
-      return true;
-    }
-    const btn = buttonByLabel(["new message"]);
-    if (btn) {
-      btn.click();
-      return true;
-    }
-    location.assign("/messages/new/");
-    return true;
-  }
-
   // inject/src/messenger/features/notifications.ts
   var FALLBACK_DELAY_MS = 2500;
   var PAGE_NOTIFICATION_MATCH_MS = 3e3;
@@ -8550,71 +8613,6 @@
   }
   var composerContainsReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
-
-  // inject/src/messenger/lib/scheduled-composer.ts
-  var COMPOSER_SELECTOR = '[role="main"] [contenteditable="true"][role="textbox"]';
-  var findComposer = () => firstShown(COMPOSER_SELECTOR);
-  var composerText = (box) => box.innerText.replace(/\r\n/g, "\n");
-  function composerRegion(box) {
-    return box.closest('[role="region"], form');
-  }
-  function hasComposerMedia(box) {
-    const region = composerRegion(box);
-    if (!region) return true;
-    if (box.querySelector('img, video, [contenteditable="false"]')) return true;
-    for (const input of region.querySelectorAll('input[type="file"]')) {
-      if (input.files?.length) return true;
-    }
-    for (const media of region.querySelectorAll('img, video, [role="progressbar"]')) {
-      if (!isShown(media)) continue;
-      const control = media.closest('button, [role="button"]');
-      const bounds = control?.getBoundingClientRect();
-      const zoom = Math.min(
-        2,
-        Math.max(0.3, (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100)
-      );
-      if (media.tagName === "IMG" && control && bounds && bounds.width / zoom <= 48 && bounds.height / zoom <= 48 && !control.closest('[contenteditable="true"]'))
-        continue;
-      return true;
-    }
-    return !!buttonByLabel(
-      ["remove attachment", "remove photo", "remove video", "remove file"],
-      region
-    );
-  }
-  function composerControls(box) {
-    const region = composerRegion(box);
-    const controls = /* @__PURE__ */ new Map();
-    if (!region) return controls;
-    for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-carrier-schedule")) continue;
-      controls.set(button, `${button.getAttribute("aria-label") ?? ""}
-${button.innerHTML}`);
-    }
-    return controls;
-  }
-  function findSendButton(box, before) {
-    const region = composerRegion(box);
-    if (!region) return null;
-    const changed = [];
-    for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-carrier-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
-        continue;
-      if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
-${button.innerHTML}`)
-        changed.push(button);
-    }
-    return changed.length === 1 ? changed[0] ?? null : null;
-  }
-  function replaceComposerText(box, text) {
-    box.focus();
-    const range = document.createRange();
-    range.selectNodeContents(box);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    return document.execCommand(text ? "insertText" : "delete", false, text);
-  }
 
   // inject/src/messenger/lib/scheduled-send.ts
   var SEND_GRACE_MS = 12e4;

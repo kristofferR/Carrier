@@ -17,6 +17,7 @@ import {
   RealtimeRecoveryTracker,
 } from "../lib/realtime-health";
 import { RenderHealthProbe } from "../lib/render-health";
+import { hasComposerDraft } from "../lib/scheduled-composer";
 import { isMessengerContentPath } from "../lib/threads";
 import { SILENT_RECOVERY_EVENT, SILENT_RECOVERY_RELOAD_EVENT } from "../lib/worker-recovery";
 import {
@@ -67,14 +68,6 @@ export function initAutoRefresh() {
     clearTimeout(timer);
     timer = undefined;
   };
-  const composerHasText = () => {
-    try {
-      for (const el of document.querySelectorAll('[contenteditable="true"]')) {
-        if ((el.textContent || "").trim().length > 0) return true;
-      }
-    } catch (_) {}
-    return false;
-  };
   const heartbeatId = window.__CARRIER_HEARTBEAT_ID__;
   try {
     delete window.__CARRIER_HEARTBEAT_ID__;
@@ -82,7 +75,7 @@ export function initAutoRefresh() {
     window.__CARRIER_HEARTBEAT_ID__ = undefined;
   }
   let lastHeartbeatProtection: boolean | undefined;
-  const heartbeatProtection = () => composerHasText() || !!window.__carrierInCall;
+  const heartbeatProtection = () => hasComposerDraft() || !!window.__carrierInCall;
   // Constructed before the first emitHeartbeat() call below. Non-content paths
   // (login, checkpoint) report "pending": the native watchdog must neither act
   // there nor treat them as proof the transport works.
@@ -243,7 +236,7 @@ export function initAutoRefresh() {
       return;
     }
     // Never yank the page out from under a draft or an in-progress call.
-    if (composerHasText() || window.__carrierInCall) {
+    if (heartbeatProtection()) {
       timer = setTimeout(maybeReload, 8000);
       return;
     }

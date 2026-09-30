@@ -640,6 +640,7 @@ impl WatchdogState {
     #[cfg(any(target_os = "macos", test))]
     fn system_resumed(&mut self, now: Duration) {
         self.render.pause(now);
+        self.memory.pause();
         // Pre-sleep ages say nothing about the newly woken renderer. Give it a
         // fresh heartbeat window, then fall back to a reload if it cannot
         // answer. Recovery attempt budgets remain intact across sleep.
@@ -1494,6 +1495,7 @@ async fn recycle_idle_renderer(
     let _ = app.run_on_main_thread(move || {
         if render_window_state(&window).visible {
             recycle.run(&window, false, || {
+                crate::actions::messenger_page_started(&window);
                 crate::renderer_memory::restart_in_place(&window);
             });
         } else {
@@ -1519,6 +1521,34 @@ fn render_window_state(window: &WebviewWindow) -> RenderWindowState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn memory_restart_waits_for_fresh_health_after_resume() {
+        let mut state = WatchdogState::default();
+        state.memory.heartbeat(Duration::ZERO, 1, true);
+        state.memory.window(Duration::ZERO, false, false);
+        let resumed_at = Duration::from_secs(3600);
+        state.heartbeat(resumed_at, false, Some(true), Some(RealtimeSignal::Ok));
+        assert!(state.memory.wants_sample(resumed_at));
+        assert!(state.memory_restart_ready(resumed_at, 1));
+
+        state.system_resumed(resumed_at);
+        let now = resumed_at + PING_INTERVAL;
+        assert_eq!(state.action(now), WatchdogAction::None);
+        assert!(!state.memory.wants_sample(now));
+        assert!(!state.memory_restart_ready(now, 1));
+
+        state.heartbeat(now, false, Some(true), Some(RealtimeSignal::Pending));
+        state.memory.heartbeat(now, 1, false);
+        assert!(!state.memory_restart_ready(now, 1));
+
+        state.heartbeat(now, false, Some(true), Some(RealtimeSignal::Ok));
+        state.memory.heartbeat(now, 1, true);
+        assert!(state.memory_restart_ready(now, 1));
+        // Resume starts a fresh settling interval before measuring again.
+        assert!(!state.memory.wants_sample(now));
+        assert!(state.memory.wants_sample(now + Duration::from_secs(600)));
+    }
 
     #[test]
     fn memory_restart_preserves_pending_blank_and_render_failures() {

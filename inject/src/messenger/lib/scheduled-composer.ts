@@ -43,6 +43,15 @@ export function hasComposerMedia(box: HTMLElement): boolean {
   );
 }
 
+/** Recovery must preserve text drafts and attachments without a caption. */
+export function hasComposerDraft(): boolean {
+  for (const box of document.querySelectorAll<HTMLElement>('[contenteditable="true"]')) {
+    if ((box.textContent || "").trim()) return true;
+    if (box.matches(COMPOSER_SELECTOR) && hasComposerMedia(box)) return true;
+  }
+  return false;
+}
+
 /** Capture controls before insertion so the send action can be identified by
  * the change Messenger makes when text appears, regardless of locale. */
 export function composerControls(box: HTMLElement): Map<HTMLElement, string> {
