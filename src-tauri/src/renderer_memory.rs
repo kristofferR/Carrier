@@ -35,6 +35,10 @@ pub(crate) struct RendererMemory {
 }
 
 impl RendererMemory {
+    pub(crate) fn document_epoch(&self) -> Option<u64> {
+        self.document_epoch_ms
+    }
+
     pub(crate) fn heartbeat(&mut self, now: Duration, document_epoch_ms: u64, healthy: bool) {
         if self.document_epoch_ms != Some(document_epoch_ms) {
             self.document_epoch_ms = Some(document_epoch_ms);
@@ -63,6 +67,12 @@ impl RendererMemory {
         self.document_seen_at = None;
         self.baseline = None;
         self.healthy = false;
+        self.last_sample_at = None;
+    }
+
+    pub(crate) fn focused(&mut self) {
+        self.hidden_since = None;
+        self.unfocused_since = None;
     }
 
     fn idle(&self, now: Duration) -> bool {
@@ -88,7 +98,15 @@ impl RendererMemory {
     }
 
     /// Returns the baseline when this footprint warrants a fresh renderer.
-    pub(crate) fn sampled(&mut self, now: Duration, footprint: u64) -> Option<u64> {
+    pub(crate) fn sampled(
+        &mut self,
+        now: Duration,
+        document_epoch_ms: u64,
+        footprint: u64,
+    ) -> Option<u64> {
+        if self.document_epoch_ms != Some(document_epoch_ms) || !self.wants_sample(now) {
+            return None;
+        }
         self.last_sample_at = Some(now);
         let baseline = *self.baseline.get_or_insert(footprint);
         (self.ready(now) && footprint >= baseline.saturating_add(GROWTH_LIMIT)).then_some(baseline)
@@ -171,7 +189,7 @@ mod linux {
 
     /// WebKitGTK exposes no web-process ID, so count every WebKit web process
     /// under Carrier, including a split-out SharedWorker; bubblewrap may sit
-    /// in between. Extra Messenger windows are counted too.
+    /// in between. The caller samples only while one Messenger window exists.
     #[cfg(target_os = "linux")]
     pub(super) fn web_processes_footprint() -> Option<u64> {
         let status = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/status")).ok();
@@ -271,7 +289,7 @@ mod tests {
         memory.heartbeat(at(0), 1, true);
         memory.window(at(0), false, false);
         assert!(memory.wants_sample(at(10)));
-        assert_eq!(memory.sampled(at(10), baseline), None);
+        assert_eq!(memory.sampled(at(10), 1, baseline), None);
         memory
     }
 
@@ -284,9 +302,9 @@ mod tests {
         let mut memory = settled_hidden_renderer(900 * MIB);
         assert!(!memory.wants_sample(at(10)));
         assert!(memory.wants_sample(at(16)));
-        assert_eq!(memory.sampled(at(16), 1155 * MIB), None);
+        assert_eq!(memory.sampled(at(16), 1, 1155 * MIB), None);
         assert!(!memory.wants_sample(at(16)));
-        assert_eq!(memory.sampled(at(17), 1156 * MIB), Some(900 * MIB));
+        assert_eq!(memory.sampled(at(17), 1, 1156 * MIB), Some(900 * MIB));
     }
 
     #[test]
@@ -305,15 +323,44 @@ mod tests {
         let mut memory = settled_hidden_renderer(900 * MIB);
         memory.heartbeat(at(20), 1, false);
         assert!(!memory.wants_sample(at(20)));
-        assert_eq!(memory.sampled(at(20), 2048 * MIB), None);
+        assert_eq!(memory.sampled(at(20), 1, 2048 * MIB), None);
 
         memory.heartbeat(at(21), 2, true);
         assert!(!memory.wants_sample(at(30)));
         assert!(memory.wants_sample(at(31)));
-        assert_eq!(memory.sampled(at(31), 2048 * MIB), None);
+        assert_eq!(memory.sampled(at(31), 2, 2048 * MIB), None);
 
         memory.pause();
         assert!(!memory.wants_sample(at(60)));
+    }
+
+    #[test]
+    fn stale_samples_cannot_set_a_replacement_documents_baseline() {
+        let mut memory = settled_hidden_renderer(900 * MIB);
+        memory.heartbeat(at(20), 2, true);
+        assert_eq!(memory.sampled(at(20), 1, 1400 * MIB), None);
+        assert_eq!(memory.baseline, None);
+        assert_eq!(memory.sampled(at(20), 2, 1400 * MIB), None);
+        assert_eq!(memory.baseline, None);
+        assert_eq!(memory.sampled(at(30), 2, 900 * MIB), None);
+        assert_eq!(memory.sampled(at(31), 2, 1156 * MIB), Some(900 * MIB));
+
+        // A Linux window-set change pauses even an unchanged document epoch.
+        memory.pause();
+        memory.heartbeat(at(32), 2, true);
+        assert_eq!(memory.sampled(at(32), 2, 1500 * MIB), None);
+        assert_eq!(memory.baseline, None);
+    }
+
+    #[test]
+    fn brief_native_focus_resets_both_idle_clocks() {
+        let mut memory = settled_hidden_renderer(900 * MIB);
+        assert!(memory.ready(at(60)));
+        memory.focused();
+        memory.window(at(60), false, false);
+        assert!(!memory.ready(at(60)));
+        assert!(!memory.ready(at(74)));
+        assert!(memory.ready(at(75)));
     }
 
     #[test]

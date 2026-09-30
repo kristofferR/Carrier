@@ -114,7 +114,14 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    build_app_window_with_render_budget(app, label, settings, RenderRecoveryBudget::default(), true)
+    build_app_window_with_render_budget(
+        app,
+        label,
+        settings,
+        RenderRecoveryBudget::default(),
+        true,
+        None,
+    )
 }
 
 fn build_app_window_with_render_budget(
@@ -123,6 +130,7 @@ fn build_app_window_with_render_budget(
     settings: &Settings,
     render_budget: RenderRecoveryBudget,
     focused: bool,
+    url: Option<tauri::Url>,
 ) -> tauri::Result<WebviewWindow> {
     if label == "main" {
         let state = app.state::<AppState>();
@@ -137,7 +145,11 @@ fn build_app_window_with_render_budget(
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
     let download_handle = app.clone();
     let download_label = label.to_string();
-    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+    let initial_url = url.map_or_else(
+        || WebviewUrl::App("index.html".into()),
+        WebviewUrl::External,
+    );
+    let builder = WebviewWindowBuilder::new(app, label, initial_url)
         .title(APP_TITLE)
         .focused(focused)
         .inner_size(1200.0, 780.0)
@@ -620,6 +632,7 @@ pub(crate) fn recreate_messenger_window(
     label: &str,
     render_budget: RenderRecoveryBudget,
     on_abandoned: Option<Box<dyn FnOnce() + Send>>,
+    recycle: Option<crate::webview_watchdog::RendererRecycle>,
 ) -> bool {
     use std::sync::atomic::Ordering;
 
@@ -651,20 +664,51 @@ pub(crate) fn recreate_messenger_window(
         // an app action dispatched into that gap would eval successfully and
         // then be lost with the webview. Take readiness away under the same
         // lock `dispatch_or_retain_page_action` uses, so it retains instead.
-        let was_loaded = {
+        let was_loaded = (label == "main" && recycle.is_none()).then(|| {
             let state = app.state::<AppState>();
             let _pending = state.pending_action.lock().unwrap();
             state.messenger_loaded.swap(false, Ordering::AcqRel)
-        };
+        });
 
         crate::webview_watchdog::realtime_window_replacing(&label);
-        if let Err(error) = window.destroy() {
+        let memory_recycle = recycle.is_some();
+        let (destroy_result, restore_url, recycle_was_loaded) = if let Some(recycle) = recycle {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let target = window.clone();
+            let scheduled = app.run_on_main_thread(move || {
+                let result = recycle.run(&target, true, |url| {
+                    let was_loaded = (target.label() == "main").then(|| {
+                        let state = target.state::<AppState>();
+                        let _pending = state.pending_action.lock().unwrap();
+                        state.messenger_loaded.swap(false, Ordering::AcqRel)
+                    });
+                    (target.destroy(), Some(url), was_loaded)
+                });
+                let _ = sender.send(result);
+            });
+            let result = if scheduled.is_ok() {
+                receiver.await.ok().flatten()
+            } else {
+                None
+            };
+            result.map_or((None, None, None), |(result, url, was_loaded)| {
+                (Some(result), url, was_loaded)
+            })
+        } else {
+            (Some(window.destroy()), None, None)
+        };
+        let was_loaded = was_loaded.or(recycle_was_loaded);
+        if !matches!(destroy_result, Some(Ok(()))) {
             crate::webview_watchdog::realtime_window_replacement_failed(&label);
-            log::warn!("failed to destroy blank Messenger webview {label}: {error}");
+            if let Some(Err(error)) = destroy_result {
+                log::warn!("failed to destroy Messenger webview {label}: {error}");
+            }
             let state = app.state::<AppState>();
             {
                 let _pending = state.pending_action.lock().unwrap();
-                state.messenger_loaded.store(was_loaded, Ordering::Release);
+                if let Some(was_loaded) = was_loaded {
+                    state.messenger_loaded.store(was_loaded, Ordering::Release);
+                }
             }
             state.recreating.store(false, Ordering::SeqCst);
             if let Some(on_abandoned) = on_abandoned {
@@ -684,6 +728,7 @@ pub(crate) fn recreate_messenger_window(
                 &settings,
                 render_budget.clone(),
                 was_focused,
+                restore_url.clone(),
             ) {
                 Ok(rebuilt) => {
                     if label == "main" {
@@ -727,10 +772,9 @@ pub(crate) fn recreate_messenger_window(
             }
         }
 
-        if render_budget.used() {
-            // Frame recovery is bounded to this window. Restarting the entire
-            // app would reset its budget and discard drafts in other windows.
-            log::error!("failed to construct replacement Messenger window {label}; automatic frame recovery stopped, reopen Carrier from the tray or relaunch manually");
+        if memory_recycle || render_budget.used() {
+            // Frame recovery and optional recycling are bounded to this window.
+            log::error!("failed to construct replacement Messenger window {label}; reopen Carrier from the tray or relaunch manually");
             crate::webview_watchdog::realtime_window_rebuild_failed(&label);
             app.state::<AppState>()
                 .recreating
