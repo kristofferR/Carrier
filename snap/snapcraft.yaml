@@ -79,6 +79,7 @@ parts:
       - rustup
       - pkg-config
       - libwebkit2gtk-4.1-dev
+      - libgstreamer1.0-dev
       - libssl-dev
       - libxdo-dev
     stage-packages:
