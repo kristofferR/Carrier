@@ -672,6 +672,75 @@ ${button.innerHTML}`)
     return document.execCommand(text ? "insertText" : "delete", false, text);
   }
 
+  // inject/src/messenger/lib/scheduled-send.ts
+  var SEND_GRACE_MS = 12e4;
+  var MAX_SCHEDULED_CHARS = 2e3;
+  function sendWindow(due, now) {
+    if (now < due) return "early";
+    return now <= due + SEND_GRACE_MS ? "due" : "missed";
+  }
+  function nextDueMessage(items, now) {
+    return items.filter((item) => item.status === "scheduled" && sendWindow(item.due, now) === "due").sort((a, b) => a.due - b.due)[0];
+  }
+  function schedulePresets(now) {
+    const evening = new Date(now);
+    evening.setHours(18, 0, 0, 0);
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return [
+      { label: "In 15 minutes", due: now + 15 * 6e4 },
+      { label: "In 1 hour", due: now + 60 * 6e4 },
+      ...evening.getTime() > now ? [{ label: "This evening", due: evening.getTime() }] : [],
+      { label: "Tomorrow morning", due: tomorrow.getTime() }
+    ];
+  }
+  function localScheduleTime(date, time) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
+    const value = /* @__PURE__ */ new Date(`${date}T${time}:00`);
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    if (value.getFullYear() !== year || value.getMonth() + 1 !== month || value.getDate() !== day || value.getHours() !== hour || value.getMinutes() !== minute)
+      return null;
+    return value.getTime();
+  }
+  function localDateValue(time) {
+    const date = new Date(time);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(void 0, {
+    ...includeDate ? { month: "short", day: "numeric" } : {},
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(time);
+  var composerBusy = false;
+  var composerWaiters = [];
+  var isComposerDeliveryActive = () => composerBusy;
+  var setComposerBusy = (busy) => {
+    composerBusy = busy;
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("carrier:protection-change"));
+  };
+  async function runComposerDelivery(run) {
+    try {
+      return await run();
+    } finally {
+      const next = composerWaiters.shift();
+      if (next) next();
+      else setComposerBusy(false);
+    }
+  }
+  function withComposerDelivery(run) {
+    if (composerBusy) return Promise.resolve(void 0);
+    setComposerBusy(true);
+    return runComposerDelivery(run);
+  }
+  async function withComposerDeliveryWhenAvailable(run) {
+    if (composerBusy) await new Promise((resolve) => composerWaiters.push(resolve));
+    else setComposerBusy(true);
+    return runComposerDelivery(run);
+  }
+
   // inject/src/messenger/lib/threads.ts
   function threadIdFromHref(href) {
     const m = (href || "").match(/\/t\/(\d+)/);
@@ -2024,7 +2093,7 @@ ${button.innerHTML}`)
       window.__CARRIER_HEARTBEAT_ID__ = void 0;
     }
     let lastHeartbeatProtection;
-    const heartbeatProtection = () => hasComposerDraft() || !!window.__carrierInCall;
+    const heartbeatProtection = () => isComposerDeliveryActive() || hasComposerDraft() || !!window.__carrierInCall;
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
@@ -8613,70 +8682,6 @@ ${button.innerHTML}`)
   }
   var composerContainsReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n") === reply.replace(/\r\n/g, "\n");
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
-
-  // inject/src/messenger/lib/scheduled-send.ts
-  var SEND_GRACE_MS = 12e4;
-  var MAX_SCHEDULED_CHARS = 2e3;
-  function sendWindow(due, now) {
-    if (now < due) return "early";
-    return now <= due + SEND_GRACE_MS ? "due" : "missed";
-  }
-  function nextDueMessage(items, now) {
-    return items.filter((item) => item.status === "scheduled" && sendWindow(item.due, now) === "due").sort((a, b) => a.due - b.due)[0];
-  }
-  function schedulePresets(now) {
-    const evening = new Date(now);
-    evening.setHours(18, 0, 0, 0);
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0);
-    return [
-      { label: "In 15 minutes", due: now + 15 * 6e4 },
-      { label: "In 1 hour", due: now + 60 * 6e4 },
-      ...evening.getTime() > now ? [{ label: "This evening", due: evening.getTime() }] : [],
-      { label: "Tomorrow morning", due: tomorrow.getTime() }
-    ];
-  }
-  function localScheduleTime(date, time) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return null;
-    const value = /* @__PURE__ */ new Date(`${date}T${time}:00`);
-    const [year, month, day] = date.split("-").map(Number);
-    const [hour, minute] = time.split(":").map(Number);
-    if (value.getFullYear() !== year || value.getMonth() + 1 !== month || value.getDate() !== day || value.getHours() !== hour || value.getMinutes() !== minute)
-      return null;
-    return value.getTime();
-  }
-  function localDateValue(time) {
-    const date = new Date(time);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  }
-  var formatScheduleTime = (time, includeDate = false) => new Intl.DateTimeFormat(void 0, {
-    ...includeDate ? { month: "short", day: "numeric" } : {},
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(time);
-  var composerBusy = false;
-  var composerWaiters = [];
-  async function runComposerDelivery(run) {
-    try {
-      return await run();
-    } finally {
-      const next = composerWaiters.shift();
-      if (next) next();
-      else composerBusy = false;
-    }
-  }
-  function withComposerDelivery(run) {
-    if (composerBusy) return Promise.resolve(void 0);
-    composerBusy = true;
-    return runComposerDelivery(run);
-  }
-  async function withComposerDeliveryWhenAvailable(run) {
-    if (composerBusy) await new Promise((resolve) => composerWaiters.push(resolve));
-    else composerBusy = true;
-    return runComposerDelivery(run);
-  }
 
   // inject/src/messenger/features/quick-reply.ts
   var POLL_MS = 250;

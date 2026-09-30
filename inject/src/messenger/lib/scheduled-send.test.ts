@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   formatScheduleTime,
+  isComposerDeliveryActive,
   localScheduleTime,
   nextDueMessage,
   schedulePresets,
@@ -49,21 +50,26 @@ describe("scheduled sending", () => {
     expect(new Date(presets.at(-1)!.due).getDate()).toBe(24);
   });
   test("serializes composer users and releases after failure", async () => {
+    expect(isComposerDeliveryActive()).toBe(false);
     let release: () => void = () => {};
     const held = withComposerDelivery(
       () =>
         new Promise<void>((resolve) => {
+          expect(isComposerDeliveryActive()).toBe(true);
           release = resolve;
         }),
     );
     expect(await withComposerDelivery(async () => "collision")).toBeUndefined();
     release();
     await held;
+    expect(isComposerDeliveryActive()).toBe(false);
     await expect(
       withComposerDelivery(async () => {
+        expect(isComposerDeliveryActive()).toBe(true);
         throw new Error("failed");
       }),
     ).rejects.toThrow();
+    expect(isComposerDeliveryActive()).toBe(false);
     expect(await withComposerDelivery(async () => "free")).toBe("free");
   });
 
@@ -77,15 +83,18 @@ describe("scheduled sending", () => {
     );
     const order: number[] = [];
     const first = withComposerDeliveryWhenAvailable(async () => {
+      expect(isComposerDeliveryActive()).toBe(true);
       order.push(1);
     });
     const second = withComposerDeliveryWhenAvailable(async () => {
+      expect(isComposerDeliveryActive()).toBe(true);
       order.push(2);
     });
     expect(order).toEqual([]);
     release();
     await Promise.all([held, first, second]);
     expect(order).toEqual([1, 2]);
+    expect(isComposerDeliveryActive()).toBe(false);
     expect(await withComposerDelivery(async () => "free")).toBe("free");
   });
 });

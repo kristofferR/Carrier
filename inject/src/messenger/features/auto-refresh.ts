@@ -18,6 +18,7 @@ import {
 } from "../lib/realtime-health";
 import { RenderHealthProbe } from "../lib/render-health";
 import { hasComposerDraft } from "../lib/scheduled-composer";
+import { isComposerDeliveryActive } from "../lib/scheduled-send";
 import { isMessengerContentPath } from "../lib/threads";
 import { SILENT_RECOVERY_EVENT, SILENT_RECOVERY_RELOAD_EVENT } from "../lib/worker-recovery";
 import {
@@ -75,7 +76,8 @@ export function initAutoRefresh() {
     window.__CARRIER_HEARTBEAT_ID__ = undefined;
   }
   let lastHeartbeatProtection: boolean | undefined;
-  const heartbeatProtection = () => hasComposerDraft() || !!window.__carrierInCall;
+  const heartbeatProtection = () =>
+    isComposerDeliveryActive() || hasComposerDraft() || !!window.__carrierInCall;
   // Constructed before the first emitHeartbeat() call below. Non-content paths
   // (login, checkpoint) report "pending": the native watchdog must neither act
   // there nor treat them as proof the transport works.

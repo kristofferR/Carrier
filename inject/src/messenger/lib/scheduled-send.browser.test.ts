@@ -6,7 +6,12 @@ import { build } from "esbuild";
 import type { initQuickReply } from "../features/quick-reply";
 import type { deliverScheduledMessage, initScheduledSend } from "../features/scheduled-send";
 import type { hasComposerDraft } from "./scheduled-composer";
-import type { ScheduledMessage, ScheduleRequest, ScheduleResponse } from "./scheduled-send";
+import type {
+  ScheduledMessage,
+  ScheduleRequest,
+  ScheduleResponse,
+  withComposerDelivery,
+} from "./scheduled-send";
 
 const chromium =
   process.env.CARRIER_BROWSER_TESTS === "1"
@@ -24,7 +29,9 @@ test.skipIf(!chromium)(
       import { initQuickReply } from "../features/quick-reply";
       import { initScheduledSend, deliverScheduledMessage } from "../features/scheduled-send";
       import { hasComposerDraft } from "./scheduled-composer";
-      (${fixtures.toString()})(initScheduledSend, deliverScheduledMessage, initQuickReply, hasComposerDraft);
+      import { initAutoRefresh } from "../features/auto-refresh";
+      import { withComposerDelivery } from "./scheduled-send";
+      (${fixtures.toString()})(initScheduledSend, deliverScheduledMessage, initQuickReply, hasComposerDraft, initAutoRefresh, withComposerDelivery);
     `,
           resolveDir: import.meta.dir,
         },
@@ -114,6 +121,8 @@ async function fixtures(
   deliver: typeof deliverScheduledMessage,
   quickReply: typeof initQuickReply,
   hasDraft: typeof hasComposerDraft,
+  autoRefresh: () => void,
+  withDelivery: typeof withComposerDelivery,
 ) {
   const result = document.querySelector("#result")!;
   const box = document.querySelector<HTMLElement>("#composer")!;
@@ -170,6 +179,41 @@ async function fixtures(
   });
   try {
     assert("empty composer and toolbar icons allow recovery", !hasDraft());
+    const protections: boolean[] = [];
+    window.__CARRIER_HEARTBEAT_ID__ = 1;
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (_cmd, args) => {
+        if (args?.event === "carrier:webview-heartbeat")
+          protections.push((args.payload as { protected: boolean }).protected);
+      },
+    };
+    autoRefresh();
+    assert("idle composer heartbeat allows recovery", protections.at(-1) === false);
+    let releaseClaim = () => {};
+    let releaseResult = () => {};
+    const claim = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    const reported = new Promise<void>((resolve) => {
+      releaseResult = resolve;
+    });
+    const delivery = withDelivery(async () => {
+      assert("claim starts with an immediately protected heartbeat", protections.at(-1) === true);
+      await claim;
+      assert(
+        "empty composer remains protected until result is recorded",
+        !hasDraft() && protections.at(-1) === true,
+      );
+      await reported;
+    });
+    releaseClaim();
+    await Promise.resolve();
+    releaseResult();
+    await delivery;
+    assert(
+      "recorded delivery immediately releases heartbeat protection",
+      protections.at(-1) === false,
+    );
     box.textContent = "Draft";
     assert("text draft protects recovery", hasDraft());
     clear();

@@ -100,25 +100,31 @@ export const formatScheduleTime = (time: number, includeDate = false): string =>
 /** Shared with notification replies so two automations cannot use one composer. */
 let composerBusy = false;
 const composerWaiters: Array<() => void> = [];
+/** Includes the native claim and result handshakes while the composer is empty. */
+export const isComposerDeliveryActive = () => composerBusy;
+const setComposerBusy = (busy: boolean) => {
+  composerBusy = busy;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("carrier:protection-change"));
+};
 async function runComposerDelivery<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
   } finally {
     const next = composerWaiters.shift();
     if (next) next();
-    else composerBusy = false;
+    else setComposerBusy(false);
   }
 }
 
 export function withComposerDelivery<T>(run: () => Promise<T>): Promise<T | undefined> {
   if (composerBusy) return Promise.resolve(undefined);
-  composerBusy = true;
+  setComposerBusy(true);
   return runComposerDelivery(run);
 }
 
 /** Keep a notification reply's draft fallback until the current delivery releases the composer. */
 export async function withComposerDeliveryWhenAvailable<T>(run: () => Promise<T>): Promise<T> {
   if (composerBusy) await new Promise<void>((resolve) => composerWaiters.push(resolve));
-  else composerBusy = true;
+  else setComposerBusy(true);
   return runComposerDelivery(run);
 }
