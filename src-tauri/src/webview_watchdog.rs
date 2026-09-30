@@ -1353,7 +1353,7 @@ async fn recycle_idle_renderer(
     if !reachable {
         return;
     }
-    {
+    let (visible, render_budget) = {
         let native_window = render_window_state(window);
         let now = started_at.elapsed();
         let mut state = state.lock().unwrap();
@@ -1365,13 +1365,21 @@ async fn recycle_idle_renderer(
             return;
         }
         state.navigation_started(now);
-    }
+        (native_window.visible, state.render.budget())
+    };
     log::info!(
-        "Messenger renderer {label} grew from {} to {} MiB while idle; restarting it to release memory",
+        "Messenger renderer {label} grew from {} to {} MiB while idle; {} it to release memory",
         baseline / (1024 * 1024),
         footprint / (1024 * 1024),
+        if visible { "restarting" } else { "rebuilding" },
     );
-    crate::renderer_memory::restart(window);
+    if visible {
+        crate::renderer_memory::restart_in_place(window);
+    } else {
+        // Hidden, a rebuild is invisible and starts Messenger as launch does,
+        // keeping the SharedWorker in the page's process.
+        crate::window::recreate_messenger_window(window.app_handle(), label, render_budget, None);
+    }
 }
 
 fn render_window_state(window: &WebviewWindow) -> RenderWindowState {

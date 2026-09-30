@@ -1,9 +1,12 @@
 //! Restart an idle Messenger renderer that has grown well past its settled size.
 //!
 //! Facebook's long-lived SPA keeps growing inside WebKit's web process, and a
-//! same-process reload keeps the allocator's high-water mark. Terminating the
-//! process releases it while the window and its native state survive. Windows
-//! (WebView2) has no equivalent hook here, so it never measures a footprint.
+//! same-process reload keeps the allocator's high-water mark. A hidden window
+//! is rebuilt, which starts Messenger exactly as launch does. A visible window
+//! restarts its web process in place instead, so it keeps its place on screen,
+//! but WebKit then moves Facebook's SharedWorker into a process of its own.
+//! Windows (WebView2) has no equivalent hook here, so it never measures a
+//! footprint.
 
 use std::time::Duration;
 
@@ -13,7 +16,7 @@ use tauri::WebviewWindow;
 const SETTLE_AGE: Duration = Duration::from_secs(10 * 60);
 /// Growth past the baseline that makes a fresh renderer worth a reload.
 const GROWTH_LIMIT: u64 = 256 * 1024 * 1024;
-/// Hidden or minimized: nobody sees the reload.
+/// Hidden or minimized: nobody sees the rebuild.
 const HIDDEN_IDLE: Duration = Duration::from_secs(15 * 60);
 /// Visible but unfocused, such as a window on another workspace.
 const UNFOCUSED_IDLE: Duration = Duration::from_secs(60 * 60);
@@ -97,7 +100,7 @@ pub(crate) async fn footprint(window: &WebviewWindow) -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
         let _ = window;
-        tauri::async_runtime::spawn_blocking(linux::largest_web_process_footprint)
+        tauri::async_runtime::spawn_blocking(linux::web_processes_footprint)
             .await
             .ok()
             .flatten()
@@ -120,7 +123,7 @@ pub(crate) async fn footprint(window: &WebviewWindow) -> Option<u64> {
 }
 
 /// Replace the web process, then load the same Messenger URL in a fresh one.
-pub(crate) fn restart(window: &WebviewWindow) {
+pub(crate) fn restart_in_place(window: &WebviewWindow) {
     #[cfg(target_os = "linux")]
     let result = window.with_webview(|webview| {
         use webkit2gtk::WebViewExt;
@@ -166,10 +169,11 @@ mod linux {
         ))
     }
 
-    /// WebKitGTK exposes no web-process ID. Use the largest WebKit web process
-    /// under Carrier, which is Messenger's; bubblewrap may sit in between.
+    /// WebKitGTK exposes no web-process ID, so count every WebKit web process
+    /// under Carrier, including a split-out SharedWorker; bubblewrap may sit
+    /// in between. Extra Messenger windows are counted too.
     #[cfg(target_os = "linux")]
-    pub(super) fn largest_web_process_footprint() -> Option<u64> {
+    pub(super) fn web_processes_footprint() -> Option<u64> {
         let status = |pid: u32| std::fs::read_to_string(format!("/proc/{pid}/status")).ok();
         let carrier = std::process::id();
         let descends_from_carrier = |mut parent: u32| {
@@ -197,7 +201,7 @@ mod linux {
                 let (name, parent, bytes) = parse_status(&status)?;
                 (name == "WebKitWebProces" && descends_from_carrier(parent)).then_some(bytes)
             })
-            .max()
+            .reduce(|total, bytes| total + bytes)
     }
 }
 
