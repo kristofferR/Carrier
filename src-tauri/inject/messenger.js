@@ -9914,6 +9914,166 @@ ${text}`)) {
     });
   }
 
+  // inject/src/messenger/lib/thread-restore.ts
+  var THREAD_RESTORE_WAIT_MS = 3e4;
+  function threadRestoreStep(input) {
+    if (input.done || input.onThread) return "done";
+    if (input.waitedMs >= THREAD_RESTORE_WAIT_MS) return "load";
+    return input.rowFound ? "click" : "wait";
+  }
+
+  // inject/src/messenger/lib/thread-viewed.ts
+  var initialThreadViewedState = () => ({
+    visible: false,
+    threadPath: null,
+    lastReportedAt: null
+  });
+  var THREAD_VIEW_RECHECK_MS = 5e3;
+  function advanceThreadViewed(previous, threadPath, visible, now) {
+    const active = visible && threadPath !== null;
+    const changed = !previous.visible || previous.threadPath !== threadPath;
+    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
+    const emit = active && (changed || recheckDue) ? threadPath : null;
+    return {
+      state: {
+        visible,
+        threadPath,
+        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
+      },
+      emit
+    };
+  }
+
+  // inject/src/messenger/features/thread-nav.ts
+  var RESTORED_THREAD_KEY = "carrier-restored-thread";
+  var cancelThreadRestore = () => {
+  };
+  function stopThreadRestore() {
+    cancelThreadRestore();
+  }
+  function restoreRecycledThread(id) {
+    const startedAt = Date.now();
+    let cancelled = false;
+    let lastThread = threadIdFromHref(location.pathname);
+    const markDone = () => {
+      try {
+        sessionStorage.setItem(RESTORED_THREAD_KEY, id);
+      } catch (_) {
+      }
+    };
+    cancelThreadRestore = () => {
+      cancelled = true;
+      markDone();
+    };
+    const onUserInput = (event) => {
+      if (event.isTrusted) cancelThreadRestore();
+    };
+    for (const type of ["pointerdown", "keydown"]) {
+      window.addEventListener(type, onUserInput, true);
+    }
+    const attempt = () => {
+      if (cancelled) return;
+      const current = threadIdFromHref(location.pathname);
+      if (lastThread && current !== lastThread && current !== id) {
+        cancelThreadRestore();
+        return;
+      }
+      lastThread = current ?? lastThread;
+      let done = false;
+      try {
+        done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
+      } catch (_) {
+      }
+      const row = [
+        ...document.querySelectorAll('[role="navigation"] a[href*="/t/"]')
+      ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
+      const step = threadRestoreStep({
+        done,
+        onThread: current === id,
+        rowFound: !!row,
+        waitedMs: Date.now() - startedAt
+      });
+      if (step === "done") {
+        if (!done) markDone();
+        return;
+      }
+      if (step === "load") {
+        markDone();
+        location.href = `https://www.facebook.com/messages/t/${id}/`;
+        return;
+      }
+      if (step === "click") row?.click();
+      setTimeout(attempt, 500);
+    };
+    attempt();
+  }
+  function initThreadNav() {
+    setTimeout(() => {
+      const restoreId = window.__CARRIER_RESTORE_THREAD__;
+      if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
+        restoreRecycledThread(restoreId);
+      }
+    }, 0);
+    window.__carrierOpenThread = (href) => {
+      const id = threadPathId(href);
+      if (!id) return false;
+      cancelThreadRestore();
+      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+        if (threadIdFromHref(a.getAttribute("href")) === id) {
+          a.click();
+          return true;
+        }
+      }
+      location.href = `https://www.facebook.com/messages/t/${id}/`;
+      return true;
+    };
+    let viewed = initialThreadViewedState();
+    const reportViewedThread = () => {
+      const id = threadIdFromHref(location.pathname);
+      const path = id ? `/t/${id}/` : null;
+      const next = advanceThreadViewed(
+        viewed,
+        path,
+        document.hasFocus() && !document.hidden,
+        performance.now()
+      );
+      viewed = next.state;
+      if (next.emit) {
+        invoke("plugin:event|emit", {
+          event: "carrier:thread-viewed",
+          payload: { thread_path: next.emit }
+        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+      }
+    };
+    setInterval(reportViewedThread, 1e3);
+    document.addEventListener("visibilitychange", reportViewedThread);
+    window.addEventListener("focus", reportViewedThread);
+    window.addEventListener("blur", reportViewedThread);
+    reportViewedThread();
+    window.__carrierToggleInfo = () => {
+      const wanted = (el) => {
+        const l = (el.getAttribute("aria-label") || "").toLowerCase();
+        return l.includes("conversation information") || l.includes("conversation details");
+      };
+      let btn = document.querySelector(
+        '[role="button"][aria-label="Conversation information"]'
+      );
+      if (!btn) {
+        for (const el of document.querySelectorAll("[aria-label]"))
+          if (wanted(el)) {
+            btn = el.closest('[role="button"]') || el;
+            break;
+          }
+      }
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      toast("Open a conversation first");
+      return false;
+    };
+  }
+
   // inject/src/messenger/lib/zoom.ts
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
@@ -10050,7 +10210,7 @@ ${text}`)) {
     );
   }
   function initShortcutRegistry() {
-    window.__carrierShortcuts = {
+    const actions = {
       nextConversation: () => stepConversation(1),
       prevConversation: () => stepConversation(-1),
       focusChatSearch,
@@ -10061,6 +10221,15 @@ ${text}`)) {
       attachFiles,
       newConversation
     };
+    window.__carrierShortcuts = Object.fromEntries(
+      Object.entries(actions).map(([name, action2]) => [
+        name,
+        () => {
+          stopThreadRestore();
+          return action2();
+        }
+      ])
+    );
   }
 
   // inject/src/messenger/features/spellcheck.ts
@@ -10635,89 +10804,6 @@ ${text}`)) {
       };
     } catch (_) {
     }
-  }
-
-  // inject/src/messenger/lib/thread-viewed.ts
-  var initialThreadViewedState = () => ({
-    visible: false,
-    threadPath: null,
-    lastReportedAt: null
-  });
-  var THREAD_VIEW_RECHECK_MS = 5e3;
-  function advanceThreadViewed(previous, threadPath, visible, now) {
-    const active = visible && threadPath !== null;
-    const changed = !previous.visible || previous.threadPath !== threadPath;
-    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
-    const emit = active && (changed || recheckDue) ? threadPath : null;
-    return {
-      state: {
-        visible,
-        threadPath,
-        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
-      },
-      emit
-    };
-  }
-
-  // inject/src/messenger/features/thread-nav.ts
-  function initThreadNav() {
-    window.__carrierOpenThread = (href) => {
-      const id = threadPathId(href);
-      if (!id) return false;
-      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
-        if (threadIdFromHref(a.getAttribute("href")) === id) {
-          a.click();
-          return true;
-        }
-      }
-      location.href = `https://www.facebook.com/messages/t/${id}/`;
-      return true;
-    };
-    let viewed = initialThreadViewedState();
-    const reportViewedThread = () => {
-      const id = threadIdFromHref(location.pathname);
-      const path = id ? `/t/${id}/` : null;
-      const next = advanceThreadViewed(
-        viewed,
-        path,
-        document.hasFocus() && !document.hidden,
-        performance.now()
-      );
-      viewed = next.state;
-      if (next.emit) {
-        invoke("plugin:event|emit", {
-          event: "carrier:thread-viewed",
-          payload: { thread_path: next.emit }
-        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
-      }
-    };
-    setInterval(reportViewedThread, 1e3);
-    document.addEventListener("visibilitychange", reportViewedThread);
-    window.addEventListener("focus", reportViewedThread);
-    window.addEventListener("blur", reportViewedThread);
-    reportViewedThread();
-    window.__carrierToggleInfo = () => {
-      const wanted = (el) => {
-        const l = (el.getAttribute("aria-label") || "").toLowerCase();
-        return l.includes("conversation information") || l.includes("conversation details");
-      };
-      let btn = document.querySelector(
-        '[role="button"][aria-label="Conversation information"]'
-      );
-      if (!btn) {
-        for (const el of document.querySelectorAll("[aria-label]"))
-          if (wanted(el)) {
-            btn = el.closest('[role="button"]') || el;
-            break;
-          }
-      }
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      toast("Open a conversation first");
-      return false;
-    };
   }
 
   // inject/src/messenger/features/unread-badge.ts

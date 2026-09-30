@@ -11,6 +11,7 @@ import {
   searchInConversation,
   stepConversation,
 } from "./conversation-actions";
+import { stopThreadRestore } from "./thread-nav";
 import { zoomIn, zoomOut, zoomReset } from "./zoom";
 
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
@@ -91,7 +92,7 @@ export function initFunctionKeys() {
 // Registry for the native menu (File ▸ New Conversation) and the dev-only
 // mcp-bridge test hook; the keydown handlers above call these directly.
 export function initShortcutRegistry() {
-  window.__carrierShortcuts = {
+  const actions: Record<string, () => unknown> = {
     nextConversation: () => stepConversation(1),
     prevConversation: () => stepConversation(-1),
     focusChatSearch,
@@ -102,4 +103,14 @@ export function initShortcutRegistry() {
     attachFiles,
     newConversation,
   };
+  // A native action is an explicit request that a pending restore must not undo.
+  window.__carrierShortcuts = Object.fromEntries(
+    Object.entries(actions).map(([name, action]) => [
+      name,
+      () => {
+        stopThreadRestore();
+        return action();
+      },
+    ]),
+  );
 }

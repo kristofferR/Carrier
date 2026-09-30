@@ -139,6 +139,8 @@ interface Window {
   __CARRIER_SETTINGS__?: CarrierSettings;
   /** Scheduled delivery availability fixed when the native process starts. */
   __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;
+  /** Conversation id a recycled window reopens; set only in rebuilt windows. */
+  __CARRIER_RESTORE_THREAD__?: string;
   /** Native watchdog generation baked into this Messenger window. */
   __CARRIER_HEARTBEAT_ID__?: number;
 

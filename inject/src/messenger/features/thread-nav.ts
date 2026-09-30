@@ -1,9 +1,85 @@
 /* ------------------- Open thread & conversation info ------------------ */
 import { diag, invoke, toast } from "../bridge";
+import { threadRestoreStep } from "../lib/thread-restore";
 import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 
+const RESTORED_THREAD_KEY = "carrier-restored-thread";
+let cancelThreadRestore = () => {};
+
+/** Native actions call this first: an explicit request beats a pending restore. */
+export function stopThreadRestore() {
+  cancelThreadRestore();
+}
+
+// A window rebuilt to release memory reopens the conversation it showed. Real
+// user input, a native action, or leaving a conversation for anything other
+// than this one ends it: the user's choice wins.
+function restoreRecycledThread(id: string) {
+  const startedAt = Date.now();
+  let cancelled = false;
+  let lastThread = threadIdFromHref(location.pathname);
+  const markDone = () => {
+    try {
+      sessionStorage.setItem(RESTORED_THREAD_KEY, id);
+    } catch (_) {}
+  };
+  cancelThreadRestore = () => {
+    cancelled = true;
+    markDone();
+  };
+  const onUserInput = (event: Event) => {
+    if (event.isTrusted) cancelThreadRestore();
+  };
+  for (const type of ["pointerdown", "keydown"]) {
+    window.addEventListener(type, onUserInput, true);
+  }
+  const attempt = () => {
+    if (cancelled) return;
+    // Facebook's own landing moves from its home to a thread; leaving a thread
+    // for any page we did not request came from the user.
+    const current = threadIdFromHref(location.pathname);
+    if (lastThread && current !== lastThread && current !== id) {
+      cancelThreadRestore();
+      return;
+    }
+    lastThread = current ?? lastThread;
+    let done = false;
+    try {
+      done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
+    } catch (_) {}
+    const row = [
+      ...document.querySelectorAll<HTMLAnchorElement>('[role="navigation"] a[href*="/t/"]'),
+    ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
+    const step = threadRestoreStep({
+      done,
+      onThread: current === id,
+      rowFound: !!row,
+      waitedMs: Date.now() - startedAt,
+    });
+    if (step === "done") {
+      if (!done) markDone();
+      return;
+    }
+    if (step === "load") {
+      markDone();
+      location.href = `https://www.facebook.com/messages/t/${id}/`;
+      return;
+    }
+    if (step === "click") row?.click();
+    setTimeout(attempt, 500);
+  };
+  attempt();
+}
+
 export function initThreadNav() {
+  // Native code sets the id in a startup script that runs after this bundle.
+  setTimeout(() => {
+    const restoreId = window.__CARRIER_RESTORE_THREAD__;
+    if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
+      restoreRecycledThread(restoreId);
+    }
+  }, 0);
   // Open a conversation by its "/t/<id>/" path (used by the Dock/tray menus,
   // via eval from Rust). Prefer clicking the row — SPA navigation, no full
   // reload; fall back to a hard navigation when the row isn't in the list
@@ -11,6 +87,7 @@ export function initThreadNav() {
   window.__carrierOpenThread = (href) => {
     const id = threadPathId(href);
     if (!id) return false;
+    cancelThreadRestore();
     for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="/t/"]')) {
       if (threadIdFromHref(a.getAttribute("href")) === id) {
         a.click();

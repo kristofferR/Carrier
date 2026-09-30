@@ -1494,6 +1494,15 @@ async fn recycle_idle_renderer(
     let app = window.app_handle().clone();
     let _ = app.run_on_main_thread(move || {
         if render_window_state(&window).visible {
+            // The sample may predate the window being shown; a visible reload
+            // needs leak-level growth.
+            if !crate::renderer_memory::warrants_replacement(
+                recycle.baseline,
+                recycle.footprint,
+                false,
+            ) {
+                return;
+            }
             recycle.run(&window, false, || {
                 crate::actions::messenger_page_started(&window);
                 crate::renderer_memory::restart_in_place(&window);

@@ -114,7 +114,14 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    build_app_window_with_render_budget(app, label, settings, RenderRecoveryBudget::default(), true)
+    build_app_window_with_render_budget(
+        app,
+        label,
+        settings,
+        RenderRecoveryBudget::default(),
+        true,
+        None,
+    )
 }
 
 fn build_app_window_with_render_budget(
@@ -123,6 +130,8 @@ fn build_app_window_with_render_budget(
     settings: &Settings,
     render_budget: RenderRecoveryBudget,
     focused: bool,
+    // Conversation a recycled window reopens once Messenger has loaded.
+    restore_thread: Option<String>,
 ) -> tauri::Result<WebviewWindow> {
     if label == "main" {
         let state = app.state::<AppState>();
@@ -327,6 +336,13 @@ fn build_app_window_with_render_budget(
     let builder = builder.decorations(show_title_bar(settings));
     let builder = match crate::user_agent::override_for(std::env::consts::OS) {
         Some(user_agent) => builder.user_agent(user_agent),
+        None => builder,
+    };
+    let builder = match restore_thread {
+        Some(id) => builder.initialization_script(format!(
+            "window.__CARRIER_RESTORE_THREAD__ = {};",
+            serde_json::to_string(&id).expect("thread id serialises")
+        )),
         None => builder,
     };
     let window = builder.build().inspect(|window| {
@@ -660,7 +676,7 @@ pub(crate) fn recreate_messenger_window(
 
         crate::webview_watchdog::realtime_window_replacing(&label);
         let memory_recycle = recycle.is_some();
-        let (destroy_result, recycle_was_loaded) = if let Some(recycle) = recycle {
+        let (destroy_result, recycle_was_loaded, restore_thread) = if let Some(recycle) = recycle {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let target = window.clone();
             let scheduled = app.run_on_main_thread(move || {
@@ -670,7 +686,11 @@ pub(crate) fn recreate_messenger_window(
                         let _pending = state.pending_action.lock().unwrap();
                         state.messenger_loaded.swap(false, Ordering::AcqRel)
                     });
-                    (target.destroy(), was_loaded)
+                    let thread = target
+                        .url()
+                        .ok()
+                        .and_then(|url| crate::messenger_url_thread_id(&url));
+                    (target.destroy(), was_loaded, thread)
                 });
                 let _ = sender.send(result);
             });
@@ -679,11 +699,11 @@ pub(crate) fn recreate_messenger_window(
             } else {
                 None
             };
-            result.map_or((None, None), |(result, was_loaded)| {
-                (Some(result), was_loaded)
+            result.map_or((None, None, None), |(result, was_loaded, thread)| {
+                (Some(result), was_loaded, thread)
             })
         } else {
-            (Some(window.destroy()), None)
+            (Some(window.destroy()), None, None)
         };
         let was_loaded = was_loaded.or(recycle_was_loaded);
         if !matches!(destroy_result, Some(Ok(()))) {
@@ -706,9 +726,10 @@ pub(crate) fn recreate_messenger_window(
         }
 
         // Rebuild exactly as launch does: visible, through the launch page, to
-        // Messenger's home. On Linux a thread URL as the first document puts
-        // Facebook's SharedWorker in a separate ~300 MB web process, and an
-        // invisible window is never realized, so blank-page recovery loops.
+        // Messenger's home; the page then reopens the thread. On
+        // Linux a thread URL as the first document puts Facebook's
+        // SharedWorker in a separate ~300 MB web process, and an invisible
+        // window is never realized, so blank-page recovery loops.
         // Let the event loop release the old native label before rebuilding.
         const MAX_BUILD_ATTEMPTS: usize = 3;
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -720,6 +741,7 @@ pub(crate) fn recreate_messenger_window(
                 &settings,
                 render_budget.clone(),
                 was_focused,
+                restore_thread.clone(),
             ) {
                 Ok(rebuilt) => {
                     if label == "main" {

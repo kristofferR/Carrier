@@ -14,13 +14,26 @@ use tauri::WebviewWindow;
 
 /// A document measures its own baseline once it has loaded and settled.
 const SETTLE_AGE: Duration = Duration::from_secs(10 * 60);
-/// Growth past the baseline that makes a fresh renderer worth a reload.
-const GROWTH_LIMIT: u64 = 256 * 1024 * 1024;
 /// Hidden or minimized: nobody sees the rebuild.
 const HIDDEN_IDLE: Duration = Duration::from_secs(15 * 60);
 /// Visible but unfocused, such as a window on another workspace.
 const UNFOCUSED_IDLE: Duration = Duration::from_secs(60 * 60);
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(60);
+/// Growth past the baseline worth an invisible rebuild of a hidden window.
+const HIDDEN_GROWTH: u64 = 256 * 1024 * 1024;
+
+/// Whether this growth warrants a fresh renderer. A hidden window is rebuilt
+/// invisibly on the same thread, so moderate growth is enough. A visible one
+/// reloads in place where it could be seen, so only leak-like growth (twice
+/// the settled size, which normal use stays well below) qualifies.
+pub(crate) fn warrants_replacement(baseline: u64, footprint: u64, hidden: bool) -> bool {
+    footprint
+        >= if hidden {
+            baseline.saturating_add(HIDDEN_GROWTH)
+        } else {
+            baseline.saturating_mul(2)
+        }
+}
 
 #[derive(Debug, Default)]
 pub(crate) struct RendererMemory {
@@ -75,11 +88,16 @@ impl RendererMemory {
         self.unfocused_since = None;
     }
 
+    fn hidden_idle(&self, now: Duration) -> bool {
+        self.hidden_since
+            .is_some_and(|start| now.saturating_sub(start) >= HIDDEN_IDLE)
+    }
+
     fn idle(&self, now: Duration) -> bool {
-        let since = |start: Option<Duration>, limit| {
-            start.is_some_and(|start| now.saturating_sub(start) >= limit)
-        };
-        since(self.hidden_since, HIDDEN_IDLE) || since(self.unfocused_since, UNFOCUSED_IDLE)
+        self.hidden_idle(now)
+            || self
+                .unfocused_since
+                .is_some_and(|start| now.saturating_sub(start) >= UNFOCUSED_IDLE)
     }
 
     pub(crate) fn ready(&self, now: Duration) -> bool {
@@ -109,7 +127,8 @@ impl RendererMemory {
         }
         self.last_sample_at = Some(now);
         let baseline = *self.baseline.get_or_insert(footprint);
-        (self.ready(now) && footprint >= baseline.saturating_add(GROWTH_LIMIT)).then_some(baseline)
+        (self.ready(now) && warrants_replacement(baseline, footprint, self.hidden_idle(now)))
+            .then_some(baseline)
     }
 }
 
@@ -294,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn restarts_only_after_growing_past_the_settled_baseline() {
+    fn hidden_windows_restart_after_moderate_growth() {
         let mut memory = RendererMemory::default();
         memory.heartbeat(at(0), 1, true);
         assert!(!memory.wants_sample(at(9)));
@@ -305,6 +324,16 @@ mod tests {
         assert_eq!(memory.sampled(at(16), 1, 1155 * MIB), None);
         assert!(!memory.wants_sample(at(16)));
         assert_eq!(memory.sampled(at(17), 1, 1156 * MIB), Some(900 * MIB));
+    }
+
+    #[test]
+    fn visible_windows_restart_only_after_doubling() {
+        let mut memory = RendererMemory::default();
+        memory.heartbeat(at(0), 1, true);
+        memory.window(at(0), true, false);
+        assert_eq!(memory.sampled(at(10), 1, 900 * MIB), None);
+        assert_eq!(memory.sampled(at(60), 1, 1799 * MIB), None);
+        assert_eq!(memory.sampled(at(61), 1, 1800 * MIB), Some(900 * MIB));
     }
 
     #[test]
