@@ -126,8 +126,6 @@ mod tests {
         }
     }
 
-    // GStreamer search paths use the platform separator, `:` on Unix.
-    #[cfg(unix)]
     #[test]
     fn gstreamer_system_path_replaces_distribution_defaults() {
         let dirs = |values: &[(&str, &str)]| {
@@ -139,10 +137,11 @@ mod tests {
             })
         };
         assert!(dirs(&[]).contains(&PathBuf::from("/usr/lib/gstreamer-1.0")));
+        let system = std::env::join_paths(["/appdir/a", "/appdir/b"]).unwrap();
         assert_eq!(
             dirs(&[
                 ("GST_PLUGIN_PATH", "/extra"),
-                ("GST_PLUGIN_SYSTEM_PATH_1_0", "/appdir/a:/appdir/b"),
+                ("GST_PLUGIN_SYSTEM_PATH_1_0", system.to_str().unwrap()),
                 ("GST_PLUGIN_SYSTEM_PATH", "/ignored"),
             ]),
             [
