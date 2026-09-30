@@ -126,6 +126,8 @@ mod tests {
         }
     }
 
+    // GStreamer search paths use the platform separator, `:` on Unix.
+    #[cfg(unix)]
     #[test]
     fn gstreamer_system_path_replaces_distribution_defaults() {
         let dirs = |values: &[(&str, &str)]| {
