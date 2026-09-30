@@ -1,7 +1,6 @@
 //! GTK/WebKit environment defaults, applied before either library starts.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
 
 fn should_default_to_http1(force_http1: Option<OsString>, allow_http2: Option<OsString>) -> bool {
     force_http1.is_none() && allow_http2.as_deref() != Some(std::ffi::OsStr::new("1"))
@@ -50,40 +49,34 @@ fn environment_defaults(
     defaults
 }
 
-#[cfg(target_os = "linux")]
-const NVDEC_DEMOTION: &str = concat!(
-    "nvh264dec:NONE,nvh265dec:NONE,nvav1dec:NONE,nvvp8dec:NONE,nvvp9dec:NONE,",
-    "nvjpegdec:NONE,nvmpegvideodec:NONE,nvmpeg2videodec:NONE,nvmpeg4videodec:NONE",
-);
-
-/// Where GStreamer looks for plugins: the extra path plus the system path,
-/// which replaces the distribution defaults when set (as AppImage does).
-fn gstreamer_plugin_dirs(env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    let paths = |keys: [&str; 2]| {
-        keys.into_iter()
-            .find_map(&env)
-            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
-    };
-    let mut dirs = paths(["GST_PLUGIN_PATH_1_0", "GST_PLUGIN_PATH"]).unwrap_or_default();
-    dirs.extend(
-        paths(["GST_PLUGIN_SYSTEM_PATH_1_0", "GST_PLUGIN_SYSTEM_PATH"]).unwrap_or_else(|| {
-            [
-                "/usr/lib",
-                "/usr/lib64",
-                "/usr/lib/x86_64-linux-gnu",
-                "/usr/lib/aarch64-linux-gnu",
-                "/usr/local/lib",
-            ]
-            .into_iter()
-            .map(|lib| Path::new(lib).join("gstreamer-1.0"))
-            .collect()
-        }),
-    );
-    dirs
+/// Demote only codecs with a usable software replacement, including the
+/// stateless factory names used before GStreamer 1.24.
+fn nvdec_demotion(mut software_decoder_usable: impl FnMut(&str) -> bool) -> String {
+    let codecs: &[(&str, &[&str])] = &[
+        ("avdec_h264", &["nvh264dec", "nvh264sldec"]),
+        ("avdec_h265", &["nvh265dec", "nvh265sldec"]),
+        ("avdec_av1", &["nvav1dec"]),
+        ("avdec_vp8", &["nvvp8dec", "nvvp8sldec"]),
+        ("avdec_vp9", &["nvvp9dec", "nvvp9sldec"]),
+        ("avdec_mjpeg", &["nvjpegdec"]),
+        ("avdec_mpegvideo", &["nvmpegvideodec"]),
+        ("avdec_mpeg2video", &["nvmpeg2videodec"]),
+        ("avdec_mpeg4", &["nvmpeg4videodec"]),
+    ];
+    codecs
+        .iter()
+        .filter(|(software, _)| software_decoder_usable(software))
+        .flat_map(|(_, hardware)| hardware.iter().map(|name| format!("{name}:NONE")))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(target_os = "linux")]
 pub(crate) fn configure() {
+    // Apply GTK/WebKit defaults before GStreamer or worker threads start.
+    for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
+        std::env::set_var(key, value);
+    }
     // libsoup 3.6.6's HTTP/2 pool stalled on Messenger with all six connections
     // in CLOSE-WAIT, blocking worker startup too. HTTP/1.1 avoids that failure.
     // Keep an opt-out for testing newer system libraries; see docs/sync-recovery.md.
@@ -96,18 +89,20 @@ pub(crate) fn configure() {
     // Any NVDEC decoder WebKit can autoplug makes the web process load CUDA
     // for Messenger clips, even paused offscreen ones: about 100 MB RAM and
     // 400 MiB VRAM. Only NONE avoids it, which removes NVDEC entirely, so do it
-    // only when libav can decode instead. Software decoding is cheap at chat
-    // sizes. Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
-    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none()
-        && gstreamer_plugin_dirs(|key| std::env::var_os(key))
-            .iter()
-            .any(|dir| dir.join("libgstlibav.so").is_file())
-    {
-        std::env::set_var("GST_PLUGIN_FEATURE_RANK", NVDEC_DEMOTION);
-    }
-    // Called first in run(), before Tauri, GTK, WebKit, or worker threads start.
-    for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
-        std::env::set_var(key, value);
+    // only when the corresponding libav decoder can be created instead.
+    // GStreamer's registry handles user, system, and AppImage plugin paths.
+    // Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
+    if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() && gstreamer::init().is_ok() {
+        use gstreamer::prelude::*;
+        let ranks = nvdec_demotion(|name| {
+            gstreamer::ElementFactory::find(name).is_some_and(|factory| {
+                factory.rank() > gstreamer::Rank::None && factory.create().build().is_ok()
+            })
+        });
+        // WebKit's separate web process reads these ranks during its own init.
+        if !ranks.is_empty() {
+            std::env::set_var("GST_PLUGIN_FEATURE_RANK", ranks);
+        }
     }
 }
 
@@ -127,28 +122,11 @@ mod tests {
     }
 
     #[test]
-    fn gstreamer_system_path_replaces_distribution_defaults() {
-        let dirs = |values: &[(&str, &str)]| {
-            gstreamer_plugin_dirs(|key| {
-                values
-                    .iter()
-                    .find(|(name, _)| *name == key)
-                    .map(|(_, value)| OsString::from(value))
-            })
-        };
-        assert!(dirs(&[]).contains(&PathBuf::from("/usr/lib/gstreamer-1.0")));
-        let system = std::env::join_paths(["/appdir/a", "/appdir/b"]).unwrap();
+    fn nvdec_ranks_require_a_usable_replacement_for_each_codec() {
+        assert!(nvdec_demotion(|_| false).is_empty());
         assert_eq!(
-            dirs(&[
-                ("GST_PLUGIN_PATH", "/extra"),
-                ("GST_PLUGIN_SYSTEM_PATH_1_0", system.to_str().unwrap()),
-                ("GST_PLUGIN_SYSTEM_PATH", "/ignored"),
-            ]),
-            [
-                PathBuf::from("/extra"),
-                PathBuf::from("/appdir/a"),
-                PathBuf::from("/appdir/b")
-            ]
+            nvdec_demotion(|name| matches!(name, "avdec_h264" | "avdec_vp9")),
+            "nvh264dec:NONE,nvh264sldec:NONE,nvvp9dec:NONE,nvvp9sldec:NONE"
         );
     }
 
