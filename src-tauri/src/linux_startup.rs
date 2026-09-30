@@ -94,10 +94,12 @@ pub(crate) fn configure() {
     // Any explicit GST_PLUGIN_FEATURE_RANK, even empty, opts out.
     if std::env::var_os("GST_PLUGIN_FEATURE_RANK").is_none() && gstreamer::init().is_ok() {
         use gstreamer::prelude::*;
+        // The registry lists only features of plugins that loaded when scanned.
+        // Creating an element would load libav into this process for good
+        // (about 35 MB), so a registry lookup is enough.
         let ranks = nvdec_demotion(|name| {
-            gstreamer::ElementFactory::find(name).is_some_and(|factory| {
-                factory.rank() > gstreamer::Rank::None && factory.create().build().is_ok()
-            })
+            gstreamer::ElementFactory::find(name)
+                .is_some_and(|factory| factory.rank() > gstreamer::Rank::None)
         });
         // WebKit's separate web process reads these ranks during its own init.
         if !ranks.is_empty() {
