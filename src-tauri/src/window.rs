@@ -114,14 +114,7 @@ pub(crate) fn build_app_window(
     label: &str,
     settings: &Settings,
 ) -> tauri::Result<WebviewWindow> {
-    build_app_window_with_render_budget(
-        app,
-        label,
-        settings,
-        RenderRecoveryBudget::default(),
-        true,
-        None,
-    )
+    build_app_window_with_render_budget(app, label, settings, RenderRecoveryBudget::default(), true)
 }
 
 fn build_app_window_with_render_budget(
@@ -130,7 +123,6 @@ fn build_app_window_with_render_budget(
     settings: &Settings,
     render_budget: RenderRecoveryBudget,
     focused: bool,
-    url: Option<tauri::Url>,
 ) -> tauri::Result<WebviewWindow> {
     if label == "main" {
         let state = app.state::<AppState>();
@@ -145,11 +137,7 @@ fn build_app_window_with_render_budget(
     let download_reveal_token = uuid::Uuid::new_v4().simple().to_string();
     let download_handle = app.clone();
     let download_label = label.to_string();
-    let initial_url = url.map_or_else(
-        || WebviewUrl::App("index.html".into()),
-        WebviewUrl::External,
-    );
-    let builder = WebviewWindowBuilder::new(app, label, initial_url)
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title(APP_TITLE)
         .focused(focused)
         .inner_size(1200.0, 780.0)
@@ -672,17 +660,17 @@ pub(crate) fn recreate_messenger_window(
 
         crate::webview_watchdog::realtime_window_replacing(&label);
         let memory_recycle = recycle.is_some();
-        let (destroy_result, restore_url, recycle_was_loaded) = if let Some(recycle) = recycle {
+        let (destroy_result, recycle_was_loaded) = if let Some(recycle) = recycle {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let target = window.clone();
             let scheduled = app.run_on_main_thread(move || {
-                let result = recycle.run(&target, true, |url| {
+                let result = recycle.run(&target, true, || {
                     let was_loaded = (target.label() == "main").then(|| {
                         let state = target.state::<AppState>();
                         let _pending = state.pending_action.lock().unwrap();
                         state.messenger_loaded.swap(false, Ordering::AcqRel)
                     });
-                    (target.destroy(), Some(url), was_loaded)
+                    (target.destroy(), was_loaded)
                 });
                 let _ = sender.send(result);
             });
@@ -691,11 +679,11 @@ pub(crate) fn recreate_messenger_window(
             } else {
                 None
             };
-            result.map_or((None, None, None), |(result, url, was_loaded)| {
-                (Some(result), url, was_loaded)
+            result.map_or((None, None), |(result, was_loaded)| {
+                (Some(result), was_loaded)
             })
         } else {
-            (Some(window.destroy()), None, None)
+            (Some(window.destroy()), None)
         };
         let was_loaded = was_loaded.or(recycle_was_loaded);
         if !matches!(destroy_result, Some(Ok(()))) {
@@ -728,7 +716,6 @@ pub(crate) fn recreate_messenger_window(
                 &settings,
                 render_budget.clone(),
                 was_focused,
-                restore_url.clone(),
             ) {
                 Ok(rebuilt) => {
                     if label == "main" {

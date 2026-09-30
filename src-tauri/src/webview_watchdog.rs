@@ -1367,7 +1367,7 @@ impl RendererRecycle {
         &self,
         window: &WebviewWindow,
         require_hidden: bool,
-        operation: impl FnOnce(tauri::Url) -> T,
+        operation: impl FnOnce() -> T,
     ) -> Option<T> {
         #[cfg(target_os = "macos")]
         if crate::macos::power::is_system_sleeping()
@@ -1375,7 +1375,7 @@ impl RendererRecycle {
         {
             return None;
         }
-        let url = window.url().ok().filter(is_messenger_content_url)?;
+        window.url().ok().filter(is_messenger_content_url)?;
         let native_window = render_window_state(window);
         if require_hidden && native_window.visible {
             return None;
@@ -1410,7 +1410,7 @@ impl RendererRecycle {
         // the locks so synchronous page-load callbacks can take them again.
         drop(coordinator);
         drop(state);
-        Some(operation(url))
+        Some(operation())
     }
 }
 
@@ -1493,7 +1493,7 @@ async fn recycle_idle_renderer(
     let app = window.app_handle().clone();
     let _ = app.run_on_main_thread(move || {
         if render_window_state(&window).visible {
-            recycle.run(&window, false, |_| {
+            recycle.run(&window, false, || {
                 crate::renderer_memory::restart_in_place(&window);
             });
         } else {
