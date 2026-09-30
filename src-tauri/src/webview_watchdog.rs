@@ -897,6 +897,8 @@ impl WebviewWatchdog {
         tauri::async_runtime::spawn(async move {
             let mut next_recovery_attempt = Duration::ZERO;
             let mut held_reported = false;
+            #[cfg(target_os = "windows")]
+            let mut hidden_memory_target: Option<bool> = None;
             #[cfg(target_os = "macos")]
             let mut resume_generation = crate::macos::power::resume_generation();
             loop {
@@ -944,6 +946,14 @@ impl WebviewWatchdog {
                 }
 
                 let native_window = render_window_state(&watchdog_window);
+                #[cfg(target_os = "windows")]
+                if hidden_memory_target != Some(!native_window.visible) {
+                    hidden_memory_target = Some(!native_window.visible);
+                    crate::renderer_memory::set_hidden_memory_target(
+                        &watchdog_window,
+                        !native_window.visible,
+                    );
+                }
                 let action = {
                     let mut state = state.lock().unwrap();
                     state

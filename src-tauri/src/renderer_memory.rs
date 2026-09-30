@@ -159,6 +159,41 @@ pub(crate) async fn footprint(window: &WebviewWindow) -> Option<u64> {
     }
 }
 
+/// Ask WebView2 to shed memory while the window is hidden or minimized. Script
+/// keeps running, so sync and notifications are unaffected; older runtimes
+/// without the API keep their default.
+#[cfg(target_os = "windows")]
+pub(crate) fn set_hidden_memory_target(window: &WebviewWindow, hidden: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+    };
+    use webview2_windows_core::Interface;
+
+    let label = window.label().to_owned();
+    if let Err(error) = window.with_webview(move |webview| {
+        let level = if hidden {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+        } else {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+        };
+        // SAFETY: Tauri passes the live controller on the UI thread for the
+        // duration of this callback; each call only reads or sets a property.
+        let result = unsafe {
+            webview
+                .controller()
+                .CoreWebView2()
+                .and_then(|core| core.cast::<ICoreWebView2_19>())
+                .and_then(|core| core.SetMemoryUsageTargetLevel(level))
+        };
+        if let Err(error) = result {
+            log::debug!("WebView2 memory target unavailable for {label}: {error}");
+        }
+    }) {
+        log::warn!("failed to set WebView2 memory target: {error}");
+    }
+}
+
 /// Replace the web process, then load the same Messenger URL in a fresh one.
 pub(crate) fn restart_in_place(window: &WebviewWindow) {
     #[cfg(target_os = "linux")]
