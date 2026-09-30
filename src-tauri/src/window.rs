@@ -705,6 +705,10 @@ pub(crate) fn recreate_messenger_window(
             return;
         }
 
+        // Rebuild exactly as launch does: visible, through the launch page, to
+        // Messenger's home. On Linux a thread URL as the first document puts
+        // Facebook's SharedWorker in a separate ~300 MB web process, and an
+        // invisible window is never realized, so blank-page recovery loops.
         // Let the event loop release the old native label before rebuilding.
         const MAX_BUILD_ATTEMPTS: usize = 3;
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
