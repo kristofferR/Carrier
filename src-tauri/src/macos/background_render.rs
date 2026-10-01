@@ -150,6 +150,15 @@ unsafe fn restore_transparency(window: *mut AnyObject, transparency: Transparenc
     let _: () = msg_send![window, setIgnoresMouseEvents: transparency.ignored_mouse];
 }
 
+/// Whether a notification action is holding the closed main window in,
+/// transparently. AppKit reports it visible meanwhile.
+pub(crate) fn holds_window_in() -> bool {
+    ENGAGED
+        .lock()
+        .unwrap()
+        .is_some_and(|engaged| engaged.ordered_in.is_some())
+}
+
 /// The user is revealing the main window: make a transparent stand-in opaque
 /// so they see it, and keep it open when the action ends. Returns whether a
 /// transparent window was handed over. Call on the main thread before showing.

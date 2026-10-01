@@ -659,6 +659,11 @@ pub(crate) fn recreate_messenger_window(
     tauri::async_runtime::spawn(async move {
         let geometry = window.outer_position().ok().zip(window.inner_size().ok());
         let was_visible = window.is_visible().unwrap_or(true);
+        // A notification action may hold a closed window in, transparently;
+        // that is not the user's window being open.
+        #[cfg(target_os = "macos")]
+        let was_visible =
+            was_visible && !(label == "main" && crate::macos::background_render::holds_window_in());
         let was_minimized = window.is_minimized().unwrap_or(false);
         let was_maximized = window.is_maximized().unwrap_or(false);
         let was_fullscreen = window.is_fullscreen().unwrap_or(false);
