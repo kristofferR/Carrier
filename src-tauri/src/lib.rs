@@ -1826,12 +1826,21 @@ pub fn run() {
                         log::info!("carrier:notify received (id {})", msg.id());
                         let id = msg.id();
                         let delivery = show_message_notification(notify_handle.clone(), msg);
+                        // The page may not have the newest Hide Preview yet:
+                        // native's redaction decides whether it may keep the
+                        // message text behind 👍/Mute.
+                        let keep_text = !notify_handle
+                            .state::<AppState>()
+                            .settings
+                            .lock()
+                            .unwrap()
+                            .hide_notification_preview;
                         if let Some(window) = notify_handle.get_webview_window("main") {
                             let delivery = serde_json::to_string(&delivery)
                                 .expect("notification delivery serializes");
-                            if let Err(e) = window
-                                .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
-                            {
+                            if let Err(e) = window.eval(format!(
+                                "window.__carrierNotifyResult?.({id}, {delivery}, {keep_text});"
+                            )) {
                                 log::warn!("carrier:notify result callback failed: {e}");
                             }
                         }

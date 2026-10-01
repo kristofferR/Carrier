@@ -7569,10 +7569,10 @@ ${button.innerHTML}`)
       }
       return handler !== void 0;
     };
-    window.__carrierNotifyResult = (id, delivery) => {
+    window.__carrierNotifyResult = (id, delivery, keepText) => {
       if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
       pageNotificationReceipts.recordDelivery(id, delivery);
-      settleNotifiedMessage(id, delivery === "accepted");
+      settleNotifiedMessage(id, delivery === "accepted" && keepText !== false);
       const handler = deliveryHandlers.get(id);
       deliveryHandlers.delete(id);
       handler?.(delivery);

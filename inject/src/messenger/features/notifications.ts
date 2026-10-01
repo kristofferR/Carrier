@@ -227,10 +227,11 @@ export function initNotificationBridge() {
     return handler !== undefined;
   };
 
-  window.__carrierNotifyResult = (id, delivery) => {
+  window.__carrierNotifyResult = (id, delivery, keepText) => {
     if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
     pageNotificationReceipts.recordDelivery(id, delivery);
-    settleNotifiedMessage(id, delivery === "accepted");
+    // Native redacted it (Hide Preview): its text must not outlive the emit.
+    settleNotifiedMessage(id, delivery === "accepted" && keepText !== false);
     const handler = deliveryHandlers.get(id);
     deliveryHandlers.delete(id);
     handler?.(delivery);

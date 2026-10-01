@@ -168,7 +168,7 @@ interface Window {
     responsivenessWorkersStopped: number;
   };
   __carrierNotifyClick?: (id: number) => boolean;
-  __carrierNotifyResult?: (id: number, delivery: string) => void;
+  __carrierNotifyResult?: (id: number, delivery: string, keepText?: boolean) => void;
   /** Share-extension payload delivery from the native intake (macOS). */
   __carrierShareMedia?: (payload: unknown) => void;
   /** Deliver a native notification reply without raising the Carrier window. */
