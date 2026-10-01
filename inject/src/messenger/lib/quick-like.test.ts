@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  bubbleIsFresh,
   bubbleMatchesNotification,
+  bubbleSentMinute,
   bubbleText,
   decideQuickLike,
   type QuickLikeSnapshot,
@@ -99,5 +101,27 @@ describe("bubbleMatchesNotification", () => {
     expect(
       bubbleMatchesNotification("Enter, Message sent Friday 9:34pm by Kim", "Kim sent a photo"),
     ).toBe(false);
+  });
+});
+
+describe("bubbleIsFresh", () => {
+  const at = (hours: number, minutes: number) => new Date(2026, 9, 1, hours, minutes, 30).getTime();
+
+  test("reads today's times in both Messenger formats, and rejects other days", () => {
+    expect(bubbleSentMinute("Enter, Message sent 4:20 PM by Kim: hi")).toBe(16 * 60 + 20);
+    expect(bubbleSentMinute("Enter, Message sent 11:48pm by Kim: hi")).toBe(23 * 60 + 48);
+    expect(bubbleSentMinute("Enter, Message sent 12:05 AM by Kim: hi")).toBe(5);
+    expect(bubbleSentMinute("Enter, Message sent 16:20 by Kim: hi")).toBe(16 * 60 + 20);
+    expect(bubbleSentMinute("Enter, Message sent Tuesday 10:42pm by Kim: hi")).toBeNull();
+  });
+
+  test("accepts a message sent shortly before its notification", () => {
+    expect(bubbleIsFresh("Enter, Message sent 4:20 PM by Kim: OK", at(16, 20))).toBe(true);
+    expect(bubbleIsFresh("Enter, Message sent 4:16 PM by Kim: OK", at(16, 20))).toBe(true);
+  });
+
+  test("rejects an older message with the same text", () => {
+    expect(bubbleIsFresh("Enter, Message sent 4:02 PM by Kim: OK", at(16, 20))).toBe(false);
+    expect(bubbleIsFresh("Enter, Message sent Tuesday 4:20pm by Kim: OK", at(16, 20))).toBe(false);
   });
 });

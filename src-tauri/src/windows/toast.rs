@@ -203,8 +203,6 @@ pub(crate) struct WindowsToastOptions {
     /// Validated `/t/<id>/` route, when known.
     pub thread_path: Option<String>,
     pub reply_eligible: bool,
-    /// The message text alone (no subtitle), which Like matches the bubble by.
-    pub message_body: String,
     pub is_sync_alert: bool,
 }
 
@@ -350,7 +348,6 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     let native_id = opts.native_id;
     let page_id = opts.page_id;
     let route = opts.thread_path.clone();
-    let message_body = opts.message_body.clone();
     let hex_activated = hex.clone();
     toast.Activated(&TypedEventHandler::new(
         move |_sender: Ref<'_, ToastNotification>, args: Ref<'_, ::windows::core::IInspectable>| {
@@ -359,7 +356,6 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
                 native_id,
                 page_id,
                 &route,
-                &message_body,
                 &hex_activated,
                 args,
             );
@@ -426,7 +422,6 @@ fn handle_activation(
     native_id: u64,
     page_id: Option<u64>,
     route: &Option<String>,
-    message_body: &str,
     hex: &str,
     args: Ref<'_, ::windows::core::IInspectable>,
 ) {
@@ -446,7 +441,6 @@ fn handle_activation(
             page_id,
             route.clone(),
             action,
-            message_body.to_string(),
             None,
         );
         return;

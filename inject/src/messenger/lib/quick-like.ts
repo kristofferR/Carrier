@@ -79,3 +79,27 @@ export function bubbleMatchesNotification(label: string, body: string): boolean 
   if (!text || !preview) return false;
   return text.startsWith(preview) || preview.endsWith(`: ${text}`);
 }
+
+/** Minute of the day a bubble was sent, or null when its label names another day. */
+export function bubbleSentMinute(label: string): number | null {
+  const match = /^Enter, Message sent (\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /i.exec(label);
+  if (!match) return null;
+  const meridiem = match[3]?.toLowerCase();
+  const hour = meridiem ? (Number(match[1]) % 12) + (meridiem === "p" ? 12 : 0) : Number(match[1]);
+  return hour * 60 + Number(match[2]);
+}
+
+/** How long after a message was sent its notification may still have fired. */
+const FRESH_MINUTES = 5;
+
+/**
+ * Whether a bubble was sent around when its notification fired. This keeps an
+ * older message with the same text from standing in for one still rendering.
+ */
+export function bubbleIsFresh(label: string, notifiedAt: number): boolean {
+  const sent = bubbleSentMinute(label);
+  if (sent === null) return false;
+  const at = new Date(notifiedAt);
+  const lag = at.getHours() * 60 + at.getMinutes() - sent;
+  return lag >= -1 && lag <= FRESH_MINUTES;
+}

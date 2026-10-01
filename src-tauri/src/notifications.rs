@@ -1685,7 +1685,6 @@ fn show_action_failure_notification(app: &tauri::AppHandle, body: &str) {
             page_id: None,
             thread_path: None,
             reply_eligible: false,
-            message_body: String::new(),
             is_sync_alert: true,
         },
     );
@@ -1921,10 +1920,10 @@ impl NotificationAction {
     }
 }
 
-/// Like reacts 👍 to the incoming message whose text matches `message_body`
-/// (the notification's own body); Mute silences the conversation in Messenger
-/// for 8 hours. Both drive the hidden page in the background, and a failure
-/// opens the conversation instead.
+/// Like reacts 👍 to the message the page's notification `page_id` announced
+/// (the page keeps its raw text and time); Mute silences the conversation in
+/// Messenger for 8 hours. Both drive the hidden page in the background, and a
+/// failure opens the conversation instead.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_action(
     app: tauri::AppHandle,
@@ -1932,21 +1931,26 @@ pub(crate) fn on_notification_action(
     page_id: Option<u64>,
     fallback_path: Option<String>,
     action: NotificationAction,
-    message_body: String,
     activation_token: Option<String>,
 ) {
     let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
     let (mode, failure, text) = match action {
-        NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED, message_body),
+        NotificationAction::Like => (
+            PendingReplyMode::Like,
+            LIKE_FAILED,
+            page_id
+                .map(|page_id| page_id.to_string())
+                .unwrap_or_default(),
+        ),
         NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED, String::new()),
     };
     let failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
         show_action_failure_notification(&app, failure);
         activate_notification(app, id, page_id, path, token);
     };
-    // Without text there is nothing to identify the message by.
-    if action == NotificationAction::Like && text.trim().is_empty() {
-        log::info!("notification like has no message text to match (id {id})");
+    // Without the page's record there is nothing to identify the message by.
+    if action == NotificationAction::Like && text.is_empty() {
+        log::info!("notification like has no page notification to match (id {id})");
         failed(app, fallback_path, activation_token);
         return;
     }
@@ -2172,9 +2176,6 @@ pub(crate) fn show_message_notification(
 
     // Redact the conversation subtitle too: it can contain private names.
     let (title, subtitle, body) = msg.content(hide_preview);
-    // Like matches the message by its own text, without the subtitle.
-    #[cfg(not(target_os = "macos"))]
-    let message_body = body.clone();
     // These platforms do not expose a separate subtitle field.
     #[cfg(not(target_os = "macos"))]
     let body = if subtitle.is_empty() {
@@ -2290,7 +2291,6 @@ pub(crate) fn show_message_notification(
                 page_id: Some(page_id),
                 thread_path,
                 reply_eligible,
-                message_body,
                 is_sync_alert: false,
             },
         );
@@ -2317,7 +2317,6 @@ pub(crate) fn show_message_notification(
                 Some(page_id),
                 None,
                 action,
-                message_body,
                 activation_token,
             ),
             LinuxNotificationResponse::Closed => {
@@ -2480,7 +2479,6 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
                 page_id: None,
                 thread_path: None,
                 reply_eligible: false,
-                message_body: String::new(),
                 is_sync_alert: true,
             },
         );
@@ -2575,7 +2573,6 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
             page_id: None,
             thread_path: None,
             reply_eligible: false,
-            message_body: String::new(),
             is_sync_alert: true,
         },
     );

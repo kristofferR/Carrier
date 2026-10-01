@@ -177,10 +177,10 @@ interface Window {
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Mute a conversation from its notification without raising the window. */
   __carrierQuickMute?: (path: string, id: number, attempt: number, budgetMs: number) => void;
-  /** React 👍 to the incoming message a notification announced (matched by its text). */
+  /** React 👍 to the message a page notification (by its id) announced. */
   __carrierQuickLike?: (
     path: string,
-    body: string,
+    notification: string,
     id: number,
     attempt: number,
     budgetMs: number,

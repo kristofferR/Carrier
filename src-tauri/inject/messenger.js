@@ -7277,6 +7277,15 @@ ${button.innerHTML}`)
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
+  // inject/src/messenger/lib/notified-messages.ts
+  var LIMIT = 50;
+  var messages = /* @__PURE__ */ new Map();
+  function rememberNotifiedMessage(id, body, at = Date.now()) {
+    messages.set(id, { body, at });
+    if (messages.size > LIMIT) messages.delete(messages.keys().next().value);
+  }
+  var notifiedMessage = (id) => messages.get(id);
+
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7748,6 +7757,7 @@ ${button.innerHTML}`)
             richMessageBody(named.body, threadPath),
             Boolean(image)
           );
+          rememberNotifiedMessage(id, originalBody);
           emitNotification(
             id,
             hidePreview ? "Messenger" : text.title,
@@ -8071,8 +8081,10 @@ ${button.innerHTML}`)
         notificationDedupeKey("", fallback.body)
       );
       diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
+      const notificationId = ++notifySeq;
+      rememberNotifiedMessage(notificationId, fallback.body);
       emitNotification(
-        ++notifySeq,
+        notificationId,
         hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
         hidePreview ? "New message" : fallback.displayBody,
         "",
@@ -8208,8 +8220,10 @@ ${button.innerHTML}`)
           visiblePresentation.subtitle ? "sender" : "group"
         );
         const text = notificationPhotoText(named.title, named.body, Boolean(image));
+        const notificationId = ++notifySeq;
+        rememberNotifiedMessage(notificationId, conversation.body);
         emitNotification(
-          ++notifySeq,
+          notificationId,
           hidePreview ? "Messenger" : text.title,
           hidePreview ? "New message" : text.body,
           hidePreview ? "" : icon,
@@ -8687,6 +8701,21 @@ ${button.innerHTML}`)
     if (!text || !preview) return false;
     return text.startsWith(preview) || preview.endsWith(`: ${text}`);
   }
+  function bubbleSentMinute(label2) {
+    const match = /^Enter, Message sent (\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /i.exec(label2);
+    if (!match) return null;
+    const meridiem = match[3]?.toLowerCase();
+    const hour = meridiem ? Number(match[1]) % 12 + (meridiem === "p" ? 12 : 0) : Number(match[1]);
+    return hour * 60 + Number(match[2]);
+  }
+  var FRESH_MINUTES = 5;
+  function bubbleIsFresh(label2, notifiedAt) {
+    const sent = bubbleSentMinute(label2);
+    if (sent === null) return false;
+    const at = new Date(notifiedAt);
+    const lag = at.getHours() * 60 + at.getMinutes() - sent;
+    return lag >= -1 && lag <= FRESH_MINUTES;
+  }
 
   // inject/src/messenger/features/quick-like.ts
   var POLL_MS = 250;
@@ -8706,10 +8735,10 @@ ${button.innerHTML}`)
     return null;
   }
   var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
-  function notifiedMessage(body) {
+  function announcedBubble(notified) {
     const bubble = bubbles().reverse().find((el) => {
       const label2 = el.getAttribute("aria-label") || "";
-      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, body);
+      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, notified.body) && bubbleIsFresh(label2, notified.at);
     });
     let scope = bubble?.closest('[role="article"]');
     while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
@@ -8724,7 +8753,7 @@ ${button.innerHTML}`)
       if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
     return null;
   }
-  async function like(path, body, deadline) {
+  async function like(path, notified, deadline) {
     const wantedThread = threadPathId(path);
     if (Date.now() >= deadline) return false;
     if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
@@ -8739,7 +8768,7 @@ ${button.innerHTML}`)
       const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
       const scroller = newest ? messageScroller(newest) : null;
       const settled = newest !== null && atBottom(scroller);
-      if (phase === "waiting") target = notifiedMessage(body);
+      if (phase === "waiting") target = announcedBubble(notified);
       if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
       const menuId = reactButton?.getAttribute("aria-controls");
       const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
@@ -8795,16 +8824,17 @@ ${button.innerHTML}`)
     }
   }
   function initQuickLike() {
-    window.__carrierQuickLike = (path, body, id, attempt, budgetMs) => {
+    window.__carrierQuickLike = (path, notification, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0) {
+      const notified = notifiedMessage(Number(notification));
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified) {
         void report(false);
         return;
       }
       const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
-      void withComposerDeliveryWhenAvailable(() => like(path, String(body), deadline)).then((ok) => report(ok)).catch(() => {
+      void withComposerDeliveryWhenAvailable(() => like(path, notified, deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-like.exception", "like flow raised an exception");
         void report(false);
       });

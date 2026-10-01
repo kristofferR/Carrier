@@ -51,6 +51,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
+import { rememberNotifiedMessage } from "../lib/notified-messages";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -612,6 +613,7 @@ export function initNotificationBridge() {
           richMessageBody(named.body, threadPath),
           Boolean(image),
         );
+        rememberNotifiedMessage(id, originalBody);
         emitNotification(
           id,
           hidePreview ? "Messenger" : text.title,
@@ -1119,8 +1121,10 @@ export function initNotificationBridge() {
     diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
     // The row has left the correlation queue. Queue native IPC in this task so
     // a reload cannot abandon the delivery while contact names are loading.
+    const notificationId = ++notifySeq;
+    rememberNotifiedMessage(notificationId, fallback.body);
     emitNotification(
-      ++notifySeq,
+      notificationId,
       hidePreview
         ? "Messenger"
         : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
@@ -1303,8 +1307,10 @@ export function initNotificationBridge() {
         visiblePresentation.subtitle ? "sender" : "group",
       );
       const text = notificationPhotoText(named.title, named.body, Boolean(image));
+      const notificationId = ++notifySeq;
+      rememberNotifiedMessage(notificationId, conversation.body);
       emitNotification(
-        ++notifySeq,
+        notificationId,
         hidePreview ? "Messenger" : text.title,
         hidePreview ? "New message" : text.body,
         hidePreview ? "" : icon,
