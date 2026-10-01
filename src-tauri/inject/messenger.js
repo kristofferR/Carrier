@@ -8669,6 +8669,7 @@ ${button.innerHTML}`)
       if (snapshot.menu === "missing") return { action: "failure", phase };
       return { action: "wait", phase };
     }
+    if (!snapshot.settled) return { action: "settle", phase };
     if (!snapshot.targetFound) return { action: "wait", phase };
     if (!snapshot.reactButton) return { action: "hover", phase };
     return { action: "open-menu", phase: "menu" };
@@ -8681,10 +8682,19 @@ ${button.innerHTML}`)
   var BUBBLE = '[aria-label^="Enter, Message sent"]';
   var REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
   var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var bubbles = () => [
+    ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
+  ];
+  function messageScroller(from) {
+    for (let el = from.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)
+        return el;
+    }
+    return null;
+  }
+  var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
   function newestIncoming() {
-    const bubble = [
-      ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
-    ].reverse().find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
+    const bubble = bubbles().reverse().find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
     let scope = bubble?.closest('[role="article"]');
     while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
       scope = scope.parentElement;
@@ -8709,7 +8719,12 @@ ${button.innerHTML}`)
     let target = null;
     let reactButton = null;
     let summaryBefore = "";
+    let lastNewest = null;
     while (true) {
+      const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
+      const scroller = newest ? messageScroller(newest) : null;
+      const settled = newest !== null && atBottom(scroller) && newest === lastNewest;
+      lastNewest = newest;
       if (phase === "waiting") target = newestIncoming();
       if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
       const menuId = reactButton?.getAttribute("aria-controls");
@@ -8719,6 +8734,7 @@ ${button.innerHTML}`)
       const snapshot = {
         threadMatches: threadIdFromHref(location.pathname) === wantedThread,
         targetFound: target !== null && target.bubble.isConnected,
+        settled,
         reactButton: reactButton !== null,
         menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",
         thumbShown: summary.includes(THUMB) && (summaryBefore === null || summary !== summaryBefore)
@@ -8726,6 +8742,9 @@ ${button.innerHTML}`)
       const decision = decideQuickLike(phase, snapshot, Date.now() >= deadline);
       phase = decision.phase;
       switch (decision.action) {
+        case "settle":
+          if (scroller && !atBottom(scroller)) scroller.scrollTop = scroller.scrollHeight;
+          break;
         case "hover": {
           const bubble = target?.bubble;
           const rect = bubble?.getBoundingClientRect();

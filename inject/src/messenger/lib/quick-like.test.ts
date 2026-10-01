@@ -4,6 +4,7 @@ import { decideQuickLike, type QuickLikeSnapshot } from "./quick-like";
 const snapshot = (overrides: Partial<QuickLikeSnapshot> = {}): QuickLikeSnapshot => ({
   threadMatches: true,
   targetFound: true,
+  settled: true,
   reactButton: false,
   menu: "none",
   thumbShown: false,
@@ -32,6 +33,13 @@ describe("decideQuickLike", () => {
     expect(decideQuickLike("confirming", snapshot({ thumbShown: true }), false).action).toBe(
       "success",
     );
+  });
+
+  test("picks a target only after the list settles at the latest message", () => {
+    expect(decideQuickLike("waiting", snapshot({ settled: false }), false).action).toBe("settle");
+    expect(
+      decideQuickLike("waiting", snapshot({ settled: false, reactButton: true }), false).action,
+    ).toBe("settle");
   });
 
   test("never toggles off an existing 👍", () => {

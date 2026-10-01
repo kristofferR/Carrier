@@ -17,10 +17,24 @@ const REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 
+const bubbles = () => [
+  ...document.querySelectorAll<HTMLElement>(`[role="main"] [role="article"] ${BUBBLE}`),
+];
+
+/** The scroller holding the conversation, or null when it all fits. */
+function messageScroller(from: Element): HTMLElement | null {
+  for (let el = from.parentElement; el && el !== document.body; el = el.parentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)
+      return el;
+  }
+  return null;
+}
+
+const atBottom = (scroller: HTMLElement | null) =>
+  !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
+
 function newestIncoming(): { bubble: HTMLElement; scope: HTMLElement } | null {
-  const bubble = [
-    ...document.querySelectorAll<HTMLElement>(`[role="main"] [role="article"] ${BUBBLE}`),
-  ]
+  const bubble = bubbles()
     .reverse()
     .find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
   // The hover toolbar and reaction summary sit beside the article, so widen
@@ -63,7 +77,13 @@ async function like(path: string, deadline: number): Promise<boolean> {
   let reactButton: HTMLElement | null = null;
   // null: 👍 was already ours, so any visible 👍 confirms it.
   let summaryBefore: string | null = "";
+  let lastNewest: HTMLElement | null = null;
   while (true) {
+    // Settled: scrolled to the latest message, which also rendered last poll.
+    const newest = phase === "waiting" ? (bubbles().pop() ?? null) : null;
+    const scroller = newest ? messageScroller(newest) : null;
+    const settled = newest !== null && atBottom(scroller) && newest === lastNewest;
+    lastNewest = newest;
     if (phase === "waiting") target = newestIncoming();
     if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
     const menuId = reactButton?.getAttribute("aria-controls");
@@ -78,6 +98,7 @@ async function like(path: string, deadline: number): Promise<boolean> {
     const snapshot: QuickLikeSnapshot = {
       threadMatches: threadIdFromHref(location.pathname) === wantedThread,
       targetFound: target !== null && target.bubble.isConnected,
+      settled,
       reactButton: reactButton !== null,
       menu: !menu
         ? "none"
@@ -92,6 +113,9 @@ async function like(path: string, deadline: number): Promise<boolean> {
     phase = decision.phase;
 
     switch (decision.action) {
+      case "settle":
+        if (scroller && !atBottom(scroller)) scroller.scrollTop = scroller.scrollHeight;
+        break;
       case "hover": {
         const bubble = target?.bubble;
         const rect = bubble?.getBoundingClientRect();

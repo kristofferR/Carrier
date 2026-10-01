@@ -1539,6 +1539,7 @@ fn register_pending_page_reply(
     thread_path: &str,
     text: &str,
     mode: PendingReplyMode,
+    expires_at: Instant,
 ) {
     pending_page_replies().lock().unwrap().register(
         id,
@@ -1546,14 +1547,7 @@ fn register_pending_page_reply(
         thread_path.to_string(),
         text.to_string(),
         mode,
-        Instant::now()
-            + match mode {
-                PendingReplyMode::Send | PendingReplyMode::Mute | PendingReplyMode::Like => {
-                    QUICK_REPLY_ACK_TIMEOUT
-                }
-                // A fallback can wait behind scheduled delivery before navigation.
-                PendingReplyMode::Draft => QUICK_REPLY_DRAFT_TIMEOUT,
-            },
+        expires_at,
     );
 }
 
@@ -1601,6 +1595,7 @@ fn eval_hidden_page_action(
     thread_path: &str,
     text: &str,
     mode: PendingReplyMode,
+    deadline: Instant,
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -1611,7 +1606,7 @@ fn eval_hidden_page_action(
         thread_path,
         text,
         mode,
-        QUICK_REPLY_ACK_TIMEOUT,
+        deadline.saturating_duration_since(Instant::now()),
     )?;
     let (sent, received) = std::sync::mpsc::sync_channel(1);
     app.run_on_main_thread(move || {
@@ -1685,7 +1680,15 @@ fn open_reply_fallback(
     activation_token: Option<String>,
 ) {
     let attempt = next_reply_attempt();
-    register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
+    // A fallback can wait behind scheduled delivery before navigation.
+    register_pending_page_reply(
+        id,
+        attempt,
+        &thread_path,
+        &text,
+        PendingReplyMode::Draft,
+        Instant::now() + QUICK_REPLY_DRAFT_TIMEOUT,
+    );
     let script = quick_reply_script(
         id,
         attempt,
@@ -1719,7 +1722,14 @@ fn open_notification_composer(
         return;
     };
     let attempt = next_reply_attempt();
-    register_pending_page_reply(id, attempt, &thread_path, "", PendingReplyMode::Draft);
+    register_pending_page_reply(
+        id,
+        attempt,
+        &thread_path,
+        "",
+        PendingReplyMode::Draft,
+        Instant::now() + QUICK_REPLY_DRAFT_TIMEOUT,
+    );
     let script = quick_reply_script(
         id,
         attempt,
@@ -1768,7 +1778,15 @@ fn deliver_quick_reply(
         return;
     }
 
-    if run_hidden_page_action(&app, id, &thread_path, &text, PendingReplyMode::Send) {
+    let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
+    if run_hidden_page_action(
+        &app,
+        id,
+        &thread_path,
+        &text,
+        PendingReplyMode::Send,
+        deadline,
+    ) {
         #[cfg(target_os = "macos")]
         if app
             .state::<AppState>()
@@ -1816,6 +1834,7 @@ fn run_hidden_page_action(
     thread_path: &str,
     text: &str,
     mode: PendingReplyMode,
+    deadline: Instant,
 ) -> bool {
     let attempt = next_reply_attempt();
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
@@ -1823,11 +1842,11 @@ fn run_hidden_page_action(
         .lock()
         .unwrap()
         .register(id, attempt, result_tx);
-    register_pending_page_reply(id, attempt, thread_path, text, mode);
-    let dispatched = eval_hidden_page_action(app, id, attempt, thread_path, text, mode);
+    register_pending_page_reply(id, attempt, thread_path, text, mode, deadline);
+    let dispatched = eval_hidden_page_action(app, id, attempt, thread_path, text, mode, deadline);
     let ok = dispatched.is_ok()
         && result_rx
-            .recv_timeout(QUICK_REPLY_ACK_TIMEOUT)
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .unwrap_or(false);
     reply_ack_waiters().lock().unwrap().remove(id);
     pending_page_replies().lock().unwrap().complete(id, attempt);
@@ -1894,6 +1913,7 @@ pub(crate) fn on_notification_action(
     action: NotificationAction,
     activation_token: Option<String>,
 ) {
+    let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
     let (mode, failure) = match action {
         NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED),
         NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
@@ -1923,7 +1943,14 @@ pub(crate) fn on_notification_action(
                 failed(app, None, activation_token);
                 return;
             };
-            if !run_hidden_page_action(&app, id, &thread_path, "", mode) {
+            // The wait for the page lock counts: an action stuck behind a
+            // stalled one must not land long after the user gave up on it.
+            if Instant::now() >= deadline {
+                log::warn!("notification {action:?} expired while queued (id {id})");
+                failed(app, Some(thread_path), activation_token);
+                return;
+            }
+            if !run_hidden_page_action(&app, id, &thread_path, "", mode, deadline) {
                 failed(app, Some(thread_path), activation_token);
             }
         })
