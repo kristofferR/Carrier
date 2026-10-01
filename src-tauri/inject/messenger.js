@@ -7280,6 +7280,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/lib/notified-messages.ts
   var KEY = "carrier-notified-messages";
   var LIMIT = 256;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
   var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number";
   function load(storage) {
     try {
@@ -7289,21 +7290,24 @@ ${button.innerHTML}`)
       return [];
     }
   }
-  var session = () => {
+  var shared = () => {
     try {
-      return window.sessionStorage;
+      return window.localStorage;
     } catch {
       return void 0;
     }
   };
-  function rememberNotifiedMessage(id, body, at = Date.now(), storage = session()) {
-    const entries = [...load(storage).filter(([known]) => known !== id), [id, { body, at }]];
+  function rememberNotifiedMessage(id, body, at = Date.now(), storage = shared()) {
+    const entries = [
+      ...load(storage).filter(([known, message]) => known !== id && at - message.at < MAX_AGE_MS),
+      [id, { body, at }]
+    ];
     try {
       storage?.setItem(KEY, JSON.stringify(entries.slice(-LIMIT)));
     } catch {
     }
   }
-  var notifiedMessage = (id, storage = session()) => load(storage).find(([known]) => known === id)?.[1];
+  var notifiedMessage = (id, storage = shared()) => load(storage).find(([known]) => known === id)?.[1];
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -8710,15 +8714,22 @@ ${button.innerHTML}`)
     return { action: "open-menu", phase: "menu" };
   }
   var normalized = (text) => text.replace(/\s+/g, " ").trim();
-  function bubbleText(label2) {
-    const match = / by [^:]*: ([\s\S]*)$/.exec(label2);
-    return match?.[1] ? normalized(match[1]) : "";
+  function bubbleTexts(label2) {
+    const start = label2.indexOf(" by ");
+    if (start < 0) return [];
+    const texts = [];
+    for (let at = label2.indexOf(": ", start); at >= 0; at = label2.indexOf(": ", at + 2)) {
+      const text = normalized(label2.slice(at + 2));
+      if (text) texts.push(text);
+    }
+    return texts;
   }
   function bubbleMatchesNotification(label2, body) {
-    const text = bubbleText(label2);
     const preview = normalized(body).replace(/(?:…|\.\.\.)$/, "").trim();
-    if (!text || !preview) return false;
-    return text.startsWith(preview) || preview.endsWith(`: ${text}`);
+    if (!preview) return false;
+    return bubbleTexts(label2).some(
+      (text) => text.startsWith(preview) || preview.endsWith(`: ${text}`)
+    );
   }
   var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   function bubbleSentAt(label2, now) {
@@ -9103,7 +9114,7 @@ ${button.innerHTML}`)
     if (Date.now() >= deadline) return false;
     const wantedThread = threadPathId(path);
     const stale = new Set(
-      threadIdFromHref(location.pathname) === wantedThread ? [] : document.querySelectorAll('[role="main"] [role="button"]')
+      threadIdFromHref(location.pathname) === wantedThread ? [] : document.querySelectorAll('[role="main"] [role="button"], [role="main"] button')
     );
     const paneReady = openThreadForAction(path);
     if (!wantedThread || !paneReady) {
@@ -9113,7 +9124,7 @@ ${button.innerHTML}`)
     const staleDialogs = new Set(document.querySelectorAll('[role="dialog"]'));
     let phase = "waiting";
     let infoRequested = false;
-    let openedInfo = false;
+    let openedInfo = null;
     try {
       while (true) {
         const control = threadMuteControl(stale);
@@ -9133,7 +9144,7 @@ ${button.innerHTML}`)
             infoRequested = true;
             if (info.getAttribute("aria-expanded") !== "true") {
               info.click();
-              openedInfo = true;
+              openedInfo = info;
             }
             break;
           }
@@ -9161,8 +9172,8 @@ ${button.innerHTML}`)
         await pause2();
       }
     } finally {
-      const info = openedInfo ? conversationInfoButton() : null;
-      if (info?.getAttribute("aria-expanded") === "true") info.click();
+      if (openedInfo?.isConnected && openedInfo.getAttribute("aria-expanded") === "true" && paneReady())
+        openedInfo.click();
     }
   }
   function initQuickMute() {

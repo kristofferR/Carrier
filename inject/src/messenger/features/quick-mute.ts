@@ -71,7 +71,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
   const stale = new Set<Element>(
     threadIdFromHref(location.pathname) === wantedThread
       ? []
-      : document.querySelectorAll('[role="main"] [role="button"]'),
+      : document.querySelectorAll('[role="main"] [role="button"], [role="main"] button'),
   );
   const paneReady = openThreadForAction(path);
   if (!wantedThread || !paneReady) {
@@ -83,7 +83,9 @@ async function mute(path: string, deadline: number): Promise<boolean> {
   const staleDialogs = new Set<Element>(document.querySelectorAll('[role="dialog"]'));
   let phase: QuickMutePhase = "waiting";
   let infoRequested = false;
-  let openedInfo = false;
+  // The exact header button this flow opened, so cleanup never closes a pane
+  // the user opened on another conversation meanwhile.
+  let openedInfo: HTMLElement | null = null;
   try {
     while (true) {
       const control = threadMuteControl(stale);
@@ -106,7 +108,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           infoRequested = true;
           if (info.getAttribute("aria-expanded") !== "true") {
             info.click();
-            openedInfo = true;
+            openedInfo = info;
           }
           break;
         }
@@ -134,8 +136,12 @@ async function mute(path: string, deadline: number): Promise<boolean> {
       await pause();
     }
   } finally {
-    const info = openedInfo ? conversationInfoButton() : null;
-    if (info?.getAttribute("aria-expanded") === "true") info.click();
+    if (
+      openedInfo?.isConnected &&
+      openedInfo.getAttribute("aria-expanded") === "true" &&
+      paneReady()
+    )
+      openedInfo.click();
   }
 }
 

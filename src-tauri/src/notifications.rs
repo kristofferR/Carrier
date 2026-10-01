@@ -1863,9 +1863,17 @@ fn run_hidden_page_action(
         .register(id, attempt, result_tx);
     register_pending_page_reply(id, attempt, thread_path, text, mode, deadline);
     let dispatched = eval_hidden_page_action(app, id, attempt, thread_path, text, mode, deadline);
+    // A reply's page flow keeps its own fixed budget, so it gets a full
+    // acknowledgement window after a slow dispatch. Like and Mute budget from
+    // `deadline` and must finish inside it.
+    let ack_deadline = if mode == PendingReplyMode::Send {
+        Instant::now() + QUICK_REPLY_ACK_TIMEOUT
+    } else {
+        deadline
+    };
     let ok = dispatched.is_ok()
         && result_rx
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .recv_timeout(ack_deadline.saturating_duration_since(Instant::now()))
             .unwrap_or(false);
     reply_ack_waiters().lock().unwrap().remove(id);
     pending_page_replies().lock().unwrap().complete(id, attempt);

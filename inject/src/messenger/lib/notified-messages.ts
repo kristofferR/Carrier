@@ -1,8 +1,9 @@
 /** What each emitted notification announced, keyed by the page's notification
  * id, so its 👍 action can find the message: the raw text (before link or
- * photo rewording) and when the page saw it. Kept in sessionStorage so a 👍
- * that forces a hard navigation still finds it in the reloaded page; ids are
- * time-based, so they never collide across reloads. */
+ * photo rewording) and when the page saw it. Kept in localStorage: native runs
+ * actions in the main window, which must find a record a secondary window or
+ * a page since reloaded wrote. Ids are time-based, so they never collide, and
+ * records outlive a week only as long as 👍 can still date a message. */
 export interface NotifiedMessage {
   body: string;
   at: number;
@@ -12,6 +13,7 @@ const KEY = "carrier-notified-messages";
 // Matches the native route cap, so every still-actionable notification keeps
 // its record.
 const LIMIT = 256;
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type Entry = [id: number, message: NotifiedMessage];
 
@@ -30,9 +32,9 @@ function load(storage: Storage | undefined): Entry[] {
   }
 }
 
-const session = () => {
+const shared = () => {
   try {
-    return window.sessionStorage;
+    return window.localStorage;
   } catch {
     return undefined;
   }
@@ -42,13 +44,16 @@ export function rememberNotifiedMessage(
   id: number,
   body: string,
   at = Date.now(),
-  storage = session(),
+  storage = shared(),
 ) {
-  const entries = [...load(storage).filter(([known]) => known !== id), [id, { body, at }] as Entry];
+  const entries = [
+    ...load(storage).filter(([known, message]) => known !== id && at - message.at < MAX_AGE_MS),
+    [id, { body, at }] as Entry,
+  ];
   try {
     storage?.setItem(KEY, JSON.stringify(entries.slice(-LIMIT)));
   } catch {}
 }
 
-export const notifiedMessage = (id: number, storage = session()) =>
+export const notifiedMessage = (id: number, storage = shared()) =>
   load(storage).find(([known]) => known === id)?.[1];

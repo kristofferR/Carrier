@@ -24,6 +24,15 @@ describe("notified messages", () => {
     expect(notifiedMessage(44, storage)).toBeUndefined();
   });
 
+  test("drops records older than a week", () => {
+    const storage = memoryStorage();
+    const week = 7 * 24 * 60 * 60 * 1000;
+    rememberNotifiedMessage(1, "old", 0, storage);
+    rememberNotifiedMessage(2, "new", week, storage);
+    expect(notifiedMessage(1, storage)).toBeUndefined();
+    expect(notifiedMessage(2, storage)).toEqual({ body: "new", at: week });
+  });
+
   test("ignores corrupt storage", () => {
     const storage = memoryStorage();
     storage.setItem("carrier-notified-messages", "{not json");
