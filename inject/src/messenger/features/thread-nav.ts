@@ -21,6 +21,26 @@ export function conversationInfoButton(): HTMLElement | null {
   return null;
 }
 
+/**
+ * Open `path` for a background action and return a check for "the pane now
+ * shows it". The route changes before Messenger replaces the pane, so after
+ * navigating the pane counts only once its message log is a new element.
+ * Null when the thread can't be opened.
+ */
+export function openThreadForAction(path: string): (() => boolean) | null {
+  const wanted = threadPathId(path);
+  if (!wanted) return null;
+  const log = () => document.querySelector('[role="main"] [role="log"]');
+  const onRoute = () => threadIdFromHref(location.pathname) === wanted;
+  if (onRoute()) return onRoute;
+  const staleLog = log();
+  if (window.__carrierOpenThread?.(path) !== true) return null;
+  return () => {
+    const current = log();
+    return onRoute() && current !== null && current !== staleLog;
+  };
+}
+
 /** Native actions call this first: an explicit request beats a pending restore. */
 export function stopThreadRestore() {
   cancelThreadRestore();

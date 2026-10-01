@@ -14,7 +14,7 @@ import {
 import { withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 import { isShown } from "./conversation-actions";
-import { conversationInfoButton } from "./thread-nav";
+import { conversationInfoButton, openThreadForAction } from "./thread-nav";
 
 const POLL_MS = 250;
 const MUTE_BUDGET_MS = 12_000;
@@ -23,12 +23,15 @@ const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS))
 const label = (el: Element) => el.getAttribute("aria-label") || el.textContent || "";
 
 /** The open thread's Mute / Unmute control, if the info pane has rendered it. */
-function threadMuteControl(): { muted: boolean | null; trigger: HTMLElement | null } {
+function threadMuteControl(stale: Set<Element>): {
+  muted: boolean | null;
+  trigger: HTMLElement | null;
+} {
   let trigger: HTMLElement | null = null;
   for (const el of document.querySelectorAll<HTMLElement>(
     '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]',
   )) {
-    if (!isShown(el)) continue;
+    if (stale.has(el) || !isShown(el)) continue;
     const muted = conversationMuteFromLabel(el.getAttribute("aria-label") || "");
     if (muted === true) return { muted, trigger: null };
     if (muted === false) trigger ??= el;
@@ -61,29 +64,32 @@ const radioSelected = (radio: HTMLInputElement) =>
   radio.checked || radio.getAttribute("aria-checked") === "true";
 
 async function mute(path: string, deadline: number): Promise<boolean> {
-  const wantedThread = threadPathId(path);
   // Expired while queued: the native side has already given up on it.
   if (Date.now() >= deadline) return false;
-  if (
-    !wantedThread ||
-    (threadIdFromHref(location.pathname) !== wantedThread &&
-      window.__carrierOpenThread?.(path) !== true)
-  ) {
+  const wantedThread = threadPathId(path);
+  // Controls rendered before navigating belong to the previous conversation.
+  const stale = new Set<Element>(
+    threadIdFromHref(location.pathname) === wantedThread
+      ? []
+      : document.querySelectorAll('[role="main"] [role="button"]'),
+  );
+  const paneReady = openThreadForAction(path);
+  if (!wantedThread || !paneReady) {
     diag("quick-mute.open", "validated thread could not be opened");
     return false;
   }
 
   // A dialog left mounted by an earlier hidden-window mute must not be reused.
-  const stale = new Set<Element>(document.querySelectorAll('[role="dialog"]'));
+  const staleDialogs = new Set<Element>(document.querySelectorAll('[role="dialog"]'));
   let phase: QuickMutePhase = "waiting";
   let infoRequested = false;
   let openedInfo = false;
   try {
     while (true) {
-      const control = threadMuteControl();
-      const dialog = phase === "waiting" ? null : muteDialog(stale);
+      const control = threadMuteControl(stale);
+      const dialog = phase === "waiting" ? null : muteDialog(staleDialogs);
       const snapshot: QuickMuteSnapshot = {
-        threadMatches: threadIdFromHref(location.pathname) === wantedThread,
+        threadMatches: paneReady(),
         muted: control.muted,
         infoRequested,
         dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected",
@@ -96,7 +102,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           // The header can mount after the route changes; keep looking until
           // the info button exists.
           const info = conversationInfoButton();
-          if (!info) break;
+          if (!info || stale.has(info)) break;
           infoRequested = true;
           if (info.getAttribute("aria-expanded") !== "true") {
             info.click();

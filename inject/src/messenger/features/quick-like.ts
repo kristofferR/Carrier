@@ -17,7 +17,8 @@ import {
   type QuickLikeSnapshot,
 } from "../lib/quick-like";
 import { withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
-import { threadIdFromHref, threadPathId } from "../lib/threads";
+import { threadPathId } from "../lib/threads";
+import { openThreadForAction } from "./thread-nav";
 
 const POLL_MS = 250;
 const LIKE_BUDGET_MS = 12_000;
@@ -82,14 +83,10 @@ function thumbItem(menu: Element): HTMLElement | null {
 }
 
 async function like(path: string, notified: NotifiedMessage, deadline: number): Promise<boolean> {
-  const wantedThread = threadPathId(path);
   // Expired while queued: the native side has already given up on it.
   if (Date.now() >= deadline) return false;
-  if (
-    !wantedThread ||
-    (threadIdFromHref(location.pathname) !== wantedThread &&
-      window.__carrierOpenThread?.(path) !== true)
-  ) {
+  const paneReady = openThreadForAction(path);
+  if (!paneReady) {
     diag("quick-like.open", "validated thread could not be opened");
     return false;
   }
@@ -118,7 +115,7 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
     const thumb = menu ? thumbItem(menu) : null;
     const summary = target ? reactionSummary(target.scope) : "";
     const snapshot: QuickLikeSnapshot = {
-      threadMatches: threadIdFromHref(location.pathname) === wantedThread,
+      threadMatches: paneReady(),
       targetFound: target !== null && target.bubble.isConnected,
       settled,
       reactButton: reactButton !== null,

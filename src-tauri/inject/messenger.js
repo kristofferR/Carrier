@@ -796,8 +796,8 @@ ${button.innerHTML}`)
     return messenger.length === 1 && value.every((label2) => label2 === "settings" || messenger.includes(label2));
   }
   var FacebookWorkerRecovery = class {
-    constructor(load, accountScope, canRestartSharedWorker = async () => false) {
-      __publicField(this, "load", load);
+    constructor(load2, accountScope, canRestartSharedWorker = async () => false) {
+      __publicField(this, "load", load2);
       __publicField(this, "accountScope", accountScope);
       __publicField(this, "canRestartSharedWorker", canRestartSharedWorker);
       __publicField(this, "replay");
@@ -7278,13 +7278,32 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/notified-messages.ts
+  var KEY = "carrier-notified-messages";
   var LIMIT = 50;
-  var messages = /* @__PURE__ */ new Map();
-  function rememberNotifiedMessage(id, body, at = Date.now()) {
-    messages.set(id, { body, at });
-    if (messages.size > LIMIT) messages.delete(messages.keys().next().value);
+  var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number";
+  function load(storage) {
+    try {
+      const entries = JSON.parse(storage?.getItem(KEY) || "[]");
+      return Array.isArray(entries) ? entries.filter(isEntry) : [];
+    } catch {
+      return [];
+    }
   }
-  var notifiedMessage = (id) => messages.get(id);
+  var session = () => {
+    try {
+      return window.sessionStorage;
+    } catch {
+      return void 0;
+    }
+  };
+  function rememberNotifiedMessage(id, body, at = Date.now(), storage = session()) {
+    const entries = [...load(storage).filter(([known]) => known !== id), [id, { body, at }]];
+    try {
+      storage?.setItem(KEY, JSON.stringify(entries.slice(-LIMIT)));
+    } catch {
+    }
+  }
+  var notifiedMessage = (id, storage = session()) => load(storage).find(([known]) => known === id)?.[1];
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -8717,150 +8736,6 @@ ${button.innerHTML}`)
     return lag >= -1 && lag <= FRESH_MINUTES;
   }
 
-  // inject/src/messenger/features/quick-like.ts
-  var POLL_MS = 250;
-  var LIKE_BUDGET_MS = 12e3;
-  var THUMB = "👍";
-  var BUBBLE = '[aria-label^="Enter, Message sent"]';
-  var REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
-  var bubbles = () => [
-    ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
-  ];
-  function messageScroller(from) {
-    for (let el = from.parentElement; el && el !== document.body; el = el.parentElement) {
-      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)
-        return el;
-    }
-    return null;
-  }
-  var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
-  function announcedBubble(notified) {
-    const bubble = bubbles().reverse().find((el) => {
-      const label2 = el.getAttribute("aria-label") || "";
-      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, notified.body) && bubbleIsFresh(label2, notified.at);
-    });
-    let scope = bubble?.closest('[role="article"]');
-    while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
-      scope = scope.parentElement;
-    return bubble && scope ? { bubble, scope } : null;
-  }
-  function reactionSummary(scope) {
-    return [...scope.querySelectorAll('[role="button"][aria-label]')].filter((el) => !el.matches(BUBBLE) && !el.closest('[role="group"]')).map((el) => el.getAttribute("aria-label")).join("\n");
-  }
-  function thumbItem(menu) {
-    for (const item of menu.querySelectorAll('[role="menuitemradio"]'))
-      if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
-    return null;
-  }
-  async function like(path, notified, deadline) {
-    const wantedThread = threadPathId(path);
-    if (Date.now() >= deadline) return false;
-    if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
-      diag("quick-like.open", "validated thread could not be opened");
-      return false;
-    }
-    let phase = "waiting";
-    let target = null;
-    let reactButton = null;
-    let summaryBefore = "";
-    while (true) {
-      const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
-      const scroller = newest ? messageScroller(newest) : null;
-      const settled = newest !== null && atBottom(scroller);
-      if (phase === "waiting") target = announcedBubble(notified);
-      if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
-      const menuId = reactButton?.getAttribute("aria-controls");
-      const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
-      const thumb = menu ? thumbItem(menu) : null;
-      const summary = target ? reactionSummary(target.scope) : "";
-      const snapshot = {
-        threadMatches: threadIdFromHref(location.pathname) === wantedThread,
-        targetFound: target !== null && target.bubble.isConnected,
-        settled,
-        reactButton: reactButton !== null,
-        menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",
-        thumbShown: summary.includes(THUMB) && (summaryBefore === null || summary !== summaryBefore)
-      };
-      const decision = decideQuickLike(phase, snapshot, Date.now() >= deadline);
-      phase = decision.phase;
-      switch (decision.action) {
-        case "settle":
-          if (scroller && !atBottom(scroller)) scroller.scrollTop = scroller.scrollHeight;
-          break;
-        case "hover": {
-          const bubble = target?.bubble;
-          const rect = bubble?.getBoundingClientRect();
-          const point = rect && {
-            clientX: rect.x + rect.width / 2,
-            clientY: rect.y + rect.height / 2
-          };
-          bubble?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, ...point }));
-          bubble?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, ...point }));
-          break;
-        }
-        case "open-menu":
-          reactButton?.click();
-          break;
-        case "select":
-          summaryBefore = summary;
-          thumb?.click();
-          break;
-        case "close-menu":
-          summaryBefore = null;
-          reactButton?.click();
-          break;
-        case "success":
-          if (menu) reactButton?.click();
-          return true;
-        case "failure":
-          if (menu) reactButton?.click();
-          diag("quick-like.delivery", `like flow stopped in ${phase}`);
-          return false;
-        case "wait":
-          break;
-      }
-      await pause();
-    }
-  }
-  function initQuickLike() {
-    window.__carrierQuickLike = (path, notification, id, attempt, budgetMs) => {
-      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
-        () => diag("quick-like.ack", "like acknowledgement emit failed")
-      );
-      const notified = notifiedMessage(Number(notification));
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified) {
-        void report(false);
-        return;
-      }
-      const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
-      void withComposerDeliveryWhenAvailable(() => like(path, notified, deadline)).then((ok) => report(ok)).catch(() => {
-        diag("quick-like.exception", "like flow raised an exception");
-        void report(false);
-      });
-    };
-  }
-
-  // inject/src/messenger/lib/quick-mute.ts
-  var QUICK_MUTE_DURATION_MS = "28800000";
-  function decideQuickMute(phase, snapshot, expired) {
-    if (snapshot.threadMatches && snapshot.muted === true) return { action: "success", phase };
-    if (expired) return { action: "failure", phase };
-    if (!snapshot.threadMatches) {
-      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
-    }
-    if (phase === "waiting") {
-      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
-      if (!snapshot.infoRequested) return { action: "open-info", phase };
-      return { action: "wait", phase };
-    }
-    if (phase === "dialog") {
-      if (snapshot.dialog === "unselected") return { action: "select", phase };
-      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
-    }
-    return { action: "wait", phase };
-  }
-
   // inject/src/messenger/lib/thread-restore.ts
   var THREAD_RESTORE_WAIT_MS = 3e4;
   function threadRestoreStep(input) {
@@ -8906,6 +8781,19 @@ ${button.innerHTML}`)
         return el.closest('[role="button"]') || el;
     }
     return null;
+  }
+  function openThreadForAction(path) {
+    const wanted = threadPathId(path);
+    if (!wanted) return null;
+    const log = () => document.querySelector('[role="main"] [role="log"]');
+    const onRoute = () => threadIdFromHref(location.pathname) === wanted;
+    if (onRoute()) return onRoute;
+    const staleLog = log();
+    if (window.__carrierOpenThread?.(path) !== true) return null;
+    return () => {
+      const current = log();
+      return onRoute() && current !== null && current !== staleLog;
+    };
   }
   function stopThreadRestore() {
     cancelThreadRestore();
@@ -9020,17 +8908,161 @@ ${button.innerHTML}`)
     };
   }
 
+  // inject/src/messenger/features/quick-like.ts
+  var POLL_MS = 250;
+  var LIKE_BUDGET_MS = 12e3;
+  var THUMB = "👍";
+  var BUBBLE = '[aria-label^="Enter, Message sent"]';
+  var REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var bubbles = () => [
+    ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
+  ];
+  function messageScroller(from) {
+    for (let el = from.parentElement; el && el !== document.body; el = el.parentElement) {
+      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)
+        return el;
+    }
+    return null;
+  }
+  var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
+  function announcedBubble(notified) {
+    const bubble = bubbles().reverse().find((el) => {
+      const label2 = el.getAttribute("aria-label") || "";
+      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, notified.body) && bubbleIsFresh(label2, notified.at);
+    });
+    let scope = bubble?.closest('[role="article"]');
+    while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
+      scope = scope.parentElement;
+    return bubble && scope ? { bubble, scope } : null;
+  }
+  function reactionSummary(scope) {
+    return [...scope.querySelectorAll('[role="button"][aria-label]')].filter((el) => !el.matches(BUBBLE) && !el.closest('[role="group"]')).map((el) => el.getAttribute("aria-label")).join("\n");
+  }
+  function thumbItem(menu) {
+    for (const item of menu.querySelectorAll('[role="menuitemradio"]'))
+      if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
+    return null;
+  }
+  async function like(path, notified, deadline) {
+    if (Date.now() >= deadline) return false;
+    const paneReady = openThreadForAction(path);
+    if (!paneReady) {
+      diag("quick-like.open", "validated thread could not be opened");
+      return false;
+    }
+    let phase = "waiting";
+    let target = null;
+    let reactButton = null;
+    let summaryBefore = "";
+    while (true) {
+      const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
+      const scroller = newest ? messageScroller(newest) : null;
+      const settled = newest !== null && atBottom(scroller);
+      if (phase === "waiting") target = announcedBubble(notified);
+      if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
+      const menuId = reactButton?.getAttribute("aria-controls");
+      const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
+      const thumb = menu ? thumbItem(menu) : null;
+      const summary = target ? reactionSummary(target.scope) : "";
+      const snapshot = {
+        threadMatches: paneReady(),
+        targetFound: target !== null && target.bubble.isConnected,
+        settled,
+        reactButton: reactButton !== null,
+        menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",
+        thumbShown: summary.includes(THUMB) && (summaryBefore === null || summary !== summaryBefore)
+      };
+      const decision = decideQuickLike(phase, snapshot, Date.now() >= deadline);
+      phase = decision.phase;
+      switch (decision.action) {
+        case "settle":
+          if (scroller && !atBottom(scroller)) scroller.scrollTop = scroller.scrollHeight;
+          break;
+        case "hover": {
+          const bubble = target?.bubble;
+          const rect = bubble?.getBoundingClientRect();
+          const point = rect && {
+            clientX: rect.x + rect.width / 2,
+            clientY: rect.y + rect.height / 2
+          };
+          bubble?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, ...point }));
+          bubble?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, ...point }));
+          break;
+        }
+        case "open-menu":
+          reactButton?.click();
+          break;
+        case "select":
+          summaryBefore = summary;
+          thumb?.click();
+          break;
+        case "close-menu":
+          summaryBefore = null;
+          reactButton?.click();
+          break;
+        case "success":
+          if (menu) reactButton?.click();
+          return true;
+        case "failure":
+          if (menu) reactButton?.click();
+          diag("quick-like.delivery", `like flow stopped in ${phase}`);
+          return false;
+        case "wait":
+          break;
+      }
+      await pause();
+    }
+  }
+  function initQuickLike() {
+    window.__carrierQuickLike = (path, notification, id, attempt, budgetMs) => {
+      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+        () => diag("quick-like.ack", "like acknowledgement emit failed")
+      );
+      const notified = notifiedMessage(Number(notification));
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified) {
+        void report(false);
+        return;
+      }
+      const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
+      void withComposerDeliveryWhenAvailable(() => like(path, notified, deadline)).then((ok) => report(ok)).catch(() => {
+        diag("quick-like.exception", "like flow raised an exception");
+        void report(false);
+      });
+    };
+  }
+
+  // inject/src/messenger/lib/quick-mute.ts
+  var QUICK_MUTE_DURATION_MS = "28800000";
+  function decideQuickMute(phase, snapshot, expired) {
+    if (snapshot.threadMatches && snapshot.muted === true) return { action: "success", phase };
+    if (expired) return { action: "failure", phase };
+    if (!snapshot.threadMatches) {
+      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
+    }
+    if (phase === "waiting") {
+      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
+      if (!snapshot.infoRequested) return { action: "open-info", phase };
+      return { action: "wait", phase };
+    }
+    if (phase === "dialog") {
+      if (snapshot.dialog === "unselected") return { action: "select", phase };
+      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
+    }
+    return { action: "wait", phase };
+  }
+
   // inject/src/messenger/features/quick-mute.ts
   var POLL_MS2 = 250;
   var MUTE_BUDGET_MS = 12e3;
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
-  function threadMuteControl() {
+  function threadMuteControl(stale) {
     let trigger = null;
     for (const el of document.querySelectorAll(
       '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]'
     )) {
-      if (!isShown(el)) continue;
+      if (stale.has(el) || !isShown(el)) continue;
       const muted = conversationMuteFromLabel(el.getAttribute("aria-label") || "");
       if (muted === true) return { muted, trigger: null };
       if (muted === false) trigger ?? (trigger = el);
@@ -9053,22 +9085,26 @@ ${button.innerHTML}`)
   }
   var radioSelected = (radio) => radio.checked || radio.getAttribute("aria-checked") === "true";
   async function mute(path, deadline) {
-    const wantedThread = threadPathId(path);
     if (Date.now() >= deadline) return false;
-    if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+    const wantedThread = threadPathId(path);
+    const stale = new Set(
+      threadIdFromHref(location.pathname) === wantedThread ? [] : document.querySelectorAll('[role="main"] [role="button"]')
+    );
+    const paneReady = openThreadForAction(path);
+    if (!wantedThread || !paneReady) {
       diag("quick-mute.open", "validated thread could not be opened");
       return false;
     }
-    const stale = new Set(document.querySelectorAll('[role="dialog"]'));
+    const staleDialogs = new Set(document.querySelectorAll('[role="dialog"]'));
     let phase = "waiting";
     let infoRequested = false;
     let openedInfo = false;
     try {
       while (true) {
-        const control = threadMuteControl();
-        const dialog = phase === "waiting" ? null : muteDialog(stale);
+        const control = threadMuteControl(stale);
+        const dialog = phase === "waiting" ? null : muteDialog(staleDialogs);
         const snapshot = {
-          threadMatches: threadIdFromHref(location.pathname) === wantedThread,
+          threadMatches: paneReady(),
           muted: control.muted,
           infoRequested,
           dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected"
@@ -9078,7 +9114,7 @@ ${button.innerHTML}`)
         switch (decision.action) {
           case "open-info": {
             const info = conversationInfoButton();
-            if (!info) break;
+            if (!info || stale.has(info)) break;
             infoRequested = true;
             if (info.getAttribute("aria-expanded") !== "true") {
               info.click();
