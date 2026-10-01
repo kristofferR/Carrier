@@ -1341,6 +1341,7 @@ enum PendingReplyMode {
     Send,
     Draft,
     Mute,
+    Like,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1515,6 +1516,7 @@ fn quick_reply_script(
             format!("window.__carrierQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
         }
         PendingReplyMode::Mute => format!("window.__carrierQuickMute?.({path}, {id}, {attempt});"),
+        PendingReplyMode::Like => format!("window.__carrierQuickLike?.({path}, {id}, {attempt});"),
     })
 }
 
@@ -1534,7 +1536,9 @@ fn register_pending_page_reply(
         mode,
         Instant::now()
             + match mode {
-                PendingReplyMode::Send | PendingReplyMode::Mute => QUICK_REPLY_ACK_TIMEOUT,
+                PendingReplyMode::Send | PendingReplyMode::Mute | PendingReplyMode::Like => {
+                    QUICK_REPLY_ACK_TIMEOUT
+                }
                 // A fallback can wait behind scheduled delivery before navigation.
                 PendingReplyMode::Draft => QUICK_REPLY_DRAFT_TIMEOUT,
             },
@@ -1604,6 +1608,8 @@ fn eval_hidden_page_action(
 const REPLY_FAILED: &str = "Reply not sent — opening the conversation";
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const MUTE_FAILED: &str = "Couldn't mute. Opening the conversation.";
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const LIKE_FAILED: &str = "Couldn't react. Opening the conversation.";
 
 #[cfg(target_os = "linux")]
 fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
@@ -1842,9 +1848,9 @@ impl NotificationAction {
     }
 }
 
-/// Like sends a thumbs-up through the quick-reply path; Mute silences the
-/// conversation in Messenger for 8 hours. Both run in the background, and a
-/// failure opens the conversation instead.
+/// Like reacts 👍 to the conversation's newest incoming message; Mute silences
+/// the conversation in Messenger for 8 hours. Both drive the hidden page in the
+/// background, and a failure opens the conversation instead.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_action(
     app: tauri::AppHandle,
@@ -1854,61 +1860,42 @@ pub(crate) fn on_notification_action(
     action: NotificationAction,
     activation_token: Option<String>,
 ) {
-    match action {
-        NotificationAction::Like => on_notification_reply(
-            app,
-            id,
-            page_id,
-            fallback_path,
-            "👍".into(),
-            activation_token,
-        ),
-        NotificationAction::Mute => {
-            on_notification_mute(app, id, page_id, fallback_path, activation_token)
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn on_notification_mute(
-    app: tauri::AppHandle,
-    id: u64,
-    page_id: Option<u64>,
-    fallback_path: Option<String>,
-    activation_token: Option<String>,
-) {
-    let mute_failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
-        show_action_failure_notification(&app, MUTE_FAILED);
+    let (mode, failure) = match action {
+        NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED),
+        NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
+    };
+    let failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
+        show_action_failure_notification(&app, failure);
         activate_notification(app, id, page_id, path, token);
     };
     let Some(permit) = QUICK_REPLY_WORKER_SLOTS.try_acquire() else {
         log::warn!(
-            "notification mute rejected because the native worker cap was reached (id {id})"
+            "notification {action:?} rejected because the native worker cap was reached (id {id})"
         );
-        mute_failed(app, fallback_path, activation_token);
+        failed(app, fallback_path, activation_token);
         return;
     };
     let fallback_app = app.clone();
     let fallback_path_copy = fallback_path.clone();
     let fallback_token = activation_token.clone();
     if let Err(error) = std::thread::Builder::new()
-        .name("carrier-quick-mute".into())
+        .name("carrier-notification-action".into())
         .spawn(move || {
             let _permit = permit;
             let _guard = lock_page_actions();
             let Some(thread_path) = resolved_notification_route(&app, id, fallback_path.as_deref())
             else {
-                log::warn!("notification mute had no validated route (id {id})");
-                mute_failed(app, None, activation_token);
+                log::warn!("notification {action:?} had no validated route (id {id})");
+                failed(app, None, activation_token);
                 return;
             };
-            if !run_hidden_page_action(&app, id, &thread_path, "", PendingReplyMode::Mute) {
-                mute_failed(app, Some(thread_path), activation_token);
+            if !run_hidden_page_action(&app, id, &thread_path, "", mode) {
+                failed(app, Some(thread_path), activation_token);
             }
         })
     {
-        log::warn!("failed to start notification mute worker (id {id}): {error}");
-        mute_failed(fallback_app, fallback_path_copy, fallback_token);
+        log::warn!("failed to start notification {action:?} worker (id {id}): {error}");
+        failed(fallback_app, fallback_path_copy, fallback_token);
     }
 }
 

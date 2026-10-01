@@ -177,6 +177,8 @@ interface Window {
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Mute a conversation from its notification without raising the window. */
   __carrierQuickMute?: (path: string, id: number, attempt: number) => void;
+  /** React 👍 to a conversation's newest incoming message from its notification. */
+  __carrierQuickLike?: (path: string, id: number, attempt: number) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
   /** Sender-avatar cache sizes, or one sender's verdict, for the MCP probe. */

@@ -8652,6 +8652,131 @@ ${button.innerHTML}`)
     startPoll();
   }
 
+  // inject/src/messenger/lib/quick-like.ts
+  function decideQuickLike(phase, snapshot, expired) {
+    if (!snapshot.threadMatches) {
+      if (phase === "waiting" && !expired) return { action: "wait", phase };
+      return { action: "failure", phase };
+    }
+    if (phase === "confirming") {
+      if (snapshot.thumbShown) return { action: "success", phase };
+      return expired ? { action: "failure", phase } : { action: "wait", phase };
+    }
+    if (expired) return { action: "failure", phase };
+    if (phase === "menu") {
+      if (snapshot.menu === "selected") return { action: "close-menu", phase: "confirming" };
+      if (snapshot.menu === "unselected") return { action: "select", phase: "confirming" };
+      if (snapshot.menu === "missing") return { action: "failure", phase };
+      return { action: "wait", phase };
+    }
+    if (!snapshot.targetFound) return { action: "wait", phase };
+    if (!snapshot.reactButton) return { action: "hover", phase };
+    return { action: "open-menu", phase: "menu" };
+  }
+
+  // inject/src/messenger/features/quick-like.ts
+  var POLL_MS = 250;
+  var LIKE_BUDGET_MS = 12e3;
+  var THUMB = "👍";
+  var BUBBLE = '[aria-label^="Enter, Message sent"]';
+  var REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  function newestIncoming() {
+    const bubble = [
+      ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
+    ].reverse().find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
+    let scope = bubble?.closest('[role="article"]');
+    while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
+      scope = scope.parentElement;
+    return bubble && scope ? { bubble, scope } : null;
+  }
+  function reactionSummary(scope) {
+    return [...scope.querySelectorAll('[role="button"][aria-label]')].filter((el) => !el.matches(BUBBLE) && !el.closest('[role="group"]')).map((el) => el.getAttribute("aria-label")).join("\n");
+  }
+  function thumbItem(menu) {
+    for (const item of menu.querySelectorAll('[role="menuitemradio"]'))
+      if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
+    return null;
+  }
+  async function like(path) {
+    const wantedThread = threadPathId(path);
+    if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+      diag("quick-like.open", "validated thread could not be opened");
+      return false;
+    }
+    const deadline = Date.now() + LIKE_BUDGET_MS;
+    let phase = "waiting";
+    let target = null;
+    let reactButton = null;
+    let summaryBefore = "";
+    while (true) {
+      if (phase === "waiting") target = newestIncoming();
+      if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
+      const menuId = reactButton?.getAttribute("aria-controls");
+      const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
+      const thumb = menu ? thumbItem(menu) : null;
+      const summary = target ? reactionSummary(target.scope) : "";
+      const snapshot = {
+        threadMatches: threadIdFromHref(location.pathname) === wantedThread,
+        targetFound: target !== null && target.bubble.isConnected,
+        reactButton: reactButton !== null,
+        menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",
+        thumbShown: summary.includes(THUMB) && (summaryBefore === null || summary !== summaryBefore)
+      };
+      const decision = decideQuickLike(phase, snapshot, Date.now() >= deadline);
+      phase = decision.phase;
+      switch (decision.action) {
+        case "hover": {
+          const bubble = target?.bubble;
+          const rect = bubble?.getBoundingClientRect();
+          const point = rect && {
+            clientX: rect.x + rect.width / 2,
+            clientY: rect.y + rect.height / 2
+          };
+          bubble?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, ...point }));
+          bubble?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, ...point }));
+          break;
+        }
+        case "open-menu":
+          reactButton?.click();
+          break;
+        case "select":
+          summaryBefore = summary;
+          thumb?.click();
+          break;
+        case "close-menu":
+          summaryBefore = null;
+          reactButton?.click();
+          break;
+        case "success":
+          if (menu) reactButton?.click();
+          return true;
+        case "failure":
+          if (menu) reactButton?.click();
+          diag("quick-like.delivery", `like flow stopped in ${phase}`);
+          return false;
+        case "wait":
+          break;
+      }
+      await pause();
+    }
+  }
+  function initQuickLike() {
+    window.__carrierQuickLike = (path, id, attempt) => {
+      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+        () => diag("quick-like.ack", "like acknowledgement emit failed")
+      );
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0) {
+        void report(false);
+        return;
+      }
+      void withComposerDeliveryWhenAvailable(() => like(path)).then((ok) => report(ok)).catch(() => {
+        diag("quick-like.exception", "like flow raised an exception");
+        void report(false);
+      });
+    };
+  }
+
   // inject/src/messenger/lib/quick-mute.ts
   var QUICK_MUTE_DURATION_MS = "28800000";
   function decideQuickMute(phase, snapshot, expired) {
@@ -8832,9 +8957,9 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/quick-mute.ts
-  var POLL_MS = 250;
+  var POLL_MS2 = 250;
   var MUTE_BUDGET_MS = 12e3;
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
   function threadMuteControl() {
     let trigger = null;
@@ -8917,7 +9042,7 @@ ${button.innerHTML}`)
           case "wait":
             break;
         }
-        await pause();
+        await pause2();
       }
     } finally {
       const info = openedInfo ? conversationInfoButton() : null;
@@ -8972,13 +9097,13 @@ ${button.innerHTML}`)
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/features/quick-reply.ts
-  var POLL_MS2 = 250;
+  var POLL_MS3 = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
   var replyAttempts = /* @__PURE__ */ new Map();
-  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
+  var pause3 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS3));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
@@ -9026,7 +9151,7 @@ ${button.innerHTML}`)
         phase = decision.phase;
         switch (decision.action) {
           case "wait":
-            await pause2();
+            await pause3();
             break;
           case "insert": {
             if (!box) return false;
@@ -9043,7 +9168,7 @@ ${button.innerHTML}`)
             if (state2.cancelled) return false;
             state2.clicked = true;
             button?.click();
-            await pause2();
+            await pause3();
             break;
           case "success":
             insertedReplies.delete(id);
@@ -9098,7 +9223,7 @@ ${text}`)) {
         insertedReplies.delete(id);
         return true;
       }
-      await pause2();
+      await pause3();
     }
     diag("quick-reply.draft", "fallback composer did not become ready");
     return false;
@@ -9247,7 +9372,7 @@ ${text}`)) {
   window.addEventListener("popstate", () => {
     routeChanged = true;
   });
-  var pause3 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var pause4 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
@@ -9289,12 +9414,12 @@ ${text}`)) {
         const current = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
-          await pause3();
+          await pause4();
           continue;
         }
         if (!current || hasComposerMedia(current)) {
           if (inserted) break;
-          await pause3();
+          await pause4();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
@@ -9304,13 +9429,13 @@ ${text}`)) {
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
-          await pause3();
+          await pause4();
           continue;
         }
         if (current !== box || composerText(current) !== message.text) break;
         const send = findSendButton(current, controls);
         if (!send) {
-          await pause3();
+          await pause4();
           continue;
         }
         if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
@@ -9322,7 +9447,7 @@ ${text}`)) {
           if (thread() !== message.thread || account() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
-          await pause3();
+          await pause4();
         }
         return "uncertain";
       }
@@ -9494,7 +9619,7 @@ ${text}`)) {
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
-            await pause3();
+            await pause4();
             if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
@@ -11353,6 +11478,7 @@ ${text}`)) {
     initFeature("thread-nav", initThreadNav);
     initFeature("quick-reply", initQuickReply);
     initFeature("quick-mute", initQuickMute);
+    initFeature("quick-like", initQuickLike);
     initFeature("scheduled-send", initScheduledSend);
     initFeature("hide-names", initHideNames);
     initFeature("system-emoji", initSystemEmoji);
