@@ -168,7 +168,11 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
         return true;
       case "failure":
         if (menu) reactButton?.click();
-        diag("quick-like.delivery", `like flow stopped in ${phase}`);
+        // Content-free state, so a field failure says which step stalled.
+        diag(
+          "quick-like.delivery",
+          `like flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, settled ${snapshot.settled}, target ${snapshot.targetFound}, ambiguous ${snapshot.ambiguous}, react ${snapshot.reactButton}, menu ${snapshot.menu})`,
+        );
         return false;
       case "wait":
         break;

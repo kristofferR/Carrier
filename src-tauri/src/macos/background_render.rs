@@ -103,6 +103,7 @@ fn engage(webview: *mut AnyObject) -> Option<bool> {
             let _: () = msg_send![window, orderBack: std::ptr::null::<AnyObject>()];
             transparency
         });
+        notify_occlusion_changed(window);
         *ENGAGED.lock().unwrap() = Some(Engaged {
             occlusion_detection_was_enabled,
             ordered_in,
@@ -136,11 +137,27 @@ fn release(webview: *mut AnyObject) {
             _setWindowOcclusionDetectionEnabled: engaged.occlusion_detection_was_enabled
         ];
         let window: *mut AnyObject = msg_send![webview, window];
-        if let (Some(transparency), false) = (engaged.ordered_in, window.is_null()) {
+        if window.is_null() {
+            return;
+        }
+        if let Some(transparency) = engaged.ordered_in {
             let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
             restore_transparency(window, transparency);
         }
+        notify_occlusion_changed(window);
     }
+}
+
+/// WebKit re-reads a window's visibility only when its occlusion state
+/// changes, so toggling occlusion detection alone leaves a covered page
+/// hidden. Post the notification WebKit's window observer listens for.
+///
+/// # Safety
+/// `window` must be a live NSWindow, on the main thread.
+unsafe fn notify_occlusion_changed(window: *mut AnyObject) {
+    let center: *mut AnyObject = msg_send![objc2::class!(NSNotificationCenter), defaultCenter];
+    let name = objc2_foundation::NSString::from_str("NSWindowDidChangeOcclusionStateNotification");
+    let _: () = msg_send![center, postNotificationName: &*name, object: window];
 }
 
 /// # Safety

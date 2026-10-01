@@ -211,7 +211,11 @@ async function mute(path: string, deadline: number): Promise<boolean> {
             );
           return true;
         case "failure":
-          diag("quick-mute.delivery", `mute flow stopped in ${phase}`);
+          // Content-free state, so a field failure says which step stalled.
+          diag(
+            "quick-mute.delivery",
+            `mute flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, muted ${snapshot.muted}, chat notifications ${snapshot.chatNotifications}, chooser ${snapshot.chooser}, dialog ${snapshot.dialog})`,
+          );
           return false;
         case "wait":
           break;

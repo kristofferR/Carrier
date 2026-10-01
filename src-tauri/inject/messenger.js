@@ -9076,7 +9076,10 @@ ${button.innerHTML}`)
           return true;
         case "failure":
           if (menu) reactButton?.click();
-          diag("quick-like.delivery", `like flow stopped in ${phase}`);
+          diag(
+            "quick-like.delivery",
+            `like flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, settled ${snapshot.settled}, target ${snapshot.targetFound}, ambiguous ${snapshot.ambiguous}, react ${snapshot.reactButton}, menu ${snapshot.menu})`
+          );
           return false;
         case "wait":
           break;
@@ -9270,7 +9273,10 @@ ${button.innerHTML}`)
               );
             return true;
           case "failure":
-            diag("quick-mute.delivery", `mute flow stopped in ${phase}`);
+            diag(
+              "quick-mute.delivery",
+              `mute flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, muted ${snapshot.muted}, chat notifications ${snapshot.chatNotifications}, chooser ${snapshot.chooser}, dialog ${snapshot.dialog})`
+            );
             return false;
           case "wait":
             break;
