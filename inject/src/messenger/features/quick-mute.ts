@@ -201,6 +201,12 @@ async function mute(path: string, deadline: number): Promise<boolean> {
               setTimeout(() => {
                 muteExpiries.delete(wantedThread);
                 mutedThreads.invalidateMute(wantedThread);
+                // The unread badge keeps its own muted set; tell it too.
+                window.dispatchEvent(
+                  new CustomEvent("carrier:thread-mute", {
+                    detail: { id: wantedThread, muted: false },
+                  }),
+                );
               }, Number(QUICK_MUTE_DURATION_MS)),
             );
           return true;

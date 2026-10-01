@@ -9261,6 +9261,11 @@ ${button.innerHTML}`)
                 setTimeout(() => {
                   muteExpiries.delete(wantedThread);
                   mutedThreads.invalidateMute(wantedThread);
+                  window.dispatchEvent(
+                    new CustomEvent("carrier:thread-mute", {
+                      detail: { id: wantedThread, muted: false }
+                    })
+                  );
                 }, Number(QUICK_MUTE_DURATION_MS))
               );
             return true;
