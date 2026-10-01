@@ -50,6 +50,22 @@ describe("notified messages", () => {
     expect(notifiedMessage(1, storage)).toEqual({ body: "m1", at: 1 });
   });
 
+  test("keep a burst's oldest pending records until native settles them", () => {
+    const storage = store();
+    for (let id = 1; id <= 300; id++) rememberNotifiedMessage(id, `m${id}`, 1_000, storage);
+    for (let id = 1; id <= 5; id++) settleNotifiedMessage(id, true, 1_000, storage);
+    expect(notifiedMessage(1, storage)).toEqual({ body: "m1", at: 1_000 });
+    expect(notifiedMessage(5, storage)).toEqual({ body: "m5", at: 1_000 });
+  });
+
+  test("let an unsettled record age out", () => {
+    const storage = store();
+    rememberNotifiedMessage(1, "lost", 0, storage);
+    rememberNotifiedMessage(2, "next", 61_000, storage);
+    settleNotifiedMessage(1, true, 61_000, storage);
+    expect(notifiedMessage(1, storage)).toBeUndefined();
+  });
+
   test("keep the newest 256 accepted records", () => {
     const storage = store();
     for (let id = 1; id <= 300; id++) accept(storage, id);

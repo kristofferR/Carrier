@@ -6,6 +6,8 @@ export interface QuickLikeSnapshot {
   targetFound: boolean;
   /** The list sits at its latest message. */
   settled: boolean;
+  /** More than one rendered message could be the announced one. */
+  ambiguous: boolean;
   /** Its hover toolbar's React button is mounted. */
   reactButton: boolean;
   /** The reaction menu: absent, 👍 unselected/selected, or open without 👍. */
@@ -54,6 +56,7 @@ export function decideQuickLike(
   }
 
   if (!snapshot.settled) return { action: "settle", phase };
+  if (snapshot.ambiguous) return { action: "failure", phase };
   if (!snapshot.targetFound) return { action: "wait", phase };
   if (!snapshot.reactButton) return { action: "hover", phase };
   return { action: "open-menu", phase: "menu" };

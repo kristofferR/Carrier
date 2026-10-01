@@ -23,8 +23,11 @@ interface StoredMessage extends NotifiedMessage {
 // Matches the native route cap, so every still-actionable notification keeps
 // its record.
 const ACCEPTED_LIMIT = 256;
-// Awaiting native's verdict, which arrives within moments of the emit.
-const PENDING_LIMIT = 64;
+// Awaiting native's verdict, which arrives within moments of the emit. Native
+// accepts a burst oldest-first before rate limiting the rest, so the oldest
+// pending records are the ones kept; an unsettled one ages out quickly.
+const PENDING_LIMIT = 256;
+const PENDING_MAX_AGE_MS = 60_000;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface Store {
@@ -63,14 +66,16 @@ function prune(store: Store, now: number) {
   }
   const live = records.filter(
     (record): record is [string, StoredMessage] =>
-      record[1] !== undefined && now - record[1].at < MAX_AGE_MS,
+      record[1] !== undefined &&
+      now - record[1].at < (record[1].accepted ? MAX_AGE_MS : PENDING_MAX_AGE_MS),
   );
   const oldestFirst = (accepted: boolean) =>
     live.filter(([, message]) => message.accepted === accepted).sort((a, b) => a[1].at - b[1].at);
   const keep = new Set(
-    [...oldestFirst(true).slice(-ACCEPTED_LIMIT), ...oldestFirst(false).slice(-PENDING_LIMIT)].map(
-      ([key]) => key,
-    ),
+    [
+      ...oldestFirst(true).slice(-ACCEPTED_LIMIT),
+      ...oldestFirst(false).slice(0, PENDING_LIMIT),
+    ].map(([key]) => key),
   );
   for (const [key] of records) if (!keep.has(key)) store.storage.removeItem(key);
 }

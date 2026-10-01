@@ -12,6 +12,7 @@ const snapshot = (overrides: Partial<QuickLikeSnapshot> = {}): QuickLikeSnapshot
   threadMatches: true,
   targetFound: true,
   settled: true,
+  ambiguous: false,
   reactButton: false,
   menu: "none",
   thumbShown: false,
@@ -47,6 +48,10 @@ describe("decideQuickLike", () => {
     expect(
       decideQuickLike("waiting", snapshot({ settled: false, reactButton: true }), false).action,
     ).toBe("settle");
+  });
+
+  test("gives up rather than guess between identical fresh messages", () => {
+    expect(decideQuickLike("waiting", snapshot({ ambiguous: true }), false).action).toBe("failure");
   });
 
   test("never toggles off an existing 👍", () => {

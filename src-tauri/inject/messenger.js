@@ -7279,7 +7279,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/notified-messages.ts
   var ACCEPTED_LIMIT = 256;
-  var PENDING_LIMIT = 64;
+  var PENDING_LIMIT = 256;
+  var PENDING_MAX_AGE_MS = 6e4;
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
   var isStored = (value) => typeof value === "object" && value !== null && typeof value.body === "string" && typeof value.at === "number" && typeof value.accepted === "boolean";
   function read(store, key) {
@@ -7303,13 +7304,14 @@ ${button.innerHTML}`)
       if (key?.startsWith(store.prefix)) records.push([key, read(store, key)]);
     }
     const live = records.filter(
-      (record2) => record2[1] !== void 0 && now - record2[1].at < MAX_AGE_MS
+      (record2) => record2[1] !== void 0 && now - record2[1].at < (record2[1].accepted ? MAX_AGE_MS : PENDING_MAX_AGE_MS)
     );
     const oldestFirst = (accepted) => live.filter(([, message]) => message.accepted === accepted).sort((a, b) => a[1].at - b[1].at);
     const keep = new Set(
-      [...oldestFirst(true).slice(-ACCEPTED_LIMIT), ...oldestFirst(false).slice(-PENDING_LIMIT)].map(
-        ([key]) => key
-      )
+      [
+        ...oldestFirst(true).slice(-ACCEPTED_LIMIT),
+        ...oldestFirst(false).slice(0, PENDING_LIMIT)
+      ].map(([key]) => key)
     );
     for (const [key] of records) if (!keep.has(key)) store.storage.removeItem(key);
   }
@@ -8740,6 +8742,7 @@ ${button.innerHTML}`)
       return { action: "wait", phase };
     }
     if (!snapshot.settled) return { action: "settle", phase };
+    if (snapshot.ambiguous) return { action: "failure", phase };
     if (!snapshot.targetFound) return { action: "wait", phase };
     if (!snapshot.reactButton) return { action: "hover", phase };
     return { action: "open-menu", phase: "menu" };
@@ -8977,10 +8980,12 @@ ${button.innerHTML}`)
   }
   var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
   function announcedBubble(notified) {
-    const bubble = bubbles().reverse().find((el) => {
+    const matches = bubbles().filter((el) => {
       const label2 = el.getAttribute("aria-label") || "";
       return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, notified.body) && bubbleIsFresh(label2, notified.at);
     });
+    if (matches.length > 1) return "ambiguous";
+    const bubble = matches[0];
     let scope = bubble?.closest('[role="article"]');
     while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
       scope = scope.parentElement;
@@ -9003,13 +9008,18 @@ ${button.innerHTML}`)
     }
     let phase = "waiting";
     let target = null;
+    let ambiguous = false;
     let reactButton = null;
     let summaryBefore = "";
     while (true) {
       const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
       const scroller = newest ? messageScroller(newest) : null;
       const settled = newest !== null && atBottom(scroller);
-      if (phase === "waiting") target = announcedBubble(notified);
+      if (phase === "waiting") {
+        const found = announcedBubble(notified);
+        ambiguous = found === "ambiguous";
+        target = found === "ambiguous" ? null : found;
+      }
       if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
       const menuId = reactButton?.getAttribute("aria-controls");
       const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
@@ -9018,6 +9028,7 @@ ${button.innerHTML}`)
       const snapshot = {
         threadMatches: paneReady(),
         targetFound: target !== null && target.bubble.isConnected,
+        ambiguous,
         settled,
         reactButton: reactButton !== null,
         menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",

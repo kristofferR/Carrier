@@ -46,20 +46,20 @@ const atBottom = (scroller: HTMLElement | null) =>
 
 /** The newest message from someone else with the notification's text, sent
  * around when it fired. */
-function announcedBubble(notified: NotifiedMessage): {
-  bubble: HTMLElement;
-  scope: HTMLElement;
-} | null {
-  const bubble = bubbles()
-    .reverse()
-    .find((el) => {
-      const label = el.getAttribute("aria-label") || "";
-      return (
-        !/ by You(?::|$)/.test(label) &&
-        bubbleMatchesNotification(label, notified.body) &&
-        bubbleIsFresh(label, notified.at)
-      );
-    });
+function announcedBubble(
+  notified: NotifiedMessage,
+): { bubble: HTMLElement; scope: HTMLElement } | "ambiguous" | null {
+  const matches = bubbles().filter((el) => {
+    const label = el.getAttribute("aria-label") || "";
+    return (
+      !/ by You(?::|$)/.test(label) &&
+      bubbleMatchesNotification(label, notified.body) &&
+      bubbleIsFresh(label, notified.at)
+    );
+  });
+  // Two fresh messages with the same text: nothing says which was announced.
+  if (matches.length > 1) return "ambiguous";
+  const bubble = matches[0];
   // The hover toolbar and reaction summary sit beside the article, so widen
   // to the largest ancestor that still holds only this message.
   let scope = bubble?.closest<HTMLElement>('[role="article"]');
@@ -92,7 +92,8 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
   }
 
   let phase: QuickLikePhase = "waiting";
-  let target: ReturnType<typeof announcedBubble> = null;
+  let target: { bubble: HTMLElement; scope: HTMLElement } | null = null;
+  let ambiguous = false;
   let reactButton: HTMLElement | null = null;
   // null: 👍 was already ours, so any visible 👍 confirms it.
   let summaryBefore: string | null = "";
@@ -103,7 +104,11 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
     const newest = phase === "waiting" ? (bubbles().pop() ?? null) : null;
     const scroller = newest ? messageScroller(newest) : null;
     const settled = newest !== null && atBottom(scroller);
-    if (phase === "waiting") target = announcedBubble(notified);
+    if (phase === "waiting") {
+      const found = announcedBubble(notified);
+      ambiguous = found === "ambiguous";
+      target = found === "ambiguous" ? null : found;
+    }
     if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
     const menuId = reactButton?.getAttribute("aria-controls");
     const menu =
@@ -117,6 +122,7 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
     const snapshot: QuickLikeSnapshot = {
       threadMatches: paneReady(),
       targetFound: target !== null && target.bubble.isConnected,
+      ambiguous,
       settled,
       reactButton: reactButton !== null,
       menu: !menu
