@@ -9,7 +9,9 @@ export interface NotifiedMessage {
 }
 
 const KEY = "carrier-notified-messages";
-const LIMIT = 50;
+// Matches the native route cap, so every still-actionable notification keeps
+// its record.
+const LIMIT = 256;
 
 type Entry = [id: number, message: NotifiedMessage];
 

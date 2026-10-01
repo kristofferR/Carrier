@@ -7279,7 +7279,7 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/notified-messages.ts
   var KEY = "carrier-notified-messages";
-  var LIMIT = 50;
+  var LIMIT = 256;
   var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number";
   function load(storage) {
     try {
@@ -8720,20 +8720,35 @@ ${button.innerHTML}`)
     if (!text || !preview) return false;
     return text.startsWith(preview) || preview.endsWith(`: ${text}`);
   }
-  function bubbleSentMinute(label2) {
-    const match = /^Enter, Message sent (\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /i.exec(label2);
+  var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  function bubbleSentAt(label2, now) {
+    const match = /^Enter, Message sent (?:(\p{Letter}+) )?(\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /iu.exec(
+      label2
+    );
     if (!match) return null;
-    const meridiem = match[3]?.toLowerCase();
-    const hour = meridiem ? Number(match[1]) % 12 + (meridiem === "p" ? 12 : 0) : Number(match[1]);
-    return hour * 60 + Number(match[2]);
+    const today = new Date(now);
+    const day = match[1]?.toLowerCase();
+    let daysBack = 0;
+    if (day === "yesterday") daysBack = 1;
+    else if (day) {
+      const weekday = WEEKDAYS.indexOf(day);
+      if (weekday < 0) return null;
+      daysBack = (today.getDay() - weekday + 7) % 7 || 7;
+    }
+    const meridiem = match[4]?.toLowerCase();
+    const hour = meridiem ? Number(match[2]) % 12 + (meridiem === "p" ? 12 : 0) : Number(match[2]);
+    const sent = new Date(today);
+    sent.setDate(today.getDate() - daysBack);
+    sent.setHours(hour, Number(match[3]), 0, 0);
+    return sent.getTime();
   }
   var FRESH_MINUTES = 5;
-  function bubbleIsFresh(label2, notifiedAt) {
-    const sent = bubbleSentMinute(label2);
+  var MINUTE_MS = 6e4;
+  function bubbleIsFresh(label2, notifiedAt, now = Date.now()) {
+    const sent = bubbleSentAt(label2, now);
     if (sent === null) return false;
-    const at = new Date(notifiedAt);
-    const lag = at.getHours() * 60 + at.getMinutes() - sent;
-    return lag >= -1 && lag <= FRESH_MINUTES;
+    const lag = notifiedAt - sent;
+    return lag >= -MINUTE_MS && lag < (FRESH_MINUTES + 1) * MINUTE_MS;
   }
 
   // inject/src/messenger/lib/thread-restore.ts
@@ -9020,7 +9035,7 @@ ${button.innerHTML}`)
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
       const notified = notifiedMessage(Number(notification));
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified) {
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified?.body.trim()) {
         void report(false);
         return;
       }

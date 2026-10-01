@@ -180,7 +180,13 @@ export function initQuickLike() {
     // The page's own record of what the notification announced; gone after a
     // reload, when there is no safe way to tell which message it meant.
     const notified = notifiedMessage(Number(notification));
-    if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified) {
+    // No text (a photo, a sticker): nothing can identify the message.
+    if (
+      threadPathId(path) === null ||
+      !Number.isSafeInteger(id) ||
+      id <= 0 ||
+      !notified?.body.trim()
+    ) {
       void report(false);
       return;
     }

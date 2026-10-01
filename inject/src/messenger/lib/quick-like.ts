@@ -80,26 +80,49 @@ export function bubbleMatchesNotification(label: string, body: string): boolean 
   return text.startsWith(preview) || preview.endsWith(`: ${text}`);
 }
 
-/** Minute of the day a bubble was sent, or null when its label names another day. */
-export function bubbleSentMinute(label: string): number | null {
-  const match = /^Enter, Message sent (\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /i.exec(label);
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+
+/**
+ * When a bubble was sent, to the minute. Messenger words the label relative to
+ * now: a bare time is today, then "Yesterday" or a weekday within the last
+ * week. Older or unrecognized labels give null.
+ */
+export function bubbleSentAt(label: string, now: number): number | null {
+  const match =
+    /^Enter, Message sent (?:(\p{Letter}+) )?(\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /iu.exec(
+      label,
+    );
   if (!match) return null;
-  const meridiem = match[3]?.toLowerCase();
-  const hour = meridiem ? (Number(match[1]) % 12) + (meridiem === "p" ? 12 : 0) : Number(match[1]);
-  return hour * 60 + Number(match[2]);
+  const today = new Date(now);
+  const day = match[1]?.toLowerCase();
+  let daysBack = 0;
+  if (day === "yesterday") daysBack = 1;
+  else if (day) {
+    const weekday = WEEKDAYS.indexOf(day);
+    if (weekday < 0) return null;
+    // Today's own name never labels a bubble, so it means a week ago.
+    daysBack = (today.getDay() - weekday + 7) % 7 || 7;
+  }
+  const meridiem = match[4]?.toLowerCase();
+  const hour = meridiem ? (Number(match[2]) % 12) + (meridiem === "p" ? 12 : 0) : Number(match[2]);
+  const sent = new Date(today);
+  sent.setDate(today.getDate() - daysBack);
+  sent.setHours(hour, Number(match[3]), 0, 0);
+  return sent.getTime();
 }
 
 /** How long after a message was sent its notification may still have fired. */
 const FRESH_MINUTES = 5;
+const MINUTE_MS = 60_000;
 
 /**
  * Whether a bubble was sent around when its notification fired. This keeps an
  * older message with the same text from standing in for one still rendering.
  */
-export function bubbleIsFresh(label: string, notifiedAt: number): boolean {
-  const sent = bubbleSentMinute(label);
+export function bubbleIsFresh(label: string, notifiedAt: number, now = Date.now()): boolean {
+  const sent = bubbleSentAt(label, now);
   if (sent === null) return false;
-  const at = new Date(notifiedAt);
-  const lag = at.getHours() * 60 + at.getMinutes() - sent;
-  return lag >= -1 && lag <= FRESH_MINUTES;
+  // The label is to the minute; allow a minute of clock skew the other way.
+  const lag = notifiedAt - sent;
+  return lag >= -MINUTE_MS && lag < (FRESH_MINUTES + 1) * MINUTE_MS;
 }

@@ -16,12 +16,12 @@ const memoryStorage = (): Storage => {
 };
 
 describe("notified messages", () => {
-  test("survive a reload through storage and keep the newest fifty", () => {
+  test("survive a reload through storage and keep the newest 256", () => {
     const storage = memoryStorage();
-    for (let id = 1; id <= 60; id++) rememberNotifiedMessage(id, `m${id}`, id, storage);
-    expect(notifiedMessage(60, storage)).toEqual({ body: "m60", at: 60 });
-    expect(notifiedMessage(11, storage)).toEqual({ body: "m11", at: 11 });
-    expect(notifiedMessage(10, storage)).toBeUndefined();
+    for (let id = 1; id <= 300; id++) rememberNotifiedMessage(id, `m${id}`, id, storage);
+    expect(notifiedMessage(300, storage)).toEqual({ body: "m300", at: 300 });
+    expect(notifiedMessage(45, storage)).toEqual({ body: "m45", at: 45 });
+    expect(notifiedMessage(44, storage)).toBeUndefined();
   });
 
   test("ignores corrupt storage", () => {
