@@ -58,10 +58,10 @@ jobs:
       - name: Install minimum Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: 1.89.0
+          toolchain: 1.90.0
 
       - name: Check minimum supported Rust version
-        run: cargo +1.89.0 check --manifest-path src-tauri/Cargo.toml --locked
+        run: cargo +1.90.0 check --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Validate Linux desktop metadata
         run: |
@@ -150,7 +150,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: taiki-e/install-action@94c31af3204a9f15ab40b35ad084410b905bbc73 # v2.87.17
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-audit
 

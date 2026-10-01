@@ -6,7 +6,7 @@ authors = ["kristofferR"]
 edition = "2021"
 # Keep in step with the highest dependency MSRV (Tauri 2 + plugins) so the
 # advertised minimum is actually buildable.
-rust-version = "1.89"
+rust-version = "1.90"
 
 [lib]
 # The Tauri app logic lives in a lib so it can be shared with mobile targets.
@@ -25,7 +25,7 @@ diagnostics = ["mcp", "tauri-plugin-mcp/devtools"]
 
 [dependencies]
 tauri = { version = "2", features = ["image-png"] }
-tauri-plugin-updater = "2.12"
+tauri-plugin-updater = "2.13"
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
@@ -123,7 +123,7 @@ mac-notification-sys = "0.6"
 # NSMenu is built with muda directly (the same crate Tauri's menus wrap — same
 # version, no extra build cost) and served via an `applicationDockMenu:` hook.
 # Menu events still flow through Tauri's regular menu-event plumbing.
-muda = "0.19"
+muda = "0.20"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # Win32_System_Registry: read the taskbar's light/dark preference for the
@@ -161,10 +161,3 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
-
-# Backport Tauri #15224 until the fix reaches a stable runtime release.
-# See vendor/README.md for provenance and removal instructions.
-[patch.crates-io]
-tauri-runtime-wry = { path = "vendor/tauri-runtime-wry" }
-# Keep Tauri and the Dock menu on one muda instance while backporting #361.
-muda = { path = "vendor/muda" }
