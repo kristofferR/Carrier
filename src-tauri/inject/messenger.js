@@ -774,12 +774,12 @@ ${button.innerHTML}`)
   var nativeNow = performance.now.bind(performance);
   var InspectionTimeout = class extends Error {
   };
-  async function inspect(read) {
+  async function inspect(read2) {
     const startedAt = nativeNow();
     let timer;
     try {
       const result = await Promise.race([
-        read(),
+        read2(),
         new Promise((_, reject) => {
           timer = nativeSetTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
         })
@@ -796,8 +796,8 @@ ${button.innerHTML}`)
     return messenger.length === 1 && value.every((label2) => label2 === "settings" || messenger.includes(label2));
   }
   var FacebookWorkerRecovery = class {
-    constructor(load2, accountScope, canRestartSharedWorker = async () => false) {
-      __publicField(this, "load", load2);
+    constructor(load, accountScope, canRestartSharedWorker = async () => false) {
+      __publicField(this, "load", load);
       __publicField(this, "accountScope", accountScope);
       __publicField(this, "canRestartSharedWorker", canRestartSharedWorker);
       __publicField(this, "replay");
@@ -3737,7 +3737,7 @@ ${button.innerHTML}`)
   async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
     if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
     let timer;
-    const read = async () => {
+    const read2 = async () => {
       const singleton = importModule("LSDatabaseSingleton");
       const db = await singleton.LSDatabaseSingleton;
       const i64 = importModule("I64");
@@ -3795,7 +3795,7 @@ ${button.innerHTML}`)
     };
     try {
       return await Promise.race([
-        read().catch(() => null),
+        read2().catch(() => null),
         new Promise((resolve) => {
           timer = setTimeout(() => resolve(null), timeoutMs);
         })
@@ -6598,11 +6598,11 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
-      if (!read.length) return;
+      const read2 = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      if (!read2.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
-        if (!read.some(
+        if (!read2.some(
           (identity) => opaqueNotificationMatches(this.receipts[index].identity, identity)
         )) {
           continue;
@@ -6806,15 +6806,15 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => ({
+      const read2 = [...readRows].map((row) => ({
         key: row.key ? hashText(row.key) : null,
         identity: opaqueNotificationIdentity(row.title, row.body)
       }));
-      if (!read.length) return;
+      if (!read2.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
-        if (!read.some(
+        if (!read2.some(
           ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
         )) {
           continue;
@@ -7278,48 +7278,64 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/notified-messages.ts
-  var KEY = "carrier-notified-messages";
   var ACCEPTED_LIMIT = 256;
   var PENDING_LIMIT = 64;
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number" && typeof value[1]?.accepted === "boolean";
-  function load(storage) {
+  var isStored = (value) => typeof value === "object" && value !== null && typeof value.body === "string" && typeof value.at === "number" && typeof value.accepted === "boolean";
+  function read(store, key) {
     try {
-      const entries = JSON.parse(storage?.getItem(KEY) || "[]");
-      return Array.isArray(entries) ? entries.filter(isEntry) : [];
-    } catch {
-      return [];
-    }
-  }
-  function save(storage, entries, now) {
-    const live = entries.filter(([, message]) => now - message.at < MAX_AGE_MS);
-    const accepted = live.filter(([, message]) => message.accepted).slice(-ACCEPTED_LIMIT);
-    const pending = live.filter(([, message]) => !message.accepted).slice(-PENDING_LIMIT);
-    try {
-      storage?.setItem(KEY, JSON.stringify([...accepted, ...pending]));
-    } catch {
-    }
-  }
-  var shared = () => {
-    try {
-      return window.localStorage;
+      const value = JSON.parse(store.storage.getItem(key) || "null");
+      return isStored(value) ? value : void 0;
     } catch {
       return void 0;
     }
-  };
-  function rememberNotifiedMessage(id, body, at = Date.now(), storage = shared()) {
-    const entries = load(storage).filter(([known]) => known !== id);
-    save(storage, [...entries, [id, { body, at, accepted: false }]], at);
   }
-  function settleNotifiedMessage(id, accepted, now = Date.now(), storage = shared()) {
-    const entries = load(storage);
-    const entry = entries.find(([known]) => known === id);
-    if (!entry) return;
-    if (accepted) entry[1].accepted = true;
-    save(storage, accepted ? entries : entries.filter(([known]) => known !== id), now);
+  function write(store, id, message) {
+    try {
+      store.storage.setItem(`${store.prefix}${id}`, JSON.stringify(message));
+    } catch {
+    }
   }
-  function notifiedMessage(id, storage = shared()) {
-    const message = load(storage).find(([known]) => known === id)?.[1];
+  function prune(store, now) {
+    const records = [];
+    for (let index = 0; index < store.storage.length; index++) {
+      const key = store.storage.key(index);
+      if (key?.startsWith(store.prefix)) records.push([key, read(store, key)]);
+    }
+    const live = records.filter(
+      (record2) => record2[1] !== void 0 && now - record2[1].at < MAX_AGE_MS
+    );
+    const oldestFirst = (accepted) => live.filter(([, message]) => message.accepted === accepted).sort((a, b) => a[1].at - b[1].at);
+    const keep = new Set(
+      [...oldestFirst(true).slice(-ACCEPTED_LIMIT), ...oldestFirst(false).slice(-PENDING_LIMIT)].map(
+        ([key]) => key
+      )
+    );
+    for (const [key] of records) if (!keep.has(key)) store.storage.removeItem(key);
+  }
+  function accountStore() {
+    try {
+      const prefix = accountScopedStorageKey("carrier-notified-message", document.cookie);
+      return prefix ? { storage: window.localStorage, prefix: `${prefix}:` } : null;
+    } catch {
+      return null;
+    }
+  }
+  function rememberNotifiedMessage(id, body, at = Date.now(), store = accountStore()) {
+    if (!store) return;
+    write(store, id, { body, at, accepted: false });
+    prune(store, at);
+  }
+  function settleNotifiedMessage(id, accepted, now = Date.now(), store = accountStore()) {
+    if (!store) return;
+    const message = read(store, `${store.prefix}${id}`);
+    if (!message) return;
+    if (accepted) write(store, id, { ...message, accepted: true });
+    else store.storage.removeItem(`${store.prefix}${id}`);
+    prune(store, now);
+  }
+  function notifiedMessage(id, store = accountStore()) {
+    const message = store ? read(store, `${store.prefix}${id}`) : void 0;
     return message?.accepted ? { body: message.body, at: message.at } : void 0;
   }
 
@@ -9681,7 +9697,7 @@ ${text}`)) {
       if (!panel) return;
       panel.style.setProperty("--schedule-accent", accent);
     };
-    const save2 = async (due) => {
+    const save = async (due) => {
       if (busy) return;
       const current = account();
       if (!current || current !== owner || thread() !== panelThread) {
@@ -9821,7 +9837,7 @@ ${text}`)) {
             toast("Choose a valid local time in HH:mm format.");
             return;
           }
-          void save2(value);
+          void save(value);
         },
         "carrier-schedule-primary"
       );
@@ -9856,7 +9872,7 @@ ${text}`)) {
             "",
             () => {
               const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
-              if (updated) void save2(updated.due);
+              if (updated) void save(updated.due);
             },
             "carrier-schedule-preset"
           );

@@ -1429,6 +1429,18 @@ impl PendingPageReplies {
         }
     }
 
+    /// Move an attempt's resume expiry, e.g. when a reply's acknowledgement
+    /// window restarts after a slow dispatch.
+    fn extend(&mut self, id: u64, attempt: u64, expires_at: Instant) {
+        if let Some(reply) = self
+            .replies
+            .get_mut(&id)
+            .filter(|reply| reply.attempt == attempt)
+        {
+            reply.expires_at = expires_at;
+        }
+    }
+
     fn resumable(&mut self, now: Instant) -> Vec<PendingPageReply> {
         self.replies.retain(|_, reply| reply.expires_at > now);
         self.replies
@@ -1867,7 +1879,13 @@ fn run_hidden_page_action(
     // acknowledgement window after a slow dispatch. Like and Mute budget from
     // `deadline` and must finish inside it.
     let ack_deadline = if mode == PendingReplyMode::Send {
-        Instant::now() + QUICK_REPLY_ACK_TIMEOUT
+        let extended = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
+        // A hard navigation after a slow dispatch must still resume.
+        pending_page_replies()
+            .lock()
+            .unwrap()
+            .extend(id, attempt, extended);
+        extended
     } else {
         deadline
     };
@@ -3153,6 +3171,32 @@ mod tests {
         assert!(pending.replies.contains_key(&7));
         pending.complete(7, 70);
         assert!(pending.replies.is_empty());
+    }
+
+    #[test]
+    fn pending_page_replies_extend_only_the_current_attempt() {
+        let now = Instant::now();
+        let mut pending = PendingPageReplies::default();
+        pending.register(
+            7,
+            70,
+            "/t/123/".into(),
+            "reply".into(),
+            PendingReplyMode::Send,
+            now,
+        );
+        pending.extend(7, 69, now + Duration::from_secs(20));
+        assert!(pending.resumable(now).is_empty());
+        pending.register(
+            7,
+            71,
+            "/t/123/".into(),
+            "reply".into(),
+            PendingReplyMode::Send,
+            now,
+        );
+        pending.extend(7, 71, now + Duration::from_secs(20));
+        assert_eq!(pending.resumable(now).len(), 1);
     }
 
     #[test]

@@ -1,12 +1,16 @@
+import { accountScopedStorageKey } from "./threads";
+
 /** What each emitted notification announced, keyed by the page's notification
  * id, so its 👍 action can find the message: the raw text (before link or
  * photo rewording) and when the page saw it. Kept in localStorage: native runs
  * actions in the main window, which must find a record a secondary window or
  * a page since reloaded wrote. Ids are time-based, so they never collide.
  *
- * A record counts only once native accepts its notification (settled from the
- * main window's delivery result), so duplicates and rate-limited bursts never
- * evict the record of a notification still on screen. */
+ * Each record has its own key under the signed-in account, so windows never
+ * overwrite each other's updates and another account's records are never
+ * read. A record counts only once native accepts its notification (settled
+ * from the main window's delivery result), so duplicates and rate-limited
+ * bursts never evict the record of a notification still on screen. */
 export interface NotifiedMessage {
   body: string;
   at: number;
@@ -16,7 +20,6 @@ interface StoredMessage extends NotifiedMessage {
   accepted: boolean;
 }
 
-const KEY = "carrier-notified-messages";
 // Matches the native route cap, so every still-actionable notification keeps
 // its record.
 const ACCEPTED_LIMIT = 256;
@@ -24,49 +27,72 @@ const ACCEPTED_LIMIT = 256;
 const PENDING_LIMIT = 64;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-type Entry = [id: number, message: StoredMessage];
-
-const isEntry = (value: unknown): value is Entry =>
-  Array.isArray(value) &&
-  typeof value[0] === "number" &&
-  typeof value[1]?.body === "string" &&
-  typeof value[1]?.at === "number" &&
-  typeof value[1]?.accepted === "boolean";
-
-function load(storage: Storage | undefined): Entry[] {
-  try {
-    const entries: unknown = JSON.parse(storage?.getItem(KEY) || "[]");
-    return Array.isArray(entries) ? entries.filter(isEntry) : [];
-  } catch {
-    return [];
-  }
+interface Store {
+  storage: Storage;
+  prefix: string;
 }
 
-function save(storage: Storage | undefined, entries: Entry[], now: number) {
-  const live = entries.filter(([, message]) => now - message.at < MAX_AGE_MS);
-  const accepted = live.filter(([, message]) => message.accepted).slice(-ACCEPTED_LIMIT);
-  const pending = live.filter(([, message]) => !message.accepted).slice(-PENDING_LIMIT);
-  try {
-    storage?.setItem(KEY, JSON.stringify([...accepted, ...pending]));
-  } catch {}
-}
+const isStored = (value: unknown): value is StoredMessage =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as StoredMessage).body === "string" &&
+  typeof (value as StoredMessage).at === "number" &&
+  typeof (value as StoredMessage).accepted === "boolean";
 
-const shared = () => {
+function read(store: Store, key: string): StoredMessage | undefined {
   try {
-    return window.localStorage;
+    const value: unknown = JSON.parse(store.storage.getItem(key) || "null");
+    return isStored(value) ? value : undefined;
   } catch {
     return undefined;
   }
-};
+}
+
+function write(store: Store, id: number, message: StoredMessage) {
+  try {
+    store.storage.setItem(`${store.prefix}${id}`, JSON.stringify(message));
+  } catch {}
+}
+
+/** Drop expired records and the oldest beyond each cap. */
+function prune(store: Store, now: number) {
+  const records: [key: string, message: StoredMessage | undefined][] = [];
+  for (let index = 0; index < store.storage.length; index++) {
+    const key = store.storage.key(index);
+    if (key?.startsWith(store.prefix)) records.push([key, read(store, key)]);
+  }
+  const live = records.filter(
+    (record): record is [string, StoredMessage] =>
+      record[1] !== undefined && now - record[1].at < MAX_AGE_MS,
+  );
+  const oldestFirst = (accepted: boolean) =>
+    live.filter(([, message]) => message.accepted === accepted).sort((a, b) => a[1].at - b[1].at);
+  const keep = new Set(
+    [...oldestFirst(true).slice(-ACCEPTED_LIMIT), ...oldestFirst(false).slice(-PENDING_LIMIT)].map(
+      ([key]) => key,
+    ),
+  );
+  for (const [key] of records) if (!keep.has(key)) store.storage.removeItem(key);
+}
+
+function accountStore(): Store | null {
+  try {
+    const prefix = accountScopedStorageKey("carrier-notified-message", document.cookie);
+    return prefix ? { storage: window.localStorage, prefix: `${prefix}:` } : null;
+  } catch {
+    return null;
+  }
+}
 
 export function rememberNotifiedMessage(
   id: number,
   body: string,
   at = Date.now(),
-  storage = shared(),
+  store = accountStore(),
 ) {
-  const entries = load(storage).filter(([known]) => known !== id);
-  save(storage, [...entries, [id, { body, at, accepted: false }]], at);
+  if (!store) return;
+  write(store, id, { body, at, accepted: false });
+  prune(store, at);
 }
 
 /** Native's verdict: keep an accepted notification's record, drop the rest. */
@@ -74,16 +100,17 @@ export function settleNotifiedMessage(
   id: number,
   accepted: boolean,
   now = Date.now(),
-  storage = shared(),
+  store = accountStore(),
 ) {
-  const entries = load(storage);
-  const entry = entries.find(([known]) => known === id);
-  if (!entry) return;
-  if (accepted) entry[1].accepted = true;
-  save(storage, accepted ? entries : entries.filter(([known]) => known !== id), now);
+  if (!store) return;
+  const message = read(store, `${store.prefix}${id}`);
+  if (!message) return;
+  if (accepted) write(store, id, { ...message, accepted: true });
+  else store.storage.removeItem(`${store.prefix}${id}`);
+  prune(store, now);
 }
 
-export function notifiedMessage(id: number, storage = shared()): NotifiedMessage | undefined {
-  const message = load(storage).find(([known]) => known === id)?.[1];
+export function notifiedMessage(id: number, store = accountStore()): NotifiedMessage | undefined {
+  const message = store ? read(store, `${store.prefix}${id}`) : undefined;
   return message?.accepted ? { body: message.body, at: message.at } : undefined;
 }
