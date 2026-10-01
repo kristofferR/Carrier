@@ -134,7 +134,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
 }
 
 export function initQuickMute() {
-  window.__carrierQuickMute = (path, id, attempt) => {
+  window.__carrierQuickMute = (path, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-mute.ack", "mute acknowledgement emit failed"),
@@ -145,9 +145,10 @@ export function initQuickMute() {
     }
     // Serialized with notification replies and scheduled sends: all of them
     // navigate the same hidden page.
-    // The budget includes any wait behind another page action, so a queued
-    // mute ends within the native acknowledgement window instead of after it.
-    const deadline = Date.now() + MUTE_BUDGET_MS;
+    // Native passes what is left of its acknowledgement wait, including after a
+    // hard-navigation resume, and queue time counts against it: a mute never
+    // lands after native has reported failure.
+    const deadline = Date.now() + Math.min(Number(budgetMs) || 0, MUTE_BUDGET_MS);
     void withComposerDeliveryWhenAvailable(() => mute(path, deadline))
       .then((ok) => report(ok))
       .catch(() => {

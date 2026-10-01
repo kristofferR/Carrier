@@ -8762,7 +8762,7 @@ ${button.innerHTML}`)
     }
   }
   function initQuickLike() {
-    window.__carrierQuickLike = (path, id, attempt) => {
+    window.__carrierQuickLike = (path, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
@@ -8770,7 +8770,7 @@ ${button.innerHTML}`)
         void report(false);
         return;
       }
-      const deadline = Date.now() + LIKE_BUDGET_MS;
+      const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
       void withComposerDeliveryWhenAvailable(() => like(path, deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-like.exception", "like flow raised an exception");
         void report(false);
@@ -9052,7 +9052,7 @@ ${button.innerHTML}`)
     }
   }
   function initQuickMute() {
-    window.__carrierQuickMute = (path, id, attempt) => {
+    window.__carrierQuickMute = (path, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
       );
@@ -9060,7 +9060,7 @@ ${button.innerHTML}`)
         void report(false);
         return;
       }
-      const deadline = Date.now() + MUTE_BUDGET_MS;
+      const deadline = Date.now() + Math.min(Number(budgetMs) || 0, MUTE_BUDGET_MS);
       void withComposerDeliveryWhenAvailable(() => mute(path, deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-mute.exception", "mute flow raised an exception");
         void report(false);

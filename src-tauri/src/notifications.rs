@@ -1290,6 +1290,9 @@ const MAX_QUICK_REPLY_CHARS: usize = 2_000;
 const QUICK_REPLY_ACK_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const QUICK_REPLY_DRAFT_TIMEOUT: Duration = Duration::from_secs(45);
+/// Leaves time for a page action's acknowledgement to reach the native waiter.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const PAGE_ACTION_ACK_MARGIN: Duration = Duration::from_secs(2);
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 const MAX_PENDING_PAGE_REPLIES: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1499,15 +1502,20 @@ fn next_reply_attempt() -> u64 {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+/// `remaining` is what is left of the native acknowledgement wait. Like and
+/// Mute budget from it, so a page reloaded mid-action (and resumed) cannot
+/// finish after the native side has already reported failure.
 fn quick_reply_script(
     id: u64,
     attempt: u64,
     thread_path: &str,
     text: &str,
     mode: PendingReplyMode,
+    remaining: Duration,
 ) -> Result<String, String> {
     let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
     let text = serde_json::to_string(text).map_err(|error| error.to_string())?;
+    let budget = remaining.saturating_sub(PAGE_ACTION_ACK_MARGIN).as_millis();
     Ok(match mode {
         PendingReplyMode::Send => {
             format!("window.__carrierQuickReply?.({path}, {text}, {id}, {attempt});")
@@ -1515,8 +1523,12 @@ fn quick_reply_script(
         PendingReplyMode::Draft => {
             format!("window.__carrierQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
         }
-        PendingReplyMode::Mute => format!("window.__carrierQuickMute?.({path}, {id}, {attempt});"),
-        PendingReplyMode::Like => format!("window.__carrierQuickLike?.({path}, {id}, {attempt});"),
+        PendingReplyMode::Mute => {
+            format!("window.__carrierQuickMute?.({path}, {id}, {attempt}, {budget});")
+        }
+        PendingReplyMode::Like => {
+            format!("window.__carrierQuickLike?.({path}, {id}, {attempt}, {budget});")
+        }
     })
 }
 
@@ -1561,6 +1573,7 @@ pub(crate) fn resume_pending_page_replies(window: &tauri::WebviewWindow) {
             &reply.thread_path,
             &reply.text,
             reply.mode,
+            reply.expires_at.saturating_duration_since(Instant::now()),
         ) {
             Ok(script) => {
                 if let Err(error) = window.eval(script) {
@@ -1592,7 +1605,14 @@ fn eval_hidden_page_action(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
-    let script = quick_reply_script(id, attempt, thread_path, text, mode)?;
+    let script = quick_reply_script(
+        id,
+        attempt,
+        thread_path,
+        text,
+        mode,
+        QUICK_REPLY_ACK_TIMEOUT,
+    )?;
     let (sent, received) = std::sync::mpsc::sync_channel(1);
     app.run_on_main_thread(move || {
         let result = window.eval(script).map_err(|error| error.to_string());
@@ -1666,8 +1686,15 @@ fn open_reply_fallback(
 ) {
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, &text, PendingReplyMode::Draft);
-    let script =
-        quick_reply_script(id, attempt, &thread_path, &text, PendingReplyMode::Draft).unwrap();
+    let script = quick_reply_script(
+        id,
+        attempt,
+        &thread_path,
+        &text,
+        PendingReplyMode::Draft,
+        QUICK_REPLY_DRAFT_TIMEOUT,
+    )
+    .unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         show_main_with_activation_token(&main_app, activation_token.as_deref());
@@ -1693,8 +1720,15 @@ fn open_notification_composer(
     };
     let attempt = next_reply_attempt();
     register_pending_page_reply(id, attempt, &thread_path, "", PendingReplyMode::Draft);
-    let script =
-        quick_reply_script(id, attempt, &thread_path, "", PendingReplyMode::Draft).unwrap();
+    let script = quick_reply_script(
+        id,
+        attempt,
+        &thread_path,
+        "",
+        PendingReplyMode::Draft,
+        QUICK_REPLY_DRAFT_TIMEOUT,
+    )
+    .unwrap();
     let main_app = app.clone();
     if let Err(error) = app.run_on_main_thread(move || {
         show_main_with_activation_token(&main_app, activation_token.as_deref());
@@ -2946,6 +2980,19 @@ mod tests {
             async_io::block_on(wait_for_linux_notification_response(messages, 7, ":1.42")).unwrap(),
             (LinuxNotificationResponse::Open, None)
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn page_actions_budget_from_the_remaining_native_wait() {
+        let script =
+            |mode, remaining| quick_reply_script(7, 3, "/t/1/", "", mode, remaining).unwrap();
+        assert_eq!(
+            script(PendingReplyMode::Mute, Duration::from_secs(20)),
+            "window.__carrierQuickMute?.(\"/t/1/\", 7, 3, 18000);"
+        );
+        // A resume after most of the wait has passed leaves the page no time.
+        assert!(script(PendingReplyMode::Like, Duration::from_secs(1)).ends_with(", 3, 0);"));
     }
 
     #[cfg(target_os = "linux")]

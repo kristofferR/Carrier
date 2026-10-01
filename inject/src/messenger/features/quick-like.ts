@@ -129,7 +129,7 @@ async function like(path: string, deadline: number): Promise<boolean> {
 }
 
 export function initQuickLike() {
-  window.__carrierQuickLike = (path, id, attempt) => {
+  window.__carrierQuickLike = (path, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-like.ack", "like acknowledgement emit failed"),
@@ -140,9 +140,10 @@ export function initQuickLike() {
     }
     // Serialized with replies, mutes, and scheduled sends: all of them
     // navigate the same hidden page.
-    // The budget includes any wait behind another page action, so a queued
-    // like ends within the native acknowledgement window instead of after it.
-    const deadline = Date.now() + LIKE_BUDGET_MS;
+    // Native passes what is left of its acknowledgement wait, including after a
+    // hard-navigation resume, and queue time counts against it: a like never
+    // lands after native has reported failure.
+    const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
     void withComposerDeliveryWhenAvailable(() => like(path, deadline))
       .then((ok) => report(ok))
       .catch(() => {
