@@ -15,6 +15,8 @@ use crate::notifications::{
 };
 
 const MESSAGE_CATEGORY_ID: &str = "carrier.message";
+/// Reply alone, for a Messenger UI whose language Like/Mute can't drive.
+const REPLY_CATEGORY_ID: &str = "carrier.message.reply";
 const REPLY_ACTION_ID: &str = "reply";
 const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 
@@ -209,15 +211,18 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
             UNNotificationActionOptionNone,
         )
     });
-    let actions = NSArray::from_slice(&[reply_action, &*like, &*mute]);
     let intents = NSArray::<NSString>::from_slice(&[]);
-    let category = UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
-        &NSString::from_str(MESSAGE_CATEGORY_ID),
-        &actions,
-        &intents,
-        UNNotificationCategoryOptionNone,
-    );
-    center.setNotificationCategories(&NSSet::from_slice(&[&*category]));
+    let category = |id: &str, actions: &[&UNNotificationAction]| {
+        UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+            &NSString::from_str(id),
+            &NSArray::from_slice(actions),
+            &intents,
+            UNNotificationCategoryOptionNone,
+        )
+    };
+    let full = category(MESSAGE_CATEGORY_ID, &[reply_action, &*like, &*mute]);
+    let reply_only = category(REPLY_CATEGORY_ID, &[reply_action]);
+    center.setNotificationCategories(&NSSet::from_slice(&[&*full, &*reply_only]));
 
     let options = UNAuthorizationOptions::Badge
         | UNAuthorizationOptions::Alert
@@ -287,6 +292,7 @@ fn apply_route_metadata(
     group_by_conversation: bool,
     reply_eligible: bool,
 ) -> Option<String> {
+    use crate::notifications::quick_actions_supported;
     use objc2::rc::Retained;
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSString};
 
@@ -301,7 +307,11 @@ fn apply_route_metadata(
         }
     }
     if reply_eligible && thread_path.is_some() {
-        content.setCategoryIdentifier(&NSString::from_str(MESSAGE_CATEGORY_ID));
+        content.setCategoryIdentifier(&NSString::from_str(if quick_actions_supported() {
+            MESSAGE_CATEGORY_ID
+        } else {
+            REPLY_CATEGORY_ID
+        }));
     }
 
     let id_key = NSString::from_str("id");

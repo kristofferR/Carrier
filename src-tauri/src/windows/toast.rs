@@ -53,6 +53,8 @@ pub(crate) struct ToastSpec {
     pub sound: bool,
     /// Eligible message toasts gain a reply input plus Reply/Open actions.
     pub reply_eligible: bool,
+    /// Eligible toasts also get 👍 and Mute (English Messenger UI only).
+    pub quick_actions: bool,
     /// Sync alerts never get actions or grouping.
     pub is_sync_alert: bool,
 }
@@ -121,7 +123,12 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
             "<action content=\"Reply\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/>",
             id = spec.hex_id,
         ));
-        for action in [NotificationAction::Like, NotificationAction::Mute] {
+        let quick_actions = if spec.quick_actions {
+            [NotificationAction::Like, NotificationAction::Mute].as_slice()
+        } else {
+            &[]
+        };
+        for action in quick_actions {
             xml.push_str(&format!(
                 "<action content=\"{}\" arguments=\"action={}&amp;id={}\" activationType=\"background\"/>",
                 action.title(),
@@ -321,6 +328,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
         hex_id: hex.clone(),
         sound: opts.sound,
         reply_eligible: opts.reply_eligible,
+        quick_actions: crate::notifications::quick_actions_supported(),
         is_sync_alert: opts.is_sync_alert,
     };
 
@@ -636,6 +644,7 @@ mod tests {
             hex_id: hex_id(0x2a),
             sound: true,
             reply_eligible,
+            quick_actions: true,
             is_sync_alert,
         }
     }
@@ -674,6 +683,12 @@ mod tests {
         assert!(xml.contains("content=\"Open\""));
         assert!(xml.contains("arguments=\"action=like&amp;id=000000000000002a\""));
         assert!(xml.contains("arguments=\"action=mute&amp;id=000000000000002a\""));
+
+        let mut reply_only = spec(true, false);
+        reply_only.quick_actions = false;
+        let xml = build_toast_xml(&reply_only);
+        assert!(xml.contains("action=reply&amp;id="));
+        assert!(!xml.contains("action=like") && !xml.contains("action=mute"));
     }
 
     #[test]

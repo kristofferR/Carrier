@@ -11,7 +11,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -65,6 +65,19 @@ pub(crate) struct NotifyMsg {
     /// Kept native-side so notification clicks still work after a page reload.
     #[serde(default)]
     thread_path: String,
+    /// Messenger's UI language is English. Older page bundles omit it.
+    #[serde(default)]
+    english_ui: bool,
+}
+
+/// The Messenger UI language the page last reported. Like and Mute drive
+/// English-labelled controls, so they are offered only for an English UI;
+/// Reply works in any language.
+static MESSENGER_ENGLISH_UI: AtomicBool = AtomicBool::new(false);
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) fn quick_actions_supported() -> bool {
+    MESSENGER_ENGLISH_UI.load(Ordering::Relaxed)
 }
 
 impl NotifyMsg {
@@ -884,7 +897,12 @@ fn linux_quick_actions_eligible(
     capabilities: LinuxNotificationCapabilities,
     snap: bool,
 ) -> bool {
-    !hide_preview && notification_id != 0 && thread_path.is_some() && capabilities.actions && !snap
+    !hide_preview
+        && notification_id != 0
+        && thread_path.is_some()
+        && capabilities.actions
+        && !snap
+        && quick_actions_supported()
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1600,22 +1618,23 @@ fn eval_hidden_page_action(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is unavailable".to_string())?;
-    let script = quick_reply_script(
-        id,
-        attempt,
-        thread_path,
-        text,
-        mode,
-        deadline.saturating_duration_since(Instant::now()),
-    )?;
+    let (thread_path, text) = (thread_path.to_string(), text.to_string());
     let (sent, received) = std::sync::mpsc::sync_channel(1);
     app.run_on_main_thread(move || {
-        let result = window.eval(script).map_err(|error| error.to_string());
+        // Budget from when the eval actually runs: a main thread that only
+        // gets here after the deadline must not start the page action.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = if remaining.is_zero() {
+            Err("page action expired before dispatch".to_string())
+        } else {
+            quick_reply_script(id, attempt, &thread_path, &text, mode, remaining)
+                .and_then(|script| window.eval(script).map_err(|error| error.to_string()))
+        };
         let _ = sent.send(result);
     })
     .map_err(|error| error.to_string())?;
     received
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
         .map_err(|error| format!("quick-reply eval dispatch failed: {error}"))?
 }
 
@@ -2087,6 +2106,7 @@ pub(crate) fn show_message_notification(
         )
     };
     late_notification_routes().lock().unwrap().forget(msg.id);
+    MESSENGER_ENGLISH_UI.store(msg.english_ui, Ordering::Relaxed);
     if muted {
         log::info!(
             "carrier:notify suppressed by mute_notifications (id {})",
@@ -2839,6 +2859,7 @@ mod tests {
             image: String::new(),
             dedupe_key: dedupe_key.into(),
             thread_path: String::new(),
+            english_ui: false,
         }
     }
 

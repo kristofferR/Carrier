@@ -7531,7 +7531,9 @@ ${button.innerHTML}`)
           icon,
           image,
           dedupe_key: dedupeKey,
-          thread_path: threadPath || ""
+          thread_path: threadPath || "",
+          // Like/Mute match English control labels; native offers them only then.
+          english_ui: /^en\b/i.test(document.documentElement.lang)
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
