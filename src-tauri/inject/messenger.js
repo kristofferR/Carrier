@@ -8698,13 +8698,13 @@ ${button.innerHTML}`)
       if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
     return null;
   }
-  async function like(path) {
+  async function like(path, deadline) {
     const wantedThread = threadPathId(path);
+    if (Date.now() >= deadline) return false;
     if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-like.open", "validated thread could not be opened");
       return false;
     }
-    const deadline = Date.now() + LIKE_BUDGET_MS;
     let phase = "waiting";
     let target = null;
     let reactButton = null;
@@ -8770,7 +8770,8 @@ ${button.innerHTML}`)
         void report(false);
         return;
       }
-      void withComposerDeliveryWhenAvailable(() => like(path)).then((ok) => report(ok)).catch(() => {
+      const deadline = Date.now() + LIKE_BUDGET_MS;
+      void withComposerDeliveryWhenAvailable(() => like(path, deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-like.exception", "like flow raised an exception");
         void report(false);
       });
@@ -8988,14 +8989,14 @@ ${button.innerHTML}`)
     return null;
   }
   var radioSelected = (radio) => radio.checked || radio.getAttribute("aria-checked") === "true";
-  async function mute(path) {
+  async function mute(path, deadline) {
     const wantedThread = threadPathId(path);
+    if (Date.now() >= deadline) return false;
     if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
       diag("quick-mute.open", "validated thread could not be opened");
       return false;
     }
     const stale = new Set(document.querySelectorAll('[role="dialog"]'));
-    const deadline = Date.now() + MUTE_BUDGET_MS;
     let phase = "waiting";
     let infoRequested = false;
     let openedInfo = false;
@@ -9013,9 +9014,10 @@ ${button.innerHTML}`)
         phase = decision.phase;
         switch (decision.action) {
           case "open-info": {
-            infoRequested = true;
             const info = conversationInfoButton();
-            if (info && info.getAttribute("aria-expanded") !== "true") {
+            if (!info) break;
+            infoRequested = true;
+            if (info.getAttribute("aria-expanded") !== "true") {
               info.click();
               openedInfo = true;
             }
@@ -9058,7 +9060,8 @@ ${button.innerHTML}`)
         void report(false);
         return;
       }
-      void withComposerDeliveryWhenAvailable(() => mute(path)).then((ok) => report(ok)).catch(() => {
+      const deadline = Date.now() + MUTE_BUDGET_MS;
+      void withComposerDeliveryWhenAvailable(() => mute(path, deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-mute.exception", "mute flow raised an exception");
         void report(false);
       });

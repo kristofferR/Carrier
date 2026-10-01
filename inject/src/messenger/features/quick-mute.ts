@@ -60,8 +60,10 @@ function muteDialog(stale: Set<Element>) {
 const radioSelected = (radio: HTMLInputElement) =>
   radio.checked || radio.getAttribute("aria-checked") === "true";
 
-async function mute(path: string): Promise<boolean> {
+async function mute(path: string, deadline: number): Promise<boolean> {
   const wantedThread = threadPathId(path);
+  // Expired while queued: the native side has already given up on it.
+  if (Date.now() >= deadline) return false;
   if (
     !wantedThread ||
     (threadIdFromHref(location.pathname) !== wantedThread &&
@@ -73,7 +75,6 @@ async function mute(path: string): Promise<boolean> {
 
   // A dialog left mounted by an earlier hidden-window mute must not be reused.
   const stale = new Set<Element>(document.querySelectorAll('[role="dialog"]'));
-  const deadline = Date.now() + MUTE_BUDGET_MS;
   let phase: QuickMutePhase = "waiting";
   let infoRequested = false;
   let openedInfo = false;
@@ -92,9 +93,12 @@ async function mute(path: string): Promise<boolean> {
 
       switch (decision.action) {
         case "open-info": {
-          infoRequested = true;
+          // The header can mount after the route changes; keep looking until
+          // the info button exists.
           const info = conversationInfoButton();
-          if (info && info.getAttribute("aria-expanded") !== "true") {
+          if (!info) break;
+          infoRequested = true;
+          if (info.getAttribute("aria-expanded") !== "true") {
             info.click();
             openedInfo = true;
           }
@@ -141,7 +145,10 @@ export function initQuickMute() {
     }
     // Serialized with notification replies and scheduled sends: all of them
     // navigate the same hidden page.
-    void withComposerDeliveryWhenAvailable(() => mute(path))
+    // The budget includes any wait behind another page action, so a queued
+    // mute ends within the native acknowledgement window instead of after it.
+    const deadline = Date.now() + MUTE_BUDGET_MS;
+    void withComposerDeliveryWhenAvailable(() => mute(path, deadline))
       .then((ok) => report(ok))
       .catch(() => {
         diag("quick-mute.exception", "mute flow raised an exception");

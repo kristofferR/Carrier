@@ -45,8 +45,10 @@ function thumbItem(menu: Element): HTMLElement | null {
   return null;
 }
 
-async function like(path: string): Promise<boolean> {
+async function like(path: string, deadline: number): Promise<boolean> {
   const wantedThread = threadPathId(path);
+  // Expired while queued: the native side has already given up on it.
+  if (Date.now() >= deadline) return false;
   if (
     !wantedThread ||
     (threadIdFromHref(location.pathname) !== wantedThread &&
@@ -56,7 +58,6 @@ async function like(path: string): Promise<boolean> {
     return false;
   }
 
-  const deadline = Date.now() + LIKE_BUDGET_MS;
   let phase: QuickLikePhase = "waiting";
   let target: ReturnType<typeof newestIncoming> = null;
   let reactButton: HTMLElement | null = null;
@@ -139,7 +140,10 @@ export function initQuickLike() {
     }
     // Serialized with replies, mutes, and scheduled sends: all of them
     // navigate the same hidden page.
-    void withComposerDeliveryWhenAvailable(() => like(path))
+    // The budget includes any wait behind another page action, so a queued
+    // like ends within the native acknowledgement window instead of after it.
+    const deadline = Date.now() + LIKE_BUDGET_MS;
+    void withComposerDeliveryWhenAvailable(() => like(path, deadline))
       .then((ok) => report(ok))
       .catch(() => {
         diag("quick-like.exception", "like flow raised an exception");
