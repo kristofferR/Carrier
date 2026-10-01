@@ -750,9 +750,12 @@ ${button.innerHTML}`)
     const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
     return m ? m[1] : null;
   }
+  function accountId(cookie) {
+    return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
+  }
   function accountScopedStorageKey(baseKey, cookie) {
-    const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
-    return accountId ? `${baseKey}:${accountId}` : null;
+    const account2 = accountId(cookie);
+    return account2 ? `${baseKey}:${account2}` : null;
   }
   function isMessengerContentPath(pathname) {
     const path = String(pathname || "");
@@ -774,12 +777,12 @@ ${button.innerHTML}`)
   var nativeNow = performance.now.bind(performance);
   var InspectionTimeout = class extends Error {
   };
-  async function inspect(read2) {
+  async function inspect(read) {
     const startedAt = nativeNow();
     let timer;
     try {
       const result = await Promise.race([
-        read2(),
+        read(),
         new Promise((_, reject) => {
           timer = nativeSetTimeout(() => reject(new InspectionTimeout()), INSPECTION_TIMEOUT_MS);
         })
@@ -3737,7 +3740,7 @@ ${button.innerHTML}`)
   async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
     if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
     let timer;
-    const read2 = async () => {
+    const read = async () => {
       const singleton = importModule("LSDatabaseSingleton");
       const db = await singleton.LSDatabaseSingleton;
       const i64 = importModule("I64");
@@ -3795,7 +3798,7 @@ ${button.innerHTML}`)
     };
     try {
       return await Promise.race([
-        read2().catch(() => null),
+        read().catch(() => null),
         new Promise((resolve) => {
           timer = setTimeout(() => resolve(null), timeoutMs);
         })
@@ -6598,11 +6601,11 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read2 = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
-      if (!read2.length) return;
+      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
-        if (!read2.some(
+        if (!read.some(
           (identity) => opaqueNotificationMatches(this.receipts[index].identity, identity)
         )) {
           continue;
@@ -6806,15 +6809,15 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read2 = [...readRows].map((row) => ({
+      const read = [...readRows].map((row) => ({
         key: row.key ? hashText(row.key) : null,
         identity: opaqueNotificationIdentity(row.title, row.body)
       }));
-      if (!read2.length) return;
+      if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
-        if (!read2.some(
+        if (!read.some(
           ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
         )) {
           continue;
@@ -7277,70 +7280,6 @@ ${button.innerHTML}`)
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
-  // inject/src/messenger/lib/notified-messages.ts
-  var ACCEPTED_LIMIT = 256;
-  var PENDING_LIMIT = 256;
-  var PENDING_MAX_AGE_MS = 6e4;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var isStored = (value) => typeof value === "object" && value !== null && typeof value.body === "string" && typeof value.at === "number" && typeof value.accepted === "boolean";
-  function read(store, key) {
-    try {
-      const value = JSON.parse(store.storage.getItem(key) || "null");
-      return isStored(value) ? value : void 0;
-    } catch {
-      return void 0;
-    }
-  }
-  function write(store, id, message) {
-    try {
-      store.storage.setItem(`${store.prefix}${id}`, JSON.stringify(message));
-    } catch {
-    }
-  }
-  function prune(store, now) {
-    const records = [];
-    for (let index = 0; index < store.storage.length; index++) {
-      const key = store.storage.key(index);
-      if (key?.startsWith(store.prefix)) records.push([key, read(store, key)]);
-    }
-    const live = records.filter(
-      (record2) => record2[1] !== void 0 && now - record2[1].at < (record2[1].accepted ? MAX_AGE_MS : PENDING_MAX_AGE_MS)
-    );
-    const oldestFirst = (accepted) => live.filter(([, message]) => message.accepted === accepted).sort((a, b) => a[1].at - b[1].at);
-    const keep = new Set(
-      [
-        ...oldestFirst(true).slice(-ACCEPTED_LIMIT),
-        ...oldestFirst(false).slice(0, PENDING_LIMIT)
-      ].map(([key]) => key)
-    );
-    for (const [key] of records) if (!keep.has(key)) store.storage.removeItem(key);
-  }
-  function accountStore() {
-    try {
-      const prefix = accountScopedStorageKey("carrier-notified-message", document.cookie);
-      return prefix ? { storage: window.localStorage, prefix: `${prefix}:` } : null;
-    } catch {
-      return null;
-    }
-  }
-  function rememberNotifiedMessage(id, body, at = Date.now(), store = accountStore()) {
-    if (!store) return;
-    write(store, id, { body, at, accepted: false });
-    prune(store, at);
-  }
-  function settleNotifiedMessage(id, accepted, now = Date.now(), store = accountStore()) {
-    if (!store) return;
-    const message = read(store, `${store.prefix}${id}`);
-    if (!message) return;
-    if (accepted) write(store, id, { ...message, accepted: true });
-    else store.storage.removeItem(`${store.prefix}${id}`);
-    prune(store, now);
-  }
-  function notifiedMessage(id, store = accountStore()) {
-    const message = store ? read(store, `${store.prefix}${id}`) : void 0;
-    return message?.accepted ? { body: message.body, at: message.at } : void 0;
-  }
-
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7569,15 +7508,14 @@ ${button.innerHTML}`)
       }
       return handler !== void 0;
     };
-    window.__carrierNotifyResult = (id, delivery, keepText) => {
+    window.__carrierNotifyResult = (id, delivery) => {
       if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
       pageNotificationReceipts.recordDelivery(id, delivery);
-      settleNotifiedMessage(id, delivery === "accepted" && keepText !== false);
       const handler = deliveryHandlers.get(id);
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "") => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "") => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -7598,7 +7536,9 @@ ${button.innerHTML}`)
           dedupe_key: dedupeKey,
           thread_path: threadPath || "",
           // Like/Mute match English control labels; native offers them only then.
-          english_ui: /^en\b/i.test(document.documentElement.lang)
+          english_ui: /^en\b/i.test(document.documentElement.lang),
+          match_body: matchBody,
+          account: accountId(document.cookie) || ""
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -7813,7 +7753,6 @@ ${button.innerHTML}`)
             richMessageBody(named.body, threadPath),
             Boolean(image)
           );
-          if (!hidePreview) rememberNotifiedMessage(id, originalBody);
           emitNotification(
             id,
             hidePreview ? "Messenger" : text.title,
@@ -7831,7 +7770,8 @@ ${button.innerHTML}`)
               handler?.(delivery);
             } : void 0,
             "",
-            hidePreview ? "" : image
+            hidePreview ? "" : image,
+            hidePreview ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -8137,16 +8077,18 @@ ${button.innerHTML}`)
         notificationDedupeKey("", fallback.body)
       );
       diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
-      const notificationId = ++notifySeq;
-      if (!hidePreview) rememberNotifiedMessage(notificationId, fallback.body);
       emitNotification(
-        notificationId,
+        ++notifySeq,
         hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
         hidePreview ? "New message" : fallback.displayBody,
         "",
         fallback.dedupeKey,
         () => window.__carrierOpenThread?.(fallback.threadPath),
-        fallback.threadPath
+        fallback.threadPath,
+        void 0,
+        "",
+        "",
+        hidePreview ? "" : fallback.body
       );
     };
     const retainPendingFallback = (fallback) => {
@@ -8276,10 +8218,8 @@ ${button.innerHTML}`)
           visiblePresentation.subtitle ? "sender" : "group"
         );
         const text = notificationPhotoText(named.title, named.body, Boolean(image));
-        const notificationId = ++notifySeq;
-        if (!hidePreview) rememberNotifiedMessage(notificationId, conversation.body);
         emitNotification(
-          notificationId,
+          ++notifySeq,
           hidePreview ? "Messenger" : text.title,
           hidePreview ? "New message" : text.body,
           hidePreview ? "" : icon,
@@ -8290,7 +8230,8 @@ ${button.innerHTML}`)
           conversation.threadPath,
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
-          hidePreview ? "" : image
+          hidePreview ? "" : image,
+          hidePreview ? "" : conversation.body
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -8724,6 +8665,15 @@ ${button.innerHTML}`)
     startPoll();
   }
 
+  // inject/src/messenger/lib/action-target.ts
+  function actionTargetFor(value, cookie) {
+    if (typeof value !== "object" || value === null) return null;
+    const { body, at, account: account2 } = value;
+    if (typeof body !== "string" || typeof at !== "number" || typeof account2 !== "string")
+      return null;
+    return account2 !== "" && account2 === accountId(cookie) ? { body, at, account: account2 } : null;
+  }
+
   // inject/src/messenger/lib/quick-like.ts
   function decideQuickLike(phase, snapshot, expired) {
     if (!snapshot.threadMatches) {
@@ -9088,11 +9038,11 @@ ${button.innerHTML}`)
     }
   }
   function initQuickLike() {
-    window.__carrierQuickLike = (path, notification, id, attempt, budgetMs) => {
+    window.__carrierQuickLike = (path, target, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
-      const notified = notifiedMessage(Number(notification));
+      const notified = actionTargetFor(target, document.cookie);
       if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified?.body.trim()) {
         void report(false);
         return;
@@ -9298,11 +9248,11 @@ ${button.innerHTML}`)
       clearTimeout(muteExpiries.get(id));
       muteExpiries.delete(id);
     });
-    window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
+    window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
       );
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notifiedMessage(Number(notification))) {
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !actionTargetFor(target, document.cookie)) {
         void report(false);
         return;
       }

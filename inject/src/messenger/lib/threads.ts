@@ -13,10 +13,15 @@ export function threadPathId(href: unknown): string | null {
   return m ? m[1]! : null;
 }
 
+/** The logged-in Facebook account's id, from the `c_user` cookie. */
+export function accountId(cookie: string): string | null {
+  return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
+}
+
 /** A localStorage key isolated to the logged-in Facebook account. */
 export function accountScopedStorageKey(baseKey: string, cookie: string): string | null {
-  const accountId = (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1];
-  return accountId ? `${baseKey}:${accountId}` : null;
+  const account = accountId(cookie);
+  return account ? `${baseKey}:${account}` : null;
 }
 
 /** Whether a pathname is a Messenger inbox/thread surface that should render controls. */

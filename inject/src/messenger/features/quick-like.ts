@@ -8,7 +8,7 @@
 // bubbles and the React button are matched by English accessible labels; the
 // reaction itself is found by its emoji image, which is locale-independent.
 import { diag } from "../bridge";
-import { type NotifiedMessage, notifiedMessage } from "../lib/notified-messages";
+import { type ActionTarget, actionTargetFor } from "../lib/action-target";
 import {
   bubbleIsFresh,
   bubbleMatchesNotification,
@@ -47,7 +47,7 @@ const atBottom = (scroller: HTMLElement | null) =>
 /** The newest message from someone else with the notification's text, sent
  * around when it fired. */
 function announcedBubble(
-  notified: NotifiedMessage,
+  notified: ActionTarget,
 ): { bubble: HTMLElement; scope: HTMLElement } | "ambiguous" | null {
   const matches = bubbles().filter((el) => {
     const label = el.getAttribute("aria-label") || "";
@@ -82,7 +82,7 @@ function thumbItem(menu: Element): HTMLElement | null {
   return null;
 }
 
-async function like(path: string, notified: NotifiedMessage, deadline: number): Promise<boolean> {
+async function like(path: string, notified: ActionTarget, deadline: number): Promise<boolean> {
   // Expired while queued: the native side has already given up on it.
   if (Date.now() >= deadline) return false;
   const paneReady = openThreadForAction(path);
@@ -182,14 +182,13 @@ async function like(path: string, notified: NotifiedMessage, deadline: number): 
 }
 
 export function initQuickLike() {
-  window.__carrierQuickLike = (path, notification, id, attempt, budgetMs) => {
+  window.__carrierQuickLike = (path, target, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-like.ack", "like acknowledgement emit failed"),
       );
-    // The page's own record of what the notification announced; gone after a
-    // reload, when there is no safe way to tell which message it meant.
-    const notified = notifiedMessage(Number(notification));
+    // What native recorded the notification announced, for this account.
+    const notified = actionTargetFor(target, document.cookie);
     // No text (a photo, a sticker): nothing can identify the message.
     if (
       threadPathId(path) === null ||

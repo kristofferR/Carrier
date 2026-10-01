@@ -1826,21 +1826,12 @@ pub fn run() {
                         log::info!("carrier:notify received (id {})", msg.id());
                         let id = msg.id();
                         let delivery = show_message_notification(notify_handle.clone(), msg);
-                        // The page may not have the newest Hide Preview yet:
-                        // native's redaction decides whether it may keep the
-                        // message text behind 👍/Mute.
-                        let keep_text = !notify_handle
-                            .state::<AppState>()
-                            .settings
-                            .lock()
-                            .unwrap()
-                            .hide_notification_preview;
                         if let Some(window) = notify_handle.get_webview_window("main") {
                             let delivery = serde_json::to_string(&delivery)
                                 .expect("notification delivery serializes");
-                            if let Err(e) = window.eval(format!(
-                                "window.__carrierNotifyResult?.({id}, {delivery}, {keep_text});"
-                            )) {
+                            if let Err(e) = window
+                                .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
+                            {
                                 log::warn!("carrier:notify result callback failed: {e}");
                             }
                         }
@@ -1861,6 +1852,11 @@ pub fn run() {
                         action: String,
                         thread_path: String,
                         page_id: u64,
+                        #[serde(default)]
+                        body: String,
+                        #[serde(default)]
+                        at: u64,
+                        account: String,
                     }
                     let Ok(request) = serde_json::from_str::<DebugAction>(event.payload()) else {
                         return;
@@ -1870,6 +1866,14 @@ pub fn run() {
                         return;
                     };
                     log::info!("debug notification action requested");
+                    notifications::remember_action_target(
+                        1,
+                        notifications::ActionTarget {
+                            body: request.body,
+                            at: request.at,
+                            account: request.account,
+                        },
+                    );
                     notifications::on_notification_action(
                         debug_action_handle.clone(),
                         1,

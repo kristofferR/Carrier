@@ -51,9 +51,8 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
-import { rememberNotifiedMessage, settleNotifiedMessage } from "../lib/notified-messages";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
-import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
+import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 
@@ -227,11 +226,9 @@ export function initNotificationBridge() {
     return handler !== undefined;
   };
 
-  window.__carrierNotifyResult = (id, delivery, keepText) => {
+  window.__carrierNotifyResult = (id, delivery) => {
     if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
     pageNotificationReceipts.recordDelivery(id, delivery);
-    // Native redacted it (Hide Preview): its text must not outlive the emit.
-    settleNotifiedMessage(id, delivery === "accepted" && keepText !== false);
     const handler = deliveryHandlers.get(id);
     deliveryHandlers.delete(id);
     handler?.(delivery);
@@ -248,6 +245,8 @@ export function initNotificationBridge() {
     onDelivery?: (delivery: NativeNotificationDelivery) => void,
     subtitle = "",
     image = "",
+    // The message's raw text, before link or photo rewording: what 👍 matches.
+    matchBody = "",
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -270,6 +269,8 @@ export function initNotificationBridge() {
         thread_path: threadPath || "",
         // Like/Mute match English control labels; native offers them only then.
         english_ui: /^en\b/i.test(document.documentElement.lang),
+        match_body: matchBody,
+        account: accountId(document.cookie) || "",
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
@@ -615,8 +616,6 @@ export function initNotificationBridge() {
           richMessageBody(named.body, threadPath),
           Boolean(image),
         );
-        // Redacted notifications offer no 👍, so their text is never kept.
-        if (!hidePreview) rememberNotifiedMessage(id, originalBody);
         emitNotification(
           id,
           hidePreview ? "Messenger" : text.title,
@@ -643,6 +642,7 @@ export function initNotificationBridge() {
             : undefined,
           "",
           hidePreview ? "" : image,
+          hidePreview ? "" : originalBody,
         );
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
@@ -1124,10 +1124,8 @@ export function initNotificationBridge() {
     diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
     // The row has left the correlation queue. Queue native IPC in this task so
     // a reload cannot abandon the delivery while contact names are loading.
-    const notificationId = ++notifySeq;
-    if (!hidePreview) rememberNotifiedMessage(notificationId, fallback.body);
     emitNotification(
-      notificationId,
+      ++notifySeq,
       hidePreview
         ? "Messenger"
         : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
@@ -1136,6 +1134,10 @@ export function initNotificationBridge() {
       fallback.dedupeKey,
       () => window.__carrierOpenThread?.(fallback.threadPath),
       fallback.threadPath,
+      undefined,
+      "",
+      "",
+      hidePreview ? "" : fallback.body,
     );
   };
 
@@ -1310,10 +1312,8 @@ export function initNotificationBridge() {
         visiblePresentation.subtitle ? "sender" : "group",
       );
       const text = notificationPhotoText(named.title, named.body, Boolean(image));
-      const notificationId = ++notifySeq;
-      if (!hidePreview) rememberNotifiedMessage(notificationId, conversation.body);
       emitNotification(
-        notificationId,
+        ++notifySeq,
         hidePreview ? "Messenger" : text.title,
         hidePreview ? "New message" : text.body,
         hidePreview ? "" : icon,
@@ -1325,6 +1325,7 @@ export function initNotificationBridge() {
         undefined,
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
+        hidePreview ? "" : conversation.body,
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({

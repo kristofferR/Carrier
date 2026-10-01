@@ -68,6 +68,48 @@ pub(crate) struct NotifyMsg {
     /// Messenger's UI language is English. Older page bundles omit it.
     #[serde(default)]
     english_ui: bool,
+    /// The message's raw text (before link or photo rewording), which 👍
+    /// matches the conversation's bubble by. Never shown.
+    #[serde(default)]
+    match_body: String,
+    /// The signed-in Facebook account the notification arrived for.
+    #[serde(default)]
+    account: String,
+}
+
+/// What a shown notification announced, for its 👍 and Mute actions: the raw
+/// message text, when Carrier saw it, and the account it arrived for. Native
+/// memory only: Facebook clears unknown page storage on reload, and a redacted
+/// notification never keeps one.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ActionTarget {
+    pub(crate) body: String,
+    pub(crate) at: u64,
+    pub(crate) account: String,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+static ACTION_TARGETS: Mutex<VecDeque<(u64, ActionTarget)>> = Mutex::new(VecDeque::new());
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) fn remember_action_target(native_id: u64, target: ActionTarget) {
+    let mut targets = ACTION_TARGETS.lock().unwrap();
+    targets.retain(|(id, _)| *id != native_id);
+    if targets.len() >= MAX_RECENT_NOTIFICATIONS {
+        targets.pop_front();
+    }
+    targets.push_back((native_id, target));
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn action_target(native_id: u64) -> Option<ActionTarget> {
+    ACTION_TARGETS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(id, _)| *id == native_id)
+        .map(|(_, target)| target.clone())
 }
 
 /// The Messenger UI language the page last reported. Like and Mute drive
@@ -1544,6 +1586,13 @@ fn quick_reply_script(
     remaining: Duration,
 ) -> Result<String, String> {
     let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
+    // Like and Mute carry a serialized `ActionTarget`. Re-serialize the parsed
+    // object, so only serde's own JSON is ever embedded as an object literal.
+    let target = || {
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text)
+            .and_then(|target| serde_json::to_string(&target))
+            .map_err(|error| format!("notification action target: {error}"))
+    };
     let text = serde_json::to_string(text).map_err(|error| error.to_string())?;
     let budget = remaining.saturating_sub(PAGE_ACTION_ACK_MARGIN).as_millis();
     Ok(match mode {
@@ -1553,12 +1602,14 @@ fn quick_reply_script(
         PendingReplyMode::Draft => {
             format!("window.__carrierQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
         }
-        PendingReplyMode::Mute => {
-            format!("window.__carrierQuickMute?.({path}, {text}, {id}, {attempt}, {budget});")
-        }
-        PendingReplyMode::Like => {
-            format!("window.__carrierQuickLike?.({path}, {text}, {id}, {attempt}, {budget});")
-        }
+        PendingReplyMode::Mute => format!(
+            "window.__carrierQuickMute?.({path}, {}, {id}, {attempt}, {budget});",
+            target()?
+        ),
+        PendingReplyMode::Like => format!(
+            "window.__carrierQuickLike?.({path}, {}, {id}, {attempt}, {budget});",
+            target()?
+        ),
     })
 }
 
@@ -1976,18 +2027,19 @@ pub(crate) fn on_notification_action(
         NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED),
         NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
     };
-    // The page's account-scoped record of this notification: Like matches its
-    // text, and both act only under the account that received it.
-    let text = page_id
-        .map(|page_id| page_id.to_string())
+    // What this notification announced: Like matches its text, and both act
+    // only under the account it arrived for.
+    let text = action_target(id)
+        .and_then(|target| serde_json::to_string(&target).ok())
         .unwrap_or_default();
     let failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
         show_action_failure_notification(&app, failure);
         activate_notification(app, id, page_id, path, token);
     };
-    // Without the page's record there is nothing to identify the target by.
+    // Without it (e.g. a notification from before a restart) there is nothing
+    // to identify the target by.
     if text.is_empty() {
-        log::info!("notification {action:?} has no page notification to match (id {id})");
+        log::info!("notification {action:?} has no recorded target (id {id})");
         failed(app, fallback_path, activation_token);
         return;
     }
@@ -2213,6 +2265,20 @@ pub(crate) fn show_message_notification(
 
     // Redact the conversation subtitle too: it can contain private names.
     let (title, subtitle, body) = msg.content(hide_preview);
+    // What 👍 and Mute act on. A redacted notification offers neither, so it
+    // never keeps the text.
+    if !hide_preview && !msg.account.is_empty() {
+        remember_action_target(
+            native_id,
+            ActionTarget {
+                body: msg.match_body.clone(),
+                at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| elapsed.as_millis() as u64),
+                account: msg.account.clone(),
+            },
+        );
+    }
     // These platforms do not expose a separate subtitle field.
     #[cfg(not(target_os = "macos"))]
     let body = if subtitle.is_empty() {
@@ -2910,6 +2976,8 @@ mod tests {
             dedupe_key: dedupe_key.into(),
             thread_path: String::new(),
             english_ui: false,
+            match_body: String::new(),
+            account: String::new(),
         }
     }
 
@@ -3083,14 +3151,26 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn page_actions_budget_from_the_remaining_native_wait() {
+        let target = r#"{"body":"hi","at":5,"account":"1"}"#;
         let script =
-            |mode, remaining| quick_reply_script(7, 3, "/t/1/", "", mode, remaining).unwrap();
+            |mode, remaining| quick_reply_script(7, 3, "/t/1/", target, mode, remaining).unwrap();
         assert_eq!(
             script(PendingReplyMode::Mute, Duration::from_secs(20)),
-            "window.__carrierQuickMute?.(\"/t/1/\", \"\", 7, 3, 18000);"
+            // Re-serialized through a map, so keys come out sorted.
+            r#"window.__carrierQuickMute?.("/t/1/", {"account":"1","at":5,"body":"hi"}, 7, 3, 18000);"#
         );
         // A resume after most of the wait has passed leaves the page no time.
         assert!(script(PendingReplyMode::Like, Duration::from_secs(1)).ends_with(", 3, 0);"));
+        // The target is embedded as code, so only a JSON object is accepted.
+        assert!(quick_reply_script(
+            7,
+            3,
+            "/t/1/",
+            "alert(1)",
+            PendingReplyMode::Like,
+            Duration::from_secs(20)
+        )
+        .is_err());
     }
 
     #[cfg(target_os = "linux")]

@@ -5,8 +5,8 @@
 // inside "Chat notifications". Success is read from an Unmute label, the
 // confirmed dialog closing, or Carrier's own muted-thread tracking.
 import { diag } from "../bridge";
+import { actionTargetFor } from "../lib/action-target";
 import { conversationMuteFromLabel, mutedThreads, muteStateAfterExplicitAction } from "../lib/mute";
-import { notifiedMessage } from "../lib/notified-messages";
 import {
   decideQuickMute,
   QUICK_MUTE_DURATION_MS,
@@ -247,18 +247,17 @@ export function initQuickMute() {
     clearTimeout(muteExpiries.get(id));
     muteExpiries.delete(id);
   });
-  window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
+  window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-mute.ack", "mute acknowledgement emit failed"),
       );
-    // Act only under the account that received the notification: its record
-    // is account-scoped, so another signed-in account cannot find it.
+    // Act only under the account the notification arrived for.
     if (
       threadPathId(path) === null ||
       !Number.isSafeInteger(id) ||
       id <= 0 ||
-      !notifiedMessage(Number(notification))
+      !actionTargetFor(target, document.cookie)
     ) {
       void report(false);
       return;

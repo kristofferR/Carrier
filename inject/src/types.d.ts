@@ -168,7 +168,7 @@ interface Window {
     responsivenessWorkersStopped: number;
   };
   __carrierNotifyClick?: (id: number) => boolean;
-  __carrierNotifyResult?: (id: number, delivery: string, keepText?: boolean) => void;
+  __carrierNotifyResult?: (id: number, delivery: string) => void;
   /** Share-extension payload delivery from the native intake (macOS). */
   __carrierShareMedia?: (payload: unknown) => void;
   /** Deliver a native notification reply without raising the Carrier window. */
@@ -178,15 +178,15 @@ interface Window {
   /** Mute a conversation from its notification without raising the window. */
   __carrierQuickMute?: (
     path: string,
-    notification: string,
+    target: unknown,
     id: number,
     attempt: number,
     budgetMs: number,
   ) => void;
-  /** React 👍 to the message a page notification (by its id) announced. */
+  /** React 👍 to the message a notification announced (`target`: native ActionTarget). */
   __carrierQuickLike?: (
     path: string,
-    notification: string,
+    target: unknown,
     id: number,
     attempt: number,
     budgetMs: number,
