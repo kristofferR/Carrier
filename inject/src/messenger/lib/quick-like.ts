@@ -2,9 +2,9 @@ export type QuickLikePhase = "waiting" | "menu" | "confirming";
 
 export interface QuickLikeSnapshot {
   threadMatches: boolean;
-  /** The newest message from someone else is rendered. */
+  /** The newest message from someone else matching the notification is rendered. */
   targetFound: boolean;
-  /** The list sits at its latest message, unchanged since the previous poll. */
+  /** The list sits at its latest message. */
   settled: boolean;
   /** Its hover toolbar's React button is mounted. */
   reactButton: boolean;
@@ -26,11 +26,9 @@ export type QuickLikeAction =
 
 /**
  * Pure notification-like state machine: bring the conversation to its latest
- * message, hover the newest incoming one, open its reaction menu, and pick 👍.
- * The target is chosen only once the list has settled, so an older message
- * left in view (scrolled-up history, or a render still catching up) is never
- * mistaken for the one the notification announced. An existing 👍 is left
- * alone, since picking it again would remove it.
+ * message, find the incoming message the notification announced (by its
+ * text), hover it, open its reaction menu, and pick 👍. An existing 👍 is
+ * left alone, since picking it again would remove it.
  */
 export function decideQuickLike(
   phase: QuickLikePhase,
@@ -59,4 +57,25 @@ export function decideQuickLike(
   if (!snapshot.targetFound) return { action: "wait", phase };
   if (!snapshot.reactButton) return { action: "hover", phase };
   return { action: "open-menu", phase: "menu" };
+}
+
+const normalized = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** The text of a bubble label: "Enter, Message sent <when> by <name>: <text>". */
+export function bubbleText(label: string): string {
+  const match = / by [^:]*: ([\s\S]*)$/.exec(label);
+  return match?.[1] ? normalized(match[1]) : "";
+}
+
+/**
+ * Whether a bubble is the message a notification announced. Previews can be
+ * truncated, and group previews can carry a "Name: " prefix.
+ */
+export function bubbleMatchesNotification(label: string, body: string): boolean {
+  const text = bubbleText(label);
+  const preview = normalized(body)
+    .replace(/(?:…|\.\.\.)$/, "")
+    .trim();
+  if (!text || !preview) return false;
+  return text.startsWith(preview) || preview.endsWith(`: ${text}`);
 }

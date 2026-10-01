@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { decideQuickLike, type QuickLikeSnapshot } from "./quick-like";
+import {
+  bubbleMatchesNotification,
+  bubbleText,
+  decideQuickLike,
+  type QuickLikeSnapshot,
+} from "./quick-like";
 
 const snapshot = (overrides: Partial<QuickLikeSnapshot> = {}): QuickLikeSnapshot => ({
   threadMatches: true,
@@ -68,5 +73,31 @@ describe("decideQuickLike", () => {
       "success",
     );
     expect(decideQuickLike("waiting", snapshot(), true).action).toBe("failure");
+  });
+});
+
+describe("bubbleMatchesNotification", () => {
+  const label = "Enter, Message sent Friday 9:34pm by Kim: See you at 5: bring snacks";
+
+  test("reads the text after the sender, ignoring colons in the time", () => {
+    expect(bubbleText(label)).toBe("See you at 5: bring snacks");
+    expect(bubbleText("Enter, Message sent Friday 9:34pm by Kim")).toBe("");
+  });
+
+  test("matches exact, truncated, and sender-prefixed previews", () => {
+    expect(bubbleMatchesNotification(label, "See you at 5: bring snacks")).toBe(true);
+    expect(bubbleMatchesNotification(label, "See you at 5…")).toBe(true);
+    expect(bubbleMatchesNotification(label, "Kim: See you at 5: bring snacks")).toBe(true);
+  });
+
+  test("rejects other messages and empty text", () => {
+    expect(bubbleMatchesNotification(label, "Running late")).toBe(false);
+    expect(bubbleMatchesNotification(label, "")).toBe(false);
+    expect(
+      bubbleMatchesNotification("Enter, Message sent Friday 9:34pm by Kim: ok", "is it ok"),
+    ).toBe(false);
+    expect(
+      bubbleMatchesNotification("Enter, Message sent Friday 9:34pm by Kim", "Kim sent a photo"),
+    ).toBe(false);
   });
 });

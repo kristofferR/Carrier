@@ -3581,9 +3581,9 @@ ${button.innerHTML}`)
      * the same faces on every scan.
      */
     remember(threadId, name, url, owner = name, at = 0) {
-      const normalized = normalizeSenderName(name);
-      const ownerKey = normalizeSenderName(owner) || normalized;
-      if (!threadId || !normalized || !url) return false;
+      const normalized2 = normalizeSenderName(name);
+      const ownerKey = normalizeSenderName(owner) || normalized2;
+      if (!threadId || !normalized2 || !url) return false;
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return false;
       const photo = avatarPhotoId(url);
@@ -3616,8 +3616,8 @@ ${button.innerHTML}`)
      * worse than showing the group photo.
      */
     resolve(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
+      const normalized2 = normalizeSenderName(name);
+      if (!threadId || !normalized2) return { verdict: "no-sender", url: "" };
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
       const prefix = `${key} `;
@@ -3657,15 +3657,15 @@ ${button.innerHTML}`)
      * held outside the avatar entries so evicting a face cannot resurrect it.
      */
     markAmbiguous(threadId, name) {
-      const normalized = normalizeSenderName(name);
-      if (!threadId || !normalized) return false;
+      const normalized2 = normalizeSenderName(name);
+      if (!threadId || !normalized2) return false;
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return false;
       this.ambiguous.add(key);
       this.entries.delete(key);
       const prefix = `${threadId}\0`;
       for (const [candidate, entry] of [...this.entries]) {
-        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
+        if (!candidate.startsWith(prefix) || entry.owner !== normalized2) continue;
         this.entries.delete(candidate);
         this.ambiguous.add(candidate);
       }
@@ -8676,6 +8676,17 @@ ${button.innerHTML}`)
     if (!snapshot.reactButton) return { action: "hover", phase };
     return { action: "open-menu", phase: "menu" };
   }
+  var normalized = (text) => text.replace(/\s+/g, " ").trim();
+  function bubbleText(label2) {
+    const match = / by [^:]*: ([\s\S]*)$/.exec(label2);
+    return match?.[1] ? normalized(match[1]) : "";
+  }
+  function bubbleMatchesNotification(label2, body) {
+    const text = bubbleText(label2);
+    const preview = normalized(body).replace(/(?:…|\.\.\.)$/, "").trim();
+    if (!text || !preview) return false;
+    return text.startsWith(preview) || preview.endsWith(`: ${text}`);
+  }
 
   // inject/src/messenger/features/quick-like.ts
   var POLL_MS = 250;
@@ -8695,8 +8706,11 @@ ${button.innerHTML}`)
     return null;
   }
   var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
-  function newestIncoming() {
-    const bubble = bubbles().reverse().find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
+  function notifiedMessage(body) {
+    const bubble = bubbles().reverse().find((el) => {
+      const label2 = el.getAttribute("aria-label") || "";
+      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, body);
+    });
     let scope = bubble?.closest('[role="article"]');
     while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
       scope = scope.parentElement;
@@ -8710,7 +8724,7 @@ ${button.innerHTML}`)
       if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
     return null;
   }
-  async function like(path, deadline) {
+  async function like(path, body, deadline) {
     const wantedThread = threadPathId(path);
     if (Date.now() >= deadline) return false;
     if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
@@ -8721,13 +8735,11 @@ ${button.innerHTML}`)
     let target = null;
     let reactButton = null;
     let summaryBefore = "";
-    let lastNewest = null;
     while (true) {
       const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
       const scroller = newest ? messageScroller(newest) : null;
-      const settled = newest !== null && atBottom(scroller) && newest === lastNewest;
-      lastNewest = newest;
-      if (phase === "waiting") target = newestIncoming();
+      const settled = newest !== null && atBottom(scroller);
+      if (phase === "waiting") target = notifiedMessage(body);
       if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
       const menuId = reactButton?.getAttribute("aria-controls");
       const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
@@ -8783,7 +8795,7 @@ ${button.innerHTML}`)
     }
   }
   function initQuickLike() {
-    window.__carrierQuickLike = (path, id, attempt, budgetMs) => {
+    window.__carrierQuickLike = (path, body, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
@@ -8792,7 +8804,7 @@ ${button.innerHTML}`)
         return;
       }
       const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
-      void withComposerDeliveryWhenAvailable(() => like(path, deadline)).then((ok) => report(ok)).catch(() => {
+      void withComposerDeliveryWhenAvailable(() => like(path, String(body), deadline)).then((ok) => report(ok)).catch(() => {
         diag("quick-like.exception", "like flow raised an exception");
         void report(false);
       });

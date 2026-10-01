@@ -1,11 +1,18 @@
 /* ------------------- Notification 👍 reaction ------------------------ */
-// Reacts 👍 to the newest message from someone else, like the Messenger iOS
-// notification action, without raising the window. Messenger mounts a
+// Reacts 👍 to the message a notification announced, like the Messenger iOS
+// notification action, without raising the window. The target is the newest
+// incoming bubble whose text matches the notification; a notification with
+// no text (a photo, a sticker) can't be matched and fails. Messenger mounts a
 // message's toolbar only on hover, so a synthetic hover comes first. Message
 // bubbles and the React button are matched by English accessible labels; the
 // reaction itself is found by its emoji image, which is locale-independent.
 import { diag } from "../bridge";
-import { decideQuickLike, type QuickLikePhase, type QuickLikeSnapshot } from "../lib/quick-like";
+import {
+  bubbleMatchesNotification,
+  decideQuickLike,
+  type QuickLikePhase,
+  type QuickLikeSnapshot,
+} from "../lib/quick-like";
 import { withComposerDeliveryWhenAvailable } from "../lib/scheduled-send";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 
@@ -33,10 +40,14 @@ function messageScroller(from: Element): HTMLElement | null {
 const atBottom = (scroller: HTMLElement | null) =>
   !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
 
-function newestIncoming(): { bubble: HTMLElement; scope: HTMLElement } | null {
+/** The newest message from someone else whose text the notification showed. */
+function notifiedMessage(body: string): { bubble: HTMLElement; scope: HTMLElement } | null {
   const bubble = bubbles()
     .reverse()
-    .find((el) => !/ by You(?::|$)/.test(el.getAttribute("aria-label") || ""));
+    .find((el) => {
+      const label = el.getAttribute("aria-label") || "";
+      return !/ by You(?::|$)/.test(label) && bubbleMatchesNotification(label, body);
+    });
   // The hover toolbar and reaction summary sit beside the article, so widen
   // to the largest ancestor that still holds only this message.
   let scope = bubble?.closest<HTMLElement>('[role="article"]');
@@ -59,7 +70,7 @@ function thumbItem(menu: Element): HTMLElement | null {
   return null;
 }
 
-async function like(path: string, deadline: number): Promise<boolean> {
+async function like(path: string, body: string, deadline: number): Promise<boolean> {
   const wantedThread = threadPathId(path);
   // Expired while queued: the native side has already given up on it.
   if (Date.now() >= deadline) return false;
@@ -73,18 +84,18 @@ async function like(path: string, deadline: number): Promise<boolean> {
   }
 
   let phase: QuickLikePhase = "waiting";
-  let target: ReturnType<typeof newestIncoming> = null;
+  let target: ReturnType<typeof notifiedMessage> = null;
   let reactButton: HTMLElement | null = null;
   // null: 👍 was already ours, so any visible 👍 confirms it.
   let summaryBefore: string | null = "";
-  let lastNewest: HTMLElement | null = null;
   while (true) {
-    // Settled: scrolled to the latest message, which also rendered last poll.
+    // Settled: scrolled to the latest message. Only a bubble matching the
+    // notification's text becomes the target, so an older message still at
+    // the bottom while the new one renders is never chosen.
     const newest = phase === "waiting" ? (bubbles().pop() ?? null) : null;
     const scroller = newest ? messageScroller(newest) : null;
-    const settled = newest !== null && atBottom(scroller) && newest === lastNewest;
-    lastNewest = newest;
-    if (phase === "waiting") target = newestIncoming();
+    const settled = newest !== null && atBottom(scroller);
+    if (phase === "waiting") target = notifiedMessage(body);
     if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
     const menuId = reactButton?.getAttribute("aria-controls");
     const menu =
@@ -153,7 +164,7 @@ async function like(path: string, deadline: number): Promise<boolean> {
 }
 
 export function initQuickLike() {
-  window.__carrierQuickLike = (path, id, attempt, budgetMs) => {
+  window.__carrierQuickLike = (path, body, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-like.ack", "like acknowledgement emit failed"),
@@ -168,7 +179,7 @@ export function initQuickLike() {
     // hard-navigation resume, and queue time counts against it: a like never
     // lands after native has reported failure.
     const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
-    void withComposerDeliveryWhenAvailable(() => like(path, deadline))
+    void withComposerDeliveryWhenAvailable(() => like(path, String(body), deadline))
       .then((ok) => report(ok))
       .catch(() => {
         diag("quick-like.exception", "like flow raised an exception");

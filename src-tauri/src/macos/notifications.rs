@@ -97,10 +97,20 @@ objc2::define_class!(
             let action = response.actionIdentifier();
 
             if let Some(action) = NotificationAction::from_id(&action.to_string()) {
+                // Like matches the message by the body this notification showed.
+                let body = response.notification().request().content().body().to_string();
                 // Like and Mute run in the background; never block this callback.
                 completion_handler.call(());
                 if let Some(id) = id {
-                    on_notification_action(self.ivars().app.clone(), id, page_id, path, action, None);
+                    on_notification_action(
+                        self.ivars().app.clone(),
+                        id,
+                        page_id,
+                        path,
+                        action,
+                        body,
+                        None,
+                    );
                 }
                 return;
             }
