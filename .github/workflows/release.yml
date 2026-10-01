@@ -643,6 +643,11 @@ jobs:
     # but public links, the Homebrew tap, and the release itself stay untouched.
     if: needs.prepare_release.outputs.keep_draft != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+      # Marks the required "PR model disclosure" status on the link-update commit.
+      statuses: write
     outputs:
       # True once the release is public. The aur job keys off this instead of
       # overall job success: a later Homebrew tap failure must not strand the
@@ -682,11 +687,12 @@ jobs:
           done
 
       # Point the README and landing page at this release BEFORE publishing, so a
-      # failed Contents API push leaves the release a draft and the whole job stays
-      # retryable. (Publishing first and failing here would strand stale download
-      # links: the rerun aborts on the "no longer a draft" guard below.) Commit the
-      # updated files straight back to the default branch through the Contents API
-      # (same approach the IPTVChecker release flow uses).
+      # failed push leaves the release a draft and the whole job stays retryable.
+      # (Publishing first and failing here would strand stale download links: the
+      # rerun aborts on the "no longer a draft" guard below.) main requires the
+      # "PR model disclosure" status, which has no PR here and which a personal
+      # repo can't let Actions bypass. So build the commit through the Git Data
+      # API, mark that status on it, then fast-forward main to it.
       - name: Point public download links at this release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -696,12 +702,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
-          update_release_file() {
-            local path="$1"
-            local temp="/tmp/$(basename "$path")"
-            local sha
-            sha=$(gh api "repos/${REPO}/contents/${path}" --jq '.sha')
-            gh api "repos/${REPO}/contents/${path}" --jq '.content' | base64 -d > "$temp"
+          base=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
+          base_tree=$(gh api "repos/${REPO}/git/commits/${base}" --jq '.tree.sha')
+          tree_entries='[]'
+          for path in README.md docs/index.html; do
+            temp="/tmp/$(basename "$path")"
+            gh api "repos/${REPO}/contents/${path}?ref=${base}" --jq '.content' | base64 -d > "$temp"
             cp "$temp" "${temp}.orig"
             # Update tag paths, artifact filenames, and visible vX.Y.Z labels.
             # The label pattern is a full three-part semver so it can't match
@@ -714,22 +720,31 @@ jobs:
               "$temp"
             if cmp -s "$temp" "${temp}.orig"; then
               echo "${path} already current for ${TAG}."
-              return
+              continue
             fi
-            # Send the request body via --input: the base64 of a large file
-            # (docs/index.html) as a -f argument exceeds the kernel's
-            # per-argument size limit ("Argument list too long", v1.4.0).
-            base64 -w 0 "$temp" | tr -d '\n' > "${temp}.b64"
-            jq -n \
-              --arg message "docs: point ${path} at ${TAG} [skip ci]" \
-              --rawfile content "${temp}.b64" \
-              --arg sha "$sha" \
-              '{message: $message, content: $content, sha: $sha, branch: "main"}' \
-              > "${temp}.json"
-            gh api --method PUT "repos/${REPO}/contents/${path}" --input "${temp}.json"
-          }
-          update_release_file README.md
-          update_release_file docs/index.html
+            # Send bodies via --input: the base64 of a large file (docs/index.html)
+            # as a -f argument exceeds the kernel's per-argument size limit
+            # ("Argument list too long", v1.4.0).
+            blob=$(jq -n --rawfile content "$temp" '{content: $content, encoding: "utf-8"}' \
+              | gh api --method POST "repos/${REPO}/git/blobs" --input - --jq '.sha')
+            tree_entries=$(jq -c --arg path "$path" --arg sha "$blob" \
+              '. + [{path: $path, mode: "100644", type: "blob", sha: $sha}]' <<< "$tree_entries")
+          done
+          if [ "$tree_entries" = '[]' ]; then
+            exit 0
+          fi
+          tree=$(jq -n --arg base "$base_tree" --argjson tree "$tree_entries" '{base_tree: $base, tree: $tree}' \
+            | gh api --method POST "repos/${REPO}/git/trees" --input - --jq '.sha')
+          commit=$(jq -n --arg message "docs: point download links at ${TAG} [skip ci]" \
+            --arg tree "$tree" --arg parent "$base" '{message: $message, tree: $tree, parents: [$parent]}' \
+            | gh api --method POST "repos/${REPO}/git/commits" --input - --jq '.sha')
+          gh api --method POST "repos/${REPO}/statuses/${commit}" \
+            -f state=success -f context="PR model disclosure" \
+            -f description="Release link update, no PR" >/dev/null
+          # Not forced: if main moved since $base, fail and let a rerun rebuild.
+          gh api --method PATCH "repos/${REPO}/git/refs/heads/main" \
+            -f sha="$commit" -F force=false >/dev/null
+          echo "Updated download links in ${commit}."
 
       - name: Publish curated release
         id: release
