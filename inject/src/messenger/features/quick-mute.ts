@@ -187,11 +187,15 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           break;
         case "success":
           mutedThreads.observe(wantedThread, true);
+          // Dispatched first: the listener below retires expiries on any
+          // mute change, and must not catch the one set next.
+          window.dispatchEvent(
+            new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
+          );
           // A mute this flow applied lasts 8 hours; don't keep suppressing past
           // it if the row is not mounted to observe the change. An existing
           // mute keeps whatever duration it had.
-          if (confirmed) {
-            clearTimeout(muteExpiries.get(wantedThread));
+          if (confirmed)
             muteExpiries.set(
               wantedThread,
               setTimeout(() => {
@@ -199,10 +203,6 @@ async function mute(path: string, deadline: number): Promise<boolean> {
                 mutedThreads.invalidateMute(wantedThread);
               }, Number(QUICK_MUTE_DURATION_MS)),
             );
-          }
-          window.dispatchEvent(
-            new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
-          );
           return true;
         case "failure":
           diag("quick-mute.delivery", `mute flow stopped in ${phase}`);
@@ -229,6 +229,14 @@ async function mute(path: string, deadline: number): Promise<boolean> {
 }
 
 export function initQuickMute() {
+  // Any later mute change (a manual unmute or re-mute, or another quick mute)
+  // replaces the state a pending quick-mute expiry would clear.
+  window.addEventListener("carrier:thread-mute", (event) => {
+    const id = (event as CustomEvent<{ id?: unknown }>).detail?.id;
+    if (typeof id !== "string") return;
+    clearTimeout(muteExpiries.get(id));
+    muteExpiries.delete(id);
+  });
   window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>

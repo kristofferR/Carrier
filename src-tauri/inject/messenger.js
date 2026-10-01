@@ -9252,8 +9252,10 @@ ${button.innerHTML}`)
             break;
           case "success":
             mutedThreads.observe(wantedThread, true);
-            if (confirmed) {
-              clearTimeout(muteExpiries.get(wantedThread));
+            window.dispatchEvent(
+              new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
+            );
+            if (confirmed)
               muteExpiries.set(
                 wantedThread,
                 setTimeout(() => {
@@ -9261,10 +9263,6 @@ ${button.innerHTML}`)
                   mutedThreads.invalidateMute(wantedThread);
                 }, Number(QUICK_MUTE_DURATION_MS))
               );
-            }
-            window.dispatchEvent(
-              new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
-            );
             return true;
           case "failure":
             diag("quick-mute.delivery", `mute flow stopped in ${phase}`);
@@ -9283,6 +9281,12 @@ ${button.innerHTML}`)
     }
   }
   function initQuickMute() {
+    window.addEventListener("carrier:thread-mute", (event) => {
+      const id = event.detail?.id;
+      if (typeof id !== "string") return;
+      clearTimeout(muteExpiries.get(id));
+      muteExpiries.delete(id);
+    });
     window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
