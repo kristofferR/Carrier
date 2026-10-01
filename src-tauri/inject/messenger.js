@@ -9096,14 +9096,21 @@ ${button.innerHTML}`)
   // inject/src/messenger/lib/quick-mute.ts
   var QUICK_MUTE_DURATION_MS = "28800000";
   function decideQuickMute(phase, snapshot, expired) {
-    if (snapshot.threadMatches && snapshot.muted === true) return { action: "success", phase };
+    if (snapshot.threadMatches && (snapshot.muted === true || phase === "chooser" && snapshot.chooser === "unmute" || phase === "confirming" && snapshot.confirmed)) {
+      return { action: "success", phase };
+    }
     if (expired) return { action: "failure", phase };
     if (!snapshot.threadMatches) {
       return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
     }
     if (phase === "waiting") {
       if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
+      if (snapshot.chatNotifications) return { action: "open-chooser", phase: "chooser" };
       if (!snapshot.infoRequested) return { action: "open-info", phase };
+      return { action: "wait", phase };
+    }
+    if (phase === "chooser") {
+      if (snapshot.chooser === "mute") return { action: "choose-mute", phase: "dialog" };
       return { action: "wait", phase };
     }
     if (phase === "dialog") {
@@ -9130,21 +9137,48 @@ ${button.innerHTML}`)
     }
     return { muted: trigger ? false : null, trigger };
   }
+  function chatNotificationsControl(stale) {
+    for (const el of document.querySelectorAll(
+      '[role="main"] [role="button"][aria-label="Chat notifications"]'
+    ))
+      if (!stale.has(el) && isShown(el)) return el;
+    return null;
+  }
+  var visibleButtons = (root) => [...root.querySelectorAll('[role="button"], button')].filter(
+    (button) => isShown(button) && getComputedStyle(button).visibility !== "hidden" && button.getAttribute("aria-disabled") !== "true"
+  );
+  function durationRadio(dialog) {
+    const input = dialog.querySelector(
+      `input[type="radio"][value="${QUICK_MUTE_DURATION_MS}"]`
+    );
+    if (input) return input;
+    for (const radio of dialog.querySelectorAll('[role="radio"]'))
+      if (isShown(radio) && /^for 8 hours$/i.test((radio.textContent || "").trim())) return radio;
+    return null;
+  }
+  function chooserDialog(stale) {
+    for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+      if (stale.has(dialog) || durationRadio(dialog)) continue;
+      for (const button of visibleButtons(dialog)) {
+        const muted = conversationMuteFromLabel(label(button));
+        if (muted !== null) return { dialog, button, muted };
+      }
+    }
+    return null;
+  }
   function muteDialog(stale) {
     for (const dialog of document.querySelectorAll('[role="dialog"]')) {
       if (stale.has(dialog)) continue;
-      const radio = dialog.querySelector(
-        `input[type="radio"][value="${QUICK_MUTE_DURATION_MS}"]`
-      );
+      const radio = durationRadio(dialog);
       if (!radio) continue;
-      const confirm = [...dialog.querySelectorAll('[role="button"], button')].find(
-        (button) => isShown(button) && getComputedStyle(button).visibility !== "hidden" && button.getAttribute("aria-disabled") !== "true" && muteStateAfterExplicitAction(label(button)) === true
+      const confirm = visibleButtons(dialog).find(
+        (button) => muteStateAfterExplicitAction(label(button)) === true || /^confirm$/i.test(label(button).trim())
       );
       if (confirm) return { radio, confirm };
     }
     return null;
   }
-  var radioSelected = (radio) => radio.checked || radio.getAttribute("aria-checked") === "true";
+  var radioSelected = (radio) => radio instanceof HTMLInputElement && radio.checked || radio.getAttribute("aria-checked") === "true";
   async function mute(path, deadline) {
     if (Date.now() >= deadline) return false;
     const wantedThread = threadPathId(path);
@@ -9160,15 +9194,22 @@ ${button.innerHTML}`)
     let phase = "waiting";
     let infoRequested = false;
     let openedInfo = null;
+    let openedChooser = null;
+    let confirmed = null;
     try {
       while (true) {
         const control = threadMuteControl(stale);
-        const dialog = phase === "waiting" ? null : muteDialog(staleDialogs);
+        const chooser = phase === "chooser" ? chooserDialog(staleDialogs) : null;
+        if (chooser) openedChooser = chooser.dialog;
+        const dialog = phase === "dialog" ? muteDialog(staleDialogs) : null;
         const snapshot = {
           threadMatches: paneReady(),
           muted: control.muted,
+          chatNotifications: chatNotificationsControl(stale) !== null,
+          chooser: !chooser ? "none" : chooser.muted ? "unmute" : "mute",
           infoRequested,
-          dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected"
+          dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected",
+          confirmed: confirmed !== null && (!confirmed.isConnected || !isShown(confirmed) || getComputedStyle(confirmed).visibility === "hidden" || mutedThreads.isMuted(wantedThread))
         };
         const decision = decideQuickMute(phase, snapshot, Date.now() >= deadline);
         phase = decision.phase;
@@ -9186,10 +9227,17 @@ ${button.innerHTML}`)
           case "open-dialog":
             control.trigger?.click();
             break;
+          case "open-chooser":
+            chatNotificationsControl(stale)?.click();
+            break;
+          case "choose-mute":
+            chooser?.button.click();
+            break;
           case "select":
             dialog?.radio.click();
             break;
           case "confirm":
+            confirmed = dialog?.confirm ?? null;
             dialog?.confirm.click();
             break;
           case "success":
@@ -9207,6 +9255,9 @@ ${button.innerHTML}`)
         await pause2();
       }
     } finally {
+      const chooser = openedChooser?.isConnected ? openedChooser : null;
+      const close = chooser ? visibleButtons(chooser).find((button) => /^(close|done)$/i.test(label(button).trim())) : null;
+      close?.click();
       if (openedInfo?.isConnected && openedInfo.getAttribute("aria-expanded") === "true" && paneReady())
         openedInfo.click();
     }
