@@ -2,6 +2,7 @@
 //! background + appearance observer, the Dock menu, and
 //! `UNUserNotificationCenter` delivery.
 
+pub(crate) mod background_render;
 pub(crate) mod clipboard;
 pub(crate) mod dock;
 pub(crate) mod notifications;

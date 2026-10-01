@@ -329,6 +329,11 @@ fn reveal_window(window: &WebviewWindow, activation_token: Option<&str>) {
     let _ = activation_token;
 
     let is_main = window.label() == "main";
+    // A notification action may be holding the closed window in, transparent.
+    #[cfg(target_os = "macos")]
+    if is_main {
+        crate::macos::background_render::hand_over(window);
+    }
     let reveal_generation = is_main.then(|| {
         let state = window.app_handle().state::<AppState>();
         let generation = state

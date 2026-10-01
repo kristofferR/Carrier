@@ -1840,6 +1840,38 @@ pub fn run() {
                 }
             });
 
+            // Debug builds only: run a notification action as if its button
+            // were clicked, so the native path (including macOS foreground
+            // rendering) can be exercised without a real notification.
+            #[cfg(all(feature = "mcp", debug_assertions))]
+            {
+                let debug_action_handle = app.handle().clone();
+                app.listen_any("carrier:debug-notification-action", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct DebugAction {
+                        action: String,
+                        thread_path: String,
+                        page_id: u64,
+                    }
+                    let Ok(request) = serde_json::from_str::<DebugAction>(event.payload()) else {
+                        return;
+                    };
+                    let Some(action) = notifications::NotificationAction::from_id(&request.action)
+                    else {
+                        return;
+                    };
+                    log::info!("debug notification action requested");
+                    notifications::on_notification_action(
+                        debug_action_handle.clone(),
+                        1,
+                        Some(request.page_id),
+                        Some(request.thread_path),
+                        action,
+                        None,
+                    );
+                });
+            }
+
             // Health notice from the page's sync monitor: a native heads-up
             // when Messenger's data sync degrades while the app looks fine.
             // Fixed strings only — the remote page's text is never rendered.
@@ -2020,7 +2052,31 @@ pub fn run() {
                 ..
             } = event
             {
-                reopen_main_if_needed(app, has_visible_windows);
+                // A transparent window held in by a notification action counts
+                // as visible to AppKit; the user still has to see it.
+                let handed_over = app
+                    .get_webview_window("main")
+                    .is_some_and(|main| macos::background_render::hand_over(&main));
+                if handed_over {
+                    show_main(app);
+                } else {
+                    reopen_main_if_needed(app, has_visible_windows);
+                }
+            }
+
+            // App activation (Cmd+Tab) can make that transparent window key.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(true),
+                ..
+            } = &event
+            {
+                if label == "main" {
+                    if let Some(main) = app.get_webview_window("main") {
+                        macos::background_render::hand_over(&main);
+                    }
+                }
             }
 
             // LaunchServices delivers both share-extension handoffs and the

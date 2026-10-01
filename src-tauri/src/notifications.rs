@@ -1867,6 +1867,12 @@ fn run_hidden_page_action(
     mode: PendingReplyMode,
     deadline: Instant,
 ) -> bool {
+    // Keeps a covered or closed macOS window rendering at foreground priority
+    // until this function returns, ahead of any fallback that shows it.
+    #[cfg(target_os = "macos")]
+    let foreground = crate::macos::background_render::begin(app);
+    #[cfg(target_os = "macos")]
+    let started = Instant::now();
     let attempt = next_reply_attempt();
     let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
     reply_ack_waiters()
@@ -1900,6 +1906,12 @@ fn run_hidden_page_action(
         Ok(()) if !ok => log::warn!("notification action failed or timed out (id {id})"),
         Ok(()) => {}
     }
+    #[cfg(target_os = "macos")]
+    log::info!(
+        "notification action finished in {} ms (id {id}, ok {ok}, foreground render {})",
+        started.elapsed().as_millis(),
+        foreground.is_some()
+    );
     ok
 }
 
