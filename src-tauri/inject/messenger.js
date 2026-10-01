@@ -7813,7 +7813,7 @@ ${button.innerHTML}`)
             richMessageBody(named.body, threadPath),
             Boolean(image)
           );
-          rememberNotifiedMessage(id, originalBody);
+          if (!hidePreview) rememberNotifiedMessage(id, originalBody);
           emitNotification(
             id,
             hidePreview ? "Messenger" : text.title,
@@ -8138,7 +8138,7 @@ ${button.innerHTML}`)
       );
       diag("notify.capacity", "completed a row fallback displaced by the correlation bound");
       const notificationId = ++notifySeq;
-      rememberNotifiedMessage(notificationId, fallback.body);
+      if (!hidePreview) rememberNotifiedMessage(notificationId, fallback.body);
       emitNotification(
         notificationId,
         hidePreview ? "Messenger" : nativeThreadTitles.displayed(fallback.key, fallback.title, fallback.displayTitle),
@@ -8277,7 +8277,7 @@ ${button.innerHTML}`)
         );
         const text = notificationPhotoText(named.title, named.body, Boolean(image));
         const notificationId = ++notifySeq;
-        rememberNotifiedMessage(notificationId, conversation.body);
+        if (!hidePreview) rememberNotifiedMessage(notificationId, conversation.body);
         emitNotification(
           notificationId,
           hidePreview ? "Messenger" : text.title,

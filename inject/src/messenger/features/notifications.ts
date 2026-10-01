@@ -614,7 +614,8 @@ export function initNotificationBridge() {
           richMessageBody(named.body, threadPath),
           Boolean(image),
         );
-        rememberNotifiedMessage(id, originalBody);
+        // Redacted notifications offer no 👍, so their text is never kept.
+        if (!hidePreview) rememberNotifiedMessage(id, originalBody);
         emitNotification(
           id,
           hidePreview ? "Messenger" : text.title,
@@ -1123,7 +1124,7 @@ export function initNotificationBridge() {
     // The row has left the correlation queue. Queue native IPC in this task so
     // a reload cannot abandon the delivery while contact names are loading.
     const notificationId = ++notifySeq;
-    rememberNotifiedMessage(notificationId, fallback.body);
+    if (!hidePreview) rememberNotifiedMessage(notificationId, fallback.body);
     emitNotification(
       notificationId,
       hidePreview
@@ -1309,7 +1310,7 @@ export function initNotificationBridge() {
       );
       const text = notificationPhotoText(named.title, named.body, Boolean(image));
       const notificationId = ++notifySeq;
-      rememberNotifiedMessage(notificationId, conversation.body);
+      if (!hidePreview) rememberNotifiedMessage(notificationId, conversation.body);
       emitNotification(
         notificationId,
         hidePreview ? "Messenger" : text.title,
