@@ -62,19 +62,14 @@ export function decideQuickLike(
 const normalized = (text: string) => text.replace(/\s+/g, " ").trim();
 
 /**
- * The possible texts of a bubble label: "Enter, Message sent <when> by
- * <name>: <text>". A display name can itself contain ": ", so every split
- * after the sender is a candidate, longest first.
+ * The text of a bubble label: "Enter, Message sent <when> by <name>: <text>".
+ * The first ": " after the sender ends the name; later ones belong to the
+ * message. A display name containing ": " (some business pages) misreads and
+ * never matches, which fails safe.
  */
-export function bubbleTexts(label: string): string[] {
-  const start = label.indexOf(" by ");
-  if (start < 0) return [];
-  const texts: string[] = [];
-  for (let at = label.indexOf(": ", start); at >= 0; at = label.indexOf(": ", at + 2)) {
-    const text = normalized(label.slice(at + 2));
-    if (text) texts.push(text);
-  }
-  return texts;
+export function bubbleText(label: string): string {
+  const match = / by [^:]*: ([\s\S]*)$/.exec(label);
+  return match?.[1] ? normalized(match[1]) : "";
 }
 
 /**
@@ -85,10 +80,9 @@ export function bubbleMatchesNotification(label: string, body: string): boolean 
   const preview = normalized(body)
     .replace(/(?:…|\.\.\.)$/, "")
     .trim();
-  if (!preview) return false;
-  return bubbleTexts(label).some(
-    (text) => text.startsWith(preview) || preview.endsWith(`: ${text}`),
-  );
+  const text = bubbleText(label);
+  if (!preview || !text) return false;
+  return text.startsWith(preview) || preview.endsWith(`: ${text}`);
 }
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];

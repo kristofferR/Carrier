@@ -7279,15 +7279,25 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/notified-messages.ts
   var KEY = "carrier-notified-messages";
-  var LIMIT = 256;
+  var ACCEPTED_LIMIT = 256;
+  var PENDING_LIMIT = 64;
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number";
+  var isEntry = (value) => Array.isArray(value) && typeof value[0] === "number" && typeof value[1]?.body === "string" && typeof value[1]?.at === "number" && typeof value[1]?.accepted === "boolean";
   function load(storage) {
     try {
       const entries = JSON.parse(storage?.getItem(KEY) || "[]");
       return Array.isArray(entries) ? entries.filter(isEntry) : [];
     } catch {
       return [];
+    }
+  }
+  function save(storage, entries, now) {
+    const live = entries.filter(([, message]) => now - message.at < MAX_AGE_MS);
+    const accepted = live.filter(([, message]) => message.accepted).slice(-ACCEPTED_LIMIT);
+    const pending = live.filter(([, message]) => !message.accepted).slice(-PENDING_LIMIT);
+    try {
+      storage?.setItem(KEY, JSON.stringify([...accepted, ...pending]));
+    } catch {
     }
   }
   var shared = () => {
@@ -7298,16 +7308,20 @@ ${button.innerHTML}`)
     }
   };
   function rememberNotifiedMessage(id, body, at = Date.now(), storage = shared()) {
-    const entries = [
-      ...load(storage).filter(([known, message]) => known !== id && at - message.at < MAX_AGE_MS),
-      [id, { body, at }]
-    ];
-    try {
-      storage?.setItem(KEY, JSON.stringify(entries.slice(-LIMIT)));
-    } catch {
-    }
+    const entries = load(storage).filter(([known]) => known !== id);
+    save(storage, [...entries, [id, { body, at, accepted: false }]], at);
   }
-  var notifiedMessage = (id, storage = shared()) => load(storage).find(([known]) => known === id)?.[1];
+  function settleNotifiedMessage(id, accepted, now = Date.now(), storage = shared()) {
+    const entries = load(storage);
+    const entry = entries.find(([known]) => known === id);
+    if (!entry) return;
+    if (accepted) entry[1].accepted = true;
+    save(storage, accepted ? entries : entries.filter(([known]) => known !== id), now);
+  }
+  function notifiedMessage(id, storage = shared()) {
+    const message = load(storage).find(([known]) => known === id)?.[1];
+    return message?.accepted ? { body: message.body, at: message.at } : void 0;
+  }
 
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
@@ -7540,6 +7554,7 @@ ${button.innerHTML}`)
     window.__carrierNotifyResult = (id, delivery) => {
       if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
       pageNotificationReceipts.recordDelivery(id, delivery);
+      settleNotifiedMessage(id, delivery === "accepted");
       const handler = deliveryHandlers.get(id);
       deliveryHandlers.delete(id);
       handler?.(delivery);
@@ -8714,22 +8729,15 @@ ${button.innerHTML}`)
     return { action: "open-menu", phase: "menu" };
   }
   var normalized = (text) => text.replace(/\s+/g, " ").trim();
-  function bubbleTexts(label2) {
-    const start = label2.indexOf(" by ");
-    if (start < 0) return [];
-    const texts = [];
-    for (let at = label2.indexOf(": ", start); at >= 0; at = label2.indexOf(": ", at + 2)) {
-      const text = normalized(label2.slice(at + 2));
-      if (text) texts.push(text);
-    }
-    return texts;
+  function bubbleText(label2) {
+    const match = / by [^:]*: ([\s\S]*)$/.exec(label2);
+    return match?.[1] ? normalized(match[1]) : "";
   }
   function bubbleMatchesNotification(label2, body) {
     const preview = normalized(body).replace(/(?:…|\.\.\.)$/, "").trim();
-    if (!preview) return false;
-    return bubbleTexts(label2).some(
-      (text) => text.startsWith(preview) || preview.endsWith(`: ${text}`)
-    );
+    const text = bubbleText(label2);
+    if (!preview || !text) return false;
+    return text.startsWith(preview) || preview.endsWith(`: ${text}`);
   }
   var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   function bubbleSentAt(label2, now) {
@@ -9673,7 +9681,7 @@ ${text}`)) {
       if (!panel) return;
       panel.style.setProperty("--schedule-accent", accent);
     };
-    const save = async (due) => {
+    const save2 = async (due) => {
       if (busy) return;
       const current = account();
       if (!current || current !== owner || thread() !== panelThread) {
@@ -9813,7 +9821,7 @@ ${text}`)) {
             toast("Choose a valid local time in HH:mm format.");
             return;
           }
-          void save(value);
+          void save2(value);
         },
         "carrier-schedule-primary"
       );
@@ -9848,7 +9856,7 @@ ${text}`)) {
             "",
             () => {
               const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
-              if (updated) void save(updated.due);
+              if (updated) void save2(updated.due);
             },
             "carrier-schedule-preset"
           );

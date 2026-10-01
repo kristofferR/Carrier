@@ -51,7 +51,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
-import { rememberNotifiedMessage } from "../lib/notified-messages";
+import { rememberNotifiedMessage, settleNotifiedMessage } from "../lib/notified-messages";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -230,6 +230,7 @@ export function initNotificationBridge() {
   window.__carrierNotifyResult = (id, delivery) => {
     if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
     pageNotificationReceipts.recordDelivery(id, delivery);
+    settleNotifiedMessage(id, delivery === "accepted");
     const handler = deliveryHandlers.get(id);
     deliveryHandlers.delete(id);
     handler?.(delivery);

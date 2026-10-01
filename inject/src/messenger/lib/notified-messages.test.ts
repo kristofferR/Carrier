@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { notifiedMessage, rememberNotifiedMessage } from "./notified-messages";
+import {
+  notifiedMessage,
+  rememberNotifiedMessage,
+  settleNotifiedMessage,
+} from "./notified-messages";
 
 const memoryStorage = (): Storage => {
   const items = new Map<string, string>();
@@ -15,29 +19,52 @@ const memoryStorage = (): Storage => {
   };
 };
 
+const accept = (storage: Storage, id: number, body = `m${id}`, at = id) => {
+  rememberNotifiedMessage(id, body, at, storage);
+  settleNotifiedMessage(id, true, at, storage);
+};
+
 describe("notified messages", () => {
-  test("survive a reload through storage and keep the newest 256", () => {
+  test("count only once native accepts them", () => {
     const storage = memoryStorage();
-    for (let id = 1; id <= 300; id++) rememberNotifiedMessage(id, `m${id}`, id, storage);
+    rememberNotifiedMessage(1, "hi", 1, storage);
+    expect(notifiedMessage(1, storage)).toBeUndefined();
+    settleNotifiedMessage(1, true, 1, storage);
+    expect(notifiedMessage(1, storage)).toEqual({ body: "hi", at: 1 });
+  });
+
+  test("a suppressed burst never evicts an accepted record", () => {
+    const storage = memoryStorage();
+    accept(storage, 1);
+    for (let id = 2; id <= 400; id++) {
+      rememberNotifiedMessage(id, `m${id}`, id, storage);
+      settleNotifiedMessage(id, false, id, storage);
+    }
+    expect(notifiedMessage(1, storage)).toEqual({ body: "m1", at: 1 });
+  });
+
+  test("keep the newest 256 accepted records", () => {
+    const storage = memoryStorage();
+    for (let id = 1; id <= 300; id++) accept(storage, id);
     expect(notifiedMessage(300, storage)).toEqual({ body: "m300", at: 300 });
     expect(notifiedMessage(45, storage)).toEqual({ body: "m45", at: 45 });
     expect(notifiedMessage(44, storage)).toBeUndefined();
   });
 
-  test("drops records older than a week", () => {
+  test("drop records older than a week", () => {
     const storage = memoryStorage();
     const week = 7 * 24 * 60 * 60 * 1000;
-    rememberNotifiedMessage(1, "old", 0, storage);
-    rememberNotifiedMessage(2, "new", week, storage);
+    accept(storage, 1, "old", 0);
+    accept(storage, 2, "new", week);
     expect(notifiedMessage(1, storage)).toBeUndefined();
     expect(notifiedMessage(2, storage)).toEqual({ body: "new", at: week });
   });
 
-  test("ignores corrupt storage", () => {
+  test("ignore corrupt storage", () => {
     const storage = memoryStorage();
     storage.setItem("carrier-notified-messages", "{not json");
     expect(notifiedMessage(1, storage)).toBeUndefined();
-    rememberNotifiedMessage(1, "hi", 5, storage);
+    accept(storage, 1, "hi", 5);
     expect(notifiedMessage(1, storage)).toEqual({ body: "hi", at: 5 });
   });
 });

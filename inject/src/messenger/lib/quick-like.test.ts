@@ -3,7 +3,7 @@ import {
   bubbleIsFresh,
   bubbleMatchesNotification,
   bubbleSentAt,
-  bubbleTexts,
+  bubbleText,
   decideQuickLike,
   type QuickLikeSnapshot,
 } from "./quick-like";
@@ -82,14 +82,14 @@ describe("bubbleMatchesNotification", () => {
   const label = "Enter, Message sent Friday 9:34pm by Kim: See you at 5: bring snacks";
 
   test("reads the text after the sender, ignoring colons in the time", () => {
-    expect(bubbleTexts(label)[0]).toBe("See you at 5: bring snacks");
-    expect(bubbleTexts("Enter, Message sent Friday 9:34pm by Kim")).toEqual([]);
+    expect(bubbleText(label)).toBe("See you at 5: bring snacks");
+    expect(bubbleText("Enter, Message sent Friday 9:34pm by Kim")).toBe("");
   });
 
-  test("handles a sender name that contains a colon", () => {
-    const named = "Enter, Message sent 4:20 PM by ACME: Support: Your order shipped";
-    expect(bubbleMatchesNotification(named, "Your order shipped")).toBe(true);
-    expect(bubbleMatchesNotification(named, "ACME: Support: Your order shipped")).toBe(true);
+  test("never matches a suffix of a message that contains a colon", () => {
+    const older = "Enter, Message sent 4:20 PM by Kim: Question: OK";
+    expect(bubbleMatchesNotification(older, "OK")).toBe(false);
+    expect(bubbleMatchesNotification(older, "Question: OK")).toBe(true);
   });
 
   test("matches exact, truncated, and sender-prefixed previews", () => {
