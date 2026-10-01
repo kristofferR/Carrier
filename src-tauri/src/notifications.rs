@@ -1554,7 +1554,7 @@ fn quick_reply_script(
             format!("window.__carrierQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
         }
         PendingReplyMode::Mute => {
-            format!("window.__carrierQuickMute?.({path}, {id}, {attempt}, {budget});")
+            format!("window.__carrierQuickMute?.({path}, {text}, {id}, {attempt}, {budget});")
         }
         PendingReplyMode::Like => {
             format!("window.__carrierQuickLike?.({path}, {text}, {id}, {attempt}, {budget});")
@@ -1972,23 +1972,22 @@ pub(crate) fn on_notification_action(
     activation_token: Option<String>,
 ) {
     let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
-    let (mode, failure, text) = match action {
-        NotificationAction::Like => (
-            PendingReplyMode::Like,
-            LIKE_FAILED,
-            page_id
-                .map(|page_id| page_id.to_string())
-                .unwrap_or_default(),
-        ),
-        NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED, String::new()),
+    let (mode, failure) = match action {
+        NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED),
+        NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
     };
+    // The page's account-scoped record of this notification: Like matches its
+    // text, and both act only under the account that received it.
+    let text = page_id
+        .map(|page_id| page_id.to_string())
+        .unwrap_or_default();
     let failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
         show_action_failure_notification(&app, failure);
         activate_notification(app, id, page_id, path, token);
     };
-    // Without the page's record there is nothing to identify the message by.
-    if action == NotificationAction::Like && text.is_empty() {
-        log::info!("notification like has no page notification to match (id {id})");
+    // Without the page's record there is nothing to identify the target by.
+    if text.is_empty() {
+        log::info!("notification {action:?} has no page notification to match (id {id})");
         failed(app, fallback_path, activation_token);
         return;
     }
@@ -3088,7 +3087,7 @@ mod tests {
             |mode, remaining| quick_reply_script(7, 3, "/t/1/", "", mode, remaining).unwrap();
         assert_eq!(
             script(PendingReplyMode::Mute, Duration::from_secs(20)),
-            "window.__carrierQuickMute?.(\"/t/1/\", 7, 3, 18000);"
+            "window.__carrierQuickMute?.(\"/t/1/\", \"\", 7, 3, 18000);"
         );
         // A resume after most of the wait has passed leaves the page no time.
         assert!(script(PendingReplyMode::Like, Duration::from_secs(1)).ends_with(", 3, 0);"));

@@ -176,7 +176,13 @@ interface Window {
   /** Preserve a failed notification reply as an unsent composer draft. */
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Mute a conversation from its notification without raising the window. */
-  __carrierQuickMute?: (path: string, id: number, attempt: number, budgetMs: number) => void;
+  __carrierQuickMute?: (
+    path: string,
+    notification: string,
+    id: number,
+    attempt: number,
+    budgetMs: number,
+  ) => void;
   /** React 👍 to the message a page notification (by its id) announced. */
   __carrierQuickLike?: (
     path: string,

@@ -6,6 +6,7 @@
 // confirmed dialog closing, or Carrier's own muted-thread tracking.
 import { diag } from "../bridge";
 import { conversationMuteFromLabel, mutedThreads, muteStateAfterExplicitAction } from "../lib/mute";
+import { notifiedMessage } from "../lib/notified-messages";
 import {
   decideQuickMute,
   QUICK_MUTE_DURATION_MS,
@@ -19,6 +20,8 @@ import { conversationInfoButton, openThreadForAction } from "./thread-nav";
 
 const POLL_MS = 250;
 const MUTE_BUDGET_MS = 12_000;
+// One expiry per thread: re-muting replaces the earlier mute's timer.
+const muteExpiries = new Map<string, ReturnType<typeof setTimeout>>();
 
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 const label = (el: Element) => el.getAttribute("aria-label") || el.textContent || "";
@@ -187,11 +190,16 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           // A mute this flow applied lasts 8 hours; don't keep suppressing past
           // it if the row is not mounted to observe the change. An existing
           // mute keeps whatever duration it had.
-          if (confirmed)
-            setTimeout(
-              () => mutedThreads.invalidateMute(wantedThread),
-              Number(QUICK_MUTE_DURATION_MS),
+          if (confirmed) {
+            clearTimeout(muteExpiries.get(wantedThread));
+            muteExpiries.set(
+              wantedThread,
+              setTimeout(() => {
+                muteExpiries.delete(wantedThread);
+                mutedThreads.invalidateMute(wantedThread);
+              }, Number(QUICK_MUTE_DURATION_MS)),
             );
+          }
           window.dispatchEvent(
             new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
           );
@@ -221,12 +229,19 @@ async function mute(path: string, deadline: number): Promise<boolean> {
 }
 
 export function initQuickMute() {
-  window.__carrierQuickMute = (path, id, attempt, budgetMs) => {
+  window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-mute.ack", "mute acknowledgement emit failed"),
       );
-    if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0) {
+    // Act only under the account that received the notification: its record
+    // is account-scoped, so another signed-in account cannot find it.
+    if (
+      threadPathId(path) === null ||
+      !Number.isSafeInteger(id) ||
+      id <= 0 ||
+      !notifiedMessage(Number(notification))
+    ) {
       void report(false);
       return;
     }

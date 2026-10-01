@@ -9132,6 +9132,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/quick-mute.ts
   var POLL_MS2 = 250;
   var MUTE_BUDGET_MS = 12e3;
+  var muteExpiries = /* @__PURE__ */ new Map();
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
   function threadMuteControl(stale) {
@@ -9251,11 +9252,16 @@ ${button.innerHTML}`)
             break;
           case "success":
             mutedThreads.observe(wantedThread, true);
-            if (confirmed)
-              setTimeout(
-                () => mutedThreads.invalidateMute(wantedThread),
-                Number(QUICK_MUTE_DURATION_MS)
+            if (confirmed) {
+              clearTimeout(muteExpiries.get(wantedThread));
+              muteExpiries.set(
+                wantedThread,
+                setTimeout(() => {
+                  muteExpiries.delete(wantedThread);
+                  mutedThreads.invalidateMute(wantedThread);
+                }, Number(QUICK_MUTE_DURATION_MS))
               );
+            }
             window.dispatchEvent(
               new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
             );
@@ -9277,11 +9283,11 @@ ${button.innerHTML}`)
     }
   }
   function initQuickMute() {
-    window.__carrierQuickMute = (path, id, attempt, budgetMs) => {
+    window.__carrierQuickMute = (path, notification, id, attempt, budgetMs) => {
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
       );
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0) {
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notifiedMessage(Number(notification))) {
         void report(false);
         return;
       }
