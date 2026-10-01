@@ -55,7 +55,13 @@ pub(crate) fn begin(app: &tauri::AppHandle) -> Option<ForegroundRender> {
     let (sent, received) = std::sync::mpsc::sync_channel(1);
     window
         .with_webview(move |webview| {
-            let _ = sent.send(engage(webview.inner().cast()));
+            let webview = webview.inner().cast();
+            let engaged = engage(webview);
+            // `begin` stopped waiting: no guard exists to restore this, so
+            // undo it at once rather than leave the window held in.
+            if sent.send(engaged).is_err() && engaged == Some(true) {
+                release(webview);
+            }
         })
         .ok()?;
     let engaged = received.recv_timeout(Duration::from_secs(2)).ok().flatten();
@@ -111,27 +117,29 @@ impl Drop for ForegroundRender {
             ENGAGED.lock().unwrap().take();
             return;
         };
-        let _ = window.with_webview(|webview| {
-            let Some(engaged) = ENGAGED.lock().unwrap().take() else {
-                return;
-            };
-            let webview: *mut AnyObject = webview.inner().cast();
-            if !responds(webview, sel!(_setWindowOcclusionDetectionEnabled:)) {
-                return;
-            }
-            // SAFETY: as in `engage`, on the main thread.
-            unsafe {
-                let _: () = msg_send![
-                    webview,
-                    _setWindowOcclusionDetectionEnabled: engaged.occlusion_detection_was_enabled
-                ];
-                let window: *mut AnyObject = msg_send![webview, window];
-                if let (Some(transparency), false) = (engaged.ordered_in, window.is_null()) {
-                    let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
-                    restore_transparency(window, transparency);
-                }
-            }
-        });
+        let _ = window.with_webview(|webview| release(webview.inner().cast()));
+    }
+}
+
+/// Undo `engage`. Runs on the main thread inside `with_webview`.
+fn release(webview: *mut AnyObject) {
+    let Some(engaged) = ENGAGED.lock().unwrap().take() else {
+        return;
+    };
+    if !responds(webview, sel!(_setWindowOcclusionDetectionEnabled:)) {
+        return;
+    }
+    // SAFETY: as in `engage`, on the main thread.
+    unsafe {
+        let _: () = msg_send![
+            webview,
+            _setWindowOcclusionDetectionEnabled: engaged.occlusion_detection_was_enabled
+        ];
+        let window: *mut AnyObject = msg_send![webview, window];
+        if let (Some(transparency), false) = (engaged.ordered_in, window.is_null()) {
+            let _: () = msg_send![window, orderOut: std::ptr::null::<AnyObject>()];
+            restore_transparency(window, transparency);
+        }
     }
 }
 

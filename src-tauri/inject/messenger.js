@@ -9242,6 +9242,10 @@ ${button.innerHTML}`)
             break;
           case "success":
             mutedThreads.observe(wantedThread, true);
+            setTimeout(
+              () => mutedThreads.invalidateMute(wantedThread),
+              Number(QUICK_MUTE_DURATION_MS)
+            );
             window.dispatchEvent(
               new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
             );
