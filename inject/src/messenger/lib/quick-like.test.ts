@@ -101,6 +101,21 @@ describe("bubbleMatchesNotification", () => {
     expect(bubbleMatchesNotification(label, "See you at 5: bring snacks")).toBe(true);
     expect(bubbleMatchesNotification(label, "See you at 5…")).toBe(true);
     expect(bubbleMatchesNotification(label, "Kim: See you at 5: bring snacks")).toBe(true);
+    expect(bubbleMatchesNotification(label, "Kim: See you at 5…")).toBe(true);
+    const fullName = "Enter, Message sent 4:20 PM by Kim Andersen: See you at 5";
+    expect(bubbleMatchesNotification(fullName, "Kim: See you at 5")).toBe(true);
+  });
+
+  test("requires an exact match unless the preview was truncated", () => {
+    const older = "Enter, Message sent 4:20 PM by Kim: OK thanks";
+    expect(bubbleMatchesNotification(older, "OK")).toBe(false);
+    expect(bubbleMatchesNotification(older, "OK…")).toBe(true);
+  });
+
+  test("strips a prefix only when it names the sender", () => {
+    const ok = "Enter, Message sent 4:20 PM by Kim: OK";
+    expect(bubbleMatchesNotification(ok, "Question: OK")).toBe(false);
+    expect(bubbleMatchesNotification(ok, "Kim: OK")).toBe(true);
   });
 
   test("rejects other messages and empty text", () => {

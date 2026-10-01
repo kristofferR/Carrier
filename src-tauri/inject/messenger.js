@@ -8752,11 +8752,20 @@ ${button.innerHTML}`)
     const match = / by [^:]*: ([\s\S]*)$/.exec(label2);
     return match?.[1] ? normalized(match[1]) : "";
   }
+  var bubbleSender = (label2) => / by ([^:]*): /.exec(label2)?.[1]?.trim() ?? "";
   function bubbleMatchesNotification(label2, body) {
-    const preview = normalized(body).replace(/(?:…|\.\.\.)$/, "").trim();
+    const raw = normalized(body);
+    const truncated = /(?:…|\.\.\.)$/.test(raw);
+    const preview = raw.replace(/(?:…|\.\.\.)$/, "").trim();
     const text = bubbleText(label2);
     if (!preview || !text) return false;
-    return text.startsWith(preview) || preview.endsWith(`: ${text}`);
+    const fits = (candidate) => candidate.length > 0 && (truncated ? text.startsWith(candidate) : text === candidate);
+    if (fits(preview)) return true;
+    const separator = preview.indexOf(": ");
+    if (separator <= 0) return false;
+    const prefix = preview.slice(0, separator);
+    const sender = bubbleSender(label2);
+    return (sender === prefix || sender.startsWith(`${prefix} `)) && fits(preview.slice(separator + 2));
   }
   var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   function bubbleSentAt(label2, now) {
@@ -9242,10 +9251,11 @@ ${button.innerHTML}`)
             break;
           case "success":
             mutedThreads.observe(wantedThread, true);
-            setTimeout(
-              () => mutedThreads.invalidateMute(wantedThread),
-              Number(QUICK_MUTE_DURATION_MS)
-            );
+            if (confirmed)
+              setTimeout(
+                () => mutedThreads.invalidateMute(wantedThread),
+                Number(QUICK_MUTE_DURATION_MS)
+              );
             window.dispatchEvent(
               new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
             );

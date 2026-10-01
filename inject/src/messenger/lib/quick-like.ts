@@ -75,17 +75,31 @@ export function bubbleText(label: string): string {
   return match?.[1] ? normalized(match[1]) : "";
 }
 
+/** The sender named in a bubble label ("… by <name>: <text>"). */
+const bubbleSender = (label: string) => / by ([^:]*): /.exec(label)?.[1]?.trim() ?? "";
+
 /**
- * Whether a bubble is the message a notification announced. Previews can be
- * truncated, and group previews can carry a "Name: " prefix.
+ * Whether a bubble is the message a notification announced. A preview that
+ * ends in an ellipsis may be a prefix of the text; otherwise it must match
+ * exactly. Group previews can carry a "Name: " prefix, stripped only when it
+ * names the bubble's sender (a first name may stand for the full one).
  */
 export function bubbleMatchesNotification(label: string, body: string): boolean {
-  const preview = normalized(body)
-    .replace(/(?:…|\.\.\.)$/, "")
-    .trim();
+  const raw = normalized(body);
+  const truncated = /(?:…|\.\.\.)$/.test(raw);
+  const preview = raw.replace(/(?:…|\.\.\.)$/, "").trim();
   const text = bubbleText(label);
   if (!preview || !text) return false;
-  return text.startsWith(preview) || preview.endsWith(`: ${text}`);
+  const fits = (candidate: string) =>
+    candidate.length > 0 && (truncated ? text.startsWith(candidate) : text === candidate);
+  if (fits(preview)) return true;
+  const separator = preview.indexOf(": ");
+  if (separator <= 0) return false;
+  const prefix = preview.slice(0, separator);
+  const sender = bubbleSender(label);
+  return (
+    (sender === prefix || sender.startsWith(`${prefix} `)) && fits(preview.slice(separator + 2))
+  );
 }
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];

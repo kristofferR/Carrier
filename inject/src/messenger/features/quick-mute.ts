@@ -184,12 +184,14 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           break;
         case "success":
           mutedThreads.observe(wantedThread, true);
-          // The mute lasts 8 hours; don't keep suppressing past it if the row
-          // is not mounted to observe the change.
-          setTimeout(
-            () => mutedThreads.invalidateMute(wantedThread),
-            Number(QUICK_MUTE_DURATION_MS),
-          );
+          // A mute this flow applied lasts 8 hours; don't keep suppressing past
+          // it if the row is not mounted to observe the change. An existing
+          // mute keeps whatever duration it had.
+          if (confirmed)
+            setTimeout(
+              () => mutedThreads.invalidateMute(wantedThread),
+              Number(QUICK_MUTE_DURATION_MS),
+            );
           window.dispatchEvent(
             new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
           );
