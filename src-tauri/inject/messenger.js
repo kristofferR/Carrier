@@ -504,8 +504,8 @@
       '[role="button"][aria-label], button[aria-label]'
     )) {
       if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").toLowerCase();
-      if (needles.some((n) => label.includes(n))) return el;
+      const label2 = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (needles.some((n) => label2.includes(n))) return el;
     }
     return null;
   }
@@ -550,8 +550,8 @@
     if (!root) return null;
     for (const el of root.querySelectorAll('[role="button"][aria-label]')) {
       if (!isShown(el)) continue;
-      const label = (el.getAttribute("aria-label") || "").trim().toLowerCase();
-      if (label === "search" || label === "search in conversation") return el;
+      const label2 = (el.getAttribute("aria-label") || "").trim().toLowerCase();
+      if (label2 === "search" || label2 === "search in conversation") return el;
     }
     return null;
   }
@@ -791,9 +791,9 @@ ${button.innerHTML}`)
     }
   }
   function hasSoleMessengerWindow(value) {
-    if (!Array.isArray(value) || value.some((label) => typeof label !== "string")) return false;
-    const messenger = value.filter((label) => label === "main" || /^win-\d+$/.test(label));
-    return messenger.length === 1 && value.every((label) => label === "settings" || messenger.includes(label));
+    if (!Array.isArray(value) || value.some((label2) => typeof label2 !== "string")) return false;
+    const messenger = value.filter((label2) => label2 === "main" || /^win-\d+$/.test(label2));
+    return messenger.length === 1 && value.every((label2) => label2 === "settings" || messenger.includes(label2));
   }
   var FacebookWorkerRecovery = class {
     constructor(load, accountScope, canRestartSharedWorker = async () => false) {
@@ -2869,14 +2869,14 @@ ${button.innerHTML}`)
         for (let index = 0; index < items.length; index += 1) {
           const item = items[index];
           if (!item) continue;
-          const label = item[0];
-          if (isMac2 && (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])) {
+          const label2 = item[0];
+          if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_LABELS[2] || label2 === VIDEO_CONTEXT_MENU_LABELS[1])) {
             continue;
           }
           const fn = item[1];
           const rowIndex = menuItems.length;
           const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
-          nativeReflectApply3(nativeSetTextContent, el, [label]);
+          nativeReflectApply3(nativeSetTextContent, el, [label2]);
           nativeReflectApply3(nativeSetAttribute, el, ["role", "menuitem"]);
           nativeReflectApply3(nativeSetTabIndex, el, [-1]);
           const elStyle = nativeReflectApply3(nativeGetStyle, el, []);
@@ -3907,12 +3907,12 @@ ${button.innerHTML}`)
       const preview = body.replace(/\s+/g, " ").trim();
       const drafts = this.drafts.get(thread2);
       if (!drafts?.size) return false;
-      const label = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
-      if (!label) return false;
-      if (preview === label.trim()) return true;
+      const label2 = /^(?:Draft|Utkast):\s*/iu.exec(preview)?.[0];
+      if (!label2) return false;
+      if (preview === label2.trim()) return true;
       return [...drafts.values()].some((snippet) => {
         if (snippet.slice(0, 240) === preview) return true;
-        return `${label}${snippet}`.slice(0, 240) === preview;
+        return `${label2}${snippet}`.slice(0, 240) === preview;
       });
     }
     remember(thread2, original, displayed) {
@@ -5319,18 +5319,18 @@ ${button.innerHTML}`)
     }
   }
   function captureFailureMessage(failure, devices) {
-    const label = mediaDeviceLabel(devices);
+    const label2 = mediaDeviceLabel(devices);
     switch (failure) {
       case "denied":
-        return `Access was denied for the requested ${label}.`;
+        return `Access was denied for the requested ${label2}.`;
       case "missing":
-        return `No matching device was found for the requested ${label}. Check that the devices are connected and enabled, then try again.`;
+        return `No matching device was found for the requested ${label2}. Check that the devices are connected and enabled, then try again.`;
       case "unavailable":
-        return `The requested ${label} could not start. Close other apps using these devices, check the connection, and try again.`;
+        return `The requested ${label2} could not start. Close other apps using these devices, check the connection, and try again.`;
       case "constraints":
-        return `The requested ${label} settings are not supported. Choose another device or call setting in Messenger and try again.`;
+        return `The requested ${label2} settings are not supported. Choose another device or call setting in Messenger and try again.`;
       case "other":
-        return `Capture failed for the requested ${label}. Check Messenger’s call settings and try again.`;
+        return `Capture failed for the requested ${label2}. Check Messenger’s call settings and try again.`;
     }
   }
   function canActivateMediaPrivacy(isTrusted, isActive) {
@@ -5926,8 +5926,8 @@ ${button.innerHTML}`)
   function muteSignalFromLabels(labels) {
     let muted = false;
     let unmuted = false;
-    for (const label of labels) {
-      const signal = conversationMuteFromLabel(label);
+    for (const label2 of labels) {
+      const signal = conversationMuteFromLabel(label2);
       if (signal === true) muted = true;
       else if (signal === false) unmuted = true;
     }
@@ -6097,9 +6097,9 @@ ${button.innerHTML}`)
           'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
         );
         if (!action2) return;
-        const label = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
+        const label2 = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
         const nextMuted = muteStateAfterControlAction(
-          label,
+          label2,
           action2.getAttribute("role"),
           action2.getAttribute("aria-checked")
         );
@@ -6133,8 +6133,8 @@ ${button.innerHTML}`)
   function observeOpenThreadMute(id, roots) {
     const labels = [];
     for (const root of roots) {
-      for (const label of collectMuteLabels(root)) {
-        if (conversationMuteFromLabel(label) !== null) labels.push(label);
+      for (const label2 of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label2) !== null) labels.push(label2);
       }
     }
     mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
@@ -7243,8 +7243,8 @@ ${button.innerHTML}`)
         (span) => !span.closest('[aria-hidden="true"]') && !hasCandidateTextChild(span)
       );
       const labels = (leaves.length ? leaves.map(conversationNodeText) : [conversationNodeText(link)]).map((text) => text.replace(/\s+/g, " ").trim()).filter((text) => {
-        const label = text.toLowerCase().replace(/^www\./, "");
-        return text && !linkTarget(text) && label !== target.host && label !== target.provider.toLowerCase();
+        const label2 = text.toLowerCase().replace(/^www\./, "");
+        return text && !linkTarget(text) && label2 !== target.host && label2 !== target.provider.toLowerCase();
       });
       const title = labels[0] || "";
       const image = [...link.querySelectorAll("img")].find((image2) => {
@@ -7828,11 +7828,11 @@ ${button.innerHTML}`)
       if (needle.length < 3) return "unknown";
       const log = document.querySelector('[role="main"] [role="log"][aria-label]');
       if (!log) return "no";
-      const label = normalizedText(log.getAttribute("aria-label")).toLowerCase();
-      if (!label.includes(needle)) return "no";
+      const label2 = normalizedText(log.getAttribute("aria-label")).toLowerCase();
+      if (!label2.includes(needle)) return "no";
       for (const previous of leaving) {
         const other = previous.replace(/[…\s]+$/, "").toLowerCase();
-        if (other && (other === needle || label.includes(other))) return "unknown";
+        if (other && (other === needle || label2.includes(other))) return "unknown";
       }
       return "yes";
     };
@@ -8652,6 +8652,294 @@ ${button.innerHTML}`)
     startPoll();
   }
 
+  // inject/src/messenger/lib/quick-mute.ts
+  var QUICK_MUTE_DURATION_MS = "28800000";
+  function decideQuickMute(phase, snapshot, expired) {
+    if (snapshot.threadMatches && snapshot.muted === true) return { action: "success", phase };
+    if (expired) return { action: "failure", phase };
+    if (!snapshot.threadMatches) {
+      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
+    }
+    if (phase === "waiting") {
+      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
+      if (!snapshot.infoRequested) return { action: "open-info", phase };
+      return { action: "wait", phase };
+    }
+    if (phase === "dialog") {
+      if (snapshot.dialog === "unselected") return { action: "select", phase };
+      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
+    }
+    return { action: "wait", phase };
+  }
+
+  // inject/src/messenger/lib/thread-restore.ts
+  var THREAD_RESTORE_WAIT_MS = 3e4;
+  function threadRestoreStep(input) {
+    if (input.done || input.onThread) return "done";
+    if (input.waitedMs >= THREAD_RESTORE_WAIT_MS) return "load";
+    return input.rowFound ? "click" : "wait";
+  }
+
+  // inject/src/messenger/lib/thread-viewed.ts
+  var initialThreadViewedState = () => ({
+    visible: false,
+    threadPath: null,
+    lastReportedAt: null
+  });
+  var THREAD_VIEW_RECHECK_MS = 5e3;
+  function advanceThreadViewed(previous, threadPath, visible, now) {
+    const active = visible && threadPath !== null;
+    const changed = !previous.visible || previous.threadPath !== threadPath;
+    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
+    const emit = active && (changed || recheckDue) ? threadPath : null;
+    return {
+      state: {
+        visible,
+        threadPath,
+        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
+      },
+      emit
+    };
+  }
+
+  // inject/src/messenger/features/thread-nav.ts
+  var RESTORED_THREAD_KEY = "carrier-restored-thread";
+  var cancelThreadRestore = () => {
+  };
+  function conversationInfoButton() {
+    const exact = document.querySelector(
+      '[role="button"][aria-label="Conversation information"]'
+    );
+    if (exact) return exact;
+    for (const el of document.querySelectorAll("[aria-label]")) {
+      const label2 = (el.getAttribute("aria-label") || "").toLowerCase();
+      if (label2.includes("conversation information") || label2.includes("conversation details"))
+        return el.closest('[role="button"]') || el;
+    }
+    return null;
+  }
+  function stopThreadRestore() {
+    cancelThreadRestore();
+  }
+  function restoreRecycledThread(id) {
+    const startedAt = Date.now();
+    let cancelled = false;
+    let lastThread = threadIdFromHref(location.pathname);
+    const markDone = () => {
+      try {
+        sessionStorage.setItem(RESTORED_THREAD_KEY, id);
+      } catch (_) {
+      }
+    };
+    cancelThreadRestore = () => {
+      cancelled = true;
+      markDone();
+    };
+    const onUserInput = (event) => {
+      if (event.isTrusted) cancelThreadRestore();
+    };
+    for (const type of ["pointerdown", "keydown"]) {
+      window.addEventListener(type, onUserInput, true);
+    }
+    const attempt = () => {
+      if (cancelled) return;
+      const current = threadIdFromHref(location.pathname);
+      if (lastThread && current !== lastThread && current !== id) {
+        cancelThreadRestore();
+        return;
+      }
+      lastThread = current ?? lastThread;
+      let done = false;
+      try {
+        done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
+      } catch (_) {
+      }
+      const row = [
+        ...document.querySelectorAll('[role="navigation"] a[href*="/t/"]')
+      ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
+      const step = threadRestoreStep({
+        done,
+        onThread: current === id,
+        rowFound: !!row,
+        waitedMs: Date.now() - startedAt
+      });
+      if (step === "done") {
+        if (!done) markDone();
+        return;
+      }
+      if (step === "load") {
+        markDone();
+        location.href = `https://www.facebook.com/messages/t/${id}/`;
+        return;
+      }
+      if (step === "click") row?.click();
+      setTimeout(attempt, 500);
+    };
+    attempt();
+  }
+  function initThreadNav() {
+    setTimeout(() => {
+      const restoreId = window.__CARRIER_RESTORE_THREAD__;
+      if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
+        restoreRecycledThread(restoreId);
+      }
+    }, 0);
+    window.__carrierOpenThread = (href) => {
+      const id = threadPathId(href);
+      if (!id) return false;
+      cancelThreadRestore();
+      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
+        if (threadIdFromHref(a.getAttribute("href")) === id) {
+          a.click();
+          return true;
+        }
+      }
+      location.href = `https://www.facebook.com/messages/t/${id}/`;
+      return true;
+    };
+    let viewed = initialThreadViewedState();
+    const reportViewedThread = () => {
+      const id = threadIdFromHref(location.pathname);
+      const path = id ? `/t/${id}/` : null;
+      const next = advanceThreadViewed(
+        viewed,
+        path,
+        document.hasFocus() && !document.hidden,
+        performance.now()
+      );
+      viewed = next.state;
+      if (next.emit) {
+        invoke("plugin:event|emit", {
+          event: "carrier:thread-viewed",
+          payload: { thread_path: next.emit }
+        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
+      }
+    };
+    setInterval(reportViewedThread, 1e3);
+    document.addEventListener("visibilitychange", reportViewedThread);
+    window.addEventListener("focus", reportViewedThread);
+    window.addEventListener("blur", reportViewedThread);
+    reportViewedThread();
+    window.__carrierToggleInfo = () => {
+      const btn = conversationInfoButton();
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      toast("Open a conversation first");
+      return false;
+    };
+  }
+
+  // inject/src/messenger/features/quick-mute.ts
+  var POLL_MS = 250;
+  var MUTE_BUDGET_MS = 12e3;
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
+  function threadMuteControl() {
+    let trigger = null;
+    for (const el of document.querySelectorAll(
+      '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]'
+    )) {
+      if (!isShown(el)) continue;
+      const muted = conversationMuteFromLabel(el.getAttribute("aria-label") || "");
+      if (muted === true) return { muted, trigger: null };
+      if (muted === false) trigger ?? (trigger = el);
+    }
+    return { muted: trigger ? false : null, trigger };
+  }
+  function muteDialog(stale) {
+    for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+      if (stale.has(dialog)) continue;
+      const radio = dialog.querySelector(
+        `input[type="radio"][value="${QUICK_MUTE_DURATION_MS}"]`
+      );
+      if (!radio) continue;
+      const confirm = [...dialog.querySelectorAll('[role="button"], button')].find(
+        (button) => isShown(button) && getComputedStyle(button).visibility !== "hidden" && button.getAttribute("aria-disabled") !== "true" && muteStateAfterExplicitAction(label(button)) === true
+      );
+      if (confirm) return { radio, confirm };
+    }
+    return null;
+  }
+  var radioSelected = (radio) => radio.checked || radio.getAttribute("aria-checked") === "true";
+  async function mute(path) {
+    const wantedThread = threadPathId(path);
+    if (!wantedThread || threadIdFromHref(location.pathname) !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+      diag("quick-mute.open", "validated thread could not be opened");
+      return false;
+    }
+    const stale = new Set(document.querySelectorAll('[role="dialog"]'));
+    const deadline = Date.now() + MUTE_BUDGET_MS;
+    let phase = "waiting";
+    let infoRequested = false;
+    let openedInfo = false;
+    try {
+      while (true) {
+        const control = threadMuteControl();
+        const dialog = phase === "waiting" ? null : muteDialog(stale);
+        const snapshot = {
+          threadMatches: threadIdFromHref(location.pathname) === wantedThread,
+          muted: control.muted,
+          infoRequested,
+          dialog: !dialog ? "none" : radioSelected(dialog.radio) ? "ready" : "unselected"
+        };
+        const decision = decideQuickMute(phase, snapshot, Date.now() >= deadline);
+        phase = decision.phase;
+        switch (decision.action) {
+          case "open-info": {
+            infoRequested = true;
+            const info = conversationInfoButton();
+            if (info && info.getAttribute("aria-expanded") !== "true") {
+              info.click();
+              openedInfo = true;
+            }
+            break;
+          }
+          case "open-dialog":
+            control.trigger?.click();
+            break;
+          case "select":
+            dialog?.radio.click();
+            break;
+          case "confirm":
+            dialog?.confirm.click();
+            break;
+          case "success":
+            mutedThreads.observe(wantedThread, true);
+            window.dispatchEvent(
+              new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
+            );
+            return true;
+          case "failure":
+            diag("quick-mute.delivery", `mute flow stopped in ${phase}`);
+            return false;
+          case "wait":
+            break;
+        }
+        await pause();
+      }
+    } finally {
+      const info = openedInfo ? conversationInfoButton() : null;
+      if (info?.getAttribute("aria-expanded") === "true") info.click();
+    }
+  }
+  function initQuickMute() {
+    window.__carrierQuickMute = (path, id, attempt) => {
+      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+        () => diag("quick-mute.ack", "mute acknowledgement emit failed")
+      );
+      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0) {
+        void report(false);
+        return;
+      }
+      void withComposerDeliveryWhenAvailable(() => mute(path)).then((ok) => report(ok)).catch(() => {
+        diag("quick-mute.exception", "mute flow raised an exception");
+        void report(false);
+      });
+    };
+  }
+
   // inject/src/messenger/lib/quick-reply.ts
   function decideQuickReply(phase, snapshot, expired) {
     if (phase === "waiting") {
@@ -8684,13 +8972,13 @@ ${button.innerHTML}`)
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/features/quick-reply.ts
-  var POLL_MS = 250;
+  var POLL_MS2 = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
   var replyAttempts = /* @__PURE__ */ new Map();
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
@@ -8738,7 +9026,7 @@ ${button.innerHTML}`)
         phase = decision.phase;
         switch (decision.action) {
           case "wait":
-            await pause();
+            await pause2();
             break;
           case "insert": {
             if (!box) return false;
@@ -8755,7 +9043,7 @@ ${button.innerHTML}`)
             if (state2.cancelled) return false;
             state2.clicked = true;
             button?.click();
-            await pause();
+            await pause2();
             break;
           case "success":
             insertedReplies.delete(id);
@@ -8810,7 +9098,7 @@ ${text}`)) {
         insertedReplies.delete(id);
         return true;
       }
-      await pause();
+      await pause2();
     }
     diag("quick-reply.draft", "fallback composer did not become ready");
     return false;
@@ -8959,7 +9247,7 @@ ${text}`)) {
   window.addEventListener("popstate", () => {
     routeChanged = true;
   });
-  var pause2 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var pause3 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
@@ -9001,12 +9289,12 @@ ${text}`)) {
         const current = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
-          await pause2();
+          await pause3();
           continue;
         }
         if (!current || hasComposerMedia(current)) {
           if (inserted) break;
-          await pause2();
+          await pause3();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
@@ -9016,13 +9304,13 @@ ${text}`)) {
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
-          await pause2();
+          await pause3();
           continue;
         }
         if (current !== box || composerText(current) !== message.text) break;
         const send = findSendButton(current, controls);
         if (!send) {
-          await pause2();
+          await pause3();
           continue;
         }
         if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
@@ -9034,7 +9322,7 @@ ${text}`)) {
           if (thread() !== message.thread || account() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
-          await pause2();
+          await pause3();
         }
         return "uncertain";
       }
@@ -9055,8 +9343,8 @@ ${text}`)) {
     if (text !== void 0) el.textContent = text;
     return el;
   }
-  var action = (label, run, className = "carrier-schedule-action") => {
-    const button = element("button", className, label);
+  var action = (label2, run, className = "carrier-schedule-action") => {
+    const button = element("button", className, label2);
     button.type = "button";
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -9206,7 +9494,7 @@ ${text}`)) {
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
-            await pause2();
+            await pause3();
             if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
@@ -9914,166 +10202,6 @@ ${text}`)) {
     });
   }
 
-  // inject/src/messenger/lib/thread-restore.ts
-  var THREAD_RESTORE_WAIT_MS = 3e4;
-  function threadRestoreStep(input) {
-    if (input.done || input.onThread) return "done";
-    if (input.waitedMs >= THREAD_RESTORE_WAIT_MS) return "load";
-    return input.rowFound ? "click" : "wait";
-  }
-
-  // inject/src/messenger/lib/thread-viewed.ts
-  var initialThreadViewedState = () => ({
-    visible: false,
-    threadPath: null,
-    lastReportedAt: null
-  });
-  var THREAD_VIEW_RECHECK_MS = 5e3;
-  function advanceThreadViewed(previous, threadPath, visible, now) {
-    const active = visible && threadPath !== null;
-    const changed = !previous.visible || previous.threadPath !== threadPath;
-    const recheckDue = active && previous.lastReportedAt !== null && Number.isFinite(now) && now >= previous.lastReportedAt + THREAD_VIEW_RECHECK_MS;
-    const emit = active && (changed || recheckDue) ? threadPath : null;
-    return {
-      state: {
-        visible,
-        threadPath,
-        lastReportedAt: emit ? now : active ? previous.lastReportedAt : null
-      },
-      emit
-    };
-  }
-
-  // inject/src/messenger/features/thread-nav.ts
-  var RESTORED_THREAD_KEY = "carrier-restored-thread";
-  var cancelThreadRestore = () => {
-  };
-  function stopThreadRestore() {
-    cancelThreadRestore();
-  }
-  function restoreRecycledThread(id) {
-    const startedAt = Date.now();
-    let cancelled = false;
-    let lastThread = threadIdFromHref(location.pathname);
-    const markDone = () => {
-      try {
-        sessionStorage.setItem(RESTORED_THREAD_KEY, id);
-      } catch (_) {
-      }
-    };
-    cancelThreadRestore = () => {
-      cancelled = true;
-      markDone();
-    };
-    const onUserInput = (event) => {
-      if (event.isTrusted) cancelThreadRestore();
-    };
-    for (const type of ["pointerdown", "keydown"]) {
-      window.addEventListener(type, onUserInput, true);
-    }
-    const attempt = () => {
-      if (cancelled) return;
-      const current = threadIdFromHref(location.pathname);
-      if (lastThread && current !== lastThread && current !== id) {
-        cancelThreadRestore();
-        return;
-      }
-      lastThread = current ?? lastThread;
-      let done = false;
-      try {
-        done = sessionStorage.getItem(RESTORED_THREAD_KEY) === id;
-      } catch (_) {
-      }
-      const row = [
-        ...document.querySelectorAll('[role="navigation"] a[href*="/t/"]')
-      ].find((a) => threadIdFromHref(a.getAttribute("href")) === id);
-      const step = threadRestoreStep({
-        done,
-        onThread: current === id,
-        rowFound: !!row,
-        waitedMs: Date.now() - startedAt
-      });
-      if (step === "done") {
-        if (!done) markDone();
-        return;
-      }
-      if (step === "load") {
-        markDone();
-        location.href = `https://www.facebook.com/messages/t/${id}/`;
-        return;
-      }
-      if (step === "click") row?.click();
-      setTimeout(attempt, 500);
-    };
-    attempt();
-  }
-  function initThreadNav() {
-    setTimeout(() => {
-      const restoreId = window.__CARRIER_RESTORE_THREAD__;
-      if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
-        restoreRecycledThread(restoreId);
-      }
-    }, 0);
-    window.__carrierOpenThread = (href) => {
-      const id = threadPathId(href);
-      if (!id) return false;
-      cancelThreadRestore();
-      for (const a of document.querySelectorAll('a[href*="/t/"]')) {
-        if (threadIdFromHref(a.getAttribute("href")) === id) {
-          a.click();
-          return true;
-        }
-      }
-      location.href = `https://www.facebook.com/messages/t/${id}/`;
-      return true;
-    };
-    let viewed = initialThreadViewedState();
-    const reportViewedThread = () => {
-      const id = threadIdFromHref(location.pathname);
-      const path = id ? `/t/${id}/` : null;
-      const next = advanceThreadViewed(
-        viewed,
-        path,
-        document.hasFocus() && !document.hidden,
-        performance.now()
-      );
-      viewed = next.state;
-      if (next.emit) {
-        invoke("plugin:event|emit", {
-          event: "carrier:thread-viewed",
-          payload: { thread_path: next.emit }
-        })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
-      }
-    };
-    setInterval(reportViewedThread, 1e3);
-    document.addEventListener("visibilitychange", reportViewedThread);
-    window.addEventListener("focus", reportViewedThread);
-    window.addEventListener("blur", reportViewedThread);
-    reportViewedThread();
-    window.__carrierToggleInfo = () => {
-      const wanted = (el) => {
-        const l = (el.getAttribute("aria-label") || "").toLowerCase();
-        return l.includes("conversation information") || l.includes("conversation details");
-      };
-      let btn = document.querySelector(
-        '[role="button"][aria-label="Conversation information"]'
-      );
-      if (!btn) {
-        for (const el of document.querySelectorAll("[aria-label]"))
-          if (wanted(el)) {
-            btn = el.closest('[role="button"]') || el;
-            break;
-          }
-      }
-      if (btn) {
-        btn.click();
-        return true;
-      }
-      toast("Open a conversation first");
-      return false;
-    };
-  }
-
   // inject/src/messenger/lib/zoom.ts
   var clampZoom = (p) => Math.min(200, Math.max(30, Math.round(p) || 100));
 
@@ -10411,14 +10539,14 @@ ${text}`)) {
         const existing = document.getElementById(SYNC_BANNER_ID);
         const banner = existing || document.createElement("div");
         banner.id = SYNC_BANNER_ID;
-        let label = banner.querySelector("span");
-        if (!label) {
-          label = document.createElement("span");
-          label.setAttribute("role", "alert");
-          banner.appendChild(label);
+        let label2 = banner.querySelector("span");
+        if (!label2) {
+          label2 = document.createElement("span");
+          label2.setAttribute("role", "alert");
+          banner.appendChild(label2);
         }
         const message = limited ? rateLimitRemainingMs() > 0 ? `Messenger is rate limiting this session. Retrying automatically in ${Math.max(1, Math.ceil(rateLimitRemainingMs() / 6e4))} min. Chats may be out of date.` : "Messenger rate-limit cooldown ended. Automatic recovery is waiting for connectivity and any draft or call to finish." : recoveryFailed ? "Messenger could not reconnect. Chats may be out of date." : syncProcessingStalled ? "Messenger is slow to update messages. Chats may be out of date." : "⚠ Messenger sync is broken — chats may be out of date";
-        if (label.textContent !== message) label.textContent = message;
+        if (label2.textContent !== message) label2.textContent = message;
         const buttonStyle = {
           background: "#1c1e21",
           color: "#fff",
@@ -10584,10 +10712,10 @@ ${text}`)) {
         return emojiGlyph(img.getAttribute("alt"));
       }
       if (el.matches?.(INTERACTIVE_SEL)) return "";
-      const label = emojiGlyph(el.getAttribute("aria-label"));
-      if (!label) return "";
+      const label2 = emojiGlyph(el.getAttribute("aria-label"));
+      if (!label2) return "";
       const bg = getComputedStyle(el).backgroundImage || "";
-      return EMOJI_SOURCE_RE.test(bg) ? label : "";
+      return EMOJI_SOURCE_RE.test(bg) ? label2 : "";
     }
     function clearGlyph(el) {
       el.__carrierSystemEmojiGlyph?.remove?.();
@@ -11224,6 +11352,7 @@ ${text}`)) {
     initFeature("recent-threads", initRecentThreads);
     initFeature("thread-nav", initThreadNav);
     initFeature("quick-reply", initQuickReply);
+    initFeature("quick-mute", initQuickMute);
     initFeature("scheduled-send", initScheduledSend);
     initFeature("hide-names", initHideNames);
     initFeature("system-emoji", initSystemEmoji);

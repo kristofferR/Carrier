@@ -28,6 +28,7 @@ import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initNotificationBridge } from "./features/notifications";
+import { initQuickMute } from "./features/quick-mute";
 import { initQuickReply } from "./features/quick-reply";
 import { initRateLimit } from "./features/rate-limit";
 import { initRecentThreads } from "./features/recent-threads";
@@ -86,6 +87,7 @@ function main() {
   initFeature("recent-threads", initRecentThreads);
   initFeature("thread-nav", initThreadNav);
   initFeature("quick-reply", initQuickReply);
+  initFeature("quick-mute", initQuickMute);
   initFeature("scheduled-send", initScheduledSend);
   initFeature("hide-names", initHideNames);
   initFeature("system-emoji", initSystemEmoji);

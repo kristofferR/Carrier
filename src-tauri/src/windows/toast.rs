@@ -17,6 +17,7 @@
 //! derivation, keep-alive eviction) are unit-tested on any OS; the WinRT glue is
 //! `cfg(target_os = "windows")`.
 
+use crate::notifications::NotificationAction;
 #[cfg(target_os = "windows")]
 use std::collections::VecDeque;
 #[cfg(target_os = "windows")]
@@ -117,8 +118,20 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
             "<actions><input id=\"reply\" type=\"text\" placeHolderContent=\"Message…\"/>",
         );
         xml.push_str(&format!(
-            "<action content=\"Reply\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/><action content=\"Open\" arguments=\"action=open&amp;id={id}\" activationType=\"foreground\"/>",
+            "<action content=\"Reply\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/>",
             id = spec.hex_id,
+        ));
+        for action in [NotificationAction::Like, NotificationAction::Mute] {
+            xml.push_str(&format!(
+                "<action content=\"{}\" arguments=\"action={}&amp;id={}\" activationType=\"background\"/>",
+                action.title(),
+                action.id(),
+                spec.hex_id,
+            ));
+        }
+        xml.push_str(&format!(
+            "<action content=\"Open\" arguments=\"action=open&amp;id={}\" activationType=\"foreground\"/>",
+            spec.hex_id,
         ));
         xml.push_str("</actions>");
     }
@@ -138,6 +151,7 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
 pub(crate) enum ToastActivation {
     Open,
     Reply,
+    Action(NotificationAction),
 }
 
 /// Parse the `action=<verb>&id=<hex>` launch/argument string WinRT hands the
@@ -149,7 +163,7 @@ pub(crate) fn parse_activation_args(args: &str) -> Option<ToastActivation> {
     match action {
         "open" => Some(ToastActivation::Open),
         "reply" => Some(ToastActivation::Reply),
-        _ => None,
+        other => NotificationAction::from_id(other).map(ToastActivation::Action),
     }
 }
 
@@ -412,6 +426,18 @@ fn handle_activation(
         .and_then(|activation| activation.Arguments().ok())
         .and_then(|arguments| parse_activation_args(&arguments.to_string()));
 
+    if let Some(ToastActivation::Action(action)) = verb {
+        crate::notifications::on_notification_action(
+            app.clone(),
+            native_id,
+            page_id,
+            route.clone(),
+            action,
+            None,
+        );
+        return;
+    }
+
     if verb == Some(ToastActivation::Reply) {
         let text = activation
             .as_ref()
@@ -646,6 +672,8 @@ mod tests {
         assert!(xml.contains("action=reply&amp;id=000000000000002a"));
         assert!(xml.contains("hint-inputId=\"reply\" activationType=\"background\""));
         assert!(xml.contains("content=\"Open\""));
+        assert!(xml.contains("arguments=\"action=like&amp;id=000000000000002a\""));
+        assert!(xml.contains("arguments=\"action=mute&amp;id=000000000000002a\""));
     }
 
     #[test]
@@ -686,6 +714,10 @@ mod tests {
         assert_eq!(
             parse_activation_args("action=reply&id=abc"),
             Some(ToastActivation::Reply)
+        );
+        assert_eq!(
+            parse_activation_args("action=mute&id=abc"),
+            Some(ToastActivation::Action(NotificationAction::Mute))
         );
         assert_eq!(parse_activation_args("action=frob&id=abc"), None);
         assert_eq!(parse_activation_args("id=abc"), None);

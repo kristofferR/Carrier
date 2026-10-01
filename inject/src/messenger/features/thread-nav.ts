@@ -7,6 +7,20 @@ import { threadIdFromHref, threadPathId } from "../lib/threads";
 const RESTORED_THREAD_KEY = "carrier-restored-thread";
 let cancelThreadRestore = () => {};
 
+/** The open thread's header "ⓘ" button that shows/hides the details sidebar. */
+export function conversationInfoButton(): HTMLElement | null {
+  const exact = document.querySelector<HTMLElement>(
+    '[role="button"][aria-label="Conversation information"]',
+  );
+  if (exact) return exact;
+  for (const el of document.querySelectorAll<HTMLElement>("[aria-label]")) {
+    const label = (el.getAttribute("aria-label") || "").toLowerCase();
+    if (label.includes("conversation information") || label.includes("conversation details"))
+      return (el.closest('[role="button"]') as HTMLElement | null) || el;
+  }
+  return null;
+}
+
 /** Native actions call this first: an explicit request beats a pending restore. */
 export function stopThreadRestore() {
   cancelThreadRestore();
@@ -134,19 +148,7 @@ export function initThreadNav() {
   // churning class names; the label is unchanged whether the panel is open or
   // closed, so one click toggles it.
   window.__carrierToggleInfo = () => {
-    const wanted = (el: Element) => {
-      const l = (el.getAttribute("aria-label") || "").toLowerCase();
-      return l.includes("conversation information") || l.includes("conversation details");
-    };
-    let btn = document.querySelector<HTMLElement>(
-      '[role="button"][aria-label="Conversation information"]',
-    );
-    if (!btn)
-      for (const el of document.querySelectorAll<HTMLElement>("[aria-label]"))
-        if (wanted(el)) {
-          btn = (el.closest('[role="button"]') as HTMLElement | null) || el;
-          break;
-        }
+    const btn = conversationInfoButton();
     if (btn) {
       btn.click();
       return true;

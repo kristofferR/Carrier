@@ -175,6 +175,8 @@ interface Window {
   __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
   /** Preserve a failed notification reply as an unsent composer draft. */
   __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
+  /** Mute a conversation from its notification without raising the window. */
+  __carrierQuickMute?: (path: string, id: number, attempt: number) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
   __carrierOnNotification?: () => void;
   /** Sender-avatar cache sizes, or one sender's verdict, for the MCP probe. */
