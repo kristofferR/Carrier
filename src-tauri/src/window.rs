@@ -730,9 +730,15 @@ pub(crate) fn recreate_messenger_window(
         // Linux a thread URL as the first document puts Facebook's
         // SharedWorker in a separate ~300 MB web process, and an invisible
         // window is never realized, so blank-page recovery loops.
-        // Let the event loop release the old native label before rebuilding.
+        // Tauri frees the label only once the native window reports it was
+        // destroyed, which on macOS can take longer than a fixed pause.
         const MAX_BUILD_ATTEMPTS: usize = 3;
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        for _ in 0..100 {
+            if app.get_webview_window(&label).is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         let settings = app.state::<AppState>().settings.lock().unwrap().clone();
         for attempt in 1..=MAX_BUILD_ATTEMPTS {
             match build_app_window_with_render_budget(
