@@ -42,7 +42,7 @@ import {
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
 import {
-  isPhotoSummary,
+  isPhotoOnlyPreview,
   notificationPhotoText,
   notificationThumbnail,
 } from "../lib/notification-images";
@@ -647,9 +647,10 @@ export function initNotificationBridge() {
             : undefined,
           "",
           hidePreview ? "" : image,
-          // A photo-only summary ("Sent a photo") has no text for 👍 to match,
-          // whether or not its thumbnail loaded.
-          hidePreview || isPhotoSummary(text.body) ? "" : originalBody,
+          // A photo-only summary ("Sent a photo", or "Kim: Sent a photo" in a
+          // group) has no text for 👍 to match, whether or not its thumbnail
+          // loaded.
+          hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody,
         );
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
@@ -1332,7 +1333,7 @@ export function initNotificationBridge() {
         undefined,
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
-        hidePreview || isPhotoSummary(text.body) ? "" : rowPreviewMatchText(conversation.body),
+        hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({

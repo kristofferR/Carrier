@@ -6,6 +6,20 @@ export function isPhotoSummary(body: string) {
   return !body.trim() || photoSummary.test(body.trim());
 }
 
+/**
+ * Whether 👍 has no text to match: a photo-only preview, bare or after a
+ * group's "Name: " prefix ("Kim: Sent a photo"). Any prefix counts, since the
+ * conversation's names may not have loaded; a false hit only withholds 👍.
+ */
+export function isPhotoOnlyPreview(body: string) {
+  if (isPhotoSummary(body)) return true;
+  const text = body.trim();
+  for (let end = text.indexOf(": "); end > 0 && end <= 200; end = text.indexOf(": ", end + 2)) {
+    if (photoSummary.test(text.slice(end + 2).trim())) return true;
+  }
+  return false;
+}
+
 /** Use the sender line to introduce an attached photo, keeping link and caption text intact. */
 export function notificationPhotoText(title: string, body: string, hasThumbnail: boolean) {
   if (hasThumbnail && isPhotoSummary(body)) {

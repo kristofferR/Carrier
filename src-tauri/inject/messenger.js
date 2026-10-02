@@ -7169,6 +7169,14 @@ ${button.innerHTML}`)
   function isPhotoSummary(body) {
     return !body.trim() || photoSummary.test(body.trim());
   }
+  function isPhotoOnlyPreview(body) {
+    if (isPhotoSummary(body)) return true;
+    const text = body.trim();
+    for (let end = text.indexOf(": "); end > 0 && end <= 200; end = text.indexOf(": ", end + 2)) {
+      if (photoSummary.test(text.slice(end + 2).trim())) return true;
+    }
+    return false;
+  }
   function notificationPhotoText(title, body, hasThumbnail) {
     if (hasThumbnail && isPhotoSummary(body)) {
       return { title: `${title} sent an image:`, body: "" };
@@ -7778,9 +7786,10 @@ ${button.innerHTML}`)
             } : void 0,
             "",
             hidePreview ? "" : image,
-            // A photo-only summary ("Sent a photo") has no text for 👍 to match,
-            // whether or not its thumbnail loaded.
-            hidePreview || isPhotoSummary(text.body) ? "" : originalBody
+            // A photo-only summary ("Sent a photo", or "Kim: Sent a photo" in a
+            // group) has no text for 👍 to match, whether or not its thumbnail
+            // loaded.
+            hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -8240,7 +8249,7 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || isPhotoSummary(text.body) ? "" : rowPreviewMatchText(conversation.body)
+          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body)
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
