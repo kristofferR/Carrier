@@ -17,17 +17,17 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 #[cfg(target_os = "linux")]
-use futures_util::future::{select, Either};
+use futures_util::future::{Either, select};
 #[cfg(target_os = "linux")]
-use futures_util::{pin_mut, StreamExt};
+use futures_util::{StreamExt, pin_mut};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-use crate::actions::{run_app_action_with_activation_token, validated_thread_path, AppAction};
+use crate::actions::{AppAction, run_app_action_with_activation_token, validated_thread_path};
 #[cfg(target_os = "macos")]
 use crate::macos::notifications::{
-    clear_delivered_for_thread, deliver_notification_macos,
-    update_pending_notification_route_macos, MacNotificationOptions,
+    MacNotificationOptions, clear_delivered_for_thread, deliver_notification_macos,
+    update_pending_notification_route_macos,
 };
 use crate::settings::AppState;
 use crate::tray::show_main_with_activation_token;
@@ -251,15 +251,14 @@ impl NotificationDeduper {
             };
         }
 
-        if self.seen.len() >= MAX_RECENT_NOTIFICATIONS {
-            if let Some(oldest) = self
+        if self.seen.len() >= MAX_RECENT_NOTIFICATIONS
+            && let Some(oldest) = self
                 .seen
                 .iter()
                 .min_by_key(|(_, seen)| seen.at)
                 .map(|(fingerprint, _)| *fingerprint)
-            {
-                self.seen.remove(&oldest);
-            }
+        {
+            self.seen.remove(&oldest);
         }
         self.seen.insert(
             fingerprint,
@@ -336,16 +335,15 @@ impl LateNotificationRoutes {
         if page_id == 0 || native_id == 0 {
             return;
         }
-        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS && !self.accepted.contains_key(&page_id)
-        {
-            if let Some(oldest) = self
+        if self.accepted.len() >= MAX_RECENT_NOTIFICATIONS
+            && !self.accepted.contains_key(&page_id)
+            && let Some(oldest) = self
                 .accepted
                 .iter()
                 .min_by_key(|(_, (_, at))| *at)
                 .map(|(id, _)| *id)
-            {
-                self.accepted.remove(&oldest);
-            }
+        {
+            self.accepted.remove(&oldest);
         }
         self.accepted.insert(page_id, (native_id, now));
     }
@@ -412,14 +410,14 @@ fn remember_notification_route(id: u64, value: &str) {
     // At the cap, evict only the oldest entry. A dismissed notification can
     // leave its route behind, but recent notifications still awaiting a click
     // must keep theirs — clearing the whole map would break their routing.
-    if routes.len() >= MAX_RECENT_NOTIFICATIONS && !routes.contains_key(&id) {
-        if let Some(oldest) = routes
+    if routes.len() >= MAX_RECENT_NOTIFICATIONS
+        && !routes.contains_key(&id)
+        && let Some(oldest) = routes
             .iter()
             .min_by_key(|(_, entry)| entry.at)
             .map(|(id, _)| *id)
-        {
-            routes.remove(&oldest);
-        }
+    {
+        routes.remove(&oldest);
     }
     routes.insert(
         id,
@@ -1157,7 +1155,7 @@ async fn wait_for_linux_notification_response(
         let next = match select(next_message, timeout).await {
             Either::Left((message, _)) => message,
             Either::Right((_, _)) => {
-                return Ok((linux_timeout_response(timeout_kind), activation_token))
+                return Ok((linux_timeout_response(timeout_kind), activation_token));
             }
         };
 
@@ -1174,7 +1172,7 @@ async fn wait_for_linux_notification_response(
             LinuxSignalDecision::ActivationToken(token) => activation_token = Some(token),
             LinuxSignalDecision::Ignore => {}
             LinuxSignalDecision::Open => {
-                return Ok((LinuxNotificationResponse::Open, activation_token))
+                return Ok((LinuxNotificationResponse::Open, activation_token));
             }
             LinuxSignalDecision::Reply(text) => {
                 return Ok((LinuxNotificationResponse::Reply(text), activation_token));
@@ -1183,7 +1181,7 @@ async fn wait_for_linux_notification_response(
                 return Ok((LinuxNotificationResponse::Action(action), activation_token));
             }
             LinuxSignalDecision::Closed => {
-                return Ok((LinuxNotificationResponse::Closed, activation_token))
+                return Ok((LinuxNotificationResponse::Closed, activation_token));
             }
             LinuxSignalDecision::AwaitReply => {
                 reply_deadline = Some(Instant::now() + REPLY_SIGNAL_GRACE);
@@ -1412,11 +1410,9 @@ impl QuickReplyWorkerSlots {
         }
     }
 
-    // `fetch_update` is deprecated in favor of `try_update`, which is newer than the MSRV.
-    #[allow(deprecated)]
     fn try_acquire(&self) -> Option<QuickReplyWorkerPermit<'_>> {
         self.active
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < MAX_NATIVE_QUICK_REPLY_WORKERS).then_some(active + 1)
             })
             .ok()
@@ -1478,15 +1474,15 @@ impl PendingPageReplies {
         mode: PendingReplyMode,
         expires_at: Instant,
     ) {
-        if self.replies.len() >= MAX_PENDING_PAGE_REPLIES && !self.replies.contains_key(&id) {
-            if let Some(oldest) = self
+        if self.replies.len() >= MAX_PENDING_PAGE_REPLIES
+            && !self.replies.contains_key(&id)
+            && let Some(oldest) = self
                 .replies
                 .iter()
                 .min_by_key(|(_, reply)| reply.expires_at)
                 .map(|(id, _)| *id)
-            {
-                self.replies.remove(&oldest);
-            }
+        {
+            self.replies.remove(&oldest);
         }
         self.replies.insert(
             id,
@@ -1917,13 +1913,11 @@ fn deliver_quick_reply(
             .lock()
             .unwrap()
             .clear_notifications_on_view
-        {
-            if let Some(thread_id) = thread_path
+            && let Some(thread_id) = thread_path
                 .strip_prefix("/t/")
                 .and_then(|path| path.strip_suffix('/'))
-            {
-                clear_delivered_for_thread(thread_id, &[id]);
-            }
+        {
+            clear_delivered_for_thread(thread_id, &[id]);
         }
         // A successful reply clears the conversation's toast group, mirroring
         // clear-on-read (the OS-side removal also clears earlier toasts).
@@ -1934,13 +1928,11 @@ fn deliver_quick_reply(
             .lock()
             .unwrap()
             .clear_notifications_on_view
-        {
-            if let Some(thread_id) = thread_path
+            && let Some(thread_id) = thread_path
                 .strip_prefix("/t/")
                 .and_then(|path| path.strip_suffix('/'))
-            {
-                crate::windows::toast::clear_thread_group(&app, thread_id);
-            }
+        {
+            crate::windows::toast::clear_thread_group(&app, thread_id);
         }
     } else {
         open_reply_fallback(app, id, thread_path, text, activation_token);
@@ -3207,15 +3199,17 @@ mod tests {
         // A resume after most of the wait has passed leaves the page no time.
         assert!(script(PendingReplyMode::Like, Duration::from_secs(1)).ends_with(", 3, 0);"));
         // The target is embedded as code, so only a JSON object is accepted.
-        assert!(quick_reply_script(
-            7,
-            3,
-            "/t/1/",
-            "alert(1)",
-            PendingReplyMode::Like,
-            Duration::from_secs(20)
-        )
-        .is_err());
+        assert!(
+            quick_reply_script(
+                7,
+                3,
+                "/t/1/",
+                "alert(1)",
+                PendingReplyMode::Like,
+                Duration::from_secs(20)
+            )
+            .is_err()
+        );
     }
 
     #[cfg(target_os = "linux")]

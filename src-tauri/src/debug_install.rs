@@ -41,7 +41,9 @@ pub(crate) fn startup() -> bool {
     }
     if let Some(dir) = install_dir() {
         if dir.join("debug-only").exists() && !cfg!(feature = "diagnostics") {
-            eprintln!("Carrier: this machine requires a diagnostics debug build. Run carrier-debug-update.");
+            eprintln!(
+                "Carrier: this machine requires a diagnostics debug build. Run carrier-debug-update."
+            );
             std::process::exit(1);
         }
         #[cfg(all(unix, feature = "diagnostics"))]
@@ -99,7 +101,8 @@ pub(crate) fn startup() -> bool {
     }
     // Configure the process environment before starting the logging thread.
     if cfg!(debug_assertions) {
-        std::env::set_var("RUST_BACKTRACE", "full");
+        // SAFETY: `run()` calls this first, while the process is single-threaded.
+        unsafe { std::env::set_var("RUST_BACKTRACE", "full") };
     }
     #[cfg(all(unix, debug_assertions))]
     if let Err(error) = capture_native_output() {

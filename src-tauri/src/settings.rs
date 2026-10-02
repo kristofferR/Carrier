@@ -19,10 +19,10 @@ use crate::hotkey::apply_global_hotkey;
 use crate::install_environment::is_snap;
 #[cfg(target_os = "macos")]
 use crate::macos::theme::set_macos_window_bg;
-use crate::menu::{rebuild_recent_menus, RecentThread};
+use crate::menu::{RecentThread, rebuild_recent_menus};
 #[cfg(target_os = "macos")]
 use crate::tray::set_macos_tray_icon_style;
-use crate::tray::{build_tray_menu, build_tray_with_menu, show_main, wants_tray, PlatformTrayIcon};
+use crate::tray::{PlatformTrayIcon, build_tray_menu, build_tray_with_menu, show_main, wants_tray};
 #[cfg(target_os = "macos")]
 use crate::window::is_dark;
 #[cfg(not(target_os = "macos"))]
@@ -496,7 +496,7 @@ pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result
 pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
     };
 
     let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -615,10 +615,8 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
     // removal failed, keep the marker so the next launch retries — otherwise a
     // single failure would silently abandon the "clear cache" request and leave
     // cookies/cache behind.
-    if all_removed {
-        if let Err(e) = std::fs::remove_file(&marker) {
-            log::warn!("failed to remove clear-cache marker: {e}");
-        }
+    if all_removed && let Err(e) = std::fs::remove_file(&marker) {
+        log::warn!("failed to remove clear-cache marker: {e}");
     }
 }
 

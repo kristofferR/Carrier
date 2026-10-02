@@ -392,11 +392,13 @@ mod tests {
     #[test]
     fn fully_covered_badge_pixels_are_opaque() {
         let pixels = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Count(1));
-        assert!(pixels
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .any(|pixel| pixel == &BADGE_RED));
+        assert!(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel == &BADGE_RED)
+        );
     }
 
     #[test]
@@ -423,11 +425,13 @@ mod tests {
         let badge = overlay_badge_rgba(1).expect("a positive count renders");
         assert_eq!(badge.len(), 32 * 32 * 4);
         // The centre of the disc is fully covered, so it is opaque Messenger-red.
-        assert!(badge
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .any(|pixel| pixel == &BADGE_RED));
+        assert!(
+            badge
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel == &BADGE_RED)
+        );
         // The corners fall outside the circle and stay transparent.
         assert_eq!(&badge[0..4], &[0, 0, 0, 0]);
     }

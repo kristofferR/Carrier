@@ -102,7 +102,7 @@ pub(crate) fn resume_generation() -> u64 {
 /// the user-visible wake boundary Carrier needs.
 pub(crate) fn observe_system_sleep(app: &tauri::AppHandle) {
     use objc2::rc::Retained;
-    use objc2::{sel, AllocAnyThread};
+    use objc2::{AllocAnyThread, sel};
     use objc2_app_kit::{
         NSWorkspace, NSWorkspaceScreensDidWakeNotification, NSWorkspaceWillSleepNotification,
     };

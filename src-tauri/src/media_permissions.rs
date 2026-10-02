@@ -34,12 +34,16 @@ mod tests {
             privacy_url("windows", MediaDevice::Microphone),
             Some("ms-settings:privacy-microphone")
         );
-        assert!(privacy_url("macos", MediaDevice::Camera)
-            .unwrap()
-            .ends_with("?Privacy_Camera"));
-        assert!(privacy_url("macos", MediaDevice::Microphone)
-            .unwrap()
-            .ends_with("?Privacy_Microphone"));
+        assert!(
+            privacy_url("macos", MediaDevice::Camera)
+                .unwrap()
+                .ends_with("?Privacy_Camera")
+        );
+        assert!(
+            privacy_url("macos", MediaDevice::Microphone)
+                .unwrap()
+                .ends_with("?Privacy_Microphone")
+        );
         assert_eq!(privacy_url("linux", MediaDevice::Camera), None);
         assert_eq!(privacy_url("linux", MediaDevice::Microphone), None);
         assert!(serde_json::from_str::<MediaDevice>("\"ms-settings:privacy-webcam\"").is_err());
@@ -101,7 +105,7 @@ fn status(device: MediaDevice) -> PermissionStatus {
 fn media_type(device: MediaDevice) -> &'static objc2_foundation::NSString {
     use objc2_foundation::NSString;
     #[link(name = "AVFoundation", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         static AVMediaTypeVideo: *const NSString;
         static AVMediaTypeAudio: *const NSString;
     }

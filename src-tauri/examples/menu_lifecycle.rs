@@ -4,7 +4,7 @@
 #[cfg(target_os = "macos")]
 fn main() {
     use muda::ContextMenu;
-    use objc2::{rc::autoreleasepool, rc::Retained, rc::Weak, MainThreadMarker};
+    use objc2::{MainThreadMarker, rc::Retained, rc::Weak, rc::autoreleasepool};
     use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 
     let mtm = MainThreadMarker::new().expect("run on the main thread");

@@ -74,8 +74,11 @@ fn nvdec_demotion(mut software_decoder_usable: impl FnMut(&str) -> bool) -> Stri
 #[cfg(target_os = "linux")]
 pub(crate) fn configure() {
     // Apply GTK/WebKit defaults before GStreamer or worker threads start.
+    // SAFETY (every `set_var` here): `run()` calls this before Tauri, GTK, or
+    // any worker starts. The only live thread is the debug native-log pump,
+    // which never touches the environment.
     for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     }
     // libsoup 3.6.6's HTTP/2 pool stalled on Messenger with all six connections
     // in CLOSE-WAIT, blocking worker startup too. HTTP/1.1 avoids that failure.
@@ -84,7 +87,7 @@ pub(crate) fn configure() {
         std::env::var_os("SOUP_FORCE_HTTP1"),
         std::env::var_os("CARRIER_LINUX_HTTP2"),
     ) {
-        std::env::set_var("SOUP_FORCE_HTTP1", "1");
+        unsafe { std::env::set_var("SOUP_FORCE_HTTP1", "1") };
     }
     // Any NVDEC decoder WebKit can autoplug makes the web process load CUDA
     // for Messenger clips, even paused offscreen ones: about 100 MB RAM and
@@ -103,7 +106,7 @@ pub(crate) fn configure() {
         });
         // WebKit's separate web process reads these ranks during its own init.
         if !ranks.is_empty() {
-            std::env::set_var("GST_PLUGIN_FEATURE_RANK", ranks);
+            unsafe { std::env::set_var("GST_PLUGIN_FEATURE_RANK", ranks) };
         }
     }
 }
@@ -235,12 +238,14 @@ mod tests {
     #[test]
     fn explicit_webkit_overrides_win_even_over_forced_safe_mode() {
         for value in ["0", "1", ""] {
-            assert!(defaults(&[
-                ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1"),
-                ("WEBKIT_DISABLE_DMABUF_RENDERER", value),
-                ("WEBKIT_DISABLE_COMPOSITING_MODE", value)
-            ])
-            .is_empty());
+            assert!(
+                defaults(&[
+                    ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1"),
+                    ("WEBKIT_DISABLE_DMABUF_RENDERER", value),
+                    ("WEBKIT_DISABLE_COMPOSITING_MODE", value)
+                ])
+                .is_empty()
+            );
         }
         assert_eq!(
             defaults(&[

@@ -4,18 +4,18 @@
 //! point here is synchronous by design and must be called from a worker thread.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 use ashpd::desktop::global_shortcuts::{
     BindShortcutsOptions, GlobalShortcuts, NewShortcut, Shortcut,
 };
 use ashpd::desktop::{CreateSessionOptions, ResponseError, Session};
-use futures_util::future::{select, Either};
-use futures_util::{pin_mut, StreamExt};
+use futures_util::future::{Either, select};
+use futures_util::{StreamExt, pin_mut};
 use tauri::Manager;
 
-use crate::settings::{save_settings, AppState};
+use crate::settings::{AppState, save_settings};
 use crate::tray::toggle_main_with_activation_token;
 
 const SHORTCUT_ID: &str = "summon";

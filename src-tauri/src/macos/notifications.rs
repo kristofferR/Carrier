@@ -10,8 +10,8 @@ use objc2_user_notifications::UNUserNotificationCenterDelegate;
 
 use crate::actions::validated_thread_path;
 use crate::notifications::{
-    on_notification_action, on_notification_click_with_path, on_notification_reply,
-    NotificationAction,
+    NotificationAction, on_notification_action, on_notification_click_with_path,
+    on_notification_reply,
 };
 
 const MESSAGE_CATEGORY_ID: &str = "carrier.message";
@@ -132,8 +132,8 @@ objc2::define_class!(
             // SAFETY: UserNotifications exports this as a process-lifetime
             // NSString constant on every supported macOS version.
             let default_action = unsafe { UNNotificationDefaultActionIdentifier };
-            if &*action == default_action {
-                if let Some(id) = id {
+            if &*action == default_action
+                && let Some(id) = id {
                     on_notification_click_with_path(
                         self.ivars().app.clone(),
                         id,
@@ -141,7 +141,6 @@ objc2::define_class!(
                         path,
                     );
                 }
-            }
             // The API requires the completion block be called when we're done.
             completion_handler.call(());
         }
@@ -174,7 +173,7 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
-    use objc2::{msg_send, AllocAnyThread};
+    use objc2::{AllocAnyThread, msg_send};
     use objc2_foundation::{NSArray, NSError, NSSet, NSString};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNNotificationAction, UNNotificationActionOptionNone,
@@ -269,7 +268,7 @@ fn refresh_launch_services_registration() {
     // LSRegisterURL(CFURLRef, Boolean) — CFURLRef is toll-free bridged from
     // NSURL, and `Boolean` is a u8.
     #[link(name = "CoreServices", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn LSRegisterURL(in_url: *const std::ffi::c_void, in_update: u8) -> i32;
     }
 
@@ -299,7 +298,7 @@ fn apply_route_metadata(
     group_by_conversation: bool,
     reply_eligible: bool,
 ) -> Option<String> {
-    use crate::notifications::{offered_actions, NotificationAction};
+    use crate::notifications::{NotificationAction, offered_actions};
     use objc2::rc::Retained;
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSString};
 
@@ -308,10 +307,8 @@ fn apply_route_metadata(
         path.strip_prefix("/t/")
             .and_then(|path| path.strip_suffix('/'))
     });
-    if group_by_conversation {
-        if let Some(thread_id) = thread_id {
-            content.setThreadIdentifier(&NSString::from_str(thread_id));
-        }
+    if group_by_conversation && let Some(thread_id) = thread_id {
+        content.setThreadIdentifier(&NSString::from_str(thread_id));
     }
     if reply_eligible && thread_path.is_some() {
         content.setCategoryIdentifier(&NSString::from_str(match offered_actions(id) {

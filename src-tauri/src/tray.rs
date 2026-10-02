@@ -10,6 +10,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
 
+use crate::APP_TITLE;
 #[cfg(target_os = "linux")]
 use crate::menu::open_recent_thread;
 #[cfg(not(target_os = "linux"))]
@@ -19,9 +20,8 @@ use crate::menu::recent_threads_for_menu;
 use crate::menu::target_window;
 use crate::settings::{AppState, Settings};
 #[cfg(target_os = "linux")]
-use crate::tray_badge::{draw_unread_badge, UnreadBucket};
+use crate::tray_badge::{UnreadBucket, draw_unread_badge};
 use crate::window::{build_app_window, install_main_close_handler};
-use crate::APP_TITLE;
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) type PlatformTrayIcon = TrayIcon;
@@ -687,7 +687,7 @@ fn dark_taskbar_from_reg(system_uses_light_theme: Option<u32>) -> bool {
 
 #[cfg(target_os = "windows")]
 fn read_system_uses_light_theme() -> Option<u32> {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
     let subkey: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
         .encode_utf16()
         .chain(std::iter::once(0))

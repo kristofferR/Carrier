@@ -1,7 +1,7 @@
 //! The global summon hotkey: registration/unregistration to match the Global
 //! Hotkey setting, and the startup reconcile.
 
-use crate::settings::{save_settings, Settings};
+use crate::settings::{Settings, save_settings};
 use crate::tray::toggle_main;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -4,18 +4,18 @@
 //! `Carrier.exe --thread <id>`; the flag (not a `carrier://` URL) keeps it working
 //! even if protocol registration failed and avoids a quoting round-trip.
 
-use windows::core::{w, Interface, Result, GUID};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize,
 };
 use windows::Win32::UI::Shell::Common::{IObjectArray, IObjectCollection};
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{
     DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW, ShellLink,
 };
+use windows::core::{GUID, Interface, Result, w};
 
 use crate::menu::RecentThread;
 
@@ -72,57 +72,63 @@ pub(crate) fn rebuild_jump_list(threads: Vec<RecentThread>) {
 }
 
 unsafe fn build(threads: &[RecentThread]) -> Result<()> {
-    let exe = std::env::current_exe()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    // SAFETY: the caller initialized COM on this thread; every call is plain shell COM.
+    unsafe {
+        let exe = std::env::current_exe()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
-    let list: ICustomDestinationList =
-        CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER)?;
-    // BeginList reports how many slots the shell will actually show (and the
-    // destinations the user removed by hand, which we don't re-add). We simply
-    // cap our additions at the reported budget.
-    let mut min_slots = 0u32;
-    let _removed: IObjectArray = list.BeginList(&mut min_slots)?;
+        let list: ICustomDestinationList =
+            CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER)?;
+        // BeginList reports how many slots the shell will actually show (and the
+        // destinations the user removed by hand, which we don't re-add). We simply
+        // cap our additions at the reported budget.
+        let mut min_slots = 0u32;
+        let _removed: IObjectArray = list.BeginList(&mut min_slots)?;
 
-    let collection: IObjectCollection =
-        CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
-    let mut added = 0u32;
-    for thread in threads {
-        if added >= min_slots {
-            break;
+        let collection: IObjectCollection =
+            CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
+        let mut added = 0u32;
+        for thread in threads {
+            if added >= min_slots {
+                break;
+            }
+            let Some(id) = thread
+                .href
+                .strip_prefix("/t/")
+                .and_then(|rest| rest.strip_suffix('/'))
+            else {
+                continue;
+            };
+            let link = shell_link(&exe, &format!("--thread {id}"), &thread.name)?;
+            collection.AddObject(&link)?;
+            added += 1;
         }
-        let Some(id) = thread
-            .href
-            .strip_prefix("/t/")
-            .and_then(|rest| rest.strip_suffix('/'))
-        else {
-            continue;
-        };
-        let link = shell_link(&exe, &format!("--thread {id}"), &thread.name)?;
-        collection.AddObject(&link)?;
-        added += 1;
-    }
 
-    if added > 0 {
-        let array: IObjectArray = collection.cast()?;
-        list.AppendCategory(w!("Recent"), &array)?;
+        if added > 0 {
+            let array: IObjectArray = collection.cast()?;
+            list.AppendCategory(w!("Recent"), &array)?;
+        }
+        // Commit even with nothing added, so clearing the recents (e.g. Hide Names &
+        // Avatars turned on) empties the jump list too.
+        list.CommitList()?;
+        Ok(())
     }
-    // Commit even with nothing added, so clearing the recents (e.g. Hide Names &
-    // Avatars turned on) empties the jump list too.
-    list.CommitList()?;
-    Ok(())
 }
 
 unsafe fn shell_link(exe: &str, arguments: &str, title: &str) -> Result<IShellLinkW> {
-    let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
-    link.SetPath(&windows::core::HSTRING::from(exe))?;
-    link.SetArguments(&windows::core::HSTRING::from(arguments))?;
-    // Reuse the executable's own icon for the entry.
-    link.SetIconLocation(&windows::core::HSTRING::from(exe), 0)?;
+    // SAFETY: called from `build`, on its COM-initialized thread.
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.SetPath(&windows::core::HSTRING::from(exe))?;
+        link.SetArguments(&windows::core::HSTRING::from(arguments))?;
+        // Reuse the executable's own icon for the entry.
+        link.SetIconLocation(&windows::core::HSTRING::from(exe), 0)?;
 
-    // The visible label lives in the link's property store as System.Title.
-    let store: IPropertyStore = link.cast()?;
-    store.SetValue(&PKEY_TITLE, &PROPVARIANT::from(title))?;
-    store.Commit()?;
-    Ok(link)
+        // The visible label lives in the link's property store as System.Title.
+        let store: IPropertyStore = link.cast()?;
+        store.SetValue(&PKEY_TITLE, &PROPVARIANT::from(title))?;
+        store.Commit()?;
+        Ok(link)
+    }
 }

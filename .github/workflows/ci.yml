@@ -58,10 +58,10 @@ jobs:
       - name: Install minimum Rust toolchain
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: 1.90.0
+          toolchain: 1.95.0
 
       - name: Check minimum supported Rust version
-        run: cargo +1.90.0 check --manifest-path src-tauri/Cargo.toml --locked
+        run: cargo +1.95.0 check --manifest-path src-tauri/Cargo.toml --locked
 
       - name: Validate Linux desktop metadata
         run: |

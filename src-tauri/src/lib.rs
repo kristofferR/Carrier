@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, KeyInit, Mac};
@@ -55,7 +55,7 @@ mod window;
 #[cfg(any(test, target_os = "windows"))]
 mod windows;
 
-use diag::{parse_diag_payload, sanitize_diag, DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES};
+use diag::{DIAG_SESSION_CAP, LOG_FILE_MAX_BYTES, parse_diag_payload, sanitize_diag};
 #[cfg(target_os = "macos")]
 use download::lookup_download_id;
 use download::{
@@ -70,19 +70,19 @@ use macos::{
     dock::install_dock_menu_provider, notifications::setup_macos_notifications,
     theme::observe_system_theme_changes,
 };
-use menu::{rebuild_recent_menus, sanitize_recent_threads, RecentThread};
+use menu::{RecentThread, rebuild_recent_menus, sanitize_recent_threads};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use notifications::handle_reply_result;
 use notifications::{
-    clear_avatar_cache, show_message_notification, show_sync_alert, update_notification_route,
-    NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource,
+    NotifyMsg, NotifyRouteMsg, SyncAlertKind, SyncAlertSource, clear_avatar_cache,
+    show_message_notification, show_sync_alert, update_notification_route,
 };
 use settings::AppState;
 #[cfg(any(target_os = "macos", test))]
 use settings::ContextMenuActivation;
 use settings::{
-    apply_settings, clamp_zoom, clear_pending_webview_data, load_settings, load_settings_early,
-    save_settings, SaveOutcome,
+    SaveOutcome, apply_settings, clamp_zoom, clear_pending_webview_data, load_settings,
+    load_settings_early, save_settings,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -152,7 +152,7 @@ pub(crate) fn refresh_unread_indicators(
 #[cfg(target_os = "windows")]
 fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
     use tauri::image::Image;
-    use tray_badge::{overlay_badge_rgba, UnreadBucket, OVERLAY_BADGE_SIZE};
+    use tray_badge::{OVERLAY_BADGE_SIZE, UnreadBucket, overlay_badge_rgba};
 
     // Rasterize only when the bucket changes — the RGBA is identical across
     // every window — but always call `set_overlay_icon`: it is cheap and
@@ -226,8 +226,8 @@ fn spawn_taskbar_dpi_watcher(app: tauri::AppHandle) {
 #[cfg(target_os = "windows")]
 fn spawn_taskbar_theme_watcher(app: tauri::AppHandle) {
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
-        REG_NOTIFY_CHANGE_LAST_SET,
+        HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegCloseKey,
+        RegNotifyChangeKeyValue, RegOpenKeyExW,
     };
     let spawned = std::thread::Builder::new()
         .name("taskbar-theme-watch".into())
@@ -631,10 +631,10 @@ fn send_native_result(
     let script = format!(
         "window.dispatchEvent(new CustomEvent('{result_event}', {{ detail: {{ request: {request}, {field}: {value}, signature: {signature} }} }}));"
     );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report {result_event}: {error}");
-        }
+    if let Some(window) = app.get_webview_window(label)
+        && let Err(error) = window.eval(&script)
+    {
+        log::warn!("failed to report {result_event}: {error}");
     }
 }
 
@@ -683,10 +683,10 @@ fn send_context_menu_result(
     let script = format!(
         "window.dispatchEvent(new CustomEvent('carrier:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, phase: {phase}, signature: {signature} }} }}));"
     );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report carrier:context-menu-result: {error}");
-        }
+    if let Some(window) = app.get_webview_window(label)
+        && let Err(error) = window.eval(&script)
+    {
+        log::warn!("failed to report carrier:context-menu-result: {error}");
     }
 }
 
@@ -720,10 +720,10 @@ fn send_choose_download_result(
     let script = format!(
         "window.dispatchEvent(new CustomEvent('carrier:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, cancelled: {cancelled}, signature: {signature} }} }}));"
     );
-    if let Some(window) = app.get_webview_window(label) {
-        if let Err(error) = window.eval(&script) {
-            log::warn!("failed to report carrier:choose-download-result: {error}");
-        }
+    if let Some(window) = app.get_webview_window(label)
+        && let Err(error) = window.eval(&script)
+    {
+        log::warn!("failed to report carrier:choose-download-result: {error}");
     }
 }
 
@@ -2084,13 +2084,10 @@ pub fn run() {
                 event: tauri::WindowEvent::Focused(true),
                 ..
             } = &event
-            {
-                if label == "main" {
-                    if let Some(main) = app.get_webview_window("main") {
+                && label == "main"
+                    && let Some(main) = app.get_webview_window("main") {
                         macos::background_render::hand_over(&main);
                     }
-                }
-            }
 
             // LaunchServices delivers both share-extension handoffs and the
             // public carrier:// automation surface here, warm or cold.
@@ -2180,14 +2177,18 @@ mod tests {
             .as_deref(),
             Some("789")
         );
-        assert!(messenger_url_thread_id(
-            &url::Url::parse("https://www.facebook.com/messages/").unwrap()
-        )
-        .is_none());
-        assert!(messenger_url_thread_id(
-            &url::Url::parse("https://example.com/messages/t/123/").unwrap()
-        )
-        .is_none());
+        assert!(
+            messenger_url_thread_id(
+                &url::Url::parse("https://www.facebook.com/messages/").unwrap()
+            )
+            .is_none()
+        );
+        assert!(
+            messenger_url_thread_id(
+                &url::Url::parse("https://example.com/messages/t/123/").unwrap()
+            )
+            .is_none()
+        );
     }
 
     fn signed_action(

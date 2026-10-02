@@ -26,8 +26,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
-use ::windows::core::{Interface, Ref, Result as WinResult, HSTRING};
-#[cfg(target_os = "windows")]
 use ::windows::Data::Xml::Dom::XmlDocument;
 #[cfg(target_os = "windows")]
 use ::windows::Foundation::TypedEventHandler;
@@ -36,6 +34,8 @@ use ::windows::UI::Notifications::{
     NotificationSetting, ToastActivatedEventArgs, ToastDismissalReason, ToastDismissedEventArgs,
     ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
+#[cfg(target_os = "windows")]
+use ::windows::core::{HSTRING, Interface, Ref, Result as WinResult};
 #[cfg(target_os = "windows")]
 use tauri::Manager;
 
@@ -258,7 +258,7 @@ fn supports_tag_group() -> bool {
 /// error, which [`supports_tag_group`] treats as "assume modern".
 #[cfg(target_os = "windows")]
 fn windows_build_number() -> Option<u32> {
-    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
     let subkey: Vec<u16> = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -494,10 +494,11 @@ fn reply_text_from_activation(activation: &ToastActivatedEventArgs) -> Option<St
 fn log_notifications_disabled_once(notifier: &ToastNotifier) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static LOGGED: AtomicBool = AtomicBool::new(false);
-    if let Ok(setting) = notifier.Setting() {
-        if setting != NotificationSetting::Enabled && !LOGGED.swap(true, Ordering::Relaxed) {
-            log::warn!("Windows notifications appear disabled for Carrier (setting {setting:?})");
-        }
+    if let Ok(setting) = notifier.Setting()
+        && setting != NotificationSetting::Enabled
+        && !LOGGED.swap(true, Ordering::Relaxed)
+    {
+        log::warn!("Windows notifications appear disabled for Carrier (setting {setting:?})");
     }
 }
 
@@ -570,8 +571,8 @@ fn ensure_notification_icon(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn register_aumid(aumid: &str, display_name: &str, icon_path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
-        REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE,
+        HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_EXPAND_SZ, REG_OPTION_NON_VOLATILE, RegCloseKey,
+        RegCreateKeyExW, RegSetValueExW,
     };
     let subkey: Vec<u16> = format!("Software\\Classes\\AppUserModelId\\{aumid}")
         .encode_utf16()

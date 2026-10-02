@@ -8,27 +8,27 @@ use serde::Deserialize;
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::{CheckMenuItem, MenuItemKind, Submenu};
 use tauri::{
-    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
     Manager, WebviewWindow,
+    menu::{AboutMetadata, Menu, MenuItem, MenuItemBuilder, SubmenuBuilder},
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::actions::{run_app_action, validated_thread_path, AppAction, NEW_CONVERSATION_JS};
+#[cfg(target_os = "macos")]
+use crate::APP_TITLE;
+use crate::actions::{AppAction, NEW_CONVERSATION_JS, run_app_action, validated_thread_path};
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 #[cfg(target_os = "macos")]
 use crate::settings::ContextMenuActivation;
 use crate::settings::{
-    apply_settings, save_settings, schedule_webview_data_clear, AppState, SaveOutcome, Settings,
+    AppState, SaveOutcome, Settings, apply_settings, save_settings, schedule_webview_data_clear,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
 use crate::tray::show_main;
 use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
-#[cfg(target_os = "macos")]
-use crate::APP_TITLE;
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
@@ -369,10 +369,10 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
 
 #[cfg(not(target_os = "macos"))]
 fn set_check_item(submenu: &Submenu<tauri::Wry>, id: &str, checked: bool) {
-    if let Some(MenuItemKind::Check(item)) = submenu.get(id) {
-        if let Err(error) = item.set_checked(checked) {
-            log::warn!("failed to update native menu item {id}: {error}");
-        }
+    if let Some(MenuItemKind::Check(item)) = submenu.get(id)
+        && let Err(error) = item.set_checked(checked)
+    {
+        log::warn!("failed to update native menu item {id}: {error}");
     }
 }
 
@@ -952,8 +952,7 @@ pub(crate) fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThrea
     if state.settings.lock().unwrap().hide_names_avatars {
         return Vec::new();
     }
-    let threads = state.recent_threads.lock().unwrap().clone();
-    threads
+    state.recent_threads.lock().unwrap().clone()
 }
 
 /// Open a conversation picked from the Dock/tray menu: surface the app and ask

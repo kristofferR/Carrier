@@ -3,9 +3,9 @@
 //! and the theme-change window rebuild.
 
 use tauri::{
+    Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
     utils::config::BackgroundThrottlingPolicy,
     webview::{Color, DownloadEvent},
-    Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_notification::NotificationExt;
 use url::Url;
@@ -20,7 +20,7 @@ use crate::download::{
 use crate::macos::theme::make_webview_transparent;
 use crate::render_recovery::RenderRecoveryBudget;
 use crate::settings::{
-    load_settings, save_settings, AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN,
+    AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, load_settings, save_settings,
 };
 use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
@@ -801,7 +801,9 @@ pub(crate) fn recreate_messenger_window(
 
         if memory_recycle || render_budget.used() {
             // Frame recovery and optional recycling are bounded to this window.
-            log::error!("failed to construct replacement Messenger window {label}; reopen Carrier from the tray or relaunch manually");
+            log::error!(
+                "failed to construct replacement Messenger window {label}; reopen Carrier from the tray or relaunch manually"
+            );
             crate::webview_watchdog::realtime_window_rebuild_failed(&label);
             app.state::<AppState>()
                 .recreating
@@ -1584,8 +1586,10 @@ mod tests {
     fn native_call_factory_waits_for_the_authenticated_result() {
         let script = init_script(&Settings::default(), 42, "test-reveal-token", true);
 
-        assert!(script
-            .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];"));
+        assert!(
+            script
+                .contains("request += alphabet[bytes[index] >> 4] + alphabet[bytes[index] & 15];")
+        );
         assert!(!script.contains("bytes[index].toString(16).padStart(2, '0')"));
         // Every result-bearing bridge goes through the one factory: correlation
         // token, '<event>-result' listener, signature verification, timeout.

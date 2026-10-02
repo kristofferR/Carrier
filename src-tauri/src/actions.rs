@@ -157,14 +157,12 @@ fn dispatch_or_retain_page_action(app: &tauri::AppHandle, action: AppAction) {
     let state = app.state::<AppState>();
     let mut pending = state.pending_action.lock().unwrap();
     let ready = state.messenger_loaded.load(Ordering::Acquire);
-    if ready {
-        if let Some(window) = app.get_webview_window("main") {
-            // A successful warm dispatch supersedes anything that was waiting
-            // for a previous page load. Keep the slot as last-writer-wins.
-            *pending = None;
-            if dispatch_page_action(&window, &action) {
-                return;
-            }
+    if ready && let Some(window) = app.get_webview_window("main") {
+        // A successful warm dispatch supersedes anything that was waiting
+        // for a previous page load. Keep the slot as last-writer-wins.
+        *pending = None;
+        if dispatch_page_action(&window, &action) {
+            return;
         }
     }
     *pending = Some(action);
@@ -222,12 +220,12 @@ pub(crate) fn messenger_page_finished(window: &tauri::WebviewWindow) {
     let state = window.state::<AppState>();
     let mut pending = state.pending_action.lock().unwrap();
     state.messenger_loaded.store(true, Ordering::Release);
-    if let Some(action) = pending.take() {
-        if !dispatch_page_action(window, &action) {
-            // The webview may have disappeared between the navigation event
-            // and eval. Preserve the action for the next completed load.
-            *pending = Some(action);
-        }
+    if let Some(action) = pending.take()
+        && !dispatch_page_action(window, &action)
+    {
+        // The webview may have disappeared between the navigation event
+        // and eval. Preserve the action for the next completed load.
+        *pending = Some(action);
     }
 }
 

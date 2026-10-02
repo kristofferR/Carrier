@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 use serde::Deserialize;
 use tauri::{Listener, Manager, WebviewWindow, WindowEvent};
 
+use crate::MESSENGER_DNS_TIMEOUT;
 use crate::preflight::messenger_dns_preflight;
 use crate::render_recovery::{
     RenderAction, RenderHeartbeat, RenderRecovery, RenderRecoveryBudget, RenderSignal,
@@ -19,7 +20,6 @@ use crate::render_recovery::{
 };
 use crate::renderer_memory::RendererMemory;
 use crate::url_rules::{is_messenger_content_url, is_messenger_web_url};
-use crate::MESSENGER_DNS_TIMEOUT;
 
 const HEARTBEAT_EVENT: &str = "carrier:webview-heartbeat";
 
@@ -137,10 +137,10 @@ impl RecoveryCoordinator {
         Some(permit)
     }
     fn refund(&mut self, account: &str, permit: Instant) {
-        if let Some(budget) = self.accounts.get_mut(account) {
-            if budget.lease_until == Some(permit) {
-                budget.lease_until = None;
-            }
+        if let Some(budget) = self.accounts.get_mut(account)
+            && budget.lease_until == Some(permit)
+        {
+            budget.lease_until = None;
         }
     }
 }
@@ -966,7 +966,9 @@ impl WebviewWatchdog {
                     }
                     WatchdogAction::RenderExhausted => {
                         state.lock().unwrap().render.exhausted();
-                        log::warn!("Messenger webview {label} frames still stalled after rebuilding; automatic frame recovery stopped until frames stay healthy for a minute");
+                        log::warn!(
+                            "Messenger webview {label} frames still stalled after rebuilding; automatic frame recovery stopped until frames stay healthy for a minute"
+                        );
                     }
                     WatchdogAction::Reload
                     | WatchdogAction::RecreateUnresponsive
@@ -986,10 +988,17 @@ impl WebviewWatchdog {
                                     "webview {label} recovery {action:?} held for investigation"
                                 );
                                 let snapshot = state.lock().unwrap();
-                                log::warn!("held recovery snapshot: heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
-                                    snapshot.last_heartbeat_at.map(|last| started_at.elapsed().saturating_sub(last).as_millis()),
-                                    snapshot.protected, snapshot.missing_content_since.is_some(),
-                                    snapshot.realtime_bad_since.is_some(), snapshot.render);
+                                log::warn!(
+                                    "held recovery snapshot: heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
+                                    snapshot.last_heartbeat_at.map(|last| started_at
+                                        .elapsed()
+                                        .saturating_sub(last)
+                                        .as_millis()),
+                                    snapshot.protected,
+                                    snapshot.missing_content_since.is_some(),
+                                    snapshot.realtime_bad_since.is_some(),
+                                    snapshot.render
+                                );
                                 drop(snapshot);
                                 let _ =
                                     watchdog_window.eval("window.__carrierCaptureRecovery?.();");
@@ -1051,11 +1060,18 @@ impl WebviewWatchdog {
 
                         {
                             let snapshot = state.lock().unwrap();
-                            log::warn!("recovery snapshot: webview={label} action={action:?} uptime_ms={} heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
+                            log::warn!(
+                                "recovery snapshot: webview={label} action={action:?} uptime_ms={} heartbeat_age_ms={:?} protected={} missing_content={} realtime_bad={} render={:?}",
                                 started_at.elapsed().as_millis(),
-                                snapshot.last_heartbeat_at.map(|last| started_at.elapsed().saturating_sub(last).as_millis()),
-                                snapshot.protected, snapshot.missing_content_since.is_some(),
-                                snapshot.realtime_bad_since.is_some(), snapshot.render);
+                                snapshot.last_heartbeat_at.map(|last| started_at
+                                    .elapsed()
+                                    .saturating_sub(last)
+                                    .as_millis()),
+                                snapshot.protected,
+                                snapshot.missing_content_since.is_some(),
+                                snapshot.realtime_bad_since.is_some(),
+                                snapshot.render
+                            );
                         }
                         #[cfg(target_os = "linux")]
                         crate::linux::log_messenger_webview_state(&watchdog_window);
@@ -1106,7 +1122,10 @@ impl WebviewWatchdog {
                         };
                         match action {
                             WatchdogAction::ReloadRender => {
-                                log::warn!("Messenger webview {label} frame delivery stayed stalled (native_focused={}); attempting one native reload", native_window.focused);
+                                log::warn!(
+                                    "Messenger webview {label} frame delivery stayed stalled (native_focused={}); attempting one native reload",
+                                    native_window.focused
+                                );
                                 state.lock().unwrap().render.reload_started(now);
                                 if let Err(error) = watchdog_window.reload() {
                                     recovery_coordinator()
@@ -1245,7 +1264,9 @@ impl WebviewWatchdog {
                                         "Messenger webview {label} realtime transport stayed dead across reloads; rebuilding the webview"
                                     );
                                 } else if action == WatchdogAction::RecreateRender {
-                                    log::warn!("Messenger webview {label} frames did not recover after reload; rebuilding the webview once");
+                                    log::warn!(
+                                        "Messenger webview {label} frames did not recover after reload; rebuilding the webview once"
+                                    );
                                 } else if action == WatchdogAction::RecreateUnresponsive {
                                     log::warn!(
                                         "Messenger webview {label} stayed unresponsive after reload; rebuilding it"
@@ -1715,15 +1736,21 @@ mod tests {
         assert!(coordinator.cooling_down("a", advance(now, Duration::from_secs(20))));
         assert!(!coordinator.cooling_down("b", advance(now, Duration::from_secs(20))));
         assert!(coordinator.blocked("a", advance(now, Duration::from_secs(20))));
-        assert!(coordinator
-            .claim("a", advance(now, Duration::from_secs(20)))
-            .is_none());
-        assert!(coordinator
-            .claim("b", advance(now, Duration::from_secs(20)))
-            .is_some());
-        assert!(coordinator
-            .claim("a", advance(now, Duration::from_secs(900)))
-            .is_some());
+        assert!(
+            coordinator
+                .claim("a", advance(now, Duration::from_secs(20)))
+                .is_none()
+        );
+        assert!(
+            coordinator
+                .claim("b", advance(now, Duration::from_secs(20)))
+                .is_some()
+        );
+        assert!(
+            coordinator
+                .claim("a", advance(now, Duration::from_secs(900)))
+                .is_some()
+        );
         // A probe lease limits reloads, but must not hide genuine recovery.
         assert!(!coordinator.cooling_down("a", advance(now, Duration::from_secs(900))));
     }
@@ -1798,12 +1825,16 @@ mod tests {
         let mut coordinator = RecoveryCoordinator::default();
         assert!(coordinator.claim("a", now).is_some());
         assert!(coordinator.claim("a", now).is_none());
-        assert!(coordinator
-            .claim("a", advance(now, Duration::from_secs(59)))
-            .is_none());
-        assert!(coordinator
-            .claim("a", advance(now, Duration::from_secs(60)))
-            .is_some());
+        assert!(
+            coordinator
+                .claim("a", advance(now, Duration::from_secs(59)))
+                .is_none()
+        );
+        assert!(
+            coordinator
+                .claim("a", advance(now, Duration::from_secs(60)))
+                .is_some()
+        );
     }
 
     #[test]

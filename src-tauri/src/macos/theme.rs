@@ -156,7 +156,7 @@ objc2::define_class!(
 /// startup; the observer is leaked (it lives for the whole process) so KVO never
 /// messages a freed object, and it keeps working across the rebuilds it triggers.
 pub(crate) fn observe_system_theme_changes(app: &tauri::AppHandle) {
-    use objc2::{class, msg_send, rc::Retained, runtime::AnyObject, AllocAnyThread};
+    use objc2::{AllocAnyThread, class, msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::ns_string;
 
     // Seed the baseline so the observer only fires on a genuine flip away from the

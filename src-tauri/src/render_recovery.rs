@@ -1,7 +1,7 @@
 //! Bounded recovery for a responsive page that has stopped delivering frames.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::Deserialize;

@@ -268,7 +268,7 @@ pub(crate) fn observe_system_theme_changes(app: &tauri::AppHandle) {
 /// hung sessions fall back to light: errors immediately, a stalled portal
 /// after a short timeout so window creation is never blocked indefinitely.
 pub(crate) fn system_prefers_dark() -> bool {
-    use futures_util::future::{select, Either};
+    use futures_util::future::{Either, select};
 
     let read = std::pin::pin!(async { PortalSettings::new().await?.color_scheme().await });
     let timeout = std::pin::pin!(async_io::Timer::after(std::time::Duration::from_secs(2)));

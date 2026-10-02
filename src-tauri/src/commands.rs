@@ -8,9 +8,9 @@ use url::Url;
 use crate::custom_css::ensure_custom_css;
 use crate::hotkey::sync_global_hotkey;
 use crate::install_environment::is_snap;
-use crate::preflight::{messenger_dns_preflight, MessengerLoadStatus, MessengerPreflightError};
+use crate::preflight::{MessengerLoadStatus, MessengerPreflightError, messenger_dns_preflight};
 use crate::settings::{
-    apply_settings, save_settings, sync_autostart, AppState, SaveOutcome, Settings,
+    AppState, SaveOutcome, Settings, apply_settings, save_settings, sync_autostart,
 };
 use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
@@ -1117,17 +1117,17 @@ mod tests {
     #[cfg(unix)]
     use super::appimage_runtime_paths_match;
     use super::{
-        classify_messenger_preflight_attempt, linux_update_install_mode, pacman_owns_carrier_with,
-        should_surface_update, LinuxUpdateEvidence, MessengerPreflightAttempt,
+        LinuxUpdateEvidence, MESSENGER_DNS_MAX_ATTEMPTS, MessengerPreflightAttempt,
         MessengerPreflightDecision, UpdateInstallGuard, UpdateInstallKind,
-        MESSENGER_DNS_MAX_ATTEMPTS,
+        classify_messenger_preflight_attempt, linux_update_install_mode, pacman_owns_carrier_with,
+        should_surface_update,
     };
     use crate::preflight::MessengerPreflightError;
     use std::io::ErrorKind;
     use std::sync::atomic::AtomicBool;
 
     #[cfg(target_os = "macos")]
-    use super::{macos_relaunch_command, MACOS_RELAUNCH_SCRIPT};
+    use super::{MACOS_RELAUNCH_SCRIPT, macos_relaunch_command};
 
     #[test]
     fn update_install_guard_is_single_flight_and_releases_on_drop() {
