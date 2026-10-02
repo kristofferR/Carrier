@@ -7165,9 +7165,12 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/notification-images.ts
+  var photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+  function isPhotoSummary(body) {
+    return !body.trim() || photoSummary.test(body.trim());
+  }
   function notificationPhotoText(title, body, hasThumbnail) {
-    const photoSummary = /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
-    if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
+    if (hasThumbnail && isPhotoSummary(body)) {
       return { title: `${title} sent an image:`, body: "" };
     }
     return { title, body };
@@ -7775,8 +7778,9 @@ ${button.innerHTML}`)
             } : void 0,
             "",
             hidePreview ? "" : image,
-            // A photo-only summary ("Sent a photo") has no text for 👍 to match.
-            hidePreview || !text.body ? "" : originalBody
+            // A photo-only summary ("Sent a photo") has no text for 👍 to match,
+            // whether or not its thumbnail loaded.
+            hidePreview || isPhotoSummary(text.body) ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -8236,7 +8240,7 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || !text.body ? "" : rowPreviewMatchText(conversation.body)
+          hidePreview || isPhotoSummary(text.body) ? "" : rowPreviewMatchText(conversation.body)
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({

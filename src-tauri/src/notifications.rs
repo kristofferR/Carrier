@@ -119,6 +119,18 @@ pub(crate) fn offered_actions(native_id: u64) -> &'static [NotificationAction] {
     }
 }
 
+/// Drop the target of a notification that was closed, cleared, or acted on,
+/// so retired entries never push out targets still live in the OS.
+fn forget_action_target(native_id: u64) {
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    ACTION_TARGETS
+        .lock()
+        .unwrap()
+        .retain(|(id, _)| *id != native_id);
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let _ = native_id;
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn action_target(native_id: u64) -> Option<ActionTarget> {
     ACTION_TARGETS
@@ -419,6 +431,7 @@ fn remember_notification_route(id: u64, value: &str) {
 }
 
 fn take_notification_route(id: u64) -> Option<String> {
+    forget_action_target(id);
     NOTIFICATION_ROUTES
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -688,6 +701,9 @@ pub(crate) fn take_notification_ids_for_thread(
     }
     ids.sort_unstable();
     ids.dedup();
+    for id in &ids {
+        forget_action_target(*id);
+    }
     ids
 }
 
@@ -700,6 +716,7 @@ fn resolved_notification_route(
     // user acted on. Prefer it to every cache so the request remains
     // self-contained across process restarts.
     if let Some(route) = fallback_path.and_then(validated_thread_path) {
+        forget_action_target(id);
         return Some(route);
     }
     let route = take_notification_route(id);
@@ -3360,6 +3377,24 @@ mod tests {
         remember_notification_route(9_002, "/t/222/");
         assert_eq!(take_notification_route(9_001).as_deref(), Some("/t/111/"));
         assert_eq!(take_notification_route(9_002).as_deref(), Some("/t/222/"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn retiring_a_route_drops_its_action_target() {
+        // A closed or acted-on notification must not keep a target that
+        // counts against the cap of those still shown.
+        let target = ActionTarget {
+            body: "hi".into(),
+            at: 1,
+            account: "1".into(),
+        };
+        remember_notification_route(9_031, "/t/111/");
+        remember_action_target(9_031, target.clone());
+        remember_action_target(9_032, target.clone());
+        take_notification_route(9_031);
+        assert_eq!(action_target(9_031), None);
+        assert_eq!(action_target(9_032), Some(target));
     }
 
     #[test]

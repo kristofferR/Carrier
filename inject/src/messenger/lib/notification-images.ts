@@ -1,8 +1,14 @@
+const photoSummary =
+  /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
+
+/** An empty or photo-only preview ("Sent a photo"): no text a bubble could be matched by. */
+export function isPhotoSummary(body: string) {
+  return !body.trim() || photoSummary.test(body.trim());
+}
+
 /** Use the sender line to introduce an attached photo, keeping link and caption text intact. */
 export function notificationPhotoText(title: string, body: string, hasThumbnail: boolean) {
-  const photoSummary =
-    /^(?:(?:(?:sent|shared)(?: you)? (?:an? )?)?(?:image|photo|picture)|(?:(?:har )?(?:sendt|sendte|delte)(?: deg)? (?:et )?)?(?:bilde|foto))[.!:]?$/i;
-  if (hasThumbnail && (!body.trim() || photoSummary.test(body.trim()))) {
+  if (hasThumbnail && isPhotoSummary(body)) {
     return { title: `${title} sent an image:`, body: "" };
   }
   return { title, body };
