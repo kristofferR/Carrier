@@ -26,12 +26,12 @@ const muteExpiries = new Map<string, ReturnType<typeof setTimeout>>();
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS));
 const label = (el: Element) => el.getAttribute("aria-label") || el.textContent || "";
 
-/** The open thread's Mute / Unmute control, if the info pane has rendered it. */
 /** The info pane's notification control: "Mute notifications" (not muted) or
  * "Unmute notifications" (muted). Bare "Mute"/"Unmute" is a call's microphone
  * control on the same surface and must never match. */
 const PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
 
+/** The open thread's Mute / Unmute control, if the info pane has rendered it. */
 function threadMuteControl(stale: Set<Element>): {
   muted: boolean | null;
   trigger: HTMLElement | null;

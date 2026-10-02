@@ -73,6 +73,15 @@ export interface ConversationTextCandidate {
 }
 
 /** Build the sender/title and preview from Messenger's nested text surfaces. */
+/** Row previews are capped here, without a truncation marker of their own. */
+export const ROW_BODY_LIMIT = 240;
+
+/** A row preview as 👍's match text: a capped preview is marked truncated, so
+ * it can match a longer message as a prefix. */
+export function rowPreviewMatchText(body: string): string {
+  return body.length >= ROW_BODY_LIMIT ? `${body}…` : body;
+}
+
 export function conversationTextParts(
   candidates: ConversationTextCandidate[],
   canonicalBody?: (body: string) => string,
@@ -123,7 +132,7 @@ export function conversationTextParts(
   const body = values[1]?.text || "";
   return {
     title: (values[0]?.text || "Messenger").slice(0, 80),
-    body: (canonicalBody ? canonicalBody(body) : body).slice(0, 240),
+    body: (canonicalBody ? canonicalBody(body) : body).slice(0, ROW_BODY_LIMIT),
   };
 }
 

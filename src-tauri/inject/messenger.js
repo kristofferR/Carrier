@@ -5822,6 +5822,10 @@ ${button.innerHTML}`)
     }
     return false;
   }
+  var ROW_BODY_LIMIT = 240;
+  function rowPreviewMatchText(body) {
+    return body.length >= ROW_BODY_LIMIT ? `${body}…` : body;
+  }
   function conversationTextParts(candidates, canonicalBody) {
     const values = [];
     const eligible = candidates.filter(
@@ -5849,7 +5853,7 @@ ${button.innerHTML}`)
     const body = values[1]?.text || "";
     return {
       title: (values[0]?.text || "Messenger").slice(0, 80),
-      body: (canonicalBody ? canonicalBody(body) : body).slice(0, 240)
+      body: (canonicalBody ? canonicalBody(body) : body).slice(0, ROW_BODY_LIMIT)
     };
   }
   function isUnreadConversationText(fontWeight, text) {
@@ -8089,7 +8093,7 @@ ${button.innerHTML}`)
         void 0,
         "",
         "",
-        hidePreview ? "" : fallback.body
+        hidePreview ? "" : rowPreviewMatchText(fallback.body)
       );
     };
     const retainPendingFallback = (fallback) => {
@@ -8232,7 +8236,7 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || !text.body ? "" : conversation.body
+          hidePreview || !text.body ? "" : rowPreviewMatchText(conversation.body)
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({

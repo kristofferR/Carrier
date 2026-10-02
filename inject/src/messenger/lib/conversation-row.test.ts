@@ -6,6 +6,8 @@ import {
   conversationTextParts,
   hasCandidateTextChild,
   isUnreadConversationText,
+  ROW_BODY_LIMIT,
+  rowPreviewMatchText,
 } from "./conversation-row";
 
 const textNode = (value: string): ConversationTextNode => ({ nodeType: 3, nodeValue: value });
@@ -196,5 +198,13 @@ describe("isUnreadConversationText", () => {
     expect(isUnreadConversationText("bold", "Jane")).toBe(false);
     expect(isUnreadConversationText("700", " ")).toBe(false);
     expect(isUnreadConversationText("700", "·")).toBe(false);
+  });
+});
+
+describe("rowPreviewMatchText", () => {
+  test("marks a preview cut at the row cap as truncated", () => {
+    const capped = "x".repeat(ROW_BODY_LIMIT);
+    expect(rowPreviewMatchText(capped)).toBe(`${capped}…`);
+    expect(rowPreviewMatchText("short")).toBe("short");
   });
 });

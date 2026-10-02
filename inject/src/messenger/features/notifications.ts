@@ -7,6 +7,7 @@ import {
   conversationTextParts,
   hasCandidateTextChild,
   isUnreadConversationText,
+  rowPreviewMatchText,
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
@@ -1138,7 +1139,7 @@ export function initNotificationBridge() {
       undefined,
       "",
       "",
-      hidePreview ? "" : fallback.body,
+      hidePreview ? "" : rowPreviewMatchText(fallback.body),
     );
   };
 
@@ -1326,7 +1327,7 @@ export function initNotificationBridge() {
         undefined,
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
-        hidePreview || !text.body ? "" : conversation.body,
+        hidePreview || !text.body ? "" : rowPreviewMatchText(conversation.body),
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({
