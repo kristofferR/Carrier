@@ -642,7 +642,8 @@ export function initNotificationBridge() {
             : undefined,
           "",
           hidePreview ? "" : image,
-          hidePreview ? "" : originalBody,
+          // A photo-only summary ("Sent a photo") has no text for 👍 to match.
+          hidePreview || !text.body ? "" : originalBody,
         );
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
@@ -1325,7 +1326,7 @@ export function initNotificationBridge() {
         undefined,
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
-        hidePreview ? "" : conversation.body,
+        hidePreview || !text.body ? "" : conversation.body,
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({

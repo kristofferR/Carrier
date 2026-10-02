@@ -7771,7 +7771,8 @@ ${button.innerHTML}`)
             } : void 0,
             "",
             hidePreview ? "" : image,
-            hidePreview ? "" : originalBody
+            // A photo-only summary ("Sent a photo") has no text for 👍 to match.
+            hidePreview || !text.body ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             notifiedStore.markNotified(
@@ -8231,7 +8232,7 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview ? "" : conversation.body
+          hidePreview || !text.body ? "" : conversation.body
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
