@@ -27,6 +27,11 @@ const pause = () => new Promise<void>((resolve) => setTimeout(resolve, POLL_MS))
 const label = (el: Element) => el.getAttribute("aria-label") || el.textContent || "";
 
 /** The open thread's Mute / Unmute control, if the info pane has rendered it. */
+/** The info pane's notification control: "Mute notifications" (not muted) or
+ * "Unmute notifications" (muted). Bare "Mute"/"Unmute" is a call's microphone
+ * control on the same surface and must never match. */
+const PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
+
 function threadMuteControl(stale: Set<Element>): {
   muted: boolean | null;
   trigger: HTMLElement | null;
@@ -36,9 +41,10 @@ function threadMuteControl(stale: Set<Element>): {
     '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]',
   )) {
     if (stale.has(el) || !isShown(el)) continue;
-    const muted = conversationMuteFromLabel(el.getAttribute("aria-label") || "");
-    if (muted === true) return { muted, trigger: null };
-    if (muted === false) trigger ??= el;
+    const control = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
+    if (!control) continue;
+    if (control[1] || control[2]?.toLowerCase() === "on") return { muted: true, trigger: null };
+    trigger ??= el;
   }
   return { muted: trigger ? false : null, trigger };
 }
@@ -75,7 +81,10 @@ function durationRadio(dialog: Element): HTMLElement | null {
 /** "Notifications for this chat": a dialog offering Mute, or Unmute when muted. */
 function chooserDialog(stale: Set<Element>) {
   for (const dialog of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
-    if (stale.has(dialog) || durationRadio(dialog)) continue;
+    // The chooser lists notification levels (radios); a call dialog's Mute
+    // button never qualifies.
+    if (stale.has(dialog) || durationRadio(dialog) || !dialog.querySelector('[role="radio"]'))
+      continue;
     for (const button of visibleButtons(dialog)) {
       const muted = conversationMuteFromLabel(label(button));
       if (muted !== null) return { dialog, button, muted };

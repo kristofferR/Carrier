@@ -9089,15 +9089,17 @@ ${button.innerHTML}`)
   var muteExpiries = /* @__PURE__ */ new Map();
   var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
+  var PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
   function threadMuteControl(stale) {
     let trigger = null;
     for (const el of document.querySelectorAll(
       '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]'
     )) {
       if (stale.has(el) || !isShown(el)) continue;
-      const muted = conversationMuteFromLabel(el.getAttribute("aria-label") || "");
-      if (muted === true) return { muted, trigger: null };
-      if (muted === false) trigger ?? (trigger = el);
+      const control = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
+      if (!control) continue;
+      if (control[1] || control[2]?.toLowerCase() === "on") return { muted: true, trigger: null };
+      trigger ?? (trigger = el);
     }
     return { muted: trigger ? false : null, trigger };
   }
@@ -9122,7 +9124,8 @@ ${button.innerHTML}`)
   }
   function chooserDialog(stale) {
     for (const dialog of document.querySelectorAll('[role="dialog"]')) {
-      if (stale.has(dialog) || durationRadio(dialog)) continue;
+      if (stale.has(dialog) || durationRadio(dialog) || !dialog.querySelector('[role="radio"]'))
+        continue;
       for (const button of visibleButtons(dialog)) {
         const muted = conversationMuteFromLabel(label(button));
         if (muted !== null) return { dialog, button, muted };
