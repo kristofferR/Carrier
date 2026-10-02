@@ -167,19 +167,42 @@ unsafe fn restore_transparency(window: *mut AnyObject, transparency: Transparenc
     let _: () = msg_send![window, setIgnoresMouseEvents: transparency.ignored_mouse];
 }
 
-/// Whether a notification action is holding the closed main window in,
-/// transparently. AppKit reports it visible meanwhile.
-pub(crate) fn holds_window_in() -> bool {
+fn holds_window_in() -> bool {
     ENGAGED
         .lock()
         .unwrap()
         .is_some_and(|engaged| engaged.ordered_in.is_some())
 }
 
+/// Whether the main window is open for the user: visible, and not merely held
+/// in, transparently, by a notification action. Both reads happen in one
+/// main-thread turn, where engage and release also run, so they cannot
+/// interleave. None if the main thread did not answer in time.
+pub(crate) fn user_visible(window: &tauri::WebviewWindow) -> Option<bool> {
+    let (sent, received) = std::sync::mpsc::sync_channel(1);
+    let main_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let visible = main_window.is_visible().unwrap_or(true);
+            let _ = sent.send(visible && !holds_window_in());
+        })
+        .ok()?;
+    received.recv_timeout(Duration::from_secs(2)).ok()
+}
+
 /// The user is revealing the main window: make a transparent stand-in opaque
 /// so they see it, and keep it open when the action ends. Returns whether a
-/// transparent window was handed over. Call on the main thread before showing.
+/// transparent window was handed over. Off the main thread (e.g. a settings
+/// worker revealing the window) the handover is queued there instead, ahead of
+/// the caller's own show, and reports false.
 pub(crate) fn hand_over(window: &tauri::WebviewWindow) -> bool {
+    if objc2::MainThreadMarker::new().is_none() {
+        let main_window = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            hand_over(&main_window);
+        });
+        return false;
+    }
     let transparency = {
         let mut engaged = ENGAGED.lock().unwrap();
         match engaged

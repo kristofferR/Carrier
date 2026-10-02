@@ -662,8 +662,11 @@ pub(crate) fn recreate_messenger_window(
         // A notification action may hold a closed window in, transparently;
         // that is not the user's window being open.
         #[cfg(target_os = "macos")]
-        let was_visible =
-            was_visible && !(label == "main" && crate::macos::background_render::holds_window_in());
+        let was_visible = if label == "main" {
+            crate::macos::background_render::user_visible(&window).unwrap_or(was_visible)
+        } else {
+            was_visible
+        };
         let was_minimized = window.is_minimized().unwrap_or(false);
         let was_maximized = window.is_maximized().unwrap_or(false);
         let was_fullscreen = window.is_fullscreen().unwrap_or(false);
