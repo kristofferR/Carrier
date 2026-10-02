@@ -198,16 +198,20 @@ async function mute(path: string, deadline: number): Promise<boolean> {
           confirmed = dialog?.confirm ?? null;
           dialog?.confirm.click();
           break;
-        case "success":
+        case "success": {
           mutedThreads.observe(wantedThread, true);
-          // Dispatched first: the listener below retires expiries on any
-          // mute change, and must not catch the one set next.
+          // An existing mute keeps whatever duration it had, including an
+          // earlier quick mute's expiry: hide that from the listener below,
+          // which retires expiries on any mute change.
+          const kept = confirmed ? undefined : muteExpiries.get(wantedThread);
+          if (kept !== undefined) muteExpiries.delete(wantedThread);
+          // Dispatched first so the listener does not catch the expiry set next.
           window.dispatchEvent(
             new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } }),
           );
+          if (kept !== undefined) muteExpiries.set(wantedThread, kept);
           // A mute this flow applied lasts 8 hours; don't keep suppressing past
-          // it if the row is not mounted to observe the change. An existing
-          // mute keeps whatever duration it had.
+          // it if the row is not mounted to observe the change.
           if (confirmed)
             muteExpiries.set(
               wantedThread,
@@ -223,6 +227,7 @@ async function mute(path: string, deadline: number): Promise<boolean> {
               }, Number(QUICK_MUTE_DURATION_MS)),
             );
           return true;
+        }
         case "failure":
           // Content-free state, so a field failure says which step stalled.
           diag(

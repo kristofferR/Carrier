@@ -121,7 +121,7 @@ pub(crate) fn offered_actions(native_id: u64) -> &'static [NotificationAction] {
 
 /// Drop the target of a notification that was closed, cleared, or acted on,
 /// so retired entries never push out targets still live in the OS.
-fn forget_action_target(native_id: u64) {
+pub(crate) fn forget_action_target(native_id: u64) {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     ACTION_TARGETS
         .lock()
@@ -670,11 +670,10 @@ fn forget_persisted_notification_route(app: &tauri::AppHandle, id: u64) {
     }
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn take_notification_ids_for_thread(
-    app: &tauri::AppHandle,
-    thread_path: &str,
-) -> Vec<u64> {
+/// Retire the in-memory routes and 👍/Mute targets of a conversation's
+/// notifications once the OS has cleared them, returning their ids.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+pub(crate) fn take_routed_notification_ids_for_thread(thread_path: &str) -> Vec<u64> {
     let Some(thread_path) = validated_thread_path(thread_path) else {
         return Vec::new();
     };
@@ -691,6 +690,21 @@ pub(crate) fn take_notification_ids_for_thread(
                 true
             }
         });
+    for id in &ids {
+        forget_action_target(*id);
+    }
+    ids
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn take_notification_ids_for_thread(
+    app: &tauri::AppHandle,
+    thread_path: &str,
+) -> Vec<u64> {
+    let Some(thread_path) = validated_thread_path(thread_path) else {
+        return Vec::new();
+    };
+    let mut ids = take_routed_notification_ids_for_thread(&thread_path);
     if let Some(directory) = persisted_notification_routes_dir(app) {
         match take_persisted_notification_ids_for_thread_from_dir(&directory, &thread_path) {
             Ok(persisted) => ids.extend(persisted),
@@ -3395,6 +3409,25 @@ mod tests {
         take_notification_route(9_031);
         assert_eq!(action_target(9_031), None);
         assert_eq!(action_target(9_032), Some(target));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn clearing_a_thread_drops_its_action_targets() {
+        // Windows removes a conversation's whole toast group on view.
+        let target = ActionTarget {
+            body: "hi".into(),
+            at: 1,
+            account: "1".into(),
+        };
+        remember_notification_route(9_041, "/t/411/");
+        remember_notification_route(9_042, "/t/422/");
+        remember_action_target(9_041, target.clone());
+        remember_action_target(9_042, target.clone());
+        assert_eq!(take_routed_notification_ids_for_thread("/t/411/"), [9_041]);
+        assert_eq!(action_target(9_041), None);
+        assert_eq!(action_target(9_042), Some(target));
+        assert_eq!(take_notification_route(9_042).as_deref(), Some("/t/422/"));
     }
 
     #[test]

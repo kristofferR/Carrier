@@ -33,8 +33,8 @@ use ::windows::Data::Xml::Dom::XmlDocument;
 use ::windows::Foundation::TypedEventHandler;
 #[cfg(target_os = "windows")]
 use ::windows::UI::Notifications::{
-    NotificationSetting, ToastActivatedEventArgs, ToastDismissedEventArgs, ToastFailedEventArgs,
-    ToastNotification, ToastNotificationManager, ToastNotifier,
+    NotificationSetting, ToastActivatedEventArgs, ToastDismissalReason, ToastDismissedEventArgs,
+    ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
 #[cfg(target_os = "windows")]
 use tauri::Manager;
@@ -361,8 +361,14 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
 
     let hex_dismissed = hex.clone();
     toast.Dismissed(&TypedEventHandler::new(
-        move |_sender: Ref<'_, ToastNotification>, _args: Ref<'_, ToastDismissedEventArgs>| {
+        move |_sender: Ref<'_, ToastNotification>, args: Ref<'_, ToastDismissedEventArgs>| {
             forget_keep_alive(&hex_dismissed);
+            // A timed-out banner moves to Action Center, where its actions stay
+            // live; a cancelled or hidden one leaves history.
+            let reason = args.ok().ok().and_then(|args| args.Reason().ok());
+            if reason.is_some_and(|reason| reason != ToastDismissalReason::TimedOut) {
+                crate::notifications::forget_action_target(native_id);
+            }
             Ok(())
         },
     ))?;
@@ -370,6 +376,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     toast.Failed(&TypedEventHandler::new(
         move |_sender: Ref<'_, ToastNotification>, _args: Ref<'_, ToastFailedEventArgs>| {
             forget_keep_alive(&hex_failed);
+            crate::notifications::forget_action_target(native_id);
             Ok(())
         },
     ))?;
@@ -511,6 +518,7 @@ pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
         Err(error) => log::warn!("failed to reach toast history: {error}"),
     }
     forget_keep_alive_group(thread_id);
+    crate::notifications::take_routed_notification_ids_for_thread(&format!("/t/{thread_id}/"));
 }
 
 /// Register Carrier's dedicated toast AppUserModelID in

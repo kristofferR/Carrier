@@ -9226,11 +9226,14 @@ ${button.innerHTML}`)
             confirmed = dialog?.confirm ?? null;
             dialog?.confirm.click();
             break;
-          case "success":
+          case "success": {
             mutedThreads.observe(wantedThread, true);
+            const kept = confirmed ? void 0 : muteExpiries.get(wantedThread);
+            if (kept !== void 0) muteExpiries.delete(wantedThread);
             window.dispatchEvent(
               new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
             );
+            if (kept !== void 0) muteExpiries.set(wantedThread, kept);
             if (confirmed)
               muteExpiries.set(
                 wantedThread,
@@ -9245,6 +9248,7 @@ ${button.innerHTML}`)
                 }, Number(QUICK_MUTE_DURATION_MS))
               );
             return true;
+          }
           case "failure":
             diag(
               "quick-mute.delivery",
