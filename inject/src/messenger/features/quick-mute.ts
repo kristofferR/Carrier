@@ -38,12 +38,16 @@ function threadMuteControl(stale: Set<Element>): {
 } {
   let trigger: HTMLElement | null = null;
   for (const el of document.querySelectorAll<HTMLElement>(
-    '[role="main"] [role="button"][aria-label], [role="main"] button[aria-label]',
+    '[role="main"] [role="button"][aria-label], [role="main"] [role="switch"][aria-label], [role="main"] button[aria-label]',
   )) {
     if (stale.has(el) || !isShown(el)) continue;
     const control = PANE_MUTE_CONTROL.exec((el.getAttribute("aria-label") || "").trim());
     if (!control) continue;
-    if (control[1] || control[2]?.toLowerCase() === "on") return { muted: true, trigger: null };
+    // A stateful "Mute notifications" switch reports its state in aria-checked;
+    // clicking a checked one would unmute.
+    const checked = el.getAttribute("aria-checked");
+    if (control[1] || control[2]?.toLowerCase() === "on" || checked === "true")
+      return { muted: true, trigger: null };
     trigger ??= el;
   }
   return { muted: trigger ? false : null, trigger };
