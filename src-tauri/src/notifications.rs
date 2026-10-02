@@ -102,6 +102,23 @@ pub(crate) fn remember_action_target(native_id: u64, target: ActionTarget) {
     targets.push_back((native_id, target));
 }
 
+/// The quick actions a shown notification offers: none for a non-English
+/// Messenger UI or without a recorded target, and Mute alone when there is no
+/// message text for 👍 to match (a photo or a sticker).
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) fn offered_actions(native_id: u64) -> &'static [NotificationAction] {
+    if !quick_actions_supported() {
+        return &[];
+    }
+    match action_target(native_id) {
+        Some(target) if !target.body.trim().is_empty() => {
+            &[NotificationAction::Like, NotificationAction::Mute]
+        }
+        Some(_) => &[NotificationAction::Mute],
+        None => &[],
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn action_target(native_id: u64) -> Option<ActionTarget> {
     ACTION_TARGETS
@@ -118,7 +135,7 @@ fn action_target(native_id: u64) -> Option<ActionTarget> {
 static MESSENGER_ENGLISH_UI: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn quick_actions_supported() -> bool {
+fn quick_actions_supported() -> bool {
     MESSENGER_ENGLISH_UI.load(Ordering::Relaxed)
 }
 
@@ -939,12 +956,7 @@ fn linux_quick_actions_eligible(
     capabilities: LinuxNotificationCapabilities,
     snap: bool,
 ) -> bool {
-    !hide_preview
-        && notification_id != 0
-        && thread_path.is_some()
-        && capabilities.actions
-        && !snap
-        && quick_actions_supported()
+    !hide_preview && notification_id != 0 && thread_path.is_some() && capabilities.actions && !snap
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -1233,7 +1245,7 @@ fn show_linux_notification<F>(
     image: Option<&Path>,
     sound: bool,
     allow_inline_reply: bool,
-    quick_actions: bool,
+    quick_actions: &[NotificationAction],
     on_response: F,
 ) where
     F: FnOnce((LinuxNotificationResponse, Option<String>)) + Send + 'static,
@@ -1255,10 +1267,8 @@ fn show_linux_notification<F>(
     if allow_inline_reply {
         notification.action("inline-reply", "Reply");
     }
-    if quick_actions {
-        for action in [NotificationAction::Like, NotificationAction::Mute] {
-            notification.action(action.id(), action.title());
-        }
+    for action in quick_actions {
+        notification.action(action.id(), action.title());
     }
 
     let result = (|| -> Result<(LinuxNotificationResponse, Option<String>), String> {
@@ -2302,13 +2312,17 @@ pub(crate) fn show_message_notification(
                 capabilities,
                 snap,
             ),
-            linux_quick_actions_eligible(
+            if linux_quick_actions_eligible(
                 hide_preview,
                 native_id,
                 thread_path.as_deref(),
                 capabilities,
                 snap,
-            ),
+            ) {
+                offered_actions(native_id)
+            } else {
+                &[]
+            },
         )
     };
     // The native id is generated on the trusted side and never reused when the
@@ -2595,7 +2609,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
             None,
             false,
             false,
-            false,
+            &[],
             move |(response, activation_token)| {
                 if matches!(
                     response,
@@ -2689,7 +2703,7 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
                 None,
                 false,
                 false,
-                false,
+                &[],
                 move |(response, token)| {
                     if matches!(
                         response,

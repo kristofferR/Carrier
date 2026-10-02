@@ -53,8 +53,9 @@ pub(crate) struct ToastSpec {
     pub sound: bool,
     /// Eligible message toasts gain a reply input plus Reply/Open actions.
     pub reply_eligible: bool,
-    /// Eligible toasts also get 👍 and Mute (English Messenger UI only).
-    pub quick_actions: bool,
+    /// The quick actions eligible toasts add beside Reply (see
+    /// `notifications::offered_actions`).
+    pub quick_actions: &'static [NotificationAction],
     /// Sync alerts never get actions or grouping.
     pub is_sync_alert: bool,
 }
@@ -123,12 +124,7 @@ pub(crate) fn build_toast_xml(spec: &ToastSpec) -> String {
             "<action content=\"Reply\" arguments=\"action=reply&amp;id={id}\" hint-inputId=\"reply\" activationType=\"background\"/>",
             id = spec.hex_id,
         ));
-        let quick_actions = if spec.quick_actions {
-            [NotificationAction::Like, NotificationAction::Mute].as_slice()
-        } else {
-            &[]
-        };
-        for action in quick_actions {
+        for action in spec.quick_actions {
             xml.push_str(&format!(
                 "<action content=\"{}\" arguments=\"action={}&amp;id={}\" activationType=\"background\"/>",
                 action.title(),
@@ -328,7 +324,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
         hex_id: hex.clone(),
         sound: opts.sound,
         reply_eligible: opts.reply_eligible,
-        quick_actions: crate::notifications::quick_actions_supported(),
+        quick_actions: crate::notifications::offered_actions(opts.native_id),
         is_sync_alert: opts.is_sync_alert,
     };
 
@@ -644,7 +640,7 @@ mod tests {
             hex_id: hex_id(0x2a),
             sound: true,
             reply_eligible,
-            quick_actions: true,
+            quick_actions: &[NotificationAction::Like, NotificationAction::Mute],
             is_sync_alert,
         }
     }
@@ -685,10 +681,16 @@ mod tests {
         assert!(xml.contains("arguments=\"action=mute&amp;id=000000000000002a\""));
 
         let mut reply_only = spec(true, false);
-        reply_only.quick_actions = false;
+        reply_only.quick_actions = &[];
         let xml = build_toast_xml(&reply_only);
         assert!(xml.contains("action=reply&amp;id="));
         assert!(!xml.contains("action=like") && !xml.contains("action=mute"));
+
+        // A photo or sticker has no text for 👍 to match.
+        let mut mute_only = spec(true, false);
+        mute_only.quick_actions = &[NotificationAction::Mute];
+        let xml = build_toast_xml(&mute_only);
+        assert!(!xml.contains("action=like") && xml.contains("action=mute"));
     }
 
     #[test]

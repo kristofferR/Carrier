@@ -17,6 +17,8 @@ use crate::notifications::{
 const MESSAGE_CATEGORY_ID: &str = "carrier.message";
 /// Reply alone, for a Messenger UI whose language Like/Mute can't drive.
 const REPLY_CATEGORY_ID: &str = "carrier.message.reply";
+/// Reply and Mute, for a notification with no text for 👍 to match.
+const MUTE_CATEGORY_ID: &str = "carrier.message.mute";
 const REPLY_ACTION_ID: &str = "reply";
 const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 
@@ -221,8 +223,13 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
         )
     };
     let full = category(MESSAGE_CATEGORY_ID, &[reply_action, &*like, &*mute]);
+    let reply_and_mute = category(MUTE_CATEGORY_ID, &[reply_action, &*mute]);
     let reply_only = category(REPLY_CATEGORY_ID, &[reply_action]);
-    center.setNotificationCategories(&NSSet::from_slice(&[&*full, &*reply_only]));
+    center.setNotificationCategories(&NSSet::from_slice(&[
+        &*full,
+        &*reply_and_mute,
+        &*reply_only,
+    ]));
 
     let options = UNAuthorizationOptions::Badge
         | UNAuthorizationOptions::Alert
@@ -292,7 +299,7 @@ fn apply_route_metadata(
     group_by_conversation: bool,
     reply_eligible: bool,
 ) -> Option<String> {
-    use crate::notifications::quick_actions_supported;
+    use crate::notifications::{offered_actions, NotificationAction};
     use objc2::rc::Retained;
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSString};
 
@@ -307,10 +314,10 @@ fn apply_route_metadata(
         }
     }
     if reply_eligible && thread_path.is_some() {
-        content.setCategoryIdentifier(&NSString::from_str(if quick_actions_supported() {
-            MESSAGE_CATEGORY_ID
-        } else {
-            REPLY_CATEGORY_ID
+        content.setCategoryIdentifier(&NSString::from_str(match offered_actions(id) {
+            [] => REPLY_CATEGORY_ID,
+            [NotificationAction::Mute] => MUTE_CATEGORY_ID,
+            _ => MESSAGE_CATEGORY_ID,
         }));
     }
 
