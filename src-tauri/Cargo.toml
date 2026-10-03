@@ -90,7 +90,7 @@ gtk = "0.18"
 # model and opt out of the in-memory back/forward page cache.
 webkit2gtk = "2.0.2"
 # Query usable software decoders before disabling NVDEC. Match GTK's GLib version.
-gstreamer = "0.21"
+gstreamer = "0.25"
 # Tauri's AppIndicator tray backend cannot emit click events or expose a real
 # tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
