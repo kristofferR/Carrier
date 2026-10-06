@@ -140,6 +140,21 @@ describe("conversationNodeText", () => {
     expect(conversationNodeText(element("SPAN", {}, [emojiSprite("😢")]))).toBe("😢");
   });
 
+  test("keeps legacy thumbs-up previews hydrated for badges and notifications", () => {
+    const preview = element("SPAN", {}, [emojiSprite("(Y)")]);
+    const text = conversationNodeText(preview);
+    expect(hasCandidateTextChild(preview)).toBe(false);
+    expect(conversationTextParts([candidate("Jane"), candidate(text, { y: 24 })])).toEqual({
+      title: "Jane",
+      body: "👍",
+    });
+    expect(isUnreadConversationText("600", text)).toBe(true);
+    expect(conversationNodeText(element("SPAN", {}, [textNode("Jane: "), preview]))).toBe(
+      "Jane: 👍",
+    );
+    expect(conversationNodeText(element("IMG", { alt: "(Y)", src: "/avatar.jpg" }))).toBe("");
+  });
+
   test("counts a deferred sprite by its alt and skips real images", () => {
     expect(conversationNodeText(element("IMG", { alt: "😢" }))).toBe("😢");
     expect(

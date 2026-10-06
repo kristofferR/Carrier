@@ -8,6 +8,13 @@ describe("emojiGlyph", () => {
     expect(emojiGlyph("❤️")).toBe("❤️");
   });
 
+  test("normalizes Messenger's thumbs-up sprite label without accepting ordinary words", () => {
+    expect(emojiGlyph("(Y)")).toBe("👍");
+    expect(emojiGlyph(" (y) ")).toBe("👍");
+    expect(emojiGlyph("(yes)")).toBe("");
+    expect(emojiGlyph("Send (Y)")).toBe("");
+  });
+
   test("passes through keycap emoji despite their digit base", () => {
     expect(emojiGlyph("1️⃣")).toBe("1️⃣");
     expect(emojiGlyph("#️⃣")).toBe("#️⃣");

@@ -137,6 +137,24 @@ function runFixtures(initBadge: () => void) {
       "a later unread updates both badges",
       badge()?.args?.value === "1" && tray()?.args?.payload === 1,
     );
+    const emptyChat = grid.querySelectorAll("a")[1]!;
+    emptyChat.insertAdjacentHTML(
+      "beforeend",
+      '<span style="display:block;font-weight:400"><img alt="(Y)" src="/images/emoji.php/thumbs-up.png" width="16" height="16"></span>',
+    );
+    for (const span of grid.querySelectorAll<HTMLElement>("span")) span.style.fontWeight = "400";
+    tick(165_000);
+    assert(
+      "a thumbs-up preview allows an immediate badge clear",
+      badge()?.args?.value === null && tray()?.args?.payload === 0,
+    );
+    for (const span of emptyChat.querySelectorAll<HTMLElement>("span"))
+      span.style.fontWeight = "600";
+    tick(166_000);
+    assert(
+      "an unread thumbs-up preview updates both badges immediately",
+      badge()?.args?.value === "1" && tray()?.args?.payload === 1,
+    );
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${error instanceof Error ? error.message : String(error)}`;

@@ -15,9 +15,10 @@ const LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
 // which the label test would otherwise read as wording around a sprite.
 const KEYCAP_RE = /[#*0-9]️?⃣/gu;
 
-/** The alt/aria-label text when it is a bare emoji sequence, else "". */
+/** A bare emoji glyph, including Messenger's legacy thumbs-up sprite label. */
 export function emojiGlyph(value: unknown): string {
   const text = String(value || "").trim();
+  if (/^\(y\)$/i.test(text)) return "👍";
   if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
   if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
   return text;

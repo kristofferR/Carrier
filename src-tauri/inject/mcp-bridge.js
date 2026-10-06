@@ -2347,6 +2347,7 @@
     var NOTIFY_KEYCAP_RE = /[#*0-9]️?⃣/gu;
 
     function hasWordCharacters(value) {
+      if (/^\(y\)$/i.test(notifyNorm(value))) return false;
       return NOTIFY_WORD_RE.test(String(value).replace(NOTIFY_KEYCAP_RE, ""));
     }
 
@@ -2814,6 +2815,7 @@
 
       var norm = notifyNorm;
       function emojiCount(value) {
+        if (/^\(y\)$/i.test(norm(value))) return 1;
         var found = norm(value).match(EMOJI_RE);
         return found ? found.length : 0;
       }

@@ -5783,6 +5783,7 @@ ${button.innerHTML}`)
   var KEYCAP_RE = /[#*0-9]️?⃣/gu;
   function emojiGlyph(value) {
     const text = String(value || "").trim();
+    if (/^\(y\)$/i.test(text)) return "👍";
     if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
     if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
     return text;
