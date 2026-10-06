@@ -18,6 +18,30 @@ export interface MutedUnreadObservation {
   hydrated?: boolean;
 }
 
+/** A settled chat can have a name but no message preview. */
+export class UnreadListReadiness {
+  private signature = "";
+  private since = 0;
+  private observations = 0;
+
+  observe(
+    rows: readonly (MutedUnreadObservation & { hasTitle: boolean })[],
+    now = Date.now(),
+  ): boolean {
+    const signature = JSON.stringify(rows);
+    if (signature !== this.signature || now < this.since) {
+      this.signature = signature;
+      this.since = now;
+      this.observations = 0;
+    }
+    this.observations++;
+    if (rows.length === 0 || rows.some((row) => !row.hasTitle)) return false;
+    if (rows.every((row) => row.hydrated)) return true;
+    // Title-only rows must settle before their read styling can clear a badge.
+    return now - this.since >= 20_000 && this.observations >= 3;
+  }
+}
+
 const MUTED_UNREAD_STORE_VERSION = 1;
 const MUTED_UNREAD_STORE_LIMIT = 500;
 const VALID_THREAD_ID_RE = /^\d{1,32}$/;

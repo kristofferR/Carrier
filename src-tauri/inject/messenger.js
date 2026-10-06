@@ -7303,6 +7303,25 @@ ${button.innerHTML}`)
   function didMutedFilterPolicyChange(previous, current) {
     return previous !== null && previous !== current;
   }
+  var UnreadListReadiness = class {
+    constructor() {
+      __publicField(this, "signature", "");
+      __publicField(this, "since", 0);
+      __publicField(this, "observations", 0);
+    }
+    observe(rows, now = Date.now()) {
+      const signature = JSON.stringify(rows);
+      if (signature !== this.signature || now < this.since) {
+        this.signature = signature;
+        this.since = now;
+        this.observations = 0;
+      }
+      this.observations++;
+      if (rows.length === 0 || rows.some((row) => !row.hasTitle)) return false;
+      if (rows.every((row) => row.hydrated)) return true;
+      return now - this.since >= 2e4 && this.observations >= 3;
+    }
+  };
   var MUTED_UNREAD_STORE_VERSION = 1;
   var MUTED_UNREAD_STORE_LIMIT = 500;
   var VALID_THREAD_ID_RE = /^\d{1,32}$/;
@@ -11296,6 +11315,7 @@ ${text}`)) {
       }
     })();
     const accountStorageKey = mutedUnreadStorageKey(document.cookie);
+    const listReadiness = new UnreadListReadiness();
     const unreadConversationState = () => {
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
@@ -11322,24 +11342,26 @@ ${text}`)) {
             break;
           }
         }
-        const hydrated = conversationTextParts(
-          spans.map((span) => {
-            const rect = span.getBoundingClientRect();
-            return {
-              node: span,
-              text: conversationNodeText(span),
-              x: rect.x,
-              y: rect.y,
-              width: rect.width,
-              height: rect.height,
-              ariaHidden: span.getAttribute("aria-hidden") === "true",
-              inAbbreviation: !!span.closest("abbr"),
-              hasTextChild: hasCandidateTextChild(span)
-            };
-          })
-        ).body.length > 0;
+        const candidates = spans.map((span) => {
+          const rect = span.getBoundingClientRect();
+          return {
+            node: span,
+            text: conversationNodeText(span),
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            ariaHidden: span.getAttribute("aria-hidden") === "true",
+            inAbbreviation: !!span.closest("abbr"),
+            hasTextChild: hasCandidateTextChild(span)
+          };
+        });
+        const hydrated = conversationTextParts(candidates).body.length > 0;
+        const hasTitle = candidates.some(
+          (candidate) => !candidate.ariaHidden && !candidate.inAbbreviation && !candidate.hasTextChild && candidate.width > 1 && candidate.height > 1 && candidate.text.trim().length > 0
+        );
         const muted = observeConversationMute(id, row);
-        rowObservations.push({ id, unread, muted, hydrated });
+        rowObservations.push({ id, unread, muted, hydrated, hasTitle });
         if (!unread) continue;
         if (ignoreMuted && muted) continue;
         count++;
@@ -11352,17 +11374,17 @@ ${text}`)) {
         break;
       }
       const listHydrated = rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
+      const ready2 = listReadiness.observe(rowObservations);
       return {
         count,
-        // A partly hydrated list proves nothing about any row's read styling.
-        // Keep every persisted identity until the complete rendered list has
-        // preview text, then require stable observations in MutedUnreadStore.
+        // Settled title-only rows can drive the badge, but keep the stricter
+        // preview requirement before retiring persisted muted-unread evidence.
         muteObservations: rowObservations.map((observation) => ({
           ...observation,
           hydrated: listHydrated
         })),
-        ready: links.length > 0 && listHydrated,
-        trustworthy: links.length > 0 && listHydrated && !scrolledFromTop
+        ready: ready2,
+        trustworthy: ready2 && !scrolledFromTop
       };
     };
     let last = null;

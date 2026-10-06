@@ -7,6 +7,7 @@ import {
   reconcileMutedUnreadIds,
   reconcileUnreadConversationCount,
   reconcileUnreadMessageCount,
+  UnreadListReadiness,
   unreadCountFromTitle,
 } from "./unread";
 
@@ -17,6 +18,46 @@ const memoryStorage = () => {
     setItem: (key: string, value: string) => void data.set(key, value),
   };
 };
+
+describe("UnreadListReadiness", () => {
+  const named = { id: "1", unread: false, muted: false, hasTitle: true, hydrated: false };
+
+  test("accepts a complete list immediately but waits for title-only rows to settle", () => {
+    const readiness = new UnreadListReadiness();
+    expect(readiness.observe([{ ...named, hydrated: true }], 0)).toBe(true);
+    expect(readiness.observe([named], 1_000)).toBe(false);
+    expect(readiness.observe([named], 6_000)).toBe(false);
+    expect(readiness.observe([named], 21_000)).toBe(true);
+  });
+
+  test("requires repeated observations, even when the window polls slowly", () => {
+    const readiness = new UnreadListReadiness();
+    expect(readiness.observe([named], 0)).toBe(false);
+    expect(readiness.observe([named], 60_000)).toBe(false);
+    expect(readiness.observe([named], 120_000)).toBe(true);
+  });
+
+  test("never trusts an empty list or nameless loading placeholders", () => {
+    const readiness = new UnreadListReadiness();
+    for (const now of [0, 60_000, 120_000]) {
+      expect(readiness.observe([], now)).toBe(false);
+    }
+    for (const now of [180_000, 240_000, 300_000]) {
+      expect(readiness.observe([{ ...named, hasTitle: false }], now)).toBe(false);
+    }
+  });
+
+  test("resets settling when read styling or mounted rows change", () => {
+    const readiness = new UnreadListReadiness();
+    readiness.observe([named], 0);
+    readiness.observe([named], 5_000);
+    const unread = { ...named, unread: true };
+    expect(readiness.observe([unread], 20_000)).toBe(false);
+    expect(readiness.observe([unread], 25_000)).toBe(false);
+    expect(readiness.observe([unread], 40_000)).toBe(true);
+    expect(readiness.observe([{ ...unread, id: "2" }], 45_000)).toBe(false);
+  });
+});
 
 describe("didMutedFilterPolicyChange", () => {
   test("detects both policy transition directions, but not initialization", () => {
