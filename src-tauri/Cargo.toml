@@ -89,7 +89,8 @@ gtk = "0.18"
 # WebKit build. Keep normal document caching, but use the smaller browser cache
 # model and opt out of the in-memory back/forward page cache.
 webkit2gtk = "2.0.2"
-# Query usable software decoders before disabling NVDEC. Match GTK's GLib version.
+# Query usable software decoders before disabling NVDEC. Keep this on GTK's
+# GLib 0.18 bindings; newer GStreamer bindings add a second GLib dependency tree.
 gstreamer = "0.21"
 # Tauri's AppIndicator tray backend cannot emit click events or expose a real
 # tooltip on Linux. KSNI implements the StatusNotifierItem protocol directly.
@@ -121,7 +122,7 @@ objc2-user-notifications = { version = "0.3.2", features = ["UNUserNotificationC
 mac-notification-sys = "0.6"
 # The Dock menu (recent conversations): Tauri exposes no Dock-menu API, so the
 # NSMenu is built with muda directly (the same crate Tauri's menus wrap — same
-# version, no extra build cost) and served via an `applicationDockMenu:` hook.
+# version, shared event handler) and served via an `applicationDockMenu:` hook.
 # Menu events still flow through Tauri's regular menu-event plumbing.
 muda = "0.20"
 
