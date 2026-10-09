@@ -2194,9 +2194,6 @@ ${button.innerHTML}`)
     const emitProtectionChange = () => {
       if (heartbeatProtection() !== lastHeartbeatProtection) emitHeartbeat();
     };
-    window.__carrierHeartbeat = (expectedId) => {
-      if (expectedId === heartbeatId) emitHeartbeat();
-    };
     window.addEventListener("input", emitProtectionChange, true);
     window.addEventListener("carrier:protection-change", emitProtectionChange);
     emitHeartbeat();
@@ -2318,6 +2315,11 @@ ${button.innerHTML}`)
     const noteLifecycle = () => {
       sampleSyncProcessing(processingActive());
       if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
+    };
+    window.__carrierHeartbeat = (expectedId) => {
+      if (expectedId !== heartbeatId) return;
+      noteLifecycle();
+      emitHeartbeat();
     };
     window.addEventListener("focus", noteLifecycle);
     window.addEventListener("blur", noteLifecycle);

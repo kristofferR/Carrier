@@ -201,9 +201,6 @@ export function initAutoRefresh() {
   const emitProtectionChange = () => {
     if (heartbeatProtection() !== lastHeartbeatProtection) emitHeartbeat();
   };
-  window.__carrierHeartbeat = (expectedId) => {
-    if (expectedId === heartbeatId) emitHeartbeat();
-  };
   window.addEventListener("input", emitProtectionChange, true);
   window.addEventListener("carrier:protection-change", emitProtectionChange);
   emitHeartbeat();
@@ -352,6 +349,12 @@ export function initAutoRefresh() {
   const noteLifecycle = () => {
     sampleSyncProcessing(processingActive());
     if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
+  };
+  window.__carrierHeartbeat = (expectedId) => {
+    if (expectedId !== heartbeatId) return;
+    // Native pings continue when hidden-page timers are throttled.
+    noteLifecycle();
+    emitHeartbeat();
   };
   window.addEventListener("focus", noteLifecycle);
   window.addEventListener("blur", noteLifecycle);
