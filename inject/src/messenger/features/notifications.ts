@@ -78,9 +78,6 @@ const ROW_MUTATION_MATCH_MS = 2000;
 // A delivered-fingerprint mismatch must remain unchanged for real elapsed time
 // before it counts as new content (see StableMismatchTracker).
 const MISMATCH_STABLE_MS = 1_000;
-// How long after the first scan a zero unread count is treated as the title
-// still hydrating rather than a real all-read baseline (see UnreadArrivalTracker).
-const HYDRATION_SETTLE_MS = 10_000;
 
 export function initNotificationBridge() {
   if (!window.__TAURI_INTERNALS__) return;
@@ -1356,7 +1353,7 @@ export function initNotificationBridge() {
   let scanPending = false;
   let mismatchConfirmationTimer: number | undefined;
   let readConfirmationTimer: number | undefined;
-  const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
+  const unreadArrivals = new UnreadArrivalTracker();
   const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
   // Arrivals attributed while their row preview was still empty. The
   // signature tracker only observes hydrated rows, so without carrying these
@@ -1366,9 +1363,9 @@ export function initNotificationBridge() {
   // Threads this document has observed rendered hydrated-and-read, CONFIRMED
   // across scans spanning real time: mid-hydration a row can show its text
   // before its unread styling, and a single such glimpse must not qualify a
-  // pre-existing unread thread for the early-arrival rescue. Bounded like the
+  // pre-existing unread thread for the first-arrival rescue. Bounded like the
   // sibling stores; a row from this set turning unread is a real arrival even
-  // during the settle window.
+  // before the title's count establishes a baseline.
   const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
   const readCandidates = new Map<string, { since: number; observations: number }>();
@@ -1521,7 +1518,7 @@ export function initNotificationBridge() {
         ROW_MUTATION_MATCH_MS + mutationGrace,
         // A fully hydrated list with no unread rows corroborates a zero
         // title: it is the inbox's real state, not a still-unstamped title,
-        // so a first arrival inside the settle window can still report.
+        // so a first arrival can report as soon as the list is ready.
         listHydrated && !observed.some(({ unread }) => unread),
         readObservedKeys,
         notifyKeys,

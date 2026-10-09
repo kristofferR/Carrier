@@ -1,4 +1,22 @@
+import type { RealtimeStatus } from "./realtime-health";
+
 export type ScheduledRefreshReason = "rate-limit" | "rate-limit-manual" | "manual";
+
+/** Page MQTT cannot refund recovery attempts for a broken encrypted worker. */
+export function nativeRealtimeStatus(
+  status: RealtimeStatus,
+  workerVerified: boolean,
+  silentRecoveryFailed: boolean,
+  workerMutationPending: boolean,
+): RealtimeStatus | "managed" {
+  if (status === "ok" && !workerVerified) return "pending";
+  if (
+    (status === "stale" || status === "never") &&
+    (!silentRecoveryFailed || workerMutationPending)
+  )
+    return "managed";
+  return status;
+}
 
 export interface PowerSnapshot {
   sleeping: boolean;

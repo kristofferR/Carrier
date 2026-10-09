@@ -6,6 +6,7 @@
 import { diag, invoke } from "../bridge";
 import {
   canReplacePendingRefresh,
+  nativeRealtimeStatus,
   type PowerSnapshot,
   PowerStateTracker,
   type ScheduledRefreshReason,
@@ -147,6 +148,7 @@ export function initAutoRefresh() {
   let rateLimitRetryGrantUntil = 0;
   // Set once in-place worker repair has failed or cannot act.
   let silentRecoveryFailed = false;
+  let workerVerified = () => false;
   const realtimeReport = () => {
     const status = realtimeStatus();
     // An overdue termination or shutdown can still mutate Messenger's worker.
@@ -154,9 +156,12 @@ export function initAutoRefresh() {
     const workerMutationPending =
       workerRecovery.phase === "dedicated-termination" ||
       workerRecovery.phase === "shared-shutdown";
-    return ["stale", "never"].includes(status) && (!silentRecoveryFailed || workerMutationPending)
-      ? "managed"
-      : status;
+    return nativeRealtimeStatus(
+      status,
+      workerVerified(),
+      silentRecoveryFailed,
+      workerMutationPending,
+    );
   };
   const emitHeartbeat = (requestRateLimitRetry = false) => {
     if (typeof heartbeatId !== "number") return;
@@ -328,6 +333,7 @@ export function initAutoRefresh() {
     },
     onWorkerChanged: () => silentRecovery.resetSettle(),
   });
+  workerVerified = realtime.isVerifiedHealthy;
 
   const silentRecovery = createSilentRecovery({
     blocked: (manual) =>

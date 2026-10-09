@@ -176,6 +176,12 @@
   };
 
   // inject/src/messenger/lib/auto-refresh.ts
+  function nativeRealtimeStatus(status, workerVerified, silentRecoveryFailed, workerMutationPending) {
+    if (status === "ok" && !workerVerified) return "pending";
+    if ((status === "stale" || status === "never") && (!silentRecoveryFailed || workerMutationPending))
+      return "managed";
+    return status;
+  }
   var PowerStateTracker = class {
     constructor(documentCreatedAt) {
       __publicField(this, "documentCreatedAt", documentCreatedAt);
@@ -2141,10 +2147,16 @@ ${button.innerHTML}`)
     };
     let rateLimitRetryGrantUntil = 0;
     let silentRecoveryFailed = false;
+    let workerVerified = () => false;
     const realtimeReport = () => {
       const status = realtimeStatus();
       const workerMutationPending = workerRecovery.phase === "dedicated-termination" || workerRecovery.phase === "shared-shutdown";
-      return ["stale", "never"].includes(status) && (!silentRecoveryFailed || workerMutationPending) ? "managed" : status;
+      return nativeRealtimeStatus(
+        status,
+        workerVerified(),
+        silentRecoveryFailed,
+        workerMutationPending
+      );
     };
     const emitHeartbeat = (requestRateLimitRetry = false) => {
       if (typeof heartbeatId !== "number") return;
@@ -2296,6 +2308,7 @@ ${button.innerHTML}`)
       },
       onWorkerChanged: () => silentRecovery.resetSettle()
     });
+    workerVerified = realtime.isVerifiedHealthy;
     const silentRecovery = createSilentRecovery({
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
@@ -6998,12 +7011,10 @@ ${button.innerHTML}`)
     }
   };
   var UnreadArrivalTracker = class {
-    constructor(settleMs = 0) {
-      __publicField(this, "settleMs", settleMs);
+    constructor() {
       __publicField(this, "changedAt", /* @__PURE__ */ new Map());
       __publicField(this, "unreadCount", null);
-      __publicField(this, "firstObservedAt", null);
-      __publicField(this, "sawDeferredZero", false);
+      __publicField(this, "sawUncorroboratedZero", false);
     }
     markRowsChanged(keys, at) {
       for (const key of keys) {
@@ -7013,15 +7024,14 @@ ${button.innerHTML}`)
     /**
      * `zeroCorroborated` — the caller observed a fully hydrated conversation
      * list containing no unread rows, so a zero count is the inbox's real
-     * state rather than a still-unstamped title. A corroborated zero baselines
-     * immediately, letting a first arrival inside the settle window report
-     * instead of being absorbed as priming.
+     * state rather than a still-unstamped title. Only a corroborated zero can
+     * establish an all-read baseline; elapsed time cannot prove hydration.
      *
      * `readObservedKeys` — threads this document has already seen rendered
-     * hydrated-and-read. A mutated row from that set turning up in an early
+     * hydrated-and-read. A mutated row from that set turning up in a first
      * count increase is a real read→unread transition, never title hydration
      * (hydrating rows are never observed read first), so it can be reported
-     * even inside the settle window after an uncorroborated zero.
+     * after an uncorroborated zero.
      */
     observeUnreadCount(count, at, maxMutationAgeMs, zeroCorroborated = false, readObservedKeys, currentUnreadKeys, blockedUnreadKeys) {
       for (const [key, candidate] of this.changedAt) {
@@ -7031,31 +7041,26 @@ ${button.innerHTML}`)
         );
         if (at > candidate.eligibleUntil) this.changedAt.delete(key);
       }
-      if (this.firstObservedAt === null) this.firstObservedAt = at;
-      const settled = at - this.firstObservedAt >= this.settleMs;
-      if (this.unreadCount === null && count === 0 && !settled && !zeroCorroborated) {
-        this.sawDeferredZero = true;
+      if (this.unreadCount === null && count === 0 && !zeroCorroborated) {
+        this.sawUncorroboratedZero = true;
         return [];
       }
-      let previous = this.unreadCount;
+      const previous = this.unreadCount;
       this.unreadCount = count;
       if (previous === null) {
-        if (!(this.sawDeferredZero && settled && count > 0)) {
-          if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-            const eligibleTransitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt);
-            const blockedTransitions = eligibleTransitions.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, count).length;
-            const transitions = eligibleTransitions.filter(
-              ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
-            ).slice(0, Math.max(0, count - blockedTransitions)).map(([key]) => key);
-            if (transitions.length) {
-              this.changedAt.clear();
-              return transitions;
-            }
+        if (this.sawUncorroboratedZero && count > 0 && readObservedKeys) {
+          const eligibleTransitions = [...this.changedAt].filter(([key]) => readObservedKeys.has(key)).sort((left, right) => right[1].changedAt - left[1].changedAt);
+          const blockedTransitions = eligibleTransitions.filter(([key]) => blockedUnreadKeys?.has(key)).slice(0, count).length;
+          const transitions = eligibleTransitions.filter(
+            ([key]) => !blockedUnreadKeys?.has(key) && (currentUnreadKeys === void 0 || currentUnreadKeys.has(key))
+          ).slice(0, Math.max(0, count - blockedTransitions)).map(([key]) => key);
+          if (transitions.length) {
+            this.changedAt.clear();
+            return transitions;
           }
-          this.changedAt.clear();
-          return [];
         }
-        previous = 0;
+        this.changedAt.clear();
+        return [];
       }
       const delta = Math.max(0, count - previous);
       const eligible = [...this.changedAt].sort(
@@ -7430,7 +7435,6 @@ ${button.innerHTML}`)
   var PAGE_NOTIFICATION_RECOVERY_MS = FALLBACK_POLL_HIDDEN_MS + PAGE_NOTIFICATION_MATCH_MS;
   var ROW_MUTATION_MATCH_MS = 2e3;
   var MISMATCH_STABLE_MS = 1e3;
-  var HYDRATION_SETTLE_MS = 1e4;
   function initNotificationBridge() {
     if (!window.__TAURI_INTERNALS__) return;
     invoke("plugin:notification|is_permission_granted")?.then?.((granted) => granted || invoke("plugin:notification|request_permission"))?.catch?.(() => diag("notify.permission", "notification permission invoke failed"));
@@ -8291,7 +8295,7 @@ ${button.innerHTML}`)
     let scanPending = false;
     let mismatchConfirmationTimer;
     let readConfirmationTimer;
-    const unreadArrivals = new UnreadArrivalTracker(HYDRATION_SETTLE_MS);
+    const unreadArrivals = new UnreadArrivalTracker();
     const mismatchTracker = new StableMismatchTracker(MISMATCH_STABLE_MS);
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
     const READ_OBSERVED_LIMIT = 500;
@@ -8400,7 +8404,7 @@ ${button.innerHTML}`)
           ROW_MUTATION_MATCH_MS + mutationGrace,
           // A fully hydrated list with no unread rows corroborates a zero
           // title: it is the inbox's real state, not a still-unstamped title,
-          // so a first arrival inside the settle window can still report.
+          // so a first arrival can report as soon as the list is ready.
           listHydrated && !observed.some(({ unread }) => unread),
           readObservedKeys,
           notifyKeys,

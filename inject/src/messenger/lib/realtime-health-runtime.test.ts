@@ -2,6 +2,7 @@ import { beforeAll, expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { build } from "esbuild";
 import type { monitorRealtimeHealth } from "../features/realtime-health";
+import { nativeRealtimeStatus } from "./auto-refresh";
 import {
   REALTIME_CONNECT_GRACE_MS,
   REALTIME_NEVER_CONNECTED_MS,
@@ -102,6 +103,8 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     socket.dispatchEvent(new Event("open"));
     return {
       tracker,
+      nativeStatus: () =>
+        nativeRealtimeStatus(tracker.status(now), monitor.isVerifiedHealthy(), true, false),
       isVerifiedHealthy: monitor.isVerifiedHealthy,
       check: async () => {
         socket.dispatchEvent(new Event("message"));
@@ -180,6 +183,7 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
   connected = true;
   await fresh.check();
   expect(fresh.isVerifiedHealthy()).toBe(true);
+  expect(fresh.nativeStatus()).toBe("ok");
   now += REALTIME_CONNECT_GRACE_MS;
   expect(fresh.isVerifiedHealthy()).toBe(false);
   await fresh.check();
@@ -205,9 +209,11 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     now += REALTIME_NEVER_CONNECTED_MS - 1;
     await starting.check();
     expect(starting.tracker.status(now)).toBe("ok");
+    expect(starting.nativeStatus()).toBe("pending");
     now += 1;
     await starting.check();
     expect(starting.tracker.status(now)).toBe("stale");
+    expect(starting.nativeStatus()).toBe("stale");
     expect(starting.isVerifiedHealthy()).toBe(false);
   }
   for (const missingSetupModule of [false, true]) {

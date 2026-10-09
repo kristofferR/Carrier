@@ -1531,7 +1531,7 @@ describe("UnreadArrivalTracker", () => {
   });
 
   test("absorbs the title hydrating from zero as the baseline", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     // Post-reload: the title has no "(N)" yet, rows mutate while hydrating.
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
@@ -1540,23 +1540,25 @@ describe("UnreadArrivalTracker", () => {
   });
 
   test("still reports a real arrival right after the baseline settles", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     tracker.observeUnreadCount(0, 1_000, 2_000);
     tracker.observeUnreadCount(3, 1_200, 2_000);
     tracker.markRowsChanged(["b"], 1_300);
     expect(tracker.observeUnreadCount(4, 1_400, 2_000)).toEqual(["b"]);
   });
 
-  test("a zero count that outlives the settle window is a real baseline", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+  test("a long-lived uncorroborated zero cannot turn late hydration into an arrival", () => {
+    const tracker = new UnreadArrivalTracker();
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
     expect(tracker.observeUnreadCount(0, 12_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 12_100);
-    expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual(["a"]);
+    expect(tracker.observeUnreadCount(1, 12_200, 2_000)).toEqual([]);
+    tracker.markRowsChanged(["new-message"], 12_300);
+    expect(tracker.observeUnreadCount(2, 12_400, 2_000)).toEqual(["new-message"]);
   });
 
   test("a silent priming clears queued hydration mutations", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     // Rows mutate while hydrating, then the first "(3)" primes silently.
     tracker.markRowsChanged(["a"], 1_100);
     expect(tracker.observeUnreadCount(3, 1_200, 2_000)).toEqual([]);
@@ -1567,8 +1569,8 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(5, 1_500, 2_000)).toEqual(["d"]);
   });
 
-  test("a read-observed thread arriving during settle still reports", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+  test("a read-observed thread arriving before the title baseline still reports", () => {
+    const tracker = new UnreadArrivalTracker();
     // Reload into an all-read inbox whose rows have not hydrated at first
     // scan — the zero cannot be corroborated yet.
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
@@ -1580,7 +1582,7 @@ describe("UnreadArrivalTracker", () => {
   });
 
   test("hydrating rows never qualify for the early-arrival rescue", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
     // Pre-existing unread rows hydrate (mutations) and the title stamps (3):
     // none were ever observed read, so the count still primes silently.
@@ -1588,29 +1590,35 @@ describe("UnreadArrivalTracker", () => {
     expect(tracker.observeUnreadCount(3, 1_200, 2_000, false, new Set(["z"]))).toEqual([]);
   });
 
-  test("a corroborated zero baselines immediately for in-window arrivals", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+  test("a corroborated zero baselines immediately for the first arrival", () => {
+    const tracker = new UnreadArrivalTracker();
     // The scan saw a fully hydrated list with no unread rows — the zero is
     // the inbox's real state, not a still-unstamped title.
     expect(tracker.observeUnreadCount(0, 1_000, 2_000, true)).toEqual([]);
     tracker.markRowsChanged(["a"], 5_000);
-    // A message arriving inside the settle window must still notify.
+    // A message arriving after the all-read list must still notify.
     expect(tracker.observeUnreadCount(1, 5_100, 2_000)).toEqual(["a"]);
   });
 
-  test("a deferred zero becomes the baseline for a late first arrival", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
-    // Reload into an all-read inbox: the only scan sees the still-hydrating
+  test("a hidden-window scan cannot treat delayed unread hydration as a first arrival", () => {
+    const tracker = new UnreadArrivalTracker();
+    // Reload into an unread inbox: the only scan sees the still-hydrating
     // zero, then the hidden window goes quiet for a minute.
     expect(tracker.observeUnreadCount(0, 1_000, 2_000)).toEqual([]);
-    // The first message's own mutation triggers the next scan — it must
-    // report as an arrival, not prime silently as the baseline.
+    // Old unread content hydrates when the next scan finally runs.
     tracker.markRowsChanged(["a"], 61_000);
-    expect(tracker.observeUnreadCount(1, 61_100, 2_000)).toEqual(["a"]);
+    expect(tracker.observeUnreadCount(1, 61_100, 2_000)).toEqual([]);
+  });
+
+  test("a late confirmed read transition still reports after an uncorroborated zero", () => {
+    const tracker = new UnreadArrivalTracker();
+    tracker.observeUnreadCount(0, 1_000, 2_000);
+    tracker.markRowsChanged(["a"], 61_000);
+    expect(tracker.observeUnreadCount(1, 61_100, 2_000, false, new Set(["a"]))).toEqual(["a"]);
   });
 
   test("a count already present at first observation primes silently", () => {
-    const tracker = new UnreadArrivalTracker(10_000);
+    const tracker = new UnreadArrivalTracker();
     expect(tracker.observeUnreadCount(5, 1_000, 2_000)).toEqual([]);
     tracker.markRowsChanged(["a"], 1_100);
     expect(tracker.observeUnreadCount(6, 1_200, 2_000)).toEqual(["a"]);

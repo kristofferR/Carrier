@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { PowerStateTracker } from "./auto-refresh";
+import { nativeRealtimeStatus, PowerStateTracker } from "./auto-refresh";
+
+test("native recovery waits for worker mutations and preserves fatal-page escalation", () => {
+  expect(nativeRealtimeStatus("never", false, false, false)).toBe("managed");
+  expect(nativeRealtimeStatus("stale", false, true, true)).toBe("managed");
+  expect(nativeRealtimeStatus("error", false, false, true)).toBe("error");
+});
 
 describe("PowerStateTracker", () => {
   test("repairs a missed resume once, without postponing a protected reload", () => {

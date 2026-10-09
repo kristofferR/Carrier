@@ -1382,10 +1382,7 @@ export class UnreadArrivalTracker {
     { changedAt: number; eligibleUntil: number; deferred: boolean }
   >();
   private unreadCount: number | null = null;
-  private firstObservedAt: number | null = null;
-  private sawDeferredZero = false;
-
-  constructor(private readonly settleMs = 0) {}
+  private sawUncorroboratedZero = false;
 
   markRowsChanged(keys: Iterable<string>, at: number): void {
     for (const key of keys) {
@@ -1396,15 +1393,14 @@ export class UnreadArrivalTracker {
   /**
    * `zeroCorroborated` — the caller observed a fully hydrated conversation
    * list containing no unread rows, so a zero count is the inbox's real
-   * state rather than a still-unstamped title. A corroborated zero baselines
-   * immediately, letting a first arrival inside the settle window report
-   * instead of being absorbed as priming.
+   * state rather than a still-unstamped title. Only a corroborated zero can
+   * establish an all-read baseline; elapsed time cannot prove hydration.
    *
    * `readObservedKeys` — threads this document has already seen rendered
-   * hydrated-and-read. A mutated row from that set turning up in an early
+   * hydrated-and-read. A mutated row from that set turning up in a first
    * count increase is a real read→unread transition, never title hydration
    * (hydrating rows are never observed read first), so it can be reported
-   * even inside the settle window after an uncorroborated zero.
+   * after an uncorroborated zero.
    */
   observeUnreadCount(
     count: number,
@@ -1427,55 +1423,44 @@ export class UnreadArrivalTracker {
     }
 
     // After a reload the title reads no "(N)" until Facebook hydrates it, so
-    // an uncorroborated zero this early would baseline at 0 and the hydrated
+    // an uncorroborated zero would baseline at 0 and the hydrated
     // count would masquerade as N fresh arrivals attributed to every
-    // hydrating row. The first non-zero count within the window (or a zero
-    // that outlives it) primes silently instead.
-    if (this.firstObservedAt === null) this.firstObservedAt = at;
-    const settled = at - this.firstObservedAt >= this.settleMs;
-    if (this.unreadCount === null && count === 0 && !settled && !zeroCorroborated) {
-      this.sawDeferredZero = true;
+    // hydrating row. A stuck connection can delay hydration indefinitely;
+    // the first non-zero count still primes silently, however late it arrives.
+    if (this.unreadCount === null && count === 0 && !zeroCorroborated) {
+      this.sawUncorroboratedZero = true;
       return [];
     }
-    let previous = this.unreadCount;
+    const previous = this.unreadCount;
     this.unreadCount = count;
     if (previous === null) {
-      // A zero deferred during the settle window becomes the real baseline
-      // once the window has elapsed, even when no scan re-observed it in
-      // between (a hidden window can go 60s without one). Otherwise the first
-      // arrival after a quiet reload would prime silently and never notify.
-      if (!(this.sawDeferredZero && settled && count > 0)) {
-        // Early-arrival rescue: after a deferred zero, a mutated row this
-        // document already observed hydrated-read is a genuine read→unread
-        // transition — report it even before the window settles. Everything
-        // else primes silently below.
-        if (this.sawDeferredZero && count > 0 && readObservedKeys) {
-          const eligibleTransitions = [...this.changedAt]
-            .filter(([key]) => readObservedKeys.has(key))
-            .sort((left, right) => right[1].changedAt - left[1].changedAt);
-          const blockedTransitions = eligibleTransitions
-            .filter(([key]) => blockedUnreadKeys?.has(key))
-            .slice(0, count).length;
-          const transitions = eligibleTransitions
-            .filter(
-              ([key]) =>
-                !blockedUnreadKeys?.has(key) &&
-                (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
-            )
-            .slice(0, Math.max(0, count - blockedTransitions))
-            .map(([key]) => key);
-          if (transitions.length) {
-            this.changedAt.clear();
-            return transitions;
-          }
+      // A confirmed read→unread transition can prove an arrival even before
+      // the title establishes its baseline. Row mutations alone cannot.
+      if (this.sawUncorroboratedZero && count > 0 && readObservedKeys) {
+        const eligibleTransitions = [...this.changedAt]
+          .filter(([key]) => readObservedKeys.has(key))
+          .sort((left, right) => right[1].changedAt - left[1].changedAt);
+        const blockedTransitions = eligibleTransitions
+          .filter(([key]) => blockedUnreadKeys?.has(key))
+          .slice(0, count).length;
+        const transitions = eligibleTransitions
+          .filter(
+            ([key]) =>
+              !blockedUnreadKeys?.has(key) &&
+              (currentUnreadKeys === undefined || currentUnreadKeys.has(key)),
+          )
+          .slice(0, Math.max(0, count - blockedTransitions))
+          .map(([key]) => key);
+        if (transitions.length) {
+          this.changedAt.clear();
+          return transitions;
         }
-        // Mutations recorded up to a silent priming belong to hydration, not
-        // to arrivals — a follow-up increase inside the attribution window
-        // must not resurrect them as fresh rows.
-        this.changedAt.clear();
-        return [];
       }
-      previous = 0;
+      // Mutations recorded up to a silent priming belong to hydration, not
+      // to arrivals — a follow-up increase inside the attribution window
+      // must not resurrect them as fresh rows.
+      this.changedAt.clear();
+      return [];
     }
     const delta = Math.max(0, count - previous);
     const eligible = [...this.changedAt].sort(
