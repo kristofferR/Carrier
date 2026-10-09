@@ -1545,14 +1545,32 @@ ${button.innerHTML}`)
     let stateRouteUnavailableFor;
     let probeIdentity;
     const now = performance.now.bind(performance);
-    let workerExpectationKey = connectionKey;
     let workerExpected = connectionRemembered;
-    const expectsEncryptedWorker = () => {
+    let workerScope = {
+      key: connectionKey,
+      id: connectionWorkerId,
+      state: connectionState,
+      current: true
+    };
+    const hasCurrentAccountWorker = () => {
       const key = accountKey();
-      if (key !== workerExpectationKey) {
-        workerExpectationKey = key;
+      if (key !== workerScope.key) {
+        workerScope = { ...workerScope, key, current: false };
         workerExpected = rememberedConnection(key);
       }
+      const id = workerId();
+      const state2 = workerConnectionState();
+      if (!workerScope.current) {
+        workerScope.current = typeof id === "string" && id.length > 0 && id !== workerScope.id || state2 !== void 0 && state2 !== workerScope.state;
+      }
+      if (workerScope.current) {
+        if (typeof id === "string" && id.length > 0) workerScope.id = id;
+        if (state2 !== void 0) workerScope.state = state2;
+      }
+      return workerScope.current;
+    };
+    const expectsEncryptedWorker = () => {
+      if (!hasCurrentAccountWorker()) return workerExpected;
       const id = workerId();
       workerExpected || (workerExpected = typeof id === "string" && id.length > 0 || workerConnectionState() !== void 0 || typeof facebookBridgeModule()?.sendAndReceive === "function" || workerSetupState() !== "unknown");
       return workerExpected;
@@ -1576,6 +1594,11 @@ ${button.innerHTML}`)
         stateRouteUnavailableFor = void 0;
         callbacks.onUnknown("worker");
         if (replaced) callbacks.onWorkerChanged?.();
+      }
+      if (!hasCurrentAccountWorker()) {
+        verified = void 0;
+        callbacks.onUnknown("worker");
+        return;
       }
       if (workerProbePending) return;
       const bridge = facebookBridgeModule();
@@ -1636,6 +1659,7 @@ ${button.innerHTML}`)
     };
     const checkConnection = () => {
       expectsEncryptedWorker();
+      const currentAccountWorker = hasCurrentAccountWorker();
       const currentKey = accountKey();
       const currentWorkerId = workerId();
       const currentState = workerConnectionState();
@@ -1653,19 +1677,19 @@ ${button.innerHTML}`)
         verified = void 0;
         callbacks.onUnknown("worker-connection");
       }
-      const connected = workerIsConnected();
-      if (connected === true && connectionKey && !connectionRemembered) {
+      const connected = currentAccountWorker ? workerIsConnected() : void 0;
+      const setup = currentAccountWorker ? workerSetupState() : "unknown";
+      if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
+      else if (setup === "ready" || setup === "failed") setupStartedAt = void 0;
+      const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
+      const freshConnected = connected === true && verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS;
+      if (freshConnected && connectionKey && !connectionRemembered) {
         try {
           localStorage.setItem(connectionKey, "1");
           connectionRemembered = true;
         } catch (_) {
         }
       }
-      const setup = workerSetupState();
-      if (setup === "starting") setupStartedAt ?? (setupStartedAt = now());
-      else if (setup === "ready" || setup === "failed") setupStartedAt = void 0;
-      const setupStale = setupStartedAt !== void 0 && now() - setupStartedAt >= REALTIME_NEVER_CONNECTED_MS;
-      const freshConnected = connected === true && verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS;
       if (freshConnected) verificationStartedAt = void 0;
       else if (setup === "ready" || connectionRemembered) verificationStartedAt ?? (verificationStartedAt = now());
       const verificationStale = verificationStartedAt !== void 0 && now() - verificationStartedAt >= REALTIME_NEVER_CONNECTED_MS;

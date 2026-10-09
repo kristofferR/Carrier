@@ -278,6 +278,7 @@ function stateProbeFixture() {
   const timers = new Map<number, { due: number; run: () => void }>();
   const listeners = new Set<(value: unknown) => void>();
   const requests: string[] = [];
+  const storage = new Map<string, string>();
   let identityChanges = 0;
   const tracker = new RealtimeRecoveryTracker(now);
   const schedule = (run: () => void, delay: number) => {
@@ -329,7 +330,10 @@ function stateProbeFixture() {
         return `c_user=${account}`;
       },
     },
-    localStorage: { getItem: () => null, setItem: () => {} },
+    localStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
     location: { href: "https://www.facebook.com/messages/" },
     Date: { now: () => now },
     performance: { now: () => now },
@@ -353,6 +357,7 @@ function stateProbeFixture() {
       return identityChanges;
     },
     requests,
+    storage,
     listeners,
     tracker,
     monitor,
@@ -377,6 +382,12 @@ function stateProbeFixture() {
     },
     changeState: () => {
       modules.WACommsConnectionState = { WACommsConnectionState: { ...connection } };
+    },
+    openSocket: () => {
+      const socket = Reflect.construct(environment.window.WebSocket, [
+        "wss://edge-chat.facebook.com/chat",
+      ]) as EventTarget;
+      socket.dispatchEvent(new Event("open"));
     },
     complete: () => complete?.(),
     reject: (error: unknown) => reject?.(error),
@@ -416,6 +427,30 @@ test("RPC replies and a cached connected value cannot hide missing state deliver
   expect(fixture.tracker.needsRecovery(24_000)).toBe(false);
   expect(fixture.listeners.size).toBe(0);
 });
+
+for (const replacement of ["changeWorker", "changeState"] as const) {
+  test(`retained worker APIs cannot establish a new account before ${replacement}`, async () => {
+    const fixture = stateProbeFixture();
+    fixture.setMode("drop");
+    await fixture.probe();
+    expect(fixture.storage.size).toBe(0);
+    await fixture.advance(8000);
+    fixture.setMode("normal");
+    await fixture.probe();
+    expect(fixture.storage.size).toBe(1);
+    fixture.changeAccount();
+    fixture.openSocket();
+    await fixture.probe();
+    expect(fixture.requests).toHaveLength(2);
+    expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+    expect(fixture.monitor.isRecoveryHealthy()).toBe(true);
+    expect(fixture.storage.size).toBe(1);
+    fixture[replacement]();
+    await fixture.probe();
+    expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
+    expect(fixture.storage.size).toBe(2);
+  });
+}
 
 test("worker probes retain native deadlines after Facebook replaces page timers", async () => {
   const fixture = stateProbeFixture();
@@ -550,6 +585,9 @@ test("only fresh encrypted state or a new worker clears a confirmed disconnect",
   expect(fixture.tracker.needsRecovery(105_000)).toBe(true);
   fixture.setMode("normal");
   fixture.changeAccount();
+  await fixture.probe();
+  expect(fixture.monitor.isVerifiedHealthy()).toBe(false);
+  fixture.changeState();
   await fixture.probe();
   expect(fixture.monitor.isVerifiedHealthy()).toBe(true);
 });

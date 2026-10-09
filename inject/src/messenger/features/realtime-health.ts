@@ -147,14 +147,35 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     | { account: string | null; id: unknown; state: WorkerConnectionState | undefined }
     | undefined;
   const now = performance.now.bind(performance);
-  let workerExpectationKey = connectionKey;
   let workerExpected = connectionRemembered;
-  const expectsEncryptedWorker = () => {
+  let workerScope = {
+    key: connectionKey,
+    id: connectionWorkerId,
+    state: connectionState,
+    current: true,
+  };
+  const hasCurrentAccountWorker = () => {
     const key = accountKey();
-    if (key !== workerExpectationKey) {
-      workerExpectationKey = key;
+    if (key !== workerScope.key) {
+      workerScope = { ...workerScope, key, current: false };
       workerExpected = rememberedConnection(key);
     }
+    const id = workerId();
+    const state = workerConnectionState();
+    // A cookie change does not transfer the old worker to the new account.
+    if (!workerScope.current) {
+      workerScope.current =
+        (typeof id === "string" && id.length > 0 && id !== workerScope.id) ||
+        (state !== undefined && state !== workerScope.state);
+    }
+    if (workerScope.current) {
+      if (typeof id === "string" && id.length > 0) workerScope.id = id;
+      if (state !== undefined) workerScope.state = state;
+    }
+    return workerScope.current;
+  };
+  const expectsEncryptedWorker = () => {
+    if (!hasCurrentAccountWorker()) return workerExpected;
     const id = workerId();
     // Missing private APIs must not erase a worker already seen in this account.
     workerExpected ||=
@@ -194,6 +215,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       // even while that worker's final probe is still pending.
       callbacks.onUnknown("worker");
       if (replaced) callbacks.onWorkerChanged?.();
+    }
+    if (!hasCurrentAccountWorker()) {
+      verified = undefined;
+      callbacks.onUnknown("worker");
+      return;
     }
     if (workerProbePending) return;
     const bridge = facebookBridgeModule();
@@ -277,6 +303,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
   };
   const checkConnection = () => {
     expectsEncryptedWorker();
+    const currentAccountWorker = hasCurrentAccountWorker();
     const currentKey = accountKey();
     const currentWorkerId = workerId();
     const currentState = workerConnectionState();
@@ -297,16 +324,8 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       verified = undefined;
       callbacks.onUnknown("worker-connection");
     }
-    const connected = workerIsConnected();
-    // Survive reloads and native webview recreation, without letting another
-    // account's connection history arm a worker that has never initialized.
-    if (connected === true && connectionKey && !connectionRemembered) {
-      try {
-        localStorage.setItem(connectionKey, "1");
-        connectionRemembered = true;
-      } catch (_) {}
-    }
-    const setup = workerSetupState();
+    const connected = currentAccountWorker ? workerIsConnected() : undefined;
+    const setup = currentAccountWorker ? workerSetupState() : "unknown";
     // A confirmed setup attempt must settle even if page MQTT is healthy or
     // the encrypted state/bridge APIs have not become available yet.
     if (setup === "starting") setupStartedAt ??= now();
@@ -317,6 +336,13 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       connected === true &&
       verified?.stillCurrent() === true &&
       now() - verified.at < REALTIME_CONNECT_GRACE_MS;
+    // Only fresh worker delivery can establish this account's history.
+    if (freshConnected && connectionKey && !connectionRemembered) {
+      try {
+        localStorage.setItem(connectionKey, "1");
+        connectionRemembered = true;
+      } catch (_) {}
+    }
     if (freshConnected) verificationStartedAt = undefined;
     else if (setup === "ready" || connectionRemembered) verificationStartedAt ??= now();
     const verificationStale =
