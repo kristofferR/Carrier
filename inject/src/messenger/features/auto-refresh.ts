@@ -148,7 +148,7 @@ export function initAutoRefresh() {
   let rateLimitRetryGrantUntil = 0;
   // Set once in-place worker repair has failed or cannot act.
   let silentRecoveryFailed = false;
-  let workerVerified = () => false;
+  let recoveryHealthy = () => false;
   const realtimeReport = () => {
     const status = realtimeStatus();
     // An overdue termination or shutdown can still mutate Messenger's worker.
@@ -158,7 +158,7 @@ export function initAutoRefresh() {
       workerRecovery.phase === "shared-shutdown";
     return nativeRealtimeStatus(
       status,
-      workerVerified(),
+      recoveryHealthy(),
       silentRecoveryFailed,
       workerMutationPending,
     );
@@ -330,7 +330,7 @@ export function initAutoRefresh() {
     },
     onWorkerChanged: () => silentRecovery.resetSettle(),
   });
-  workerVerified = realtime.isVerifiedHealthy;
+  recoveryHealthy = realtime.isRecoveryHealthy;
 
   const silentRecovery = createSilentRecovery({
     blocked: (manual) =>
@@ -342,7 +342,7 @@ export function initAutoRefresh() {
       !isMessengerContentPath(location.pathname) ||
       onFacebookErrorPage(),
     needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
-    isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
+    isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
     check: () => realtime.check(),
   });
   // These events are reasons to check sync, not evidence that it is broken.

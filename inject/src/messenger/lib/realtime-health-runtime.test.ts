@@ -104,8 +104,9 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
     return {
       tracker,
       nativeStatus: () =>
-        nativeRealtimeStatus(tracker.status(now), monitor.isVerifiedHealthy(), true, false),
+        nativeRealtimeStatus(tracker.status(now), monitor.isRecoveryHealthy(), true, false),
       isVerifiedHealthy: monitor.isVerifiedHealthy,
+      isRecoveryHealthy: monitor.isRecoveryHealthy,
       check: async () => {
         socket.dispatchEvent(new Event("message"));
         monitor.check();
@@ -113,6 +114,30 @@ test("successful worker probes cannot cancel recovery for a disconnected encrypt
       },
     };
   };
+  // Socket-only deployments can restore recovery budgets without worker APIs.
+  bridgeAvailable = moduleAvailable = setupModuleAvailable = false;
+  const fallback = createMonitor("2000");
+  await fallback.check();
+  expect(fallback.isVerifiedHealthy()).toBe(false);
+  expect(fallback.isRecoveryHealthy()).toBe(true);
+  expect(fallback.nativeStatus()).toBe("ok");
+  now += REALTIME_NEVER_CONNECTED_MS;
+  expect(fallback.isRecoveryHealthy()).toBe(false);
+  await fallback.check();
+  expect(fallback.nativeStatus()).toBe("ok");
+  // Once an encrypted worker appears, page traffic cannot replace its proof,
+  // even if those private APIs subsequently disappear.
+  setupModuleAvailable = setupInProgress = true;
+  await fallback.check();
+  expect(fallback.nativeStatus()).toBe("pending");
+  setupModuleAvailable = setupInProgress = false;
+  await fallback.check();
+  expect(fallback.isRecoveryHealthy()).toBe(false);
+  expect(fallback.nativeStatus()).toBe("pending");
+  const otherAccount = createMonitor("2001");
+  await otherAccount.check();
+  expect(otherAccount.nativeStatus()).toBe("ok");
+  bridgeAvailable = moduleAvailable = setupModuleAvailable = true;
   let { tracker, check } = createMonitor();
   await check();
   expect(tracker.status(now)).toBe("ok");

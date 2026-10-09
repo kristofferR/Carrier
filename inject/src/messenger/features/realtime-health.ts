@@ -28,6 +28,8 @@ export type RealtimeHealthMonitor = {
   check: () => void;
   /** Fresh state delivered from the worker, rather than a cached page boolean. */
   isVerifiedHealthy: () => boolean;
+  /** Page sockets can confirm recovery only when no encrypted worker is expected. */
+  isRecoveryHealthy: () => boolean;
 };
 
 const WORKER_HEARTBEAT_TIMEOUT_MS = 8_000;
@@ -145,6 +147,23 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     | { account: string | null; id: unknown; state: WorkerConnectionState | undefined }
     | undefined;
   const now = performance.now.bind(performance);
+  let workerExpectationKey = connectionKey;
+  let workerExpected = connectionRemembered;
+  const expectsEncryptedWorker = () => {
+    const key = accountKey();
+    if (key !== workerExpectationKey) {
+      workerExpectationKey = key;
+      workerExpected = rememberedConnection(key);
+    }
+    const id = workerId();
+    // Missing private APIs must not erase a worker already seen in this account.
+    workerExpected ||=
+      (typeof id === "string" && id.length > 0) ||
+      workerConnectionState() !== undefined ||
+      typeof facebookBridgeModule()?.sendAndReceive === "function" ||
+      workerSetupState() !== "unknown";
+    return workerExpected;
+  };
 
   const checkSockets = () => {
     const health = watchdog.health(Date.now());
@@ -257,6 +276,7 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
       });
   };
   const checkConnection = () => {
+    expectsEncryptedWorker();
     const currentKey = accountKey();
     const currentWorkerId = workerId();
     const currentState = workerConnectionState();
@@ -372,5 +392,11 @@ export function monitorRealtimeHealth(callbacks: RealtimeHealthCallbacks): Realt
     now() - verified.at < REALTIME_CONNECT_GRACE_MS &&
     workerIsConnected() === true &&
     workerSetupState() === "ready";
-  return { check, isVerifiedHealthy: verifiedConnection };
+  return {
+    check,
+    isVerifiedHealthy: verifiedConnection,
+    isRecoveryHealthy: () =>
+      verifiedConnection() ||
+      (!expectsEncryptedWorker() && watchdog.health(Date.now()) === "healthy"),
+  };
 }

@@ -176,8 +176,8 @@
   };
 
   // inject/src/messenger/lib/auto-refresh.ts
-  function nativeRealtimeStatus(status, workerVerified, silentRecoveryFailed, workerMutationPending) {
-    if (status === "ok" && !workerVerified) return "pending";
+  function nativeRealtimeStatus(status, transportConfirmed, silentRecoveryFailed, workerMutationPending) {
+    if (status === "ok" && !transportConfirmed) return "pending";
     if ((status === "stale" || status === "never") && (!silentRecoveryFailed || workerMutationPending))
       return "managed";
     return status;
@@ -1545,6 +1545,18 @@ ${button.innerHTML}`)
     let stateRouteUnavailableFor;
     let probeIdentity;
     const now = performance.now.bind(performance);
+    let workerExpectationKey = connectionKey;
+    let workerExpected = connectionRemembered;
+    const expectsEncryptedWorker = () => {
+      const key = accountKey();
+      if (key !== workerExpectationKey) {
+        workerExpectationKey = key;
+        workerExpected = rememberedConnection(key);
+      }
+      const id = workerId();
+      workerExpected || (workerExpected = typeof id === "string" && id.length > 0 || workerConnectionState() !== void 0 || typeof facebookBridgeModule()?.sendAndReceive === "function" || workerSetupState() !== "unknown");
+      return workerExpected;
+    };
     const checkSockets = () => {
       const health = watchdog.health(Date.now());
       if (health === "healthy") callbacks.onHealthy("socket");
@@ -1623,6 +1635,7 @@ ${button.innerHTML}`)
       });
     };
     const checkConnection = () => {
+      expectsEncryptedWorker();
       const currentKey = accountKey();
       const currentWorkerId = workerId();
       const currentState = workerConnectionState();
@@ -1713,7 +1726,11 @@ ${button.innerHTML}`)
       diag("sync.monitor", "could not observe Messenger realtime WebSockets");
     }
     verifiedConnection = () => verified?.stillCurrent() === true && now() - verified.at < REALTIME_CONNECT_GRACE_MS && workerIsConnected() === true && workerSetupState() === "ready";
-    return { check, isVerifiedHealthy: verifiedConnection };
+    return {
+      check,
+      isVerifiedHealthy: verifiedConnection,
+      isRecoveryHealthy: () => verifiedConnection() || !expectsEncryptedWorker() && watchdog.health(Date.now()) === "healthy"
+    };
   }
 
   // inject/src/messenger/features/worker-recovery.ts
@@ -2147,13 +2164,13 @@ ${button.innerHTML}`)
     };
     let rateLimitRetryGrantUntil = 0;
     let silentRecoveryFailed = false;
-    let workerVerified = () => false;
+    let recoveryHealthy = () => false;
     const realtimeReport = () => {
       const status = realtimeStatus();
       const workerMutationPending = workerRecovery.phase === "dedicated-termination" || workerRecovery.phase === "shared-shutdown";
       return nativeRealtimeStatus(
         status,
-        workerVerified(),
+        recoveryHealthy(),
         silentRecoveryFailed,
         workerMutationPending
       );
@@ -2305,11 +2322,11 @@ ${button.innerHTML}`)
       },
       onWorkerChanged: () => silentRecovery.resetSettle()
     });
-    workerVerified = realtime.isVerifiedHealthy;
+    recoveryHealthy = realtime.isRecoveryHealthy;
     const silentRecovery = createSilentRecovery({
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
-      isHealthy: () => realtimeStatus() === "ok" && realtime.isVerifiedHealthy(),
+      isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
       check: () => realtime.check()
     });
     const noteLifecycle = () => {
