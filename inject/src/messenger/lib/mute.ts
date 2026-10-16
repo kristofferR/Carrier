@@ -25,6 +25,9 @@ const STATEFUL_MUTE_ROLES = new Set(["menuitemcheckbox", "switch"]);
 
 const MUTED_ROW_ICON_SHAPE = 0x774a4a14;
 const MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
+// The glyph sits 16px from a read row's right edge; an unread row's dot pushes
+// it to 38px. Bound the trailing status column, not one layout of it.
+const MUTED_ROW_ICON_MAX_RIGHT_GAP = 64;
 
 const MUTED_THREAD_LIMIT = 500;
 const MUTE_ABSENCE_CONFIRM_MS = 1_000;
@@ -156,7 +159,7 @@ export interface MutedRowIconShape {
   pathPrefixMatched: boolean;
 }
 
-/** Messenger's unlabeled, aria-hidden 16px slashed-bell row status icon. */
+/** Messenger's unlabeled, aria-hidden 16px slashed-bell row status icon, read or unread. */
 export function isMutedRowIconShape(shape: MutedRowIconShape): boolean {
   return (
     shape.width >= 14 &&
@@ -164,7 +167,7 @@ export function isMutedRowIconShape(shape: MutedRowIconShape): boolean {
     shape.height >= 14 &&
     shape.height <= 18 &&
     shape.rightGap >= 8 &&
-    shape.rightGap <= 24 &&
+    shape.rightGap <= MUTED_ROW_ICON_MAX_RIGHT_GAP &&
     !shape.interactive &&
     shape.ariaHidden &&
     shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" &&

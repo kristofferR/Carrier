@@ -212,6 +212,11 @@ describe("isMutedRowIconShape", () => {
     expect(isMutedRowIconShape(mutedBell)).toBe(true);
   });
 
+  test("still recognizes the icon when an unread dot shifts it left", () => {
+    expect(isMutedRowIconShape({ ...mutedBell, rightGap: 38 })).toBe(true);
+    expect(isMutedRowIconShape({ ...mutedBell, rightGap: 120 })).toBe(false);
+  });
+
   test("accepts the current path prefix only inside the verified row-icon geometry", () => {
     expect(
       isMutedRowIconShape({

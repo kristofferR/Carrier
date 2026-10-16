@@ -5928,6 +5928,7 @@ ${button.innerHTML}`)
   var STATEFUL_MUTE_ROLES = /* @__PURE__ */ new Set(["menuitemcheckbox", "switch"]);
   var MUTED_ROW_ICON_SHAPE = 2001357332;
   var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
+  var MUTED_ROW_ICON_MAX_RIGHT_GAP = 64;
   var MUTED_THREAD_LIMIT = 500;
   var MUTE_ABSENCE_CONFIRM_MS = 1e3;
   var MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
@@ -6000,7 +6001,7 @@ ${button.innerHTML}`)
     return null;
   }
   function isMutedRowIconShape(shape) {
-    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= 24 && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
+    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= MUTED_ROW_ICON_MAX_RIGHT_GAP && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
   }
   var svgShapeHash = (svg) => {
     let shapeText = "";
