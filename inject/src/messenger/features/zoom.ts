@@ -1,39 +1,25 @@
 /* ----------------------------- Page zoom ------------------------------ */
 // The persisted zoom level lives in the Rust Settings struct (source of
 // truth) and reaches the page via __CARRIER_SETTINGS__ / carrier:settings.
-// Keyboard/menu zoom reports its changes back with a carrier:zoom event so
-// Rust can persist them. The old localStorage key is only kept as a
-// migration source for pre-settings installs (see initZoomLevel below).
+// Rust applies it as native WebView zoom; CSS `zoom` grew the layout past the
+// window (#318). Keyboard/menu zoom reports its changes back with a
+// carrier:zoom event, which Rust applies and persists. The old localStorage
+// key is only kept as a migration source for pre-settings installs (see
+// initZoomLevel below).
 import { invoke } from "../bridge";
 import { clampZoom } from "../lib/zoom";
 
 const ZOOM_KEY = "carrier:zoom";
-const isWindows = /windows/i.test(navigator.userAgent);
 
-let zoomLevel = 100; // the level currently applied to the page
+let zoomLevel = 100; // the level Rust last applied (or was asked to)
 
-function applyZoom(percent: number, fromSettings?: boolean) {
+function setZoomLevel(percent: number, fromSettings?: boolean) {
   const clamped = clampZoom(percent);
-  if (isWindows) {
-    // WebView2 ignores `zoom`; fall back to a transform.
-    const scale = clamped / 100;
-    document.body.style.transformOrigin = "top left";
-    document.body.style.transform = `scale(${scale})`;
-    document.body.style.width = `${100 / scale}%`;
-    document.body.style.height = `${100 / scale}%`;
-    // The transform does not resize the layout viewport, so features that
-    // position privacy masks and login surfaces off `resize` need an explicit
-    // relayout signal just like the non-Windows zoom path.
-    window.dispatchEvent(new Event("resize"));
-  } else {
-    document.documentElement.style.zoom = `${clamped}%`;
-    window.dispatchEvent(new Event("resize"));
-  }
   const changed = clamped !== zoomLevel;
   zoomLevel = clamped;
   // Keep the page-side settings snapshot and its localStorage cache in step,
   // so a Facebook-triggered reload (which re-runs the init script off that
-  // cache) restores the same level without waiting for a settings push.
+  // cache) keeps stepping from the same level without waiting for a push.
   try {
     localStorage.setItem(ZOOM_KEY, String(clamped));
     const settings =
@@ -57,24 +43,24 @@ function applyZoom(percent: number, fromSettings?: boolean) {
       localStorage.setItem("__carrier_settings", JSON.stringify(nextSettings));
     }
   } catch (_) {}
-  // Report a local change (keyboard / View menu) so Rust persists it. Never
-  // re-emit for a settings push — Rust already has that value, and echoing
+  // Report a local change (keyboard / View menu) so Rust applies and persists
+  // it. Never re-emit for a settings push — Rust already has that value, and echoing
   // it back could feed a loop.
   if (changed && !fromSettings) {
     invoke("plugin:event|emit", { event: "carrier:zoom", payload: clamped })?.catch?.(() => {});
   }
 }
 
-export const zoomIn = () => applyZoom(zoomLevel + 10);
-export const zoomOut = () => applyZoom(zoomLevel - 10);
-export const zoomReset = () => applyZoom(100);
+export const zoomIn = () => setZoomLevel(zoomLevel + 10);
+export const zoomOut = () => setZoomLevel(zoomLevel - 10);
+export const zoomReset = () => setZoomLevel(100);
 
 // Follow the zoom in settings: applied at load and whenever Rust pushes a
 // settings change (e.g. the Settings window's Page zoom select).
 function syncZoomFromSettings() {
   const s = window.__CARRIER_SETTINGS__ || {};
   const z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
-  if (z !== zoomLevel) applyZoom(z, true);
+  if (z !== zoomLevel) setZoomLevel(z, true);
 }
 
 function initZoomLevel() {
@@ -88,7 +74,7 @@ function initZoomLevel() {
     z = clampZoom(stored);
     invoke("plugin:event|emit", { event: "carrier:zoom", payload: z })?.catch?.(() => {});
   }
-  if (z !== zoomLevel) applyZoom(z, true);
+  if (z !== zoomLevel) setZoomLevel(z, true);
   window.addEventListener("carrier:settings", syncZoomFromSettings);
 }
 

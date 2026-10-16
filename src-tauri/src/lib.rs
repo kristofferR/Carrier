@@ -81,8 +81,8 @@ use settings::AppState;
 #[cfg(any(target_os = "macos", test))]
 use settings::ContextMenuActivation;
 use settings::{
-    SaveOutcome, apply_settings, clamp_zoom, clear_pending_webview_data, load_settings,
-    load_settings_early, save_settings,
+    SaveOutcome, apply_page_zoom, apply_settings, clamp_zoom, clear_pending_webview_data,
+    load_settings, load_settings_early, save_settings,
 };
 use tray::show_main;
 #[cfg(target_os = "macos")]
@@ -1738,6 +1738,13 @@ pub fn run() {
                     return;
                 };
                 let zoom = clamp_zoom(zoom);
+                // Zoom right away; persisting below is coalesced and may lag
+                // behind a burst of keypresses.
+                for (label, window) in h.webview_windows() {
+                    if label != "settings" {
+                        apply_page_zoom(&window, zoom);
+                    }
+                }
                 let generation = h
                     .state::<AppState>()
                     .zoom_generation

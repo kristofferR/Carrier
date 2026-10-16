@@ -199,20 +199,11 @@ async function runFixtures() {
     ancestor.remove();
     for (const theme of ["__fb-light-mode", "__fb-dark-mode"]) {
       document.documentElement.className = theme;
-      for (const mode of ["zoom", "transform"])
-        for (const scale of [0.3, 0.8, 1, 1.5, 2]) {
-          document.documentElement.style.zoom = "";
-          document.body.style.cssText = "margin:0";
-          if (mode === "zoom") document.documentElement.style.zoom = String(scale);
-          else
-            document.body.style.cssText = `margin:0;transform:scale(${scale});transform-origin:top left;width:${100 / scale}%;height:${100 / scale}%`;
-          dialog = make();
-          window.dispatchEvent(new Event("resize"));
-          await settle();
-          assert(`${theme} ${mode} ${scale}`, marked(dialog) && header() === "56px");
-          dialog.remove();
-          await settle();
-        }
+      dialog = make();
+      await settle();
+      assert(theme, marked(dialog) && header() === "56px");
+      dialog.remove();
+      await settle();
     }
     result.textContent = "PASS";
   } catch (error) {

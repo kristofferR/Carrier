@@ -22,15 +22,8 @@ export function initHideNames() {
     return (el?.textContent || "").replace(/\s+/g, " ").trim();
   }
 
-  function normalizedRect(el: Element) {
-    const rect = el.getBoundingClientRect();
-    const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
-    const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
-    return new DOMRect(rect.x / scale, rect.y / scale, rect.width / scale, rect.height / scale);
-  }
-
   function visible(el: Element | null | undefined) {
-    const r = el ? normalizedRect(el) : null;
+    const r = el?.getBoundingClientRect();
     if (!r || r.width <= 0 || r.height <= 0) return false;
     const cs = getComputedStyle(el!);
     return cs.display !== "none" && cs.visibility !== "hidden";
@@ -57,8 +50,8 @@ export function initHideNames() {
       out.push(el);
     });
     return out.sort((a, b) => {
-      const ar = normalizedRect(a);
-      const br = normalizedRect(b);
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
       return ar.y - br.y || ar.x - br.x;
     });
   }
@@ -71,14 +64,14 @@ export function initHideNames() {
       out.push(el);
     });
     return out.sort((a, b) => {
-      const ar = normalizedRect(a);
-      const br = normalizedRect(b);
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
       return ar.y - br.y || ar.x - br.x || ar.height - br.height;
     });
   }
 
   function area(el: Element) {
-    const r = normalizedRect(el);
+    const r = el.getBoundingClientRect();
     return r.width * r.height;
   }
 
@@ -90,8 +83,8 @@ export function initHideNames() {
     let count = 0;
     deepest(elements)
       .sort((a, b) => {
-        const ar = normalizedRect(a);
-        const br = normalizedRect(b);
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
         return ar.x - br.x || area(a) - area(b);
       })
       .forEach((el) => {
@@ -137,10 +130,10 @@ export function initHideNames() {
       if (!href || seen.has(href) || !visible(row)) continue;
       seen.add(href);
 
-      const rr = normalizedRect(row);
+      const rr = row.getBoundingClientRect();
       row.querySelectorAll(VISUAL_SEL).forEach((el) => {
         if (!visible(el)) return;
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
         const rightReceipt =
           r.right > rr.right - 56 &&
@@ -154,15 +147,15 @@ export function initHideNames() {
       const surfaces = textSurfaces(row).filter((el) => {
         if (el.getAttribute("aria-hidden") === "true") return false;
         if (el.closest("abbr")) return false;
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         return r.left > rr.left + 56;
       });
       if (!surfaces.length) continue;
 
-      const firstLineY = Math.min(...surfaces.map((el) => normalizedRect(el).top));
+      const firstLineY = Math.min(...surfaces.map((el) => el.getBoundingClientRect().top));
       const firstLine: Element[] = [];
       surfaces.forEach((el) => {
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
         else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
       });
@@ -175,18 +168,18 @@ export function initHideNames() {
   }
 
   function markThreadHeader(main: Element) {
-    const mr = normalizedRect(main);
+    const mr = main.getBoundingClientRect();
     const headerBottom = mr.top + 96;
     const actionStart = mr.right - 150;
 
     textLeaves(main).forEach((el) => {
-      const r = normalizedRect(el);
+      const r = el.getBoundingClientRect();
       if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
     });
 
     main.querySelectorAll(VISUAL_SEL).forEach((el) => {
       if (!visible(el)) return;
-      const r = normalizedRect(el);
+      const r = el.getBoundingClientRect();
       if (
         r.top >= mr.top &&
         r.bottom <= headerBottom &&
@@ -219,7 +212,7 @@ export function initHideNames() {
     });
 
     textSurfaces(main).forEach((el) => {
-      const r = normalizedRect(el);
+      const r = el.getBoundingClientRect();
       if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
         mark(el);
       }

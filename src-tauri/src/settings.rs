@@ -148,13 +148,22 @@ pub(crate) struct Settings {
     pub(crate) hold_failures: bool,
 }
 
-/// Valid page-zoom range in percent (matches the keyboard zoom in
-/// `inject/messenger.js`).
+/// Valid page-zoom range in percent (matches `clampZoom` in
+/// `inject/src/messenger/lib/zoom.ts`).
 pub(crate) const ZOOM_MIN: i32 = 30;
 pub(crate) const ZOOM_MAX: i32 = 200;
 
 pub(crate) fn clamp_zoom(zoom: i32) -> i32 {
     zoom.clamp(ZOOM_MIN, ZOOM_MAX)
+}
+
+/// Apply page zoom through the native WebView zoom. Unlike CSS `zoom`, this
+/// shrinks the layout viewport, so Messenger's viewport-sized layout still fits
+/// the window instead of overflowing it (#318).
+pub(crate) fn apply_page_zoom(window: &tauri::WebviewWindow, zoom: i32) {
+    if let Err(e) = window.set_zoom(f64::from(clamp_zoom(zoom)) / 100.0) {
+        log::warn!("failed to set page zoom on {}: {e}", window.label());
+    }
 }
 
 impl Settings {
@@ -681,6 +690,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             } else {
                 window.show_menu()
             };
+            apply_page_zoom(&window, s.zoom);
             // Push the new prefs to the running page so JS-side settings
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {

@@ -624,11 +624,7 @@
       if (!isShown(media)) continue;
       const control = media.closest('button, [role="button"]');
       const bounds = control?.getBoundingClientRect();
-      const zoom = Math.min(
-        2,
-        Math.max(0.3, (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100)
-      );
-      if (media.tagName === "IMG" && control && bounds && bounds.width / zoom <= 48 && bounds.height / zoom <= 48 && !control.closest('[contenteditable="true"]'))
+      if (media.tagName === "IMG" && control && bounds && bounds.width <= 48 && bounds.height <= 48 && !control.closest('[contenteditable="true"]'))
         continue;
       return true;
     }
@@ -4730,14 +4726,8 @@ ${button.innerHTML}`)
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
-    function normalizedRect(el) {
-      const rect = el.getBoundingClientRect();
-      const configuredZoom = Number(window.__CARRIER_SETTINGS__?.zoom) || 100;
-      const scale = Math.min(2, Math.max(0.3, configuredZoom / 100));
-      return new DOMRect(rect.x / scale, rect.y / scale, rect.width / scale, rect.height / scale);
-    }
     function visible(el) {
-      const r = el ? normalizedRect(el) : null;
+      const r = el?.getBoundingClientRect();
       if (!r || r.width <= 0 || r.height <= 0) return false;
       const cs = getComputedStyle(el);
       return cs.display !== "none" && cs.visibility !== "hidden";
@@ -4761,8 +4751,8 @@ ${button.innerHTML}`)
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = normalizedRect(a);
-        const br = normalizedRect(b);
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
         return ar.y - br.y || ar.x - br.x;
       });
     }
@@ -4774,13 +4764,13 @@ ${button.innerHTML}`)
         out.push(el);
       });
       return out.sort((a, b) => {
-        const ar = normalizedRect(a);
-        const br = normalizedRect(b);
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
         return ar.y - br.y || ar.x - br.x || ar.height - br.height;
       });
     }
     function area(el) {
-      const r = normalizedRect(el);
+      const r = el.getBoundingClientRect();
       return r.width * r.height;
     }
     function deepest(elements) {
@@ -4789,8 +4779,8 @@ ${button.innerHTML}`)
     function markDeepest(elements) {
       let count = 0;
       deepest(elements).sort((a, b) => {
-        const ar = normalizedRect(a);
-        const br = normalizedRect(b);
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
         return ar.x - br.x || area(a) - area(b);
       }).forEach((el) => {
         if (isMetaText(textValue(el))) return;
@@ -4823,10 +4813,10 @@ ${button.innerHTML}`)
         const href = row.getAttribute("href") || "";
         if (!href || seen.has(href) || !visible(row)) continue;
         seen.add(href);
-        const rr = normalizedRect(row);
+        const rr = row.getBoundingClientRect();
         row.querySelectorAll(VISUAL_SEL).forEach((el) => {
           if (!visible(el)) return;
-          const r = normalizedRect(el);
+          const r = el.getBoundingClientRect();
           const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
           const rightReceipt = r.right > rr.right - 56 && r.width >= 12 && r.width <= 34 && r.height >= 12 && r.height <= 34;
           if (leftAvatar || rightReceipt) mark(el);
@@ -4834,14 +4824,14 @@ ${button.innerHTML}`)
         const surfaces = textSurfaces(row).filter((el) => {
           if (el.getAttribute("aria-hidden") === "true") return false;
           if (el.closest("abbr")) return false;
-          const r = normalizedRect(el);
+          const r = el.getBoundingClientRect();
           return r.left > rr.left + 56;
         });
         if (!surfaces.length) continue;
-        const firstLineY = Math.min(...surfaces.map((el) => normalizedRect(el).top));
+        const firstLineY = Math.min(...surfaces.map((el) => el.getBoundingClientRect().top));
         const firstLine = [];
         surfaces.forEach((el) => {
-          const r = normalizedRect(el);
+          const r = el.getBoundingClientRect();
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
           else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
         });
@@ -4852,16 +4842,16 @@ ${button.innerHTML}`)
       return document.querySelector('[role="main"]') || document.querySelector("main");
     }
     function markThreadHeader(main2) {
-      const mr = normalizedRect(main2);
+      const mr = main2.getBoundingClientRect();
       const headerBottom = mr.top + 96;
       const actionStart = mr.right - 150;
       textLeaves(main2).forEach((el) => {
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
       });
       main2.querySelectorAll(VISUAL_SEL).forEach((el) => {
         if (!visible(el)) return;
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
           mark(el);
         }
@@ -4882,7 +4872,7 @@ ${button.innerHTML}`)
         });
       });
       textSurfaces(main2).forEach((el) => {
-        const r = normalizedRect(el);
+        const r = el.getBoundingClientRect();
         if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
           mark(el);
         }
@@ -10625,21 +10615,9 @@ ${text}`)) {
 
   // inject/src/messenger/features/zoom.ts
   var ZOOM_KEY = "carrier:zoom";
-  var isWindows = /windows/i.test(navigator.userAgent);
   var zoomLevel = 100;
-  function applyZoom(percent, fromSettings) {
+  function setZoomLevel(percent, fromSettings) {
     const clamped = clampZoom(percent);
-    if (isWindows) {
-      const scale = clamped / 100;
-      document.body.style.transformOrigin = "top left";
-      document.body.style.transform = `scale(${scale})`;
-      document.body.style.width = `${100 / scale}%`;
-      document.body.style.height = `${100 / scale}%`;
-      window.dispatchEvent(new Event("resize"));
-    } else {
-      document.documentElement.style.zoom = `${clamped}%`;
-      window.dispatchEvent(new Event("resize"));
-    }
     const changed = clamped !== zoomLevel;
     zoomLevel = clamped;
     try {
@@ -10661,13 +10639,13 @@ ${text}`)) {
       });
     }
   }
-  var zoomIn = () => applyZoom(zoomLevel + 10);
-  var zoomOut = () => applyZoom(zoomLevel - 10);
-  var zoomReset = () => applyZoom(100);
+  var zoomIn = () => setZoomLevel(zoomLevel + 10);
+  var zoomOut = () => setZoomLevel(zoomLevel - 10);
+  var zoomReset = () => setZoomLevel(100);
   function syncZoomFromSettings() {
     const s = window.__CARRIER_SETTINGS__ || {};
     const z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
-    if (z !== zoomLevel) applyZoom(z, true);
+    if (z !== zoomLevel) setZoomLevel(z, true);
   }
   function initZoomLevel() {
     const s = window.__CARRIER_SETTINGS__ || {};
@@ -10678,7 +10656,7 @@ ${text}`)) {
       invoke("plugin:event|emit", { event: "carrier:zoom", payload: z })?.catch?.(() => {
       });
     }
-    if (z !== zoomLevel) applyZoom(z, true);
+    if (z !== zoomLevel) setZoomLevel(z, true);
     window.addEventListener("carrier:settings", syncZoomFromSettings);
   }
   function initZoom() {
