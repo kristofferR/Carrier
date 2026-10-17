@@ -25,7 +25,10 @@ diagnostics = ["mcp", "tauri-plugin-mcp/devtools"]
 
 [dependencies]
 tauri = { version = "2", features = ["image-png"] }
-tauri-plugin-updater = "2.13"
+# No `zip` feature: it only unpacks v1-style `.msi.zip`/`.exe.zip` and compressed
+# AppImage updates, while `createUpdaterArtifacts: true` ships the raw installers.
+# Dropping it also keeps the advisory-prone `zip` crate out of the tree.
+tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-opener = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"

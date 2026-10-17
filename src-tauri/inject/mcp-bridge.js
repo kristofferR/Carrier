@@ -2527,7 +2527,7 @@
           shape.h >= 14 &&
           shape.h <= 18 &&
           shape.rightGap >= 8 &&
-          shape.rightGap <= 24 &&
+          shape.rightGap <= 64 &&
           !shape.interactive &&
           shape.ariaHidden &&
           String(shape.viewBox).replace(/\s+/g, " ").trim() === "0 0 16 16" &&
