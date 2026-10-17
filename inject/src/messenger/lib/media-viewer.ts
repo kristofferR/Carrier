@@ -42,7 +42,6 @@ function isVisible(element: Element): boolean {
 
 export function isMediaViewerDialog(dialog: HTMLElement): boolean {
   if (!isVisible(dialog)) return false;
-  // Bounding rectangles already include CSS zoom and body transforms.
   const viewport = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
   const rect = dialog.getBoundingClientRect();
   if (!coversViewport(rect, viewport)) return false;
@@ -67,7 +66,7 @@ export function isMediaViewerDialog(dialog: HTMLElement): boolean {
     const width = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
     const height = (visible.bottom - visible.top) / Math.min(rect.height, viewport.bottom);
     // Ignore avatars, emoji, and gallery thumbnails, but accept panoramas and
-    // tall screenshots that span the viewer on only one axis. Ratios account for zoom.
+    // tall screenshots that span the viewer on only one axis.
     return (
       width > 0 &&
       height > 0 &&

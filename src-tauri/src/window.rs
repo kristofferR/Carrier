@@ -20,7 +20,8 @@ use crate::download::{
 use crate::macos::theme::make_webview_transparent;
 use crate::render_recovery::RenderRecoveryBudget;
 use crate::settings::{
-    AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, load_settings, save_settings,
+    AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, apply_page_zoom, load_settings,
+    save_settings,
 };
 use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
 use crate::webview_watchdog::WebviewWatchdog;
@@ -183,6 +184,10 @@ fn build_app_window_with_render_budget(
                 }
                 if is_messenger_web_url(payload.url()) {
                     crate::actions::messenger_page_finished(&window);
+                    // Re-assert the zoom in case the engine keys it per origin
+                    // (the first load hops from the bundled page to Facebook).
+                    let zoom = window.state::<AppState>().settings.lock().unwrap().zoom;
+                    apply_page_zoom(&window, zoom);
                 }
                 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
                 if window.label() == "main" && is_messenger_web_url(payload.url()) {
@@ -351,8 +356,9 @@ fn build_app_window_with_render_budget(
             crate::linux::configure_messenger_webview_memory(window);
             crate::linux::install_webview_diagnostics(window);
         }
-        // New windows inherit the current always-on-top preference.
+        // New windows inherit the current always-on-top preference and zoom.
         let _ = window.set_always_on_top(settings.always_on_top);
+        apply_page_zoom(window, settings.zoom);
         #[cfg(not(target_os = "macos"))]
         if settings.hide_menu_bar {
             let _ = window.hide_menu();

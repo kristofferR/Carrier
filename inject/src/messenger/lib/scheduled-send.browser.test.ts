@@ -292,12 +292,8 @@ async function fixtures(
     const reaction = region.querySelector<HTMLButtonElement>("button")!;
     reaction.style.width = "40px";
     reaction.style.height = "40px";
-    window.__CARRIER_SETTINGS__ = { zoom: 150 };
-    document.documentElement.style.zoom = "150%";
     await settle();
-    assert("zoomed toolbar image remains an icon", !!icon());
-    document.documentElement.style.zoom = "";
-    window.__CARRIER_SETTINGS__ = { zoom: 100 };
+    assert("toolbar image remains an icon", !!icon());
     reaction.style.width = "";
     reaction.style.height = "";
     for (const tag of ["img", "video"] as const) {
