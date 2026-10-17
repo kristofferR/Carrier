@@ -94,6 +94,10 @@ function createHarness(
     readyState: "complete",
     title: "MCP bridge test",
     documentElement: root,
+    body: root,
+    querySelector(selector: string) {
+      return this.querySelectorAll(selector)[0] ?? null;
+    },
     querySelectorAll(selector: string) {
       if (selector === "[") throw new Error("invalid selector");
       return scopes.get(selector) ?? [];
@@ -199,6 +203,68 @@ function createHarness(
     },
   };
 }
+
+describe("runtime MCP muted-row detection", () => {
+  test.each([
+    { rightGap: 38, muted: true },
+    { rightGap: 65, muted: false },
+  ])("classifies a slashed bell with a $rightGap px gap", ({ rightGap, muted }) => {
+    class RowElement extends FakeElement {
+      readonly selectors = new Map<string, RowElement[]>();
+      box = { x: 0, y: 0, width: 300, height: 60 };
+      click = mock(() => undefined);
+
+      getBoundingClientRect() {
+        return this.box;
+      }
+
+      querySelectorAll(selector: string): RowElement[] {
+        return this.selectors.get(selector) ?? [];
+      }
+
+      querySelector(selector: string) {
+        return this.querySelectorAll(selector)[0] ?? null;
+      }
+
+      closest(_selector: string) {
+        return null;
+      }
+    }
+
+    const root = new RowElement("div");
+    const row = new RowElement("a");
+    row.setAttribute("href", "/messages/t/123");
+    const svg = new RowElement("svg");
+    svg.box = { x: 300 - rightGap - 16, y: 22, width: 16, height: 16 };
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    const path = new RowElement("path");
+    path.setAttribute("d", "M2.5 6c0-.322");
+    svg.selectors.set("path, line, polyline, circle", [path]);
+    svg.selectors.set("path[d]", [path]);
+    svg.selectors.set("path", [path]);
+    row.selectors.set("svg", [svg]);
+    const harness = createHarness(root);
+    harness.document.querySelectorAll = (selector) =>
+      selector === '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]' ? [row] : [];
+
+    expect(harness.execute("__carrier_mcp_notification_row_probe__")).toMatchObject({
+      rows: [
+        {
+          mute: {
+            status: muted ? "muted" : "none",
+            rowIconMuted: muted,
+            svgShapes: [{ rightGap, pathPrefixMatched: true }],
+          },
+        },
+      ],
+    });
+    expect(harness.execute("__carrier_mcp_notification_open_muted_row__")).toEqual({
+      applied: muted,
+    });
+    expect(row.click).toHaveBeenCalledTimes(muted ? 1 : 0);
+  });
+});
 
 describe("runtime MCP page-map bounds", () => {
   test("composes its Haste instrumentation with an existing define accessor", () => {
