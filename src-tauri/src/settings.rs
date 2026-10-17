@@ -161,7 +161,12 @@ pub(crate) fn clamp_zoom(zoom: i32) -> i32 {
 /// shrinks the layout viewport, so Messenger's viewport-sized layout still fits
 /// the window instead of overflowing it (#318).
 pub(crate) fn apply_page_zoom(window: &tauri::WebviewWindow, zoom: i32) {
-    if let Err(e) = window.set_zoom(f64::from(clamp_zoom(zoom)) / 100.0) {
+    let factor = f64::from(clamp_zoom(zoom)) / 100.0;
+    #[cfg(target_os = "macos")]
+    let result = crate::macos::zoom::set_page_zoom(window, factor);
+    #[cfg(not(target_os = "macos"))]
+    let result = window.set_zoom(factor);
+    if let Err(e) = result {
         log::warn!("failed to set page zoom on {}: {e}", window.label());
     }
 }
