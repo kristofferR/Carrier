@@ -341,7 +341,10 @@ Any other second dedicated worker, created after an earlier one completed
 backend setup (for example by Messenger's own bad-state reboot), is likewise
 treated as proof the page is unhealthy: Carrier logs `sync.worker-replaced` and
 reloads. Both reloads use the usual draft, call, sleep, offline, rate-limit, and
-Hold Failures guards. Shared-worker restarts are unaffected.
+Hold Failures guards. Shared-worker restarts are unaffected. There is
+deliberately no reload cap or backoff across documents: each new document must
+gather the evidence again, so repeats during a lasting outage stay minutes apart,
+and a page left stale after the outage ends is the worse failure.
 
 ## Message-processing diagnostics
 

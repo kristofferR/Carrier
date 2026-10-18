@@ -32,6 +32,9 @@ export async function probeFacebook(fetch: typeof globalThis.fetch): Promise<boo
  * Decides when a stuck dedicated worker's page should reload. Waiting while
  * Facebook is unreachable avoids reloading into an outage; requiring Facebook
  * to answer for two retry rounds first lets the worker reconnect on its own.
+ * Every reloaded document must collect this evidence again, which spaces any
+ * repeats minutes apart. There is deliberately no backoff or give-up cap: a
+ * page left broken is worse than steady retries (see docs/sync-recovery.md).
  */
 export class StuckWorkerReload {
   private stuckSince: number | undefined;
