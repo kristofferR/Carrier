@@ -77,7 +77,11 @@ export class StuckWorkerReload {
           this.probing = false;
         });
     }
-    if (this.reachableSince !== undefined && now - this.reachableSince >= STUCK_WORKER_RELOAD_MS) {
+    if (
+      !this.probing &&
+      this.reachableSince !== undefined &&
+      now - this.reachableSince >= STUCK_WORKER_RELOAD_MS
+    ) {
       return "reachable";
     }
     return now - this.stuckSince >= STUCK_WORKER_MAX_MS ? "timeout" : undefined;

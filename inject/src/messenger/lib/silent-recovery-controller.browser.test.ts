@@ -67,6 +67,7 @@ async function runFixtures(
     isHealthy: () => boolean;
     check: () => void;
     reload: () => void;
+    cancelReload: () => void;
   }) => { tick: () => void; resetSettle: () => void },
   adapter: { recover: (allowed?: () => boolean, restartShared?: boolean) => Promise<string> },
   failureEvent: string,
@@ -102,14 +103,19 @@ async function runFixtures(
     await flush();
   };
   let reloads = 0;
-  const make = (state: { needed: boolean; healthy: boolean }) =>
+  let pendingReload = false;
+  const make = (state: { needed: boolean; healthy: boolean; blocked?: boolean }) =>
     createRecovery({
-      blocked: () => false,
+      blocked: () => state.blocked === true,
       needsRecovery: () => state.needed,
       isHealthy: () => state.healthy,
       check: () => {},
       reload: () => {
         reloads++;
+        pendingReload = true;
+      },
+      cancelReload: () => {
+        pendingReload = false;
       },
     });
   const originalRecover = adapter.recover;
@@ -348,7 +354,7 @@ async function runFixtures(
       stuckEscalation = escalate === true;
       return stuckResult;
     };
-    const stuckState = { needed: true, healthy: false };
+    const stuckState = { needed: true, healthy: false, blocked: false };
     const stuckRecovery = make(stuckState);
     let stuckFailure = false;
     window.addEventListener(failureEvent, (event) => {
@@ -375,14 +381,31 @@ async function runFixtures(
     await tickFor(70_000);
     assert("a worker stuck while Facebook answers reloads the page", reloads > 0);
     assert("a stuck worker never spends the repair budget", !stuckFailure);
+    assert("a protected reload can remain queued", pendingReload);
+    stuckState.blocked = true;
     stuckState.needed = false;
     stuckState.healthy = true;
     stuckRecovery.tick();
+    assert("recovery cancels a queued stuck-worker reload even under protection", !pendingReload);
+    stuckState.blocked = false;
     const reloadsBefore = reloads;
     stuckState.needed = true;
     stuckState.healthy = false;
     await tickFor(85_000);
     assert("a new stuck episode waits again", reloads === reloadsBefore);
+    // biome-ignore lint/suspicious/noDocumentCookie: synthetic account switch while still stale.
+    document.cookie = "c_user=789; path=/";
+    await tickFor(85_000);
+    assert("a stale new account cannot inherit reachability evidence", reloads === reloadsBefore);
+    await tickFor(70_000);
+    assert(
+      "a stale new account reloads after its own reachability window",
+      reloads > reloadsBefore,
+    );
+    // biome-ignore lint/suspicious/noDocumentCookie: synthetic account switch with a queued reload.
+    document.cookie = "c_user=987; path=/";
+    stuckRecovery.tick();
+    assert("an account change cancels the previous account's queued reload", !pendingReload);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

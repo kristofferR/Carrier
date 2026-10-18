@@ -1816,7 +1816,7 @@ ${button.innerHTML}`)
           this.probing = false;
         });
       }
-      if (this.reachableSince !== void 0 && now - this.reachableSince >= STUCK_WORKER_RELOAD_MS) {
+      if (!this.probing && this.reachableSince !== void 0 && now - this.reachableSince >= STUCK_WORKER_RELOAD_MS) {
         return "reachable";
       }
       return now - this.stuckSince >= STUCK_WORKER_MAX_MS ? "timeout" : void 0;
@@ -1925,6 +1925,11 @@ ${button.innerHTML}`)
       now
     );
     let stuckReloadRequested = false;
+    const resetStuckWorker = () => {
+      stuckWorker.reset();
+      stuckReloadRequested = false;
+      options.cancelReload();
+    };
     const wallNow = Date.now.bind(Date);
     let lastTickAt = wallNow();
     let restartRunningDeadline;
@@ -1960,8 +1965,7 @@ ${button.innerHTML}`)
     const resetSettle = () => {
       unhealthySince = void 0;
       busySince = void 0;
-      stuckWorker.reset();
-      stuckReloadRequested = false;
+      resetStuckWorker();
       budget.restartObservation(now());
       if (running && !runningTimedOut) restartRunningDeadline?.();
     };
@@ -1972,6 +1976,7 @@ ${button.innerHTML}`)
         scope = currentScope;
         scopeEpoch++;
         budget.reset();
+        resetStuckWorker();
         workerRecovery.clearEscalation();
         manualRequested = false;
         unhealthySince = void 0;
@@ -2007,8 +2012,7 @@ ${button.innerHTML}`)
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
-        stuckWorker.reset();
-        stuckReloadRequested = false;
+        resetStuckWorker();
         showFailure(false);
         return;
       }
@@ -2415,8 +2419,14 @@ ${button.innerHTML}`)
     window.__carrierCaptureRecovery = captureRecovery;
     let capturingRecovery = false;
     const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" && pendingReason !== "manual";
+    const cancelRecoveredStuckReload = () => {
+      if (pendingReason === "worker-stuck" && realtimeStatus() === "ok" && recoveryHealthy()) {
+        clearPending();
+      }
+    };
     const maybeReload = async () => {
       timer = void 0;
+      cancelRecoveredStuckReload();
       if (!pending || capturingRecovery) return;
       if (recoveryHeld()) {
         diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
@@ -2449,6 +2459,7 @@ ${button.innerHTML}`)
       } finally {
         capturingRecovery = false;
       }
+      cancelRecoveredStuckReload();
       if (!pending || capturedReason !== pendingReason) return;
       if (recoveryHeld()) {
         diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
@@ -2515,6 +2526,9 @@ ${button.innerHTML}`)
       check: () => realtime.check(),
       reload: () => {
         if (!pending) schedule(0, "worker-stuck");
+      },
+      cancelReload: () => {
+        if (pending && pendingReason === "worker-stuck") clearPending();
       }
     });
     const noteLifecycle = () => {

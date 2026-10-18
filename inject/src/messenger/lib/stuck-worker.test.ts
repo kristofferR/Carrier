@@ -61,6 +61,34 @@ describe("StuckWorkerReload", () => {
     expect(await f.run(STUCK_WORKER_RELOAD_MS - 5_000)).toBeUndefined();
   });
 
+  test.each([true, false])(
+    "waits for the threshold probe to settle (reachable=%s)",
+    async (answer) => {
+      let now = 0;
+      let finishProbe: ((reachable: boolean) => void) | undefined;
+      const gate = new StuckWorkerReload(
+        () =>
+          new Promise((resolve) => {
+            finishProbe = resolve;
+          }),
+        () => now,
+      );
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+      expect(gate.due()).toBeUndefined();
+      finishProbe?.(true);
+      await settle();
+      now = STUCK_WORKER_RELOAD_MS;
+      expect(gate.due()).toBeUndefined();
+      expect(gate.due()).toBeUndefined();
+      finishProbe?.(answer);
+      await settle();
+      expect(gate.due()).toBe(answer ? "reachable" : undefined);
+      // The maximum stuck time still applies even if a probe hangs.
+      now = STUCK_WORKER_MAX_MS;
+      expect(gate.due()).toBe("timeout");
+    },
+  );
+
   test("reloads after the cap even if no probe ever succeeds", async () => {
     const f = fixture();
     expect(await f.run(STUCK_WORKER_MAX_MS)).toBe("timeout");

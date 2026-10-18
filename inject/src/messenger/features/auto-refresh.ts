@@ -228,8 +228,14 @@ export function initAutoRefresh() {
     window.__CARRIER_SETTINGS__?.hold_failures &&
     pendingReason !== "rate-limit-manual" &&
     pendingReason !== "manual";
+  const cancelRecoveredStuckReload = () => {
+    if (pendingReason === "worker-stuck" && realtimeStatus() === "ok" && recoveryHealthy()) {
+      clearPending();
+    }
+  };
   const maybeReload = async () => {
     timer = undefined;
+    cancelRecoveredStuckReload();
     if (!pending || capturingRecovery) return;
     if (recoveryHeld()) {
       diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
@@ -264,6 +270,7 @@ export function initAutoRefresh() {
     } finally {
       capturingRecovery = false;
     }
+    cancelRecoveredStuckReload();
     if (!pending || capturedReason !== pendingReason) return;
     // Settings or a draft/call may have changed while IPC was pending.
     if (recoveryHeld()) {
@@ -346,6 +353,9 @@ export function initAutoRefresh() {
     check: () => realtime.check(),
     reload: () => {
       if (!pending) schedule(0, "worker-stuck");
+    },
+    cancelReload: () => {
+      if (pending && pendingReason === "worker-stuck") clearPending();
     },
   });
   // These events are reasons to check sync, not evidence that it is broken.

@@ -20,6 +20,8 @@ export function createSilentRecovery(options: {
   check: () => void;
   /** Reload the page under the usual draft and call protections. */
   reload: () => void;
+  /** Withdraw a queued stuck-worker reload when its evidence is reset. */
+  cancelReload: () => void;
 }) {
   const budget = new SilentRecoveryBudget();
   const nativeSetTimeout = window.setTimeout.bind(window);
@@ -32,6 +34,11 @@ export function createSilentRecovery(options: {
     now,
   );
   let stuckReloadRequested = false;
+  const resetStuckWorker = () => {
+    stuckWorker.reset();
+    stuckReloadRequested = false;
+    options.cancelReload();
+  };
   const wallNow = Date.now.bind(Date);
   let lastTickAt = wallNow();
   let restartRunningDeadline: (() => void) | undefined;
@@ -68,8 +75,7 @@ export function createSilentRecovery(options: {
     unhealthySince = undefined;
     busySince = undefined;
     // After a wake, give Messenger's own reconnect a fresh chance.
-    stuckWorker.reset();
-    stuckReloadRequested = false;
+    resetStuckWorker();
     budget.restartObservation(now());
     if (running && !runningTimedOut) restartRunningDeadline?.();
   };
@@ -80,6 +86,7 @@ export function createSilentRecovery(options: {
       scope = currentScope;
       scopeEpoch++;
       budget.reset();
+      resetStuckWorker();
       workerRecovery.clearEscalation();
       manualRequested = false;
       unhealthySince = undefined;
@@ -115,8 +122,7 @@ export function createSilentRecovery(options: {
       manualRequested = false;
       unhealthySince = undefined;
       busySince = undefined;
-      stuckWorker.reset();
-      stuckReloadRequested = false;
+      resetStuckWorker();
       showFailure(false);
       return;
     }
