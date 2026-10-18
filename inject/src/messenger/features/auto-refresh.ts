@@ -344,6 +344,9 @@ export function initAutoRefresh() {
     needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
     isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
     check: () => realtime.check(),
+    reload: () => {
+      if (!pending) schedule(0, "worker-stuck");
+    },
   });
   // These events are reasons to check sync, not evidence that it is broken.
   const noteLifecycle = () => {

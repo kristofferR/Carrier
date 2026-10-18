@@ -1,7 +1,8 @@
 # Messenger sync recovery
 
 Responsive Messenger pages repair the messaging worker without navigation. A
-repair that replaces a dedicated worker (macOS) is followed by one reload; see
+stuck dedicated worker (macOS) that already served the page is the exception:
+the page reloads instead; see
 [A replaced dedicated worker needs a reload](#a-replaced-dedicated-worker-needs-a-reload).
 Focus, visibility, wake, notifications, and going online trigger health checks;
 they are no longer reasons to periodically reload the page.
@@ -326,11 +327,21 @@ yet the page never showed a newly received message, and two queued sends stayed
 at "Sending…". A reload restored both. Reading Messenger's page-side setup code
 did not reveal which state stayed attached to the old worker.
 
-Carrier therefore treats a second dedicated worker, created after an earlier
-one completed backend setup, as proof the page is unhealthy. It logs
-`sync.worker-replaced` and reloads under the usual draft, call, sleep, offline,
-rate-limit, and Hold Failures guards. Startup retries before any setup succeeds
-do not count, and shared-worker restarts are unaffected.
+Carrier therefore never replaces a dedicated worker whose backend setup
+succeeded. The old worker can still reconnect by itself: Messenger retries its
+socket with backoff capped at 60 seconds, and on October 17 one outage healed
+that way after 25 minutes. So the page waits while Facebook is unreachable, and
+probes it at most every 30 seconds with a `HEAD /favicon.ico` request; any HTTP
+answer counts. Once Facebook has answered for two minutes and the worker is
+still stuck, Carrier logs `sync.worker-stuck` and reloads. After ten stuck
+minutes it reloads even without a successful probe, so a probe fault cannot
+strand the page. Startups that never succeeded are still repaired in place.
+
+Any other second dedicated worker, created after an earlier one completed
+backend setup (for example by Messenger's own bad-state reboot), is likewise
+treated as proof the page is unhealthy: Carrier logs `sync.worker-replaced` and
+reloads. Both reloads use the usual draft, call, sleep, offline, rate-limit, and
+Hold Failures guards. Shared-worker restarts are unaffected.
 
 ## Message-processing diagnostics
 

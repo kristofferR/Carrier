@@ -928,6 +928,7 @@ ${button.innerHTML}`)
         const currentId = method(state2, "getCurrentWorkerID");
         const reset = method(state2, "resetBackendSetup");
         const reject = method(state2, "rejectBackendSetup");
+        const successful = method(state2, "isBackendSetupSuccessful");
         const singleton = this.load("MAWWebWorkerSingleton");
         const health = method(singleton, "getWorkerHealthStatus");
         if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
@@ -984,6 +985,9 @@ ${button.innerHTML}`)
         } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
         if (status.tag === "dedicated_exists") {
+          if (!stalledSetup && id === "dedicated" && successful?.call(state2) === true) {
+            return "reload";
+          }
           if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
             return "unsupported";
           }
@@ -1516,8 +1520,8 @@ ${button.innerHTML}`)
     }
   };
   function monitorRealtimeHealth(callbacks) {
-    const nativeSetTimeout4 = setTimeout.bind(globalThis);
-    const nativeClearTimeout3 = clearTimeout.bind(globalThis);
+    const nativeSetTimeout5 = setTimeout.bind(globalThis);
+    const nativeClearTimeout4 = clearTimeout.bind(globalThis);
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
     const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
@@ -1610,7 +1614,7 @@ ${button.innerHTML}`)
       let live = true;
       let timeout;
       const deadline = new Promise((_, reject) => {
-        timeout = nativeSetTimeout4(
+        timeout = nativeSetTimeout5(
           () => reject(new Error("Messenger worker probe timed out")),
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
@@ -1649,7 +1653,7 @@ ${button.innerHTML}`)
       }).finally(() => {
         live = false;
         observation?.dispose();
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         workerProbePending = false;
       });
     };
@@ -1728,7 +1732,7 @@ ${button.innerHTML}`)
             watchdog.received(socket, Date.now());
             callbacks.onHealthy("socket");
           });
-          const failed = () => nativeSetTimeout4(checkSockets, 1e3);
+          const failed = () => nativeSetTimeout5(checkSockets, 1e3);
           socket.addEventListener("error", failed);
           socket.addEventListener("close", () => {
             watchdog.closed(socket, Date.now());
@@ -1752,6 +1756,70 @@ ${button.innerHTML}`)
       isRecoveryHealthy: () => verifiedConnection() || !expectsEncryptedWorker() && watchdog.health(Date.now()) === "healthy"
     };
   }
+
+  // inject/src/messenger/lib/stuck-worker.ts
+  var STUCK_WORKER_RELOAD_MS = 12e4;
+  var STUCK_WORKER_MAX_MS = 6e5;
+  var PROBE_INTERVAL_MS = 3e4;
+  var PROBE_TIMEOUT_MS = 1e4;
+  var nativeSetTimeout2 = setTimeout.bind(globalThis);
+  var nativeClearTimeout2 = clearTimeout.bind(globalThis);
+  async function probeFacebook(fetch2) {
+    const controller = new AbortController();
+    const timer = nativeSetTimeout2(() => controller.abort(), PROBE_TIMEOUT_MS);
+    try {
+      await fetch2("/favicon.ico", {
+        method: "HEAD",
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      nativeClearTimeout2(timer);
+    }
+  }
+  var StuckWorkerReload = class {
+    constructor(probe, now) {
+      __publicField(this, "probe", probe);
+      __publicField(this, "now", now);
+      __publicField(this, "stuckSince");
+      __publicField(this, "reachableSince");
+      __publicField(this, "lastProbeAt");
+      __publicField(this, "probing", false);
+      __publicField(this, "episode", 0);
+    }
+    reset() {
+      this.episode++;
+      this.stuckSince = void 0;
+      this.reachableSince = void 0;
+      this.lastProbeAt = void 0;
+    }
+    /** Call while the worker stays stuck; returns why a reload is now due. */
+    due() {
+      const now = this.now();
+      this.stuckSince ?? (this.stuckSince = now);
+      if (!this.probing && (this.lastProbeAt === void 0 || now - this.lastProbeAt >= PROBE_INTERVAL_MS)) {
+        this.probing = true;
+        this.lastProbeAt = now;
+        const episode = this.episode;
+        void this.probe().catch(() => false).then((reachable) => {
+          if (episode !== this.episode) return;
+          if (reachable) this.reachableSince ?? (this.reachableSince = this.now());
+          else this.reachableSince = void 0;
+        }).finally(() => {
+          this.probing = false;
+        });
+      }
+      if (this.reachableSince !== void 0 && now - this.reachableSince >= STUCK_WORKER_RELOAD_MS) {
+        return "reachable";
+      }
+      return now - this.stuckSince >= STUCK_WORKER_MAX_MS ? "timeout" : void 0;
+    }
+  };
 
   // inject/src/messenger/lib/worker-replacement.ts
   function record2(value) {
@@ -1845,9 +1913,15 @@ ${button.innerHTML}`)
   var NETWORK_RESTORATION_GRACE_MS = 15e3;
   function createSilentRecovery(options) {
     const budget = new SilentRecoveryBudget();
-    const nativeSetTimeout4 = window.setTimeout.bind(window);
-    const nativeClearTimeout3 = window.clearTimeout.bind(window);
+    const nativeSetTimeout5 = window.setTimeout.bind(window);
+    const nativeClearTimeout4 = window.clearTimeout.bind(window);
     const now = performance.now.bind(performance);
+    const nativeFetch = typeof window.fetch === "function" ? window.fetch.bind(window) : void 0;
+    const stuckWorker = new StuckWorkerReload(
+      async () => !!nativeFetch && await probeFacebook(nativeFetch),
+      now
+    );
+    let stuckReloadRequested = false;
     const wallNow = Date.now.bind(Date);
     let lastTickAt = wallNow();
     let restartRunningDeadline;
@@ -1883,6 +1957,8 @@ ${button.innerHTML}`)
     const resetSettle = () => {
       unhealthySince = void 0;
       busySince = void 0;
+      stuckWorker.reset();
+      stuckReloadRequested = false;
       budget.restartObservation(now());
       if (running && !runningTimedOut) restartRunningDeadline?.();
     };
@@ -1928,6 +2004,8 @@ ${button.innerHTML}`)
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
+        stuckWorker.reset();
+        stuckReloadRequested = false;
         showFailure(false);
         return;
       }
@@ -1966,15 +2044,15 @@ ${button.innerHTML}`)
         );
       };
       restartRunningDeadline = () => {
-        nativeClearTimeout3(timeout);
-        timeout = nativeSetTimeout4(expire, SILENT_RECOVERY_TIMEOUT_MS);
+        nativeClearTimeout4(timeout);
+        timeout = nativeSetTimeout5(expire, SILENT_RECOVERY_TIMEOUT_MS);
       };
       restartRunningDeadline();
       void workerRecovery.recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
         budget.attemptCount >= 2 || busySince !== void 0 && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS
       ).then((result) => {
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -1982,7 +2060,21 @@ ${button.innerHTML}`)
           options.check();
           return;
         }
-        if (result === "busy") {
+        if (result === "reload") {
+          budget.cancel();
+          outageRequests--;
+          const due = stuckWorker.due();
+          if (due) {
+            if (!stuckReloadRequested) {
+              stuckReloadRequested = true;
+              diag(
+                "sync.worker-stuck",
+                due === "reachable" ? "encrypted worker stayed disconnected while Facebook answered; reloading" : "encrypted worker stayed disconnected for 10 minutes; reloading"
+              );
+            }
+            options.reload();
+          }
+        } else if (result === "busy") {
           budget.cancel();
           busySince ?? (busySince = now());
           if (now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS) showFailure(true);
@@ -2018,7 +2110,7 @@ ${button.innerHTML}`)
         }
         options.check();
       }).catch(() => {
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -2178,7 +2270,7 @@ ${button.innerHTML}`)
       performance.now.bind(performance)
     );
     const documentEpochMs = Math.floor(performance.timeOrigin);
-    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeSetTimeout5 = window.setTimeout.bind(window);
     const nativeNow2 = performance.now.bind(performance);
     let reloadRequestedAt;
     let unloadObserved = false;
@@ -2312,7 +2404,7 @@ ${button.innerHTML}`)
           payload: { key: "recovery.snapshot", msg: snapshot }
         })?.catch?.(() => {
         }),
-        new Promise((resolve) => nativeSetTimeout4(resolve, 500))
+        new Promise((resolve) => nativeSetTimeout5(resolve, 500))
       ]);
     };
     window.__carrierCaptureRecovery = captureRecovery;
@@ -2365,7 +2457,7 @@ ${button.innerHTML}`)
       if (reloadRequestedAt === void 0) {
         reloadRequestedAt = nativeNow2();
         unloadObserved = false;
-        nativeSetTimeout4(() => {
+        nativeSetTimeout5(() => {
           diag(
             "sync.reload-unfinished",
             `same document alive ${Math.round(nativeNow2() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
@@ -2415,7 +2507,10 @@ ${button.innerHTML}`)
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
       isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
-      check: () => realtime.check()
+      check: () => realtime.check(),
+      reload: () => {
+        if (!pending) schedule(0, "worker-stuck");
+      }
     });
     const noteLifecycle = () => {
       sampleSyncProcessing(processingActive());
@@ -2564,8 +2659,8 @@ ${button.innerHTML}`)
   var nativeReflectApply = Reflect.apply;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
-  var nativeSetTimeout2 = globalThis.setTimeout;
-  var nativeClearTimeout2 = globalThis.clearTimeout;
+  var nativeSetTimeout3 = globalThis.setTimeout;
+  var nativeClearTimeout3 = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -2583,7 +2678,7 @@ ${button.innerHTML}`)
     return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        nativeReflectApply(nativeClearTimeout2, globalThis, [timer]);
+        nativeReflectApply(nativeClearTimeout3, globalThis, [timer]);
         nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
@@ -2611,7 +2706,7 @@ ${button.innerHTML}`)
         ]);
       };
       nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
-      timer = nativeReflectApply(nativeSetTimeout2, globalThis, [
+      timer = nativeReflectApply(nativeSetTimeout3, globalThis, [
         () => {
           cleanup();
           reject(new Error("native download timed out"));
@@ -2664,7 +2759,7 @@ ${button.innerHTML}`)
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout3 = window.setTimeout;
+  var nativeSetTimeout4 = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -3110,7 +3205,7 @@ ${button.innerHTML}`)
         focusedIndex = 0;
         const firstItem = menuItems[0];
         if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout3, window, [
+        nativeReflectApply3(nativeSetTimeout4, window, [
           () => {
             nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
             nativeReflectApply3(nativeAddEventListener2, document, [

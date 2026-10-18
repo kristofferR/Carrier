@@ -19,6 +19,7 @@ function fixture(
   let currentId: string | null = null;
   let inProgress = false;
   let settled = true;
+  let successful = false;
   let status = "shared_not_exists";
   let resets = 0;
   const rejected: unknown[] = [];
@@ -41,6 +42,7 @@ function fixture(
   const modules: Record<string, unknown> = {
     MAWWaitForBackendSetup: {
       isBackendSetupSettled: () => settled,
+      isBackendSetupSuccessful: () => settled && successful,
       isBackendSetupInProgress: () => inProgress,
       getCurrentWorkerID: () => currentId,
       resetBackendSetup: () => {
@@ -99,6 +101,9 @@ function fixture(
     },
     set settled(value: boolean) {
       settled = value;
+    },
+    set successful(value: boolean) {
+      successful = value;
     },
     set status(value: string) {
       status = value;
@@ -679,7 +684,19 @@ describe("Messenger worker recovery", () => {
     expect(calls).toBe(1);
   });
 
-  test("stops and replays a dedicated worker without navigating", async () => {
+  test("asks for a reload instead of replacing a dedicated worker that served the page", async () => {
+    const f = fixture();
+    f.setup.getOrSetupWorker(...f.args);
+    f.currentId = "dedicated";
+    f.status = "dedicated_exists";
+    f.successful = true;
+    expect(await f.recovery.recover()).toBe("reload");
+    expect(f.terminationCalls).toHaveLength(0);
+    expect(f.setupCalls).toHaveLength(1);
+    expect(f.resets).toBe(0);
+  });
+
+  test("stops and replays a dedicated worker whose startup failed", async () => {
     const f = fixture();
     f.setup.getOrSetupWorker(...f.args);
     f.currentId = "dedicated";

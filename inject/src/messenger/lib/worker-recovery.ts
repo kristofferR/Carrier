@@ -19,7 +19,9 @@ export type WorkerRecoveryResult =
   | "busy"
   | "unsupported"
   | "failed"
-  | "inspection-timeout";
+  | "inspection-timeout"
+  /** The page itself must reload; nothing was mutated. */
+  | "reload";
 
 const INSPECTION_TIMEOUT_MS = 8_000;
 const nativeSetTimeout = setTimeout.bind(globalThis);
@@ -226,6 +228,7 @@ export class FacebookWorkerRecovery {
       const currentId = method(state, "getCurrentWorkerID");
       const reset = method(state, "resetBackendSetup");
       const reject = method(state, "rejectBackendSetup");
+      const successful = method(state, "isBackendSetupSuccessful");
       const singleton = this.load("MAWWebWorkerSingleton");
       const health = method(singleton, "getWorkerHealthStatus");
       if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
@@ -323,6 +326,12 @@ export class FacebookWorkerRecovery {
       } else if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
       const id = currentId.call(state);
       if (status.tag === "dedicated_exists") {
+        // Messenger never replaces a dedicated worker inside a live page, and
+        // a replacement can verify as connected while this page never shows
+        // its messages. Only a startup that never succeeded is repaired here.
+        if (!stalledSetup && id === "dedicated" && successful?.call(state) === true) {
+          return "reload";
+        }
         if (
           id !== "dedicated" ||
           initialId !== id ||

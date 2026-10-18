@@ -4,7 +4,8 @@ export type ScheduledRefreshReason =
   | "rate-limit"
   | "rate-limit-manual"
   | "manual"
-  | "worker-replaced";
+  | "worker-replaced"
+  | "worker-stuck";
 
 /** Recovery requires the expected transport, not unrelated page MQTT traffic. */
 export function nativeRealtimeStatus(

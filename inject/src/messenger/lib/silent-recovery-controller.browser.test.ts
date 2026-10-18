@@ -66,6 +66,7 @@ async function runFixtures(
     needsRecovery: () => boolean;
     isHealthy: () => boolean;
     check: () => void;
+    reload: () => void;
   }) => { tick: () => void; resetSettle: () => void },
   adapter: { recover: (allowed?: () => boolean, restartShared?: boolean) => Promise<string> },
   failureEvent: string,
@@ -100,12 +101,16 @@ async function runFixtures(
     }
     await flush();
   };
+  let reloads = 0;
   const make = (state: { needed: boolean; healthy: boolean }) =>
     createRecovery({
       blocked: () => false,
       needsRecovery: () => state.needed,
       isHealthy: () => state.healthy,
       check: () => {},
+      reload: () => {
+        reloads++;
+      },
     });
   const originalRecover = adapter.recover;
   let calls = 0;
@@ -331,6 +336,42 @@ async function runFixtures(
       "busy network-restoration retry retains native handoff",
       busyAttempts === 2 && failure && failureChanges.join() === "true",
     );
+
+    let facebookAnswers = false;
+    window.fetch = (async () => {
+      if (!facebookAnswers) throw new TypeError("Load failed");
+      return new Response(null);
+    }) as unknown as typeof window.fetch;
+    adapter.recover = async () => "reload";
+    const stuckState = { needed: true, healthy: false };
+    const stuckRecovery = make(stuckState);
+    let stuckFailure = false;
+    window.addEventListener(failureEvent, (event) => {
+      if ((event as CustomEvent<boolean>).detail === true) stuckFailure = true;
+    });
+    const tickFor = async (ms: number) => {
+      for (let elapsed = 0; elapsed < ms; elapsed += 5_000) {
+        stuckRecovery.tick();
+        await flush();
+        await advance(5_000);
+      }
+    };
+    await tickFor(180_000);
+    assert("a stuck worker waits while Facebook is unreachable", reloads === 0);
+    facebookAnswers = true;
+    await tickFor(85_000);
+    assert("a reachable Facebook first gets two retry rounds", reloads === 0);
+    await tickFor(70_000);
+    assert("a worker stuck while Facebook answers reloads the page", reloads > 0);
+    assert("a stuck worker never spends the repair budget", !stuckFailure);
+    stuckState.needed = false;
+    stuckState.healthy = true;
+    stuckRecovery.tick();
+    const reloadsBefore = reloads;
+    stuckState.needed = true;
+    stuckState.healthy = false;
+    await tickFor(85_000);
+    assert("a new stuck episode waits again", reloads === reloadsBefore);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;
