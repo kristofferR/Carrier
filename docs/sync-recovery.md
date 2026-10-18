@@ -1,6 +1,9 @@
 # Messenger sync recovery
 
-Responsive Messenger pages repair the messaging worker without navigation.
+Responsive Messenger pages repair the messaging worker without navigation. A
+stuck dedicated worker (macOS) that already served the page is the exception:
+the page reloads instead; see
+[A replaced dedicated worker needs a reload](#a-replaced-dedicated-worker-needs-a-reload).
 Focus, visibility, wake, notifications, and going online trigger health checks;
 they are no longer reasons to periodically reload the page.
 
@@ -312,6 +315,36 @@ a live account between worker types or overlaps two setup attempts. Existing
 dedicated-worker recovery and draft/call/offline protections still apply. This is
 a workaround for the observed process-lifetime failure, not a guarantee against
 all OS resource reclamation; validate it on the affected Mac after installation.
+
+### A replaced dedicated worker needs a reload
+
+Messenger restarts shared workers in place, but registers no restart for a
+dedicated worker: that backend is meant to live as long as its page. On
+October 18 a seven-minute network outage left the Mac's dedicated worker
+disconnected after the network returned. Carrier's in-place repair replaced it.
+The replacement's encrypted connection verified as healthy within five seconds,
+yet the page never showed a newly received message, and two queued sends stayed
+at "Sending…". A reload restored both. Reading Messenger's page-side setup code
+did not reveal which state stayed attached to the old worker.
+
+Carrier therefore never replaces a dedicated worker whose backend setup
+succeeded. The old worker can still reconnect by itself: Messenger retries its
+socket with backoff capped at 60 seconds, and on October 17 one outage healed
+that way after 25 minutes. So the page waits while Facebook is unreachable, and
+probes it at most every 30 seconds with a `HEAD /favicon.ico` request; any HTTP
+answer counts. Once Facebook has answered for two minutes and the worker is
+still stuck, Carrier logs `sync.worker-stuck` and reloads. After ten stuck
+minutes it reloads even without a successful probe, so a probe fault cannot
+strand the page. Startups that never succeeded are still repaired in place.
+
+Any other second dedicated worker, created after an earlier one completed
+backend setup (for example by Messenger's own bad-state reboot), is likewise
+treated as proof the page is unhealthy: Carrier logs `sync.worker-replaced` and
+reloads. Both reloads use the usual draft, call, sleep, offline, rate-limit, and
+Hold Failures guards. Shared-worker restarts are unaffected. There is
+deliberately no reload cap or backoff across documents: each new document must
+gather the evidence again, so repeats during a lasting outage stay minutes apart,
+and a page left stale after the outage ends is the worse failure.
 
 ## Message-processing diagnostics
 

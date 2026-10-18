@@ -66,6 +66,8 @@ async function runFixtures(
     needsRecovery: () => boolean;
     isHealthy: () => boolean;
     check: () => void;
+    reload: () => void;
+    cancelReload: () => void;
   }) => { tick: () => void; resetSettle: () => void },
   adapter: { recover: (allowed?: () => boolean, restartShared?: boolean) => Promise<string> },
   failureEvent: string,
@@ -100,12 +102,21 @@ async function runFixtures(
     }
     await flush();
   };
-  const make = (state: { needed: boolean; healthy: boolean }) =>
+  let reloads = 0;
+  let pendingReload = false;
+  const make = (state: { needed: boolean; healthy: boolean; blocked?: boolean }) =>
     createRecovery({
-      blocked: () => false,
+      blocked: () => state.blocked === true,
       needsRecovery: () => state.needed,
       isHealthy: () => state.healthy,
       check: () => {},
+      reload: () => {
+        reloads++;
+        pendingReload = true;
+      },
+      cancelReload: () => {
+        pendingReload = false;
+      },
     });
   const originalRecover = adapter.recover;
   let calls = 0;
@@ -331,6 +342,70 @@ async function runFixtures(
       "busy network-restoration retry retains native handoff",
       busyAttempts === 2 && failure && failureChanges.join() === "true",
     );
+
+    let facebookAnswers = false;
+    window.fetch = (async () => {
+      if (!facebookAnswers) throw new TypeError("Load failed");
+      return new Response(null);
+    }) as unknown as typeof window.fetch;
+    let stuckResult = "busy";
+    let stuckEscalation = false;
+    adapter.recover = async (_allowed, escalate) => {
+      stuckEscalation = escalate === true;
+      return stuckResult;
+    };
+    const stuckState = { needed: true, healthy: false, blocked: false };
+    const stuckRecovery = make(stuckState);
+    let stuckFailure = false;
+    window.addEventListener(failureEvent, (event) => {
+      stuckFailure = (event as CustomEvent<boolean>).detail;
+    });
+    const tickFor = async (ms: number) => {
+      for (let elapsed = 0; elapsed < ms; elapsed += 5_000) {
+        stuckRecovery.tick();
+        await flush();
+        await advance(5_000);
+      }
+    };
+    await tickFor(55_000);
+    assert("prolonged busy setup hands transport to native", stuckFailure && stuckEscalation);
+    stuckResult = "reload";
+    await tickFor(10_000);
+    assert("page-managed reload clears the old native handoff", !stuckFailure);
+    assert("page-managed reload clears busy escalation", !stuckEscalation);
+    await tickFor(180_000);
+    assert("a stuck worker waits while Facebook is unreachable", reloads === 0);
+    facebookAnswers = true;
+    await tickFor(85_000);
+    assert("a reachable Facebook first gets two retry rounds", reloads === 0);
+    await tickFor(70_000);
+    assert("a worker stuck while Facebook answers reloads the page", reloads > 0);
+    assert("a stuck worker never spends the repair budget", !stuckFailure);
+    assert("a protected reload can remain queued", pendingReload);
+    stuckState.blocked = true;
+    stuckState.needed = false;
+    stuckState.healthy = true;
+    stuckRecovery.tick();
+    assert("recovery cancels a queued stuck-worker reload even under protection", !pendingReload);
+    stuckState.blocked = false;
+    const reloadsBefore = reloads;
+    stuckState.needed = true;
+    stuckState.healthy = false;
+    await tickFor(85_000);
+    assert("a new stuck episode waits again", reloads === reloadsBefore);
+    // biome-ignore lint/suspicious/noDocumentCookie: synthetic account switch while still stale.
+    document.cookie = "c_user=789; path=/";
+    await tickFor(85_000);
+    assert("a stale new account cannot inherit reachability evidence", reloads === reloadsBefore);
+    await tickFor(70_000);
+    assert(
+      "a stale new account reloads after its own reachability window",
+      reloads > reloadsBefore,
+    );
+    // biome-ignore lint/suspicious/noDocumentCookie: synthetic account switch with a queued reload.
+    document.cookie = "c_user=987; path=/";
+    stuckRecovery.tick();
+    assert("an account change cancels the previous account's queued reload", !pendingReload);
     result.textContent = "PASS";
   } catch (error) {
     result.textContent = `FAIL: ${String(error)}`;

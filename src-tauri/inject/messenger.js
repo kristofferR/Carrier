@@ -928,6 +928,7 @@ ${button.innerHTML}`)
         const currentId = method(state2, "getCurrentWorkerID");
         const reset = method(state2, "resetBackendSetup");
         const reject = method(state2, "rejectBackendSetup");
+        const successful = method(state2, "isBackendSetupSuccessful");
         const singleton = this.load("MAWWebWorkerSingleton");
         const health = method(singleton, "getWorkerHealthStatus");
         if (!settled || !inProgress || !currentId || !reset || !reject || !health) {
@@ -984,6 +985,11 @@ ${button.innerHTML}`)
         } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
         if (status.tag === "dedicated_exists") {
+          const setupSuccessful = successful?.call(state2);
+          if (typeof setupSuccessful !== "boolean") return "unsupported";
+          if (!stalledSetup && id === "dedicated" && setupSuccessful) {
+            return "reload";
+          }
           if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
             return "unsupported";
           }
@@ -1516,8 +1522,8 @@ ${button.innerHTML}`)
     }
   };
   function monitorRealtimeHealth(callbacks) {
-    const nativeSetTimeout4 = setTimeout.bind(globalThis);
-    const nativeClearTimeout3 = clearTimeout.bind(globalThis);
+    const nativeSetTimeout5 = setTimeout.bind(globalThis);
+    const nativeClearTimeout4 = clearTimeout.bind(globalThis);
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
     const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
@@ -1610,7 +1616,7 @@ ${button.innerHTML}`)
       let live = true;
       let timeout;
       const deadline = new Promise((_, reject) => {
-        timeout = nativeSetTimeout4(
+        timeout = nativeSetTimeout5(
           () => reject(new Error("Messenger worker probe timed out")),
           WORKER_HEARTBEAT_TIMEOUT_MS
         );
@@ -1649,7 +1655,7 @@ ${button.innerHTML}`)
       }).finally(() => {
         live = false;
         observation?.dispose();
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         workerProbePending = false;
       });
     };
@@ -1728,7 +1734,7 @@ ${button.innerHTML}`)
             watchdog.received(socket, Date.now());
             callbacks.onHealthy("socket");
           });
-          const failed = () => nativeSetTimeout4(checkSockets, 1e3);
+          const failed = () => nativeSetTimeout5(checkSockets, 1e3);
           socket.addEventListener("error", failed);
           socket.addEventListener("close", () => {
             watchdog.closed(socket, Date.now());
@@ -1753,12 +1759,145 @@ ${button.innerHTML}`)
     };
   }
 
+  // inject/src/messenger/lib/stuck-worker.ts
+  var STUCK_WORKER_RELOAD_MS = 12e4;
+  var STUCK_WORKER_MAX_MS = 6e5;
+  var PROBE_INTERVAL_MS = 3e4;
+  var PROBE_TIMEOUT_MS = 1e4;
+  var nativeSetTimeout2 = setTimeout.bind(globalThis);
+  var nativeClearTimeout2 = clearTimeout.bind(globalThis);
+  async function probeFacebook(fetch2) {
+    const controller = new AbortController();
+    const timer = nativeSetTimeout2(() => controller.abort(), PROBE_TIMEOUT_MS);
+    try {
+      await fetch2("/favicon.ico", {
+        method: "HEAD",
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "manual",
+        signal: controller.signal
+      });
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      nativeClearTimeout2(timer);
+    }
+  }
+  var StuckWorkerReload = class {
+    constructor(probe, now) {
+      __publicField(this, "probe", probe);
+      __publicField(this, "now", now);
+      __publicField(this, "stuckSince");
+      __publicField(this, "reachableSince");
+      __publicField(this, "lastProbeAt");
+      __publicField(this, "probing", false);
+      __publicField(this, "episode", 0);
+    }
+    reset() {
+      this.episode++;
+      this.stuckSince = void 0;
+      this.reachableSince = void 0;
+      this.lastProbeAt = void 0;
+    }
+    /** Call while the worker stays stuck; returns why a reload is now due. */
+    due() {
+      const now = this.now();
+      this.stuckSince ?? (this.stuckSince = now);
+      if (!this.probing && (this.lastProbeAt === void 0 || now - this.lastProbeAt >= PROBE_INTERVAL_MS)) {
+        this.probing = true;
+        this.lastProbeAt = now;
+        const episode = this.episode;
+        void this.probe().catch(() => false).then((reachable) => {
+          if (episode !== this.episode) return;
+          if (reachable) this.reachableSince ?? (this.reachableSince = this.now());
+          else this.reachableSince = void 0;
+        }).finally(() => {
+          this.probing = false;
+        });
+      }
+      if (!this.probing && this.reachableSince !== void 0 && now - this.reachableSince >= STUCK_WORKER_RELOAD_MS) {
+        return "reachable";
+      }
+      return now - this.stuckSince >= STUCK_WORKER_MAX_MS ? "timeout" : void 0;
+    }
+  };
+
+  // inject/src/messenger/lib/worker-replacement.ts
+  function record2(value) {
+    return value !== null && typeof value === "object" ? value : void 0;
+  }
+  var DedicatedWorkerReplacement = class {
+    constructor(load) {
+      __publicField(this, "load", load);
+      __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "current");
+      /** Some worker in this document completed backend setup. */
+      __publicField(this, "served", false);
+      __publicField(this, "replacedWorker", false);
+    }
+    setupSucceeded() {
+      try {
+        const state2 = record2(this.load("MAWWaitForBackendSetup"));
+        const successful = state2?.isBackendSetupSuccessful;
+        return typeof successful === "function" && successful.call(state2) === true;
+      } catch (_) {
+        return false;
+      }
+    }
+    observeLifecycleExports(value) {
+      const exports = record2(value);
+      const create = exports?.createWorkerIfNone;
+      if (!exports || typeof create !== "function" || this.wrapped.has(create)) return;
+      const owner = this;
+      const wrapped3 = new Proxy(create, {
+        apply(target, receiver, args) {
+          const result = Reflect.apply(target, receiver, args);
+          try {
+            owner.created(result);
+          } catch (_) {
+          }
+          return result;
+        }
+      });
+      try {
+        exports.createWorkerIfNone = wrapped3;
+        this.wrapped.add(wrapped3);
+      } catch (_) {
+      }
+    }
+    created(result) {
+      const creation = record2(result);
+      if (!creation || typeof creation.then !== "function" || creation === this.current) return;
+      if (this.current && !this.served && this.setupSucceeded()) this.served = true;
+      this.current = creation;
+      if (!this.served) return;
+      creation.then(
+        (value) => {
+          if (record2(value)?.workerID === "dedicated") this.replacedWorker = true;
+        },
+        () => {
+        }
+      );
+    }
+    /**
+     * Sample periodically. A worker serves the page once its backend setup
+     * succeeds, so failed startup retries never count as a replacement.
+     */
+    replaced() {
+      if (this.current && !this.served && this.setupSucceeded()) this.served = true;
+      return this.replacedWorker;
+    }
+  };
+
   // inject/src/messenger/features/worker-recovery.ts
+  var loadFacebookModule = (name) => {
+    const page = window;
+    return page.require?.(name);
+  };
+  var workerReplacement = new DedicatedWorkerReplacement(loadFacebookModule);
   var workerRecovery = new FacebookWorkerRecovery(
-    (name) => {
-      const page = window;
-      return page.require?.(name);
-    },
+    loadFacebookModule,
     () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
     async () => {
       if (window.__CARRIER_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
@@ -1777,9 +1916,20 @@ ${button.innerHTML}`)
   var NETWORK_RESTORATION_GRACE_MS = 15e3;
   function createSilentRecovery(options) {
     const budget = new SilentRecoveryBudget();
-    const nativeSetTimeout4 = window.setTimeout.bind(window);
-    const nativeClearTimeout3 = window.clearTimeout.bind(window);
+    const nativeSetTimeout5 = window.setTimeout.bind(window);
+    const nativeClearTimeout4 = window.clearTimeout.bind(window);
     const now = performance.now.bind(performance);
+    const nativeFetch = typeof window.fetch === "function" ? window.fetch.bind(window) : void 0;
+    const stuckWorker = new StuckWorkerReload(
+      async () => !!nativeFetch && await probeFacebook(nativeFetch),
+      now
+    );
+    let stuckReloadRequested = false;
+    const resetStuckWorker = () => {
+      stuckWorker.reset();
+      stuckReloadRequested = false;
+      options.cancelReload();
+    };
     const wallNow = Date.now.bind(Date);
     let lastTickAt = wallNow();
     let restartRunningDeadline;
@@ -1815,6 +1965,7 @@ ${button.innerHTML}`)
     const resetSettle = () => {
       unhealthySince = void 0;
       busySince = void 0;
+      resetStuckWorker();
       budget.restartObservation(now());
       if (running && !runningTimedOut) restartRunningDeadline?.();
     };
@@ -1825,6 +1976,7 @@ ${button.innerHTML}`)
         scope = currentScope;
         scopeEpoch++;
         budget.reset();
+        resetStuckWorker();
         workerRecovery.clearEscalation();
         manualRequested = false;
         unhealthySince = void 0;
@@ -1860,6 +2012,7 @@ ${button.innerHTML}`)
         manualRequested = false;
         unhealthySince = void 0;
         busySince = void 0;
+        resetStuckWorker();
         showFailure(false);
         return;
       }
@@ -1898,15 +2051,15 @@ ${button.innerHTML}`)
         );
       };
       restartRunningDeadline = () => {
-        nativeClearTimeout3(timeout);
-        timeout = nativeSetTimeout4(expire, SILENT_RECOVERY_TIMEOUT_MS);
+        nativeClearTimeout4(timeout);
+        timeout = nativeSetTimeout5(expire, SILENT_RECOVERY_TIMEOUT_MS);
       };
       restartRunningDeadline();
       void workerRecovery.recover(
         () => !runningTimedOut && !options.blocked(manual) && options.needsRecovery(),
         budget.attemptCount >= 2 || busySince !== void 0 && now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS
       ).then((result) => {
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -1914,7 +2067,23 @@ ${button.innerHTML}`)
           options.check();
           return;
         }
-        if (result === "busy") {
+        if (result === "reload") {
+          budget.cancel();
+          outageRequests--;
+          busySince = void 0;
+          showFailure(false);
+          const due = stuckWorker.due();
+          if (due) {
+            if (!stuckReloadRequested) {
+              stuckReloadRequested = true;
+              diag(
+                "sync.worker-stuck",
+                due === "reachable" ? "encrypted worker stayed disconnected while Facebook answered; reloading" : "encrypted worker stayed disconnected for 10 minutes; reloading"
+              );
+            }
+            options.reload();
+          }
+        } else if (result === "busy") {
           budget.cancel();
           busySince ?? (busySince = now());
           if (now() - busySince >= SILENT_RECOVERY_TIMEOUT_MS) showFailure(true);
@@ -1950,7 +2119,7 @@ ${button.innerHTML}`)
         }
         options.check();
       }).catch(() => {
-        nativeClearTimeout3(timeout);
+        nativeClearTimeout4(timeout);
         restartRunningDeadline = void 0;
         running = false;
         runningTimedOut = false;
@@ -2110,7 +2279,7 @@ ${button.innerHTML}`)
       performance.now.bind(performance)
     );
     const documentEpochMs = Math.floor(performance.timeOrigin);
-    const nativeSetTimeout4 = window.setTimeout.bind(window);
+    const nativeSetTimeout5 = window.setTimeout.bind(window);
     const nativeNow2 = performance.now.bind(performance);
     let reloadRequestedAt;
     let unloadObserved = false;
@@ -2244,14 +2413,20 @@ ${button.innerHTML}`)
           payload: { key: "recovery.snapshot", msg: snapshot }
         })?.catch?.(() => {
         }),
-        new Promise((resolve) => nativeSetTimeout4(resolve, 500))
+        new Promise((resolve) => nativeSetTimeout5(resolve, 500))
       ]);
     };
     window.__carrierCaptureRecovery = captureRecovery;
     let capturingRecovery = false;
     const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" && pendingReason !== "manual";
+    const cancelRecoveredStuckReload = () => {
+      if (pendingReason === "worker-stuck" && realtimeStatus() === "ok" && recoveryHealthy()) {
+        clearPending();
+      }
+    };
     const maybeReload = async () => {
       timer = void 0;
+      cancelRecoveredStuckReload();
       if (!pending || capturingRecovery) return;
       if (recoveryHeld()) {
         diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
@@ -2284,6 +2459,7 @@ ${button.innerHTML}`)
       } finally {
         capturingRecovery = false;
       }
+      cancelRecoveredStuckReload();
       if (!pending || capturedReason !== pendingReason) return;
       if (recoveryHeld()) {
         diag("recovery.held", `automatic ${pendingReason} recovery paused for investigation`);
@@ -2297,7 +2473,7 @@ ${button.innerHTML}`)
       if (reloadRequestedAt === void 0) {
         reloadRequestedAt = nativeNow2();
         unloadObserved = false;
-        nativeSetTimeout4(() => {
+        nativeSetTimeout5(() => {
           diag(
             "sync.reload-unfinished",
             `same document alive ${Math.round(nativeNow2() - (reloadRequestedAt ?? 0))}ms after reload; beforeunload=${unloadObserved} ready=${document.readyState} visible=${!document.hidden}`
@@ -2347,7 +2523,13 @@ ${button.innerHTML}`)
       blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
       isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
-      check: () => realtime.check()
+      check: () => realtime.check(),
+      reload: () => {
+        if (!pending) schedule(0, "worker-stuck");
+      },
+      cancelReload: () => {
+        if (pending && pendingReason === "worker-stuck") clearPending();
+      }
     });
     const noteLifecycle = () => {
       sampleSyncProcessing(processingActive());
@@ -2404,6 +2586,7 @@ ${button.innerHTML}`)
       emitHeartbeat();
     });
     let lastHealthTickAt = Date.now();
+    let replacementReported = false;
     setInterval(() => {
       const tickAt = Date.now();
       if (!isMac4 && (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)) {
@@ -2426,6 +2609,13 @@ ${button.innerHTML}`)
       }
       realtime.check();
       silentRecovery.tick();
+      if (workerReplacement.replaced() && !pending) {
+        if (!replacementReported) {
+          replacementReported = true;
+          diag("sync.worker-replaced", "encrypted worker was replaced in this page; reloading");
+        }
+        schedule(0, "worker-replaced");
+      }
       emitHeartbeat();
     }, 5e3);
   }
@@ -2488,8 +2678,8 @@ ${button.innerHTML}`)
   var nativeReflectApply = Reflect.apply;
   var nativeAddEventListener = EventTarget.prototype.addEventListener;
   var nativeRemoveEventListener = EventTarget.prototype.removeEventListener;
-  var nativeSetTimeout2 = globalThis.setTimeout;
-  var nativeClearTimeout2 = globalThis.clearTimeout;
+  var nativeSetTimeout3 = globalThis.setTimeout;
+  var nativeClearTimeout3 = globalThis.clearTimeout;
   function detailFor(event) {
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
@@ -2507,7 +2697,7 @@ ${button.innerHTML}`)
     return new NativePromise((resolve, reject) => {
       let timer;
       const cleanup = () => {
-        nativeReflectApply(nativeClearTimeout2, globalThis, [timer]);
+        nativeReflectApply(nativeClearTimeout3, globalThis, [timer]);
         nativeReflectApply(nativeRemoveEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
       };
       const onFinished = (event) => {
@@ -2535,7 +2725,7 @@ ${button.innerHTML}`)
         ]);
       };
       nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
-      timer = nativeReflectApply(nativeSetTimeout2, globalThis, [
+      timer = nativeReflectApply(nativeSetTimeout3, globalThis, [
         () => {
           cleanup();
           reject(new Error("native download timed out"));
@@ -2588,7 +2778,7 @@ ${button.innerHTML}`)
   var nativeObjectEntries = Object.entries;
   var nativeReflectApply3 = Reflect.apply;
   var nativeSetStyleProperty = CSSStyleDeclaration.prototype.setProperty;
-  var nativeSetTimeout3 = window.setTimeout;
+  var nativeSetTimeout4 = window.setTimeout;
   var nativeAttachShadow = Element.prototype.attachShadow;
   var nativeAppendChild = Node.prototype.appendChild;
   var nativeContains = Node.prototype.contains;
@@ -3034,7 +3224,7 @@ ${button.innerHTML}`)
         focusedIndex = 0;
         const firstItem = menuItems[0];
         if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout3, window, [
+        nativeReflectApply3(nativeSetTimeout4, window, [
           () => {
             nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
             nativeReflectApply3(nativeAddEventListener2, document, [
@@ -3443,8 +3633,8 @@ ${button.innerHTML}`)
     window.addEventListener("resize", scheduleScan);
     new MutationObserver((records) => {
       if (pending.size === 0) return;
-      for (const record2 of records) {
-        for (const removed of record2.removedNodes) {
+      for (const record3 of records) {
+        for (const removed of record3.removedNodes) {
           if (removed instanceof HTMLImageElement) {
             pending.delete(removed);
           } else if (removed instanceof Element) {
@@ -3522,10 +3712,10 @@ ${button.innerHTML}`)
       const group = context && useContext ? useContext(context) : void 0;
       const enabled = showNicknames(mode, group);
       if (!enabled && props && typeof props === "object") {
-        const record2 = props;
-        const contact = record2.contact;
-        if (typeof record2.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
-          return createElement(original, { ...record2, nickname: void 0 });
+        const record3 = props;
+        const contact = record3.contact;
+        if (typeof record3.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
+          return createElement(original, { ...record3, nickname: void 0 });
         }
       }
       return createElement(original, props);
@@ -4004,19 +4194,19 @@ ${button.innerHTML}`)
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
       const owner = useRef({}).current;
-      const record2 = props && typeof props === "object" ? props : {};
-      const thread2 = record2.thread;
+      const record3 = props && typeof props === "object" ? props : {};
+      const thread2 = record3.thread;
       let key = "", snippet = "";
       try {
         if (thread2 && typeof thread2 === "object" && "threadKey" in thread2) {
           const id = threadKey(thread2.threadKey);
           if (typeof id === "string") key = id;
         }
-        const raw = typeof record2.snippetRaw === "string" ? maybeUnvault(record2.snippetRaw) ?? record2.snippetRaw : null;
+        const raw = typeof record3.snippetRaw === "string" ? maybeUnvault(record3.snippetRaw) ?? record3.snippetRaw : null;
         if (typeof raw === "string") snippet = raw;
       } catch (_) {
       }
-      const draft = record2.isDraftMessage === true;
+      const draft = record3.isDraftMessage === true;
       useEffect(() => {
         if (!key || !snippet.includes(": ") || draft || showNicknames(mode, true)) return;
         let cancelled = false;
@@ -4047,7 +4237,7 @@ ${button.innerHTML}`)
       }, [key, owner, snippet, draft]);
       return createElement(
         original,
-        displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
+        displayed !== snippet ? { ...record3, snippetRaw: displayed } : props
       );
     };
     try {
@@ -4102,15 +4292,15 @@ ${button.innerHTML}`)
         const result = Reflect.apply(target, receiver, args);
         return useMemo(() => {
           if (!result || typeof result !== "object") return result;
-          const record2 = result;
+          const record3 = result;
           const thread2 = args[0];
-          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record2.threadTitle !== "string" || !Array.isArray(record2.participantsAndContacts))
+          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record3.threadTitle !== "string" || !Array.isArray(record3.participantsAndContacts))
             return result;
           try {
-            let displayed = record2.threadTitle;
+            let displayed = record3.threadTitle;
             const group = typeof types?.isGroup === "function" ? types.isGroup(thread2.threadType) === true : void 0;
             if (!showNicknames(mode, group)) {
-              const pairs = record2.participantsAndContacts.map((pair) => {
+              const pairs = record3.participantsAndContacts.map((pair) => {
                 if (!Array.isArray(pair)) return pair;
                 const [participant, contact] = pair;
                 if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object" || !("name" in contact) || typeof contact.name !== "string")
@@ -4121,13 +4311,13 @@ ${button.innerHTML}`)
                 intlList.CONJUNCTIONS?.NONE,
                 thread2.threadType,
                 pairs,
-                record2.actorId
+                record3.actorId
               );
               if (typeof computed === "string") displayed = computed;
             }
             const key = threadKey(thread2.threadKey);
-            if (typeof key === "string") titles.remember(key, record2.threadTitle, displayed);
-            return displayed === record2.threadTitle ? result : { ...record2, threadTitle: displayed };
+            if (typeof key === "string") titles.remember(key, record3.threadTitle, displayed);
+            return displayed === record3.threadTitle ? result : { ...record3, threadTitle: displayed };
           } catch (_) {
             return result;
           }
@@ -4189,10 +4379,10 @@ ${button.innerHTML}`)
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
     if (!value || typeof value !== "object") return value;
-    const record2 = value;
-    if (typeof record2.default === "function") {
+    const record3 = value;
+    if (typeof record3.default === "function") {
       try {
-        record2.default = replacement;
+        record3.default = replacement;
       } catch (_) {
       }
     }
@@ -4203,22 +4393,22 @@ ${button.innerHTML}`)
     for (let index = firstExportIndex; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
-      const record2 = candidate;
-      if (Object.prototype.hasOwnProperty.call(record2, "exports")) {
+      const record3 = candidate;
+      if (Object.prototype.hasOwnProperty.call(record3, "exports")) {
         try {
-          record2.exports = replaceFunctionExport(record2.exports, replacement);
+          record3.exports = replaceFunctionExport(record3.exports, replacement);
         } catch (_) {
         }
       }
-      replaceFunctionExport(record2, replacement);
+      replaceFunctionExport(record3, replacement);
     }
     return replaceFunctionExport(result, replacement);
   }
   function findFTSRestoreSync(value, seen) {
     if (!value || typeof value !== "object" || seen.has(value)) return void 0;
     seen.add(value);
-    const record2 = value;
-    const getter = record2.getFTSRestoreSync;
+    const record3 = value;
+    const getter = record3.getFTSRestoreSync;
     if (typeof getter === "function") {
       try {
         const restore2 = Reflect.apply(getter, value, []);
@@ -4228,7 +4418,7 @@ ${button.innerHTML}`)
       } catch (_) {
       }
     }
-    return findFTSRestoreSync(record2.default, seen);
+    return findFTSRestoreSync(record3.default, seen);
   }
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
@@ -4284,8 +4474,8 @@ ${button.innerHTML}`)
       }
     }
   };
-  function wrapTelemetryMethod(record2, key, shouldBlockTelemetry) {
-    const original = record2[key];
+  function wrapTelemetryMethod(record3, key, shouldBlockTelemetry) {
+    const original = record3[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
     const wrapped3 = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
@@ -4293,7 +4483,7 @@ ${button.innerHTML}`)
     };
     wrappedTelemetryMethods.add(wrapped3);
     try {
-      record2[key] = wrapped3;
+      record3[key] = wrapped3;
     } catch (_) {
     }
   }
@@ -4304,8 +4494,8 @@ ${button.innerHTML}`)
       wrapTelemetryMethod(logger, method2, shouldBlockTelemetry);
     }
   }
-  function wrapFalcoFactory(record2, shouldBlockTelemetry) {
-    const original = record2.create;
+  function wrapFalcoFactory(record3, shouldBlockTelemetry) {
+    const original = record3.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
     const wrapped3 = function(...args) {
       const logger = Reflect.apply(original, this, args);
@@ -4314,21 +4504,21 @@ ${button.innerHTML}`)
     };
     wrappedFalcoFactories.add(wrapped3);
     try {
-      record2.create = wrapped3;
+      record3.create = wrapped3;
     } catch (_) {
     }
   }
   function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
     if (!value || typeof value !== "object") return;
-    const record2 = value;
+    const record3 = value;
     if (moduleName === "FalcoLoggerInternal") {
-      wrapFalcoFactory(record2, shouldBlockTelemetry);
+      wrapFalcoFactory(record3, shouldBlockTelemetry);
     } else {
       const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
-      for (const method2 of methods) wrapTelemetryMethod(record2, method2, shouldBlockTelemetry);
+      for (const method2 of methods) wrapTelemetryMethod(record3, method2, shouldBlockTelemetry);
     }
-    if (record2.default && record2.default !== value && typeof record2.default === "object") {
-      patchTelemetryValue(moduleName, record2.default, shouldBlockTelemetry);
+    if (record3.default && record3.default !== value && typeof record3.default === "object") {
+      patchTelemetryValue(moduleName, record3.default, shouldBlockTelemetry);
     }
   }
   function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
@@ -4479,11 +4669,11 @@ ${button.innerHTML}`)
       try {
         inspect2(value);
         if (value && typeof value === "object") {
-          const record2 = value;
-          inspect2(record2.default);
-          inspect2(record2.exports);
-          if (record2.exports && typeof record2.exports === "object") {
-            inspect2(record2.exports.default);
+          const record3 = value;
+          inspect2(record3.default);
+          inspect2(record3.exports);
+          if (record3.exports && typeof record3.exports === "object") {
+            inspect2(record3.exports.default);
           }
         }
       } catch (_) {
@@ -4542,7 +4732,10 @@ ${button.innerHTML}`)
         },
         (exports) => workerRecovery.observeSetupExports(exports),
         (exports) => syncProcessing.observeLogger(exports),
-        (exports) => workerRecovery.observeLifecycleExports(exports),
+        (exports) => {
+          workerRecovery.observeLifecycleExports(exports);
+          workerReplacement.observeLifecycleExports(exports);
+        },
         /mac/i.test(navigator.platform),
         nicknamePreference
       );
@@ -8673,10 +8866,10 @@ ${button.innerHTML}`)
         const key = threadIdFromHref(links[0].getAttribute("href"));
         if (key) mutatedRows.add(key);
       };
-      for (const record2 of records) {
-        inspect2(record2.target);
-        inspectMutatedRow(record2.target);
-        for (const node of record2.addedNodes) {
+      for (const record3 of records) {
+        inspect2(record3.target);
+        inspectMutatedRow(record3.target);
+        for (const node of record3.addedNodes) {
           inspect2(node);
           inspectMutatedRow(node);
         }
@@ -11682,7 +11875,7 @@ ${text}`)) {
     const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element2.contains(control));
     new MutationObserver((records) => {
       if (records.some(
-        (record2) => record2.target instanceof Element && affectsControls(record2.target) || record2.type === "childList" && [...record2.addedNodes, ...record2.removedNodes].some(
+        (record3) => record3.target instanceof Element && affectsControls(record3.target) || record3.type === "childList" && [...record3.addedNodes, ...record3.removedNodes].some(
           (node) => node instanceof Element && (affectsControls(node) || node.querySelector(`${DIALOG2}, ${BANNER}`))
         )
       ))

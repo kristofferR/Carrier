@@ -1,12 +1,17 @@
 import { invoke } from "../bridge";
 import { accountScopedStorageKey } from "../lib/threads";
 import { FacebookWorkerRecovery, hasSoleMessengerWindow } from "../lib/worker-recovery";
+import { DedicatedWorkerReplacement } from "../lib/worker-replacement";
+
+const loadFacebookModule = (name: string) => {
+  const page = window as unknown as { require?: (name: string) => unknown };
+  return page.require?.(name);
+};
+
+export const workerReplacement = new DedicatedWorkerReplacement(loadFacebookModule);
 
 export const workerRecovery = new FacebookWorkerRecovery(
-  (name) => {
-    const page = window as unknown as { require?: (name: string) => unknown };
-    return page.require?.(name);
-  },
+  loadFacebookModule,
   () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? undefined,
   async () => {
     if (
