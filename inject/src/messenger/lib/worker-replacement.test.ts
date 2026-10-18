@@ -42,6 +42,17 @@ function fixture(workerID = "dedicated") {
 }
 
 describe("DedicatedWorkerReplacement", () => {
+  test("flags a replacement created after setup succeeds between samples", async () => {
+    const { detector, singleton, settle, setSuccessful } = fixture();
+    await singleton.createWorkerIfNone("mawInit");
+    setSuccessful(true);
+    singleton.resetWorkerCreation();
+    await singleton.createWorkerIfNone("bridgeRecovery");
+    setSuccessful(false);
+    await settle();
+    expect(detector.replaced()).toBe(true);
+  });
+
   test("flags a dedicated worker created after the first one served the page", async () => {
     const { detector, singleton, settle, setSuccessful } = fixture();
     await singleton.createWorkerIfNone("mawInit");

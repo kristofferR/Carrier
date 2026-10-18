@@ -326,10 +326,12 @@ export class FacebookWorkerRecovery {
       } else if (inProgress.call(state) === true || settled.call(state) !== true) return "busy";
       const id = currentId.call(state);
       if (status.tag === "dedicated_exists") {
+        const setupSuccessful = successful?.call(state);
+        if (typeof setupSuccessful !== "boolean") return "unsupported";
         // Messenger never replaces a dedicated worker inside a live page, and
         // a replacement can verify as connected while this page never shows
         // its messages. Only a startup that never succeeded is repaired here.
-        if (!stalledSetup && id === "dedicated" && successful?.call(state) === true) {
+        if (!stalledSetup && id === "dedicated" && setupSuccessful) {
           return "reload";
         }
         if (

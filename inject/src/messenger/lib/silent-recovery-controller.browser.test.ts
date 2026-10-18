@@ -342,12 +342,17 @@ async function runFixtures(
       if (!facebookAnswers) throw new TypeError("Load failed");
       return new Response(null);
     }) as unknown as typeof window.fetch;
-    adapter.recover = async () => "reload";
+    let stuckResult = "busy";
+    let stuckEscalation = false;
+    adapter.recover = async (_allowed, escalate) => {
+      stuckEscalation = escalate === true;
+      return stuckResult;
+    };
     const stuckState = { needed: true, healthy: false };
     const stuckRecovery = make(stuckState);
     let stuckFailure = false;
     window.addEventListener(failureEvent, (event) => {
-      if ((event as CustomEvent<boolean>).detail === true) stuckFailure = true;
+      stuckFailure = (event as CustomEvent<boolean>).detail;
     });
     const tickFor = async (ms: number) => {
       for (let elapsed = 0; elapsed < ms; elapsed += 5_000) {
@@ -356,6 +361,12 @@ async function runFixtures(
         await advance(5_000);
       }
     };
+    await tickFor(55_000);
+    assert("prolonged busy setup hands transport to native", stuckFailure && stuckEscalation);
+    stuckResult = "reload";
+    await tickFor(10_000);
+    assert("page-managed reload clears the old native handoff", !stuckFailure);
+    assert("page-managed reload clears busy escalation", !stuckEscalation);
     await tickFor(180_000);
     assert("a stuck worker waits while Facebook is unreachable", reloads === 0);
     facebookAnswers = true;

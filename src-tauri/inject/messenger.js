@@ -985,7 +985,9 @@ ${button.innerHTML}`)
         } else if (inProgress.call(state2) === true || settled.call(state2) !== true) return "busy";
         const id = currentId.call(state2);
         if (status.tag === "dedicated_exists") {
-          if (!stalledSetup && id === "dedicated" && successful?.call(state2) === true) {
+          const setupSuccessful = successful?.call(state2);
+          if (typeof setupSuccessful !== "boolean") return "unsupported";
+          if (!stalledSetup && id === "dedicated" && setupSuccessful) {
             return "reload";
           }
           if (id !== "dedicated" || initialId !== id || !initialBridge || typeof record(initialBridge)?.then !== "function" || bridge?.call(setup) !== initialBridge || !replay || replayScope !== startingScope) {
@@ -1834,6 +1836,15 @@ ${button.innerHTML}`)
       __publicField(this, "served", false);
       __publicField(this, "replacedWorker", false);
     }
+    setupSucceeded() {
+      try {
+        const state2 = record2(this.load("MAWWaitForBackendSetup"));
+        const successful = state2?.isBackendSetupSuccessful;
+        return typeof successful === "function" && successful.call(state2) === true;
+      } catch (_) {
+        return false;
+      }
+    }
     observeLifecycleExports(value) {
       const exports = record2(value);
       const create = exports?.createWorkerIfNone;
@@ -1858,6 +1869,7 @@ ${button.innerHTML}`)
     created(result) {
       const creation = record2(result);
       if (!creation || typeof creation.then !== "function" || creation === this.current) return;
+      if (this.current && !this.served && this.setupSucceeded()) this.served = true;
       this.current = creation;
       if (!this.served) return;
       creation.then(
@@ -1873,16 +1885,7 @@ ${button.innerHTML}`)
      * succeeds, so failed startup retries never count as a replacement.
      */
     replaced() {
-      if (this.current && !this.served) {
-        try {
-          const state2 = record2(this.load("MAWWaitForBackendSetup"));
-          const successful = state2?.isBackendSetupSuccessful;
-          if (typeof successful === "function" && successful.call(state2) === true) {
-            this.served = true;
-          }
-        } catch (_) {
-        }
-      }
+      if (this.current && !this.served && this.setupSucceeded()) this.served = true;
       return this.replacedWorker;
     }
   };
@@ -2063,6 +2066,8 @@ ${button.innerHTML}`)
         if (result === "reload") {
           budget.cancel();
           outageRequests--;
+          busySince = void 0;
+          showFailure(false);
           const due = stuckWorker.due();
           if (due) {
             if (!stuckReloadRequested) {

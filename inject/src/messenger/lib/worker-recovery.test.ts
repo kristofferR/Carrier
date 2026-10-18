@@ -696,6 +696,23 @@ describe("Messenger worker recovery", () => {
     expect(f.resets).toBe(0);
   });
 
+  test.each([undefined, () => undefined])(
+    "refuses dedicated worker mutation when setup success is unavailable (%p)",
+    async (successful) => {
+      const f = fixture();
+      f.setup.getOrSetupWorker(...f.args);
+      f.currentId = "dedicated";
+      f.status = "dedicated_exists";
+      Object.assign(f.modules.MAWWaitForBackendSetup as object, {
+        isBackendSetupSuccessful: successful,
+      });
+      expect(await f.recovery.recover()).toBe("unsupported");
+      expect(f.terminationCalls).toHaveLength(0);
+      expect(f.setupCalls).toHaveLength(1);
+      expect(f.resets).toBe(0);
+    },
+  );
+
   test("stops and replays a dedicated worker whose startup failed", async () => {
     const f = fixture();
     f.setup.getOrSetupWorker(...f.args);

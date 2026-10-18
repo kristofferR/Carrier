@@ -22,6 +22,16 @@ export class DedicatedWorkerReplacement {
 
   constructor(private readonly load: ModuleLoader) {}
 
+  private setupSucceeded(): boolean {
+    try {
+      const state = record(this.load("MAWWaitForBackendSetup"));
+      const successful = state?.isBackendSetupSuccessful;
+      return typeof successful === "function" && successful.call(state) === true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   observeLifecycleExports(value: unknown): void {
     const exports = record(value);
     const create = exports?.createWorkerIfNone;
@@ -48,6 +58,7 @@ export class DedicatedWorkerReplacement {
     const creation = record(result);
     // Messenger hands every caller the same promise while a worker exists.
     if (!creation || typeof creation.then !== "function" || creation === this.current) return;
+    if (this.current && !this.served && this.setupSucceeded()) this.served = true;
     this.current = creation;
     if (!this.served) return;
     (creation as unknown as PromiseLike<unknown>).then(
@@ -63,15 +74,7 @@ export class DedicatedWorkerReplacement {
    * succeeds, so failed startup retries never count as a replacement.
    */
   replaced(): boolean {
-    if (this.current && !this.served) {
-      try {
-        const state = record(this.load("MAWWaitForBackendSetup"));
-        const successful = state?.isBackendSetupSuccessful;
-        if (typeof successful === "function" && successful.call(state) === true) {
-          this.served = true;
-        }
-      } catch (_) {}
-    }
+    if (this.current && !this.served && this.setupSucceeded()) this.served = true;
     return this.replacedWorker;
   }
 }

@@ -187,6 +187,8 @@ export function createSilentRecovery(options: {
           // Not a repair attempt: the page waits for Facebook, then reloads.
           budget.cancel();
           outageRequests--;
+          busySince = undefined;
+          showFailure(false);
           const due = stuckWorker.due();
           if (due) {
             if (!stuckReloadRequested) {
