@@ -8,7 +8,7 @@ import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
-import { workerRecovery } from "./worker-recovery";
+import { workerRecovery, workerReplacement } from "./worker-recovery";
 
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
 
@@ -74,7 +74,10 @@ export function initFacebookModuleInterception() {
       },
       (exports) => workerRecovery.observeSetupExports(exports),
       (exports) => syncProcessing.observeLogger(exports),
-      (exports) => workerRecovery.observeLifecycleExports(exports),
+      (exports) => {
+        workerRecovery.observeLifecycleExports(exports);
+        workerReplacement.observeLifecycleExports(exports);
+      },
       /mac/i.test(navigator.platform),
       nicknamePreference,
     );

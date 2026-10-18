@@ -33,7 +33,7 @@ import {
 import { monitorRealtimeHealth } from "./realtime-health";
 import { createSilentRecovery } from "./silent-recovery";
 import { sampleSyncProcessing } from "./sync-processing";
-import { workerRecovery } from "./worker-recovery";
+import { workerRecovery, workerReplacement } from "./worker-recovery";
 
 export function initAutoRefresh() {
   // Capture these at document start, before Facebook wraps the scheduling APIs.
@@ -414,6 +414,7 @@ export function initAutoRefresh() {
   // Windows/Linux do not emit AppKit power snapshots. A timer gap gives fresh
   // probes time to run before mutation, even when performance.now pauses in sleep.
   let lastHealthTickAt = Date.now();
+  let replacementReported = false;
   setInterval(() => {
     const tickAt = Date.now();
     if (
@@ -439,6 +440,15 @@ export function initAutoRefresh() {
     }
     realtime.check();
     silentRecovery.tick();
+    // Verified transport is not enough here: a replaced dedicated worker can
+    // connect while this page never receives its messages.
+    if (workerReplacement.replaced() && !pending) {
+      if (!replacementReported) {
+        replacementReported = true;
+        diag("sync.worker-replaced", "encrypted worker was replaced in this page; reloading");
+      }
+      schedule(0, "worker-replaced");
+    }
     emitHeartbeat();
   }, 5_000);
 }

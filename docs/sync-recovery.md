@@ -1,6 +1,8 @@
 # Messenger sync recovery
 
-Responsive Messenger pages repair the messaging worker without navigation.
+Responsive Messenger pages repair the messaging worker without navigation. A
+repair that replaces a dedicated worker (macOS) is followed by one reload; see
+[A replaced dedicated worker needs a reload](#a-replaced-dedicated-worker-needs-a-reload).
 Focus, visibility, wake, notifications, and going online trigger health checks;
 they are no longer reasons to periodically reload the page.
 
@@ -312,6 +314,23 @@ a live account between worker types or overlaps two setup attempts. Existing
 dedicated-worker recovery and draft/call/offline protections still apply. This is
 a workaround for the observed process-lifetime failure, not a guarantee against
 all OS resource reclamation; validate it on the affected Mac after installation.
+
+### A replaced dedicated worker needs a reload
+
+Messenger restarts shared workers in place, but registers no restart for a
+dedicated worker: that backend is meant to live as long as its page. On
+October 18 a seven-minute network outage left the Mac's dedicated worker
+disconnected after the network returned. Carrier's in-place repair replaced it.
+The replacement's encrypted connection verified as healthy within five seconds,
+yet the page never showed a newly received message, and two queued sends stayed
+at "Sending…". A reload restored both. Reading Messenger's page-side setup code
+did not reveal which state stayed attached to the old worker.
+
+Carrier therefore treats a second dedicated worker, created after an earlier
+one completed backend setup, as proof the page is unhealthy. It logs
+`sync.worker-replaced` and reloads under the usual draft, call, sleep, offline,
+rate-limit, and Hold Failures guards. Startup retries before any setup succeeds
+do not count, and shared-worker restarts are unaffected.
 
 ## Message-processing diagnostics
 

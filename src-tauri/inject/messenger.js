@@ -1753,12 +1753,80 @@ ${button.innerHTML}`)
     };
   }
 
+  // inject/src/messenger/lib/worker-replacement.ts
+  function record2(value) {
+    return value !== null && typeof value === "object" ? value : void 0;
+  }
+  var DedicatedWorkerReplacement = class {
+    constructor(load) {
+      __publicField(this, "load", load);
+      __publicField(this, "wrapped", /* @__PURE__ */ new WeakSet());
+      __publicField(this, "current");
+      /** Some worker in this document completed backend setup. */
+      __publicField(this, "served", false);
+      __publicField(this, "replacedWorker", false);
+    }
+    observeLifecycleExports(value) {
+      const exports = record2(value);
+      const create = exports?.createWorkerIfNone;
+      if (!exports || typeof create !== "function" || this.wrapped.has(create)) return;
+      const owner = this;
+      const wrapped3 = new Proxy(create, {
+        apply(target, receiver, args) {
+          const result = Reflect.apply(target, receiver, args);
+          try {
+            owner.created(result);
+          } catch (_) {
+          }
+          return result;
+        }
+      });
+      try {
+        exports.createWorkerIfNone = wrapped3;
+        this.wrapped.add(wrapped3);
+      } catch (_) {
+      }
+    }
+    created(result) {
+      const creation = record2(result);
+      if (!creation || typeof creation.then !== "function" || creation === this.current) return;
+      this.current = creation;
+      if (!this.served) return;
+      creation.then(
+        (value) => {
+          if (record2(value)?.workerID === "dedicated") this.replacedWorker = true;
+        },
+        () => {
+        }
+      );
+    }
+    /**
+     * Sample periodically. A worker serves the page once its backend setup
+     * succeeds, so failed startup retries never count as a replacement.
+     */
+    replaced() {
+      if (this.current && !this.served) {
+        try {
+          const state2 = record2(this.load("MAWWaitForBackendSetup"));
+          const successful = state2?.isBackendSetupSuccessful;
+          if (typeof successful === "function" && successful.call(state2) === true) {
+            this.served = true;
+          }
+        } catch (_) {
+        }
+      }
+      return this.replacedWorker;
+    }
+  };
+
   // inject/src/messenger/features/worker-recovery.ts
+  var loadFacebookModule = (name) => {
+    const page = window;
+    return page.require?.(name);
+  };
+  var workerReplacement = new DedicatedWorkerReplacement(loadFacebookModule);
   var workerRecovery = new FacebookWorkerRecovery(
-    (name) => {
-      const page = window;
-      return page.require?.(name);
-    },
+    loadFacebookModule,
     () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
     async () => {
       if (window.__CARRIER_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
@@ -2404,6 +2472,7 @@ ${button.innerHTML}`)
       emitHeartbeat();
     });
     let lastHealthTickAt = Date.now();
+    let replacementReported = false;
     setInterval(() => {
       const tickAt = Date.now();
       if (!isMac4 && (tickAt - lastHealthTickAt > REALTIME_UNOBSERVED_SETTLE_MS || tickAt < lastHealthTickAt)) {
@@ -2426,6 +2495,13 @@ ${button.innerHTML}`)
       }
       realtime.check();
       silentRecovery.tick();
+      if (workerReplacement.replaced() && !pending) {
+        if (!replacementReported) {
+          replacementReported = true;
+          diag("sync.worker-replaced", "encrypted worker was replaced in this page; reloading");
+        }
+        schedule(0, "worker-replaced");
+      }
       emitHeartbeat();
     }, 5e3);
   }
@@ -3443,8 +3519,8 @@ ${button.innerHTML}`)
     window.addEventListener("resize", scheduleScan);
     new MutationObserver((records) => {
       if (pending.size === 0) return;
-      for (const record2 of records) {
-        for (const removed of record2.removedNodes) {
+      for (const record3 of records) {
+        for (const removed of record3.removedNodes) {
           if (removed instanceof HTMLImageElement) {
             pending.delete(removed);
           } else if (removed instanceof Element) {
@@ -3522,10 +3598,10 @@ ${button.innerHTML}`)
       const group = context && useContext ? useContext(context) : void 0;
       const enabled = showNicknames(mode, group);
       if (!enabled && props && typeof props === "object") {
-        const record2 = props;
-        const contact = record2.contact;
-        if (typeof record2.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
-          return createElement(original, { ...record2, nickname: void 0 });
+        const record3 = props;
+        const contact = record3.contact;
+        if (typeof record3.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
+          return createElement(original, { ...record3, nickname: void 0 });
         }
       }
       return createElement(original, props);
@@ -4004,19 +4080,19 @@ ${button.innerHTML}`)
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
       const owner = useRef({}).current;
-      const record2 = props && typeof props === "object" ? props : {};
-      const thread2 = record2.thread;
+      const record3 = props && typeof props === "object" ? props : {};
+      const thread2 = record3.thread;
       let key = "", snippet = "";
       try {
         if (thread2 && typeof thread2 === "object" && "threadKey" in thread2) {
           const id = threadKey(thread2.threadKey);
           if (typeof id === "string") key = id;
         }
-        const raw = typeof record2.snippetRaw === "string" ? maybeUnvault(record2.snippetRaw) ?? record2.snippetRaw : null;
+        const raw = typeof record3.snippetRaw === "string" ? maybeUnvault(record3.snippetRaw) ?? record3.snippetRaw : null;
         if (typeof raw === "string") snippet = raw;
       } catch (_) {
       }
-      const draft = record2.isDraftMessage === true;
+      const draft = record3.isDraftMessage === true;
       useEffect(() => {
         if (!key || !snippet.includes(": ") || draft || showNicknames(mode, true)) return;
         let cancelled = false;
@@ -4047,7 +4123,7 @@ ${button.innerHTML}`)
       }, [key, owner, snippet, draft]);
       return createElement(
         original,
-        displayed !== snippet ? { ...record2, snippetRaw: displayed } : props
+        displayed !== snippet ? { ...record3, snippetRaw: displayed } : props
       );
     };
     try {
@@ -4102,15 +4178,15 @@ ${button.innerHTML}`)
         const result = Reflect.apply(target, receiver, args);
         return useMemo(() => {
           if (!result || typeof result !== "object") return result;
-          const record2 = result;
+          const record3 = result;
           const thread2 = args[0];
-          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record2.threadTitle !== "string" || !Array.isArray(record2.participantsAndContacts))
+          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record3.threadTitle !== "string" || !Array.isArray(record3.participantsAndContacts))
             return result;
           try {
-            let displayed = record2.threadTitle;
+            let displayed = record3.threadTitle;
             const group = typeof types?.isGroup === "function" ? types.isGroup(thread2.threadType) === true : void 0;
             if (!showNicknames(mode, group)) {
-              const pairs = record2.participantsAndContacts.map((pair) => {
+              const pairs = record3.participantsAndContacts.map((pair) => {
                 if (!Array.isArray(pair)) return pair;
                 const [participant, contact] = pair;
                 if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object" || !("name" in contact) || typeof contact.name !== "string")
@@ -4121,13 +4197,13 @@ ${button.innerHTML}`)
                 intlList.CONJUNCTIONS?.NONE,
                 thread2.threadType,
                 pairs,
-                record2.actorId
+                record3.actorId
               );
               if (typeof computed === "string") displayed = computed;
             }
             const key = threadKey(thread2.threadKey);
-            if (typeof key === "string") titles.remember(key, record2.threadTitle, displayed);
-            return displayed === record2.threadTitle ? result : { ...record2, threadTitle: displayed };
+            if (typeof key === "string") titles.remember(key, record3.threadTitle, displayed);
+            return displayed === record3.threadTitle ? result : { ...record3, threadTitle: displayed };
           } catch (_) {
             return result;
           }
@@ -4189,10 +4265,10 @@ ${button.innerHTML}`)
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
     if (!value || typeof value !== "object") return value;
-    const record2 = value;
-    if (typeof record2.default === "function") {
+    const record3 = value;
+    if (typeof record3.default === "function") {
       try {
-        record2.default = replacement;
+        record3.default = replacement;
       } catch (_) {
       }
     }
@@ -4203,22 +4279,22 @@ ${button.innerHTML}`)
     for (let index = firstExportIndex; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
-      const record2 = candidate;
-      if (Object.prototype.hasOwnProperty.call(record2, "exports")) {
+      const record3 = candidate;
+      if (Object.prototype.hasOwnProperty.call(record3, "exports")) {
         try {
-          record2.exports = replaceFunctionExport(record2.exports, replacement);
+          record3.exports = replaceFunctionExport(record3.exports, replacement);
         } catch (_) {
         }
       }
-      replaceFunctionExport(record2, replacement);
+      replaceFunctionExport(record3, replacement);
     }
     return replaceFunctionExport(result, replacement);
   }
   function findFTSRestoreSync(value, seen) {
     if (!value || typeof value !== "object" || seen.has(value)) return void 0;
     seen.add(value);
-    const record2 = value;
-    const getter = record2.getFTSRestoreSync;
+    const record3 = value;
+    const getter = record3.getFTSRestoreSync;
     if (typeof getter === "function") {
       try {
         const restore2 = Reflect.apply(getter, value, []);
@@ -4228,7 +4304,7 @@ ${button.innerHTML}`)
       } catch (_) {
       }
     }
-    return findFTSRestoreSync(record2.default, seen);
+    return findFTSRestoreSync(record3.default, seen);
   }
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
@@ -4284,8 +4360,8 @@ ${button.innerHTML}`)
       }
     }
   };
-  function wrapTelemetryMethod(record2, key, shouldBlockTelemetry) {
-    const original = record2[key];
+  function wrapTelemetryMethod(record3, key, shouldBlockTelemetry) {
+    const original = record3[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
     const wrapped3 = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
@@ -4293,7 +4369,7 @@ ${button.innerHTML}`)
     };
     wrappedTelemetryMethods.add(wrapped3);
     try {
-      record2[key] = wrapped3;
+      record3[key] = wrapped3;
     } catch (_) {
     }
   }
@@ -4304,8 +4380,8 @@ ${button.innerHTML}`)
       wrapTelemetryMethod(logger, method2, shouldBlockTelemetry);
     }
   }
-  function wrapFalcoFactory(record2, shouldBlockTelemetry) {
-    const original = record2.create;
+  function wrapFalcoFactory(record3, shouldBlockTelemetry) {
+    const original = record3.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
     const wrapped3 = function(...args) {
       const logger = Reflect.apply(original, this, args);
@@ -4314,21 +4390,21 @@ ${button.innerHTML}`)
     };
     wrappedFalcoFactories.add(wrapped3);
     try {
-      record2.create = wrapped3;
+      record3.create = wrapped3;
     } catch (_) {
     }
   }
   function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
     if (!value || typeof value !== "object") return;
-    const record2 = value;
+    const record3 = value;
     if (moduleName === "FalcoLoggerInternal") {
-      wrapFalcoFactory(record2, shouldBlockTelemetry);
+      wrapFalcoFactory(record3, shouldBlockTelemetry);
     } else {
       const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
-      for (const method2 of methods) wrapTelemetryMethod(record2, method2, shouldBlockTelemetry);
+      for (const method2 of methods) wrapTelemetryMethod(record3, method2, shouldBlockTelemetry);
     }
-    if (record2.default && record2.default !== value && typeof record2.default === "object") {
-      patchTelemetryValue(moduleName, record2.default, shouldBlockTelemetry);
+    if (record3.default && record3.default !== value && typeof record3.default === "object") {
+      patchTelemetryValue(moduleName, record3.default, shouldBlockTelemetry);
     }
   }
   function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
@@ -4479,11 +4555,11 @@ ${button.innerHTML}`)
       try {
         inspect2(value);
         if (value && typeof value === "object") {
-          const record2 = value;
-          inspect2(record2.default);
-          inspect2(record2.exports);
-          if (record2.exports && typeof record2.exports === "object") {
-            inspect2(record2.exports.default);
+          const record3 = value;
+          inspect2(record3.default);
+          inspect2(record3.exports);
+          if (record3.exports && typeof record3.exports === "object") {
+            inspect2(record3.exports.default);
           }
         }
       } catch (_) {
@@ -4542,7 +4618,10 @@ ${button.innerHTML}`)
         },
         (exports) => workerRecovery.observeSetupExports(exports),
         (exports) => syncProcessing.observeLogger(exports),
-        (exports) => workerRecovery.observeLifecycleExports(exports),
+        (exports) => {
+          workerRecovery.observeLifecycleExports(exports);
+          workerReplacement.observeLifecycleExports(exports);
+        },
         /mac/i.test(navigator.platform),
         nicknamePreference
       );
@@ -8673,10 +8752,10 @@ ${button.innerHTML}`)
         const key = threadIdFromHref(links[0].getAttribute("href"));
         if (key) mutatedRows.add(key);
       };
-      for (const record2 of records) {
-        inspect2(record2.target);
-        inspectMutatedRow(record2.target);
-        for (const node of record2.addedNodes) {
+      for (const record3 of records) {
+        inspect2(record3.target);
+        inspectMutatedRow(record3.target);
+        for (const node of record3.addedNodes) {
           inspect2(node);
           inspectMutatedRow(node);
         }
@@ -11682,7 +11761,7 @@ ${text}`)) {
     const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element2.contains(control));
     new MutationObserver((records) => {
       if (records.some(
-        (record2) => record2.target instanceof Element && affectsControls(record2.target) || record2.type === "childList" && [...record2.addedNodes, ...record2.removedNodes].some(
+        (record3) => record3.target instanceof Element && affectsControls(record3.target) || record3.type === "childList" && [...record3.addedNodes, ...record3.removedNodes].some(
           (node) => node instanceof Element && (affectsControls(node) || node.querySelector(`${DIALOG2}, ${BANNER}`))
         )
       ))

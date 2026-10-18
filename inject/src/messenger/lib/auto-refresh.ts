@@ -1,6 +1,10 @@
 import type { RealtimeStatus } from "./realtime-health";
 
-export type ScheduledRefreshReason = "rate-limit" | "rate-limit-manual" | "manual";
+export type ScheduledRefreshReason =
+  | "rate-limit"
+  | "rate-limit-manual"
+  | "manual"
+  | "worker-replaced";
 
 /** Recovery requires the expected transport, not unrelated page MQTT traffic. */
 export function nativeRealtimeStatus(
