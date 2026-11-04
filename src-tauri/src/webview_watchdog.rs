@@ -755,6 +755,8 @@ impl WebviewWatchdog {
         let mut state = self.state.lock().unwrap();
         state.render.pause(self.started_at.elapsed());
         state.disarm();
+        #[cfg(target_os = "macos")]
+        set_window_protected(self.id, false);
     }
 
     /// Install one watchdog task for this Messenger window generation.
@@ -1051,6 +1053,8 @@ impl WebviewWatchdog {
                         // than reloading a user out of an in-progress login flow.
                         if !is_messenger_web_url(&url) {
                             state.lock().unwrap().disarm();
+                            #[cfg(target_os = "macos")]
+                            set_window_protected(watchdog_id, false);
                             continue;
                         }
                         if matches!(

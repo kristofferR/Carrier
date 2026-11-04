@@ -6655,12 +6655,9 @@ ${button.innerHTML}`)
      * partially hydrated list is precisely when a still-unread row renders its
      * text before its unread styling, so such a scan is treated as no evidence
      * either way: it neither advances nor is allowed to satisfy a streak.
-     *
-     * Returns the conversations this observation confirmed read, with the
-     * preview each had announced.
      */
     observeRead(unreadKeys, observedKeys, observedAt = Date.now(), listHydrated = true) {
-      const dropped = [];
+      let dropped = false;
       const observed = new Set(observedKeys);
       for (const key of this.readStreaks.keys()) {
         if (!observed.has(key)) this.readStreaks.delete(key);
@@ -6688,16 +6685,17 @@ ${button.innerHTML}`)
         this.readStreaks.delete(key);
         this.observedUnread.delete(key);
         this.readFingerprints.delete(key);
-        const { fingerprint, bodyHash } = this.entries.get(key);
-        this.readFingerprints.set(key, { fingerprint, retiredAt: Date.now() });
+        this.readFingerprints.set(key, {
+          fingerprint: this.entries.get(key).fingerprint,
+          retiredAt: Date.now()
+        });
         while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
           this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         }
         this.entries.delete(key);
-        dropped.push({ key, fingerprint, bodyHash });
+        dropped = true;
       }
-      if (dropped.length > 0) this.persist();
-      return dropped;
+      if (dropped) this.persist();
     }
   };
   var HASH_RE = /^[0-9a-f]{16}$/;
@@ -8420,7 +8418,7 @@ ${button.innerHTML}`)
           thread: fallback.key,
           fingerprint: fallback.fingerprint,
           body_hash: notificationDedupeKey("", fallback.body),
-          after_read: fallback.afterRead
+          read_at: fallback.readAt
         }
       );
     };
@@ -8430,7 +8428,7 @@ ${button.innerHTML}`)
       clearTimeout(displaced.row.timer);
       if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
     };
-    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates, afterRead = confirmedRepeat) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates, readAt = confirmedRepeat ? detectedAt : 0) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -8460,7 +8458,7 @@ ${button.innerHTML}`)
           fingerprint,
           dedupeKey,
           confirmedRepeat,
-          afterRead,
+          readAt,
           deliverable: false
         });
         return;
@@ -8566,7 +8564,7 @@ ${button.innerHTML}`)
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
-          { thread: conversation.key, fingerprint, body_hash: bodyHash, after_read: afterRead }
+          { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt }
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -8581,7 +8579,7 @@ ${button.innerHTML}`)
         fingerprint,
         dedupeKey,
         confirmedRepeat,
-        afterRead,
+        readAt,
         deliverable: true
       });
     };
@@ -8594,6 +8592,7 @@ ${button.innerHTML}`)
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
     const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
+    const readConfirmedAt = /* @__PURE__ */ new Map();
     const readCandidates = /* @__PURE__ */ new Map();
     let lastScanAt = 0;
     const MAX_MUTATION_GRACE_MS = 9e4;
@@ -8631,26 +8630,12 @@ ${button.innerHTML}`)
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
-        const read = notifiedStore.observeRead(
+        notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
           observed.map(({ key }) => key),
           detectedAt,
           listHydrated
         );
-        if (read.length > 0) {
-          invoke("plugin:event|emit", {
-            event: "carrier:notify-read",
-            payload: {
-              account: accountId(document.cookie) || "",
-              reads: read.map(({ key, fingerprint, bodyHash }) => ({
-                thread: key,
-                fingerprint,
-                body_hash: bodyHash ?? ""
-              }))
-            }
-          })?.catch?.(() => {
-          });
-        }
         const hydrated = conversations.filter(({ body }) => body.length > 0);
         const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
         const pageRouteCandidates = observed.map((conversation) => ({
@@ -8663,6 +8648,7 @@ ${button.innerHTML}`)
         clearTimeout(readConfirmationTimer);
         readConfirmationTimer = void 0;
         let nextReadConfirmationIn = null;
+        const confirmedReads = [];
         for (const key of readCandidates.keys()) {
           if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
         }
@@ -8686,10 +8672,27 @@ ${button.innerHTML}`)
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
+            readConfirmedAt.delete(conversation.key);
+            readConfirmedAt.set(conversation.key, detectedAt);
+            if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
+              readConfirmedAt.delete(readConfirmedAt.keys().next().value);
+            }
+            confirmedReads.push({
+              thread: conversation.key,
+              fingerprint: notificationDedupeKey(conversation.title, conversation.body),
+              body_hash: notificationDedupeKey("", conversation.body)
+            });
           } else {
             const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed2);
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
+        }
+        if (confirmedReads.length > 0) {
+          invoke("plugin:event|emit", {
+            event: "carrier:notify-read",
+            payload: { account: accountId(document.cookie) || "", reads: confirmedReads }
+          })?.catch?.(() => {
+          });
         }
         if (nextReadConfirmationIn !== null) {
           readConfirmationTimer = setTimeout(
@@ -8698,6 +8701,7 @@ ${button.innerHTML}`)
           );
         }
         const readTransitions = /* @__PURE__ */ new Set();
+        const readAtFor = (key, repeat) => readTransitions.has(key) ? readConfirmedAt.get(key) ?? detectedAt : repeat ? detectedAt : 0;
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
@@ -8827,7 +8831,13 @@ ${button.innerHTML}`)
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             pageSignal.onNativeDelivery = (delivery) => {
               if (delivery === "duplicate") {
-                scheduleFallback(conversation, detectedAt, true, routeCandidates);
+                scheduleFallback(
+                  conversation,
+                  detectedAt,
+                  true,
+                  routeCandidates,
+                  readAtFor(conversation.key, true)
+                );
                 return;
               }
               markNotified(conversation.key, fingerprint, bodyHash);
@@ -8836,7 +8846,13 @@ ${button.innerHTML}`)
             continue;
           }
           if (receiptSuppressedRepeat) {
-            scheduleFallback(conversation, detectedAt, true, routeCandidates);
+            scheduleFallback(
+              conversation,
+              detectedAt,
+              true,
+              routeCandidates,
+              readAtFor(conversation.key, true)
+            );
             changed.delete(conversation.key);
             continue;
           }
@@ -8902,7 +8918,7 @@ ${button.innerHTML}`)
               detectedAt,
               confirmedRepeats.has(conversation.key),
               routeCandidates,
-              confirmedRepeats.has(conversation.key) || readTransitions.has(conversation.key)
+              readAtFor(conversation.key, confirmedRepeats.has(conversation.key))
             );
           }
         }

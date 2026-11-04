@@ -245,7 +245,7 @@ export function initNotificationBridge() {
     // The message's raw text, before link or photo rewording: what 👍 matches.
     matchBody = "",
     // The row fallback's claim on native's notification ledger.
-    row?: { thread: string; fingerprint: string; body_hash: string; after_read: boolean },
+    row?: { thread: string; fingerprint: string; body_hash: string; read_at: number },
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -348,8 +348,8 @@ export function initNotificationBridge() {
     fingerprint: string;
     dedupeKey: string;
     confirmedRepeat: boolean;
-    /** The page confirmed the conversation read before this arrival. */
-    afterRead: boolean;
+    /** When the page confirmed the conversation read before this arrival, else 0. */
+    readAt: number;
     /** False when this row exists only to correlate an already-suppressed page signal. */
     deliverable: boolean;
   }
@@ -1164,7 +1164,7 @@ export function initNotificationBridge() {
         thread: fallback.key,
         fingerprint: fallback.fingerprint,
         body_hash: notificationDedupeKey("", fallback.body),
-        after_read: fallback.afterRead,
+        read_at: fallback.readAt,
       },
     );
   };
@@ -1183,7 +1183,7 @@ export function initNotificationBridge() {
     routeCandidates?: Iterable<Conversation>,
     // An identical preview after a confirmed read is news, even when this
     // document never delivered the earlier one (after a restart or rebuild).
-    afterRead = confirmedRepeat,
+    readAt = confirmedRepeat ? detectedAt : 0,
   ) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -1222,7 +1222,7 @@ export function initNotificationBridge() {
         fingerprint,
         dedupeKey,
         confirmedRepeat,
-        afterRead,
+        readAt,
         deliverable: false,
       });
       return;
@@ -1358,7 +1358,7 @@ export function initNotificationBridge() {
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
         hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
-        { thread: conversation.key, fingerprint, body_hash: bodyHash, after_read: afterRead },
+        { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({
@@ -1373,7 +1373,7 @@ export function initNotificationBridge() {
       fingerprint,
       dedupeKey,
       confirmedRepeat,
-      afterRead,
+      readAt,
       deliverable: true,
     });
   };
@@ -1397,6 +1397,10 @@ export function initNotificationBridge() {
   // before the title's count establishes a baseline.
   const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
+  // When each conversation in readObservedKeys was confirmed read. A claim
+  // carries it so native tells this arrival apart from the delivery the read
+  // covered, and from another window's claim on this same arrival.
+  const readConfirmedAt = new Map<string, number>();
   const readCandidates = new Map<string, { since: number; observations: number }>();
   // When the previous scan actually examined the list. Row mutations are
   // attributed against real elapsed time, but the scan that reads them is
@@ -1458,26 +1462,12 @@ export function initNotificationBridge() {
       // "Read" means the row is no longer unread — not merely filtered from
       // `conversations` (an unread row whose preview currently shows your own
       // reply must keep its entry; hydration can flap the preview form).
-      const read = notifiedStore.observeRead(
+      notifiedStore.observeRead(
         new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
         observed.map(({ key }) => key),
         detectedAt,
         listHydrated,
       );
-      // An identical preview in these conversations is news again.
-      if (read.length > 0) {
-        invoke("plugin:event|emit", {
-          event: "carrier:notify-read",
-          payload: {
-            account: accountId(document.cookie) || "",
-            reads: read.map(({ key, fingerprint, bodyHash }) => ({
-              thread: key,
-              fingerprint,
-              body_hash: bodyHash ?? "",
-            })),
-          },
-        })?.catch?.(() => {});
-      }
       // Only hydrated rows feed the signature tracker — in both directions.
       // Priming an unhydrated row with its title would report a "change" the
       // moment the body arrives and replay store-less threads after every
@@ -1500,6 +1490,7 @@ export function initNotificationBridge() {
       clearTimeout(readConfirmationTimer);
       readConfirmationTimer = undefined;
       let nextReadConfirmationIn: number | null = null;
+      const confirmedReads: { thread: string; fingerprint: string; body_hash: string }[] = [];
       for (const key of readCandidates.keys()) {
         if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
       }
@@ -1529,6 +1520,16 @@ export function initNotificationBridge() {
           if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
             readObservedKeys.delete(readObservedKeys.keys().next().value!);
           }
+          readConfirmedAt.delete(conversation.key);
+          readConfirmedAt.set(conversation.key, detectedAt);
+          if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
+            readConfirmedAt.delete(readConfirmedAt.keys().next().value!);
+          }
+          confirmedReads.push({
+            thread: conversation.key,
+            fingerprint: notificationDedupeKey(conversation.title, conversation.body),
+            body_hash: notificationDedupeKey("", conversation.body),
+          });
         } else {
           // Once the elapsed-time guard is met, keep scanning until the
           // observation guard is met too. Otherwise the scheduled scan at the
@@ -1540,6 +1541,14 @@ export function initNotificationBridge() {
               : Math.min(nextReadConfirmationIn, remaining);
         }
       }
+      // Whichever window confirms the read, and whether or not it delivered the
+      // preview, native's ledger forgets that preview: an identical one is news.
+      if (confirmedReads.length > 0) {
+        invoke("plugin:event|emit", {
+          event: "carrier:notify-read",
+          payload: { account: accountId(document.cookie) || "", reads: confirmedReads },
+        })?.catch?.(() => {});
+      }
       if (nextReadConfirmationIn !== null) {
         readConfirmationTimer = setTimeout(
           scanUnreadConversations,
@@ -1547,6 +1556,13 @@ export function initNotificationBridge() {
         );
       }
       const readTransitions = new Set<string>();
+      // When this arrival's conversation was confirmed read, for its ledger claim.
+      const readAtFor = (key: string, repeat: boolean) =>
+        readTransitions.has(key)
+          ? (readConfirmedAt.get(key) ?? detectedAt)
+          : repeat
+            ? detectedAt
+            : 0;
       const changed = new Set(
         conversationTracker.observe(
           hydrated.map(({ key, body }) => ({ key, signature: body })),
@@ -1727,7 +1743,13 @@ export function initNotificationBridge() {
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           pageSignal.onNativeDelivery = (delivery) => {
             if (delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true, routeCandidates);
+              scheduleFallback(
+                conversation,
+                detectedAt,
+                true,
+                routeCandidates,
+                readAtFor(conversation.key, true),
+              );
               return;
             }
             markNotified(conversation.key, fingerprint, bodyHash);
@@ -1739,7 +1761,13 @@ export function initNotificationBridge() {
           // The native layer did not show the page emit. A reload also erased
           // the in-memory page signal, but the confirmed row transition still
           // proves this is a new logical delivery, so retry it with a fresh key.
-          scheduleFallback(conversation, detectedAt, true, routeCandidates);
+          scheduleFallback(
+            conversation,
+            detectedAt,
+            true,
+            routeCandidates,
+            readAtFor(conversation.key, true),
+          );
           changed.delete(conversation.key);
           continue;
         }
@@ -1846,7 +1874,7 @@ export function initNotificationBridge() {
             detectedAt,
             confirmedRepeats.has(conversation.key),
             routeCandidates,
-            confirmedRepeats.has(conversation.key) || readTransitions.has(conversation.key),
+            readAtFor(conversation.key, confirmedRepeats.has(conversation.key)),
           );
         }
       }

@@ -90,14 +90,15 @@ pub(crate) struct RowClaim {
     fingerprint: String,
     #[serde(default)]
     body_hash: String,
-    /// The page confirmed this conversation read before the arrival, so it is
-    /// a new message even when its preview matches the ledger.
+    /// Unix milliseconds when the page confirmed this conversation read before
+    /// the arrival, or 0. An identical preview announced before that read was
+    /// an earlier message.
     #[serde(default)]
-    after_read: bool,
+    read_at: u64,
 }
 
 impl NotifyMsg {
-    fn row_message(&self) -> Option<(crate::notification_ledger::HandledMessage, bool)> {
+    fn row_message(&self) -> Option<(crate::notification_ledger::HandledMessage, u64)> {
         let row = self.row.as_ref()?;
         Some((
             crate::notification_ledger::HandledMessage {
@@ -106,7 +107,7 @@ impl NotifyMsg {
                 fingerprint: row.fingerprint.clone(),
                 body_hash: row.body_hash.clone(),
             },
-            row.after_read,
+            row.read_at,
         ))
     }
 }
@@ -2290,8 +2291,8 @@ pub(crate) fn show_message_notification(
     // A row that a reload, rebuild or restart re-hydrated as unread is not a
     // new message. The page's own memory may be gone; the ledger is not.
     let row_message = msg.row_message();
-    if let Some((message, false)) = &row_message
-        && crate::notification_ledger::already_handled(message)
+    if let Some((message, read_at)) = &row_message
+        && crate::notification_ledger::already_handled(message, *read_at)
     {
         log::info!(
             "carrier:notify replayed an already announced preview (id {})",
@@ -2304,10 +2305,15 @@ pub(crate) fn show_message_notification(
         .lock()
         .unwrap()
         .classify(&msg, native_id, Instant::now());
-    if let Some((message, _)) = &row_message {
-        crate::notification_ledger::record(message);
-    }
+    // Record a row claim only once its banner exists: shown now, or by the
+    // emit this one duplicates.
+    let record_row = || {
+        if let Some((message, _)) = &row_message {
+            crate::notification_ledger::record(message);
+        }
+    };
     if let Delivery::Suppress { delivered_id } = decision {
+        record_row();
         // The duplicate is dropped, but it may carry the reload-safe route the
         // shown notification lacked (a page-first notification whose row paired
         // only after the page pairing window, inside the native dedupe window).
@@ -2344,6 +2350,7 @@ pub(crate) fn show_message_notification(
     if rate_decision != RateLimitDecision::Allow {
         return NativeNotificationDelivery::Suppressed;
     }
+    record_row();
 
     // Redact the conversation subtitle too: it can contain private names.
     let (title, subtitle, body) = msg.content(hide_preview);

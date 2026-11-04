@@ -66,7 +66,7 @@ impl HandledMessage {
 struct LedgerEntry {
     #[serde(flatten)]
     message: HandledMessage,
-    /// Unix milliseconds when this preview was first handled.
+    /// Unix milliseconds when this preview was last announced.
     at: u64,
 }
 
@@ -98,29 +98,27 @@ impl NotificationLedger {
     }
 
     /// Whether `message` is the preview its conversation already announced.
-    fn already_handled(&self, message: &HandledMessage, now: u64) -> bool {
+    /// `read_at` is when the page confirmed the conversation read before this
+    /// arrival (0 if it did not): an announcement from before that read covered
+    /// an earlier message. One from after it is another window's claim on this
+    /// same arrival. Every announcement happens while its row is unread, and a
+    /// read is confirmed only after the row renders read for a while, so the
+    /// two never overlap.
+    fn already_handled(&self, message: &HandledMessage, read_at: u64, now: u64) -> bool {
         message.is_valid()
-            && self
-                .entries
-                .iter()
-                .any(|entry| entry.message.same_preview(message) && !Self::expired(entry, now))
+            && self.entries.iter().any(|entry| {
+                entry.message.same_preview(message)
+                    && !Self::expired(entry, now)
+                    && entry.at >= read_at
+            })
     }
 
     fn record(&mut self, message: &HandledMessage, now: u64) {
         if !message.is_valid() {
             return;
         }
-        let current = self
-            .entries
-            .iter()
-            .position(|entry| entry.message.same_conversation(message));
-        if let Some(index) = current {
-            let entry = &self.entries[index];
-            if entry.message == *message && !Self::expired(entry, now) {
-                return;
-            }
-            self.entries.remove(index);
-        }
+        self.entries
+            .retain(|entry| !entry.message.same_conversation(message));
         self.entries.push(LedgerEntry {
             message: message.clone(),
             at: now,
@@ -185,8 +183,11 @@ pub(crate) fn init(app: &tauri::AppHandle) {
     )));
 }
 
-pub(crate) fn already_handled(message: &HandledMessage) -> bool {
-    ledger().lock().unwrap().already_handled(message, now_ms())
+pub(crate) fn already_handled(message: &HandledMessage, read_at: u64) -> bool {
+    ledger()
+        .lock()
+        .unwrap()
+        .already_handled(message, read_at, now_ms())
 }
 
 pub(crate) fn record(message: &HandledMessage) {
@@ -228,11 +229,11 @@ mod tests {
 
         let restarted = NotificationLedger::load(path.clone(), 1);
 
-        assert!(restarted.already_handled(&message("1", A, B), 1));
+        assert!(restarted.already_handled(&message("1", A, B), 0, 1));
         // A renamed conversation repeats the same preview under a new title.
-        assert!(restarted.already_handled(&message("1", C, B), 1));
-        assert!(!restarted.already_handled(&message("1", C, C), 1));
-        assert!(!restarted.already_handled(&message("2", A, B), 1));
+        assert!(restarted.already_handled(&message("1", C, B), 0, 1));
+        assert!(!restarted.already_handled(&message("1", C, C), 0, 1));
+        assert!(!restarted.already_handled(&message("2", A, B), 0, 1));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -241,24 +242,36 @@ mod tests {
         let mut ledger = NotificationLedger::default();
         ledger.record(&message("1", A, B), 0);
         ledger.forget(&message("1", A, B));
-        assert!(!ledger.already_handled(&message("1", A, B), 0));
+        assert!(!ledger.already_handled(&message("1", A, B), 0, 0));
 
         // Another window recorded a newer preview before this read arrived.
         ledger.record(&message("1", C, C), 0);
         ledger.forget(&message("1", A, B));
-        assert!(ledger.already_handled(&message("1", C, C), 0));
+        assert!(ledger.already_handled(&message("1", C, C), 0, 0));
     }
 
     #[test]
     fn old_entries_expire_and_a_redelivery_renews_them() {
         let mut ledger = NotificationLedger::default();
         ledger.record(&message("1", A, B), 0);
-        assert!(ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS));
-        assert!(!ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS + 1));
+        assert!(ledger.already_handled(&message("1", A, B), 0, ENTRY_MAX_AGE_MS));
+        assert!(!ledger.already_handled(&message("1", A, B), 0, ENTRY_MAX_AGE_MS + 1));
 
         ledger.record(&message("1", A, B), ENTRY_MAX_AGE_MS + 1);
 
-        assert!(ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS + 2));
+        assert!(ledger.already_handled(&message("1", A, B), 0, ENTRY_MAX_AGE_MS + 2));
+    }
+
+    #[test]
+    fn an_identical_message_after_a_read_notifies_once_across_windows() {
+        let mut ledger = NotificationLedger::default();
+        ledger.record(&message("1", A, B), 100);
+
+        // Read confirmed at 200; the identical message arrives at 300.
+        assert!(!ledger.already_handled(&message("1", A, B), 200, 300));
+        ledger.record(&message("1", A, B), 300);
+        // Another window confirmed the same read and claims the same arrival.
+        assert!(ledger.already_handled(&message("1", A, B), 210, 305));
     }
 
     #[test]
