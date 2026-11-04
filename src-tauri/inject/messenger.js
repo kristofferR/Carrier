@@ -7528,6 +7528,52 @@ ${button.innerHTML}`)
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
+  // inject/src/messenger/lib/reload-safe-storage.ts
+  function reloadSafeStorage(local, session) {
+    if (!local && !session) return null;
+    const read = (storage, key) => {
+      try {
+        return storage?.getItem(key) ?? null;
+      } catch (_) {
+        return null;
+      }
+    };
+    const remove = (storage, key) => {
+      try {
+        storage?.removeItem(key);
+      } catch (_) {
+      }
+    };
+    return {
+      getItem: (key) => read(local, key) ?? read(session, key),
+      setItem: (key, value) => {
+        try {
+          local?.setItem(key, value);
+        } catch (_) {
+          remove(local, key);
+        }
+        try {
+          session?.setItem(key, value);
+        } catch (_) {
+        }
+      },
+      removeItem: (key) => {
+        remove(local, key);
+        remove(session, key);
+      }
+    };
+  }
+  function pageReloadSafeStorage() {
+    const storage = (name) => {
+      try {
+        return window[name];
+      } catch (_) {
+        return null;
+      }
+    };
+    return reloadSafeStorage(storage("localStorage"), storage("sessionStorage"));
+  }
+
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7735,13 +7781,7 @@ ${button.innerHTML}`)
       });
     };
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
-    const notificationStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
+    const notificationStorage = pageReloadSafeStorage();
     const pageReceiptKey = accountScopedStorageKey(
       "__carrier_page_notification_receipts__",
       document.cookie
@@ -11527,13 +11567,7 @@ ${text}`)) {
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
-    const unreadStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
+    const unreadStorage = pageReloadSafeStorage();
     const accountStorageKey = mutedUnreadStorageKey(document.cookie);
     const listReadiness = new UnreadListReadiness();
     const unreadConversationState = () => {

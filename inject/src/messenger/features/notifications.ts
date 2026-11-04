@@ -56,6 +56,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
+import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -177,17 +178,11 @@ export function initNotificationBridge() {
 
   const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
-  // The trackers die with every page reload, and the auto-refresh reloads an
-  // unfocused window periodically. Keep the page receipt store alive in
-  // localStorage so even a native result delivered to the new document can be
-  // attached to the emit that the previous document queued.
-  const notificationStorage = (() => {
-    try {
-      return window.localStorage;
-    } catch (_) {
-      return null;
-    }
-  })();
+  // The trackers die with every page reload, and recovery reloads an unfocused
+  // window. Keep the notification stores in reload-safe storage so a native
+  // result delivered to the new document can be attached to the emit that the
+  // previous document queued, and hydration cannot replay delivered rows.
+  const notificationStorage = pageReloadSafeStorage();
   const pageReceiptKey = accountScopedStorageKey(
     "__carrier_page_notification_receipts__",
     document.cookie,
