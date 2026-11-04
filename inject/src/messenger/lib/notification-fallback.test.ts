@@ -393,9 +393,10 @@ describe("NotifiedSignatureStore", () => {
     const store = new NotifiedSignatureStore(storage);
     // Rendered rows: "1" no longer unread, "2" was never tracked.
     store.observeRead(new Set(["2"]), ["1", "2"], 1_000);
-    store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS - 1);
+    expect(store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS - 1)).toEqual([]);
     expect(store.alreadyNotified("1", "aaaa")).toBe(true);
-    store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS);
+    // Reported so native's notification ledger forgets the conversation too.
+    expect(store.observeRead(new Set(["2"]), ["1", "2"], 1_000 + STABLE_READ_MS)).toEqual(["1"]);
     expect(store.alreadyNotified("1", "aaaa")).toBe(false);
     expect(new NotifiedSignatureStore(storage).alreadyNotified("1", "aaaa")).toBe(false);
   });

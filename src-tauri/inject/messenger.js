@@ -6653,9 +6653,11 @@ ${button.innerHTML}`)
      * partially hydrated list is precisely when a still-unread row renders its
      * text before its unread styling, so such a scan is treated as no evidence
      * either way: it neither advances nor is allowed to satisfy a streak.
+     *
+     * Returns the conversations this observation confirmed read.
      */
     observeRead(unreadKeys, observedKeys, observedAt = Date.now(), listHydrated = true) {
-      let dropped = false;
+      const dropped = [];
       const observed = new Set(observedKeys);
       for (const key of this.readStreaks.keys()) {
         if (!observed.has(key)) this.readStreaks.delete(key);
@@ -6691,9 +6693,10 @@ ${button.innerHTML}`)
           this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         }
         this.entries.delete(key);
-        dropped = true;
+        dropped.push(key);
       }
-      if (dropped) this.persist();
+      if (dropped.length > 0) this.persist();
+      return dropped;
     }
   };
   var HASH_RE = /^[0-9a-f]{16}$/;
@@ -7821,7 +7824,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "") => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "", row) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -7844,7 +7847,8 @@ ${button.innerHTML}`)
           // Like/Mute match English control labels; native offers them only then.
           english_ui: /^en\b/i.test(document.documentElement.lang),
           match_body: matchBody,
-          account: accountId(document.cookie) || ""
+          account: accountId(document.cookie) || "",
+          row
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -7858,6 +7862,22 @@ ${button.innerHTML}`)
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+    const markHandled = (suppressed) => (key, fingerprint, bodyHash) => {
+      if (suppressed) notifiedStore.markSuppressed(key, fingerprint, bodyHash);
+      else notifiedStore.markNotified(key, fingerprint, bodyHash);
+      invoke("plugin:event|emit", {
+        event: "carrier:notify-handled",
+        payload: {
+          account: accountId(document.cookie) || "",
+          thread: key,
+          fingerprint,
+          body_hash: bodyHash ?? ""
+        }
+      })?.catch?.(() => {
+      });
+    };
+    const markNotified = markHandled(false);
+    const markSuppressed = markHandled(true);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     const conversationNames = (threadId) => readConversationNotificationNames(
       threadId,
@@ -8002,7 +8022,7 @@ ${button.innerHTML}`)
           }
           pendingPageNotifications.remove(id);
           if (pageMatch.suppressed) {
-            notifiedStore.markSuppressed(
+            markSuppressed(
               pageMatch.suppressed.key,
               pageMatch.suppressed.fingerprint,
               pageMatch.suppressed.bodyHash
@@ -8017,13 +8037,9 @@ ${button.innerHTML}`)
             retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
-              notifiedStore.markSuppressed(
-                suppressed.key,
-                suppressed.fingerprint,
-                suppressed.bodyHash
-              );
+              markSuppressed(suppressed.key, suppressed.fingerprint, suppressed.bodyHash);
             } else if (threadId && !suppressed) {
-              notifiedStore.markSuppressed(
+              markSuppressed(
                 threadId,
                 notificationDedupeKey(originalTitle, originalBody),
                 notificationDedupeKey("", originalBody)
@@ -8083,7 +8099,7 @@ ${button.innerHTML}`)
             hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-            notifiedStore.markNotified(
+            markNotified(
               pageMatch.deliver.key,
               pageMatch.deliver.fingerprint,
               pageMatch.deliver.bodyHash
@@ -8093,13 +8109,13 @@ ${button.innerHTML}`)
             pageMatch.signal.emitted = true;
             const delivery = pageMatch.signal.pendingDelivery;
             if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+              markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
             }
           }
         });
       } else {
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-          notifiedStore.markSuppressed(
+          markSuppressed(
             pageMatch.deliver.key,
             pageMatch.deliver.fingerprint,
             pageMatch.deliver.bodyHash
@@ -8332,7 +8348,7 @@ ${button.innerHTML}`)
       const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
       if (pageSignal.suppressedBeforeMatch) {
-        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        markSuppressed(conversation.key, fingerprint, bodyHash);
         return true;
       }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
@@ -8342,7 +8358,7 @@ ${button.innerHTML}`)
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
-        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        markSuppressed(conversation.key, fingerprint, bodyHash);
         pageSignal.pendingDelivery = void 0;
       } else if (pageSignal.emitted) {
         const finishDelivery = (delivery) => {
@@ -8350,7 +8366,7 @@ ${button.innerHTML}`)
             scheduleFallback(conversation, detectedAt, true, routeCandidates);
             return;
           }
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          markNotified(conversation.key, fingerprint, bodyHash);
         };
         if (pageSignal.nativeDelivery) {
           finishDelivery(pageSignal.nativeDelivery);
@@ -8372,11 +8388,7 @@ ${button.innerHTML}`)
       if (!fallback.deliverable) return;
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
-        notifiedStore.markSuppressed(
-          fallback.key,
-          fallback.fingerprint,
-          notificationDedupeKey("", fallback.body)
-        );
+        markSuppressed(fallback.key, fallback.fingerprint, notificationDedupeKey("", fallback.body));
         return;
       }
       const hidePreview = settings.hide_notification_preview === true;
@@ -8397,7 +8409,13 @@ ${button.innerHTML}`)
         void 0,
         "",
         "",
-        hidePreview ? "" : rowPreviewMatchText(fallback.body)
+        hidePreview ? "" : rowPreviewMatchText(fallback.body),
+        {
+          thread: fallback.key,
+          fingerprint: fallback.fingerprint,
+          body_hash: notificationDedupeKey("", fallback.body),
+          repeat: fallback.confirmedRepeat
+        }
       );
     };
     const retainPendingFallback = (fallback) => {
@@ -8418,7 +8436,7 @@ ${button.innerHTML}`)
       if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
         return;
       if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
-        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+        markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
             notificationCorrelations.removeRow(conversation.key);
@@ -8463,7 +8481,7 @@ ${button.innerHTML}`)
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
-          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+          markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
           }
@@ -8489,7 +8507,7 @@ ${button.innerHTML}`)
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
         const hidePreview = deliverySettings.hide_notification_preview === true;
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
-          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+          markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
           return;
         }
@@ -8540,7 +8558,8 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body)
+          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
+          { thread: conversation.key, fingerprint, body_hash: bodyHash, repeat: confirmedRepeat }
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -8604,12 +8623,19 @@ ${button.innerHTML}`)
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
         lastScanAt = detectedAt;
         const listHydrated = observed.length > 0 && observed.every(({ body }) => body.length > 0);
-        notifiedStore.observeRead(
+        const read = notifiedStore.observeRead(
           new Set(observed.filter(({ unread }) => unread).map(({ key }) => key)),
           observed.map(({ key }) => key),
           detectedAt,
           listHydrated
         );
+        if (read.length > 0) {
+          invoke("plugin:event|emit", {
+            event: "carrier:notify-read",
+            payload: { account: accountId(document.cookie) || "", threads: read }
+          })?.catch?.(() => {
+          });
+        }
         const hydrated = conversations.filter(({ body }) => body.length > 0);
         const routeCandidates = observed.filter(({ body, draft }) => body.length > 0 && !draft);
         const pageRouteCandidates = observed.map((conversation) => ({
@@ -8789,7 +8815,7 @@ ${button.innerHTML}`)
                 scheduleFallback(conversation, detectedAt, true, routeCandidates);
                 return;
               }
-              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              markNotified(conversation.key, fingerprint, bodyHash);
             };
             changed.delete(conversation.key);
             continue;
@@ -8804,10 +8830,10 @@ ${button.innerHTML}`)
             if (pending) clearTimeout(pending.timer);
             notificationCorrelations.removeRow(conversation.key);
             if (pageReceipt.suppressedDraft) {
-              notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
+              markSuppressed(conversation.key, fingerprint, bodyHash);
               changed.delete(conversation.key);
             } else {
-              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              markNotified(conversation.key, fingerprint, bodyHash);
               updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             }
             reconciliation = pageReceipt.suppressedDraft ? "suppressed" : "matched";

@@ -75,6 +75,40 @@ pub(crate) struct NotifyMsg {
     /// The signed-in Facebook account the notification arrived for.
     #[serde(default)]
     account: String,
+    /// Set by the row-driven fallback, the one path a reload, rebuild or
+    /// restart can replay: which conversation preview this announces.
+    #[serde(default)]
+    row: Option<RowClaim>,
+}
+
+/// A row fallback's claim on the notification ledger.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct RowClaim {
+    #[serde(default)]
+    thread: String,
+    #[serde(default)]
+    fingerprint: String,
+    #[serde(default)]
+    body_hash: String,
+    /// The page saw this conversation read and then unread again with the
+    /// same preview: a new message, even though it matches the ledger.
+    #[serde(default)]
+    repeat: bool,
+}
+
+impl NotifyMsg {
+    fn row_message(&self) -> Option<(crate::notification_ledger::HandledMessage, bool)> {
+        let row = self.row.as_ref()?;
+        Some((
+            crate::notification_ledger::HandledMessage {
+                account: self.account.clone(),
+                thread: row.thread.clone(),
+                fingerprint: row.fingerprint.clone(),
+                body_hash: row.body_hash.clone(),
+            },
+            row.repeat,
+        ))
+    }
 }
 
 /// What a shown notification announced, for its 👍 and Mute actions: the raw
@@ -2253,11 +2287,26 @@ pub(crate) fn show_message_notification(
     let page_id = msg.id;
     let native_id = next_native_notification_id();
     let thread_path = validated_thread_path(&msg.thread_path);
+    // A row that a reload, rebuild or restart re-hydrated as unread is not a
+    // new message. The page's own memory may be gone; the ledger is not.
+    let row_message = msg.row_message();
+    if let Some((message, false)) = &row_message
+        && crate::notification_ledger::already_handled(message)
+    {
+        log::info!(
+            "carrier:notify replayed an already announced preview (id {})",
+            msg.id
+        );
+        return NativeNotificationDelivery::Duplicate;
+    }
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
         .classify(&msg, native_id, Instant::now());
+    if let Some((message, _)) = &row_message {
+        crate::notification_ledger::record(message);
+    }
     if let Delivery::Suppress { delivered_id } = decision {
         // The duplicate is dropped, but it may carry the reload-safe route the
         // shown notification lacked (a page-first notification whose row paired
@@ -3015,6 +3064,7 @@ mod tests {
             english_ui: false,
             match_body: String::new(),
             account: String::new(),
+            row: None,
         }
     }
 

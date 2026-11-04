@@ -37,6 +37,7 @@ mod linux_startup;
 mod macos;
 mod media_permissions;
 mod menu;
+mod notification_ledger;
 mod notifications;
 mod preflight;
 mod render_recovery;
@@ -1823,6 +1824,7 @@ pub fn run() {
             // macOS delivery now goes through UNUserNotificationCenter under the
             // app's own bundle id (set up in `setup_macos_notifications` once the
             // app is ready), so there's no per-process registration to do here.
+            notification_ledger::init(app.handle());
             let notify_handle = app.handle().clone();
             app.listen_any("carrier:notify", move |event| {
                 // Content-free receipt breadcrumb: with the page-side
@@ -1844,6 +1846,28 @@ pub fn run() {
                         }
                     }
                     Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
+                }
+            });
+
+            // The page's other notification verdicts (banners it paired with a
+            // row after showing them, and previews it kept quiet because the
+            // conversation is muted) and its confirmed reads keep the ledger
+            // in step with what each conversation has announced.
+            app.listen_any("carrier:notify-handled", |event| {
+                match serde_json::from_str::<notification_ledger::HandledMessage>(event.payload()) {
+                    Ok(message) => notification_ledger::record(&message),
+                    Err(e) => log::warn!("carrier:notify-handled payload did not parse: {e}"),
+                }
+            });
+            app.listen_any("carrier:notify-read", |event| {
+                #[derive(serde::Deserialize)]
+                struct ReadMsg {
+                    account: String,
+                    threads: Vec<String>,
+                }
+                match serde_json::from_str::<ReadMsg>(event.payload()) {
+                    Ok(read) => notification_ledger::forget(&read.account, &read.threads),
+                    Err(e) => log::warn!("carrier:notify-read payload did not parse: {e}"),
                 }
             });
 

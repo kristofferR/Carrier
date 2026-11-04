@@ -528,14 +528,16 @@ export class NotifiedSignatureStore {
    * partially hydrated list is precisely when a still-unread row renders its
    * text before its unread styling, so such a scan is treated as no evidence
    * either way: it neither advances nor is allowed to satisfy a streak.
+   *
+   * Returns the conversations this observation confirmed read.
    */
   observeRead(
     unreadKeys: ReadonlySet<string>,
     observedKeys: Iterable<string>,
     observedAt = Date.now(),
     listHydrated = true,
-  ): void {
-    let dropped = false;
+  ): string[] {
+    const dropped: string[] = [];
     const observed = new Set(observedKeys);
     for (const key of this.readStreaks.keys()) {
       if (!observed.has(key)) this.readStreaks.delete(key);
@@ -576,9 +578,10 @@ export class NotifiedSignatureStore {
         this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
       }
       this.entries.delete(key);
-      dropped = true;
+      dropped.push(key);
     }
-    if (dropped) this.persist();
+    if (dropped.length > 0) this.persist();
+    return dropped;
   }
 }
 
