@@ -227,7 +227,8 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
         }
     }
     // Tauri frees a label only once the native window reports it destroyed.
-    for _ in 0..100 {
+    // Give a slow close time to finish, so that window still comes back.
+    for _ in 0..600 {
         if destroyed
             .iter()
             .all(|snapshot| app.get_webview_window(&snapshot.label).is_none())
@@ -237,63 +238,75 @@ async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     // `destroy` only queues the close. A window still present may still run
-    // its engine, so it counts as a failed destroy and keeps its place.
-    destroyed.retain(|snapshot| {
-        let gone = app.get_webview_window(&snapshot.label).is_none();
-        if !gone {
+    // its engine, so the session stays on per-window engines and no new window
+    // opens. It is still rebuilt below if it finishes closing meanwhile.
+    for snapshot in &destroyed {
+        if app.get_webview_window(&snapshot.label).is_some() {
             log::warn!(
                 "Messenger webview {} did not close in time for the shared engine",
                 snapshot.label
             );
             failed = true;
         }
-        gone
-    });
+    }
     if !failed {
         SHARED_MESSENGER_ENGINE.store(true, Ordering::SeqCst);
     }
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    const MAX_BUILD_ATTEMPTS: u64 = 3;
     for snapshot in destroyed {
-        match build_app_window_with_render_budget(
-            app,
-            &snapshot.label,
-            &settings,
-            RenderRecoveryBudget::default(),
-            snapshot.focused,
-            snapshot.thread,
-        ) {
-            Ok(window) => {
-                if snapshot.label == "main" {
-                    install_main_close_handler(app, &window);
+        let mut rebuilt = None;
+        for attempt in 1..=MAX_BUILD_ATTEMPTS {
+            match build_app_window_with_render_budget(
+                app,
+                &snapshot.label,
+                &settings,
+                RenderRecoveryBudget::default(),
+                snapshot.focused,
+                snapshot.thread.clone(),
+            ) {
+                Ok(window) => {
+                    rebuilt = Some(window);
+                    break;
                 }
-                if let Some((position, size)) = snapshot.geometry {
-                    let _ = window.set_position(tauri::Position::Physical(position));
-                    let _ = window.set_size(tauri::Size::Physical(size));
-                }
-                if snapshot.maximized {
-                    let _ = window.maximize();
-                }
-                if snapshot.fullscreen {
-                    let _ = window.set_fullscreen(true);
-                }
-                if snapshot.visible {
-                    let _ = window.show();
-                } else {
-                    let _ = window.hide();
-                }
-                if snapshot.minimized {
-                    let _ = window.minimize();
-                } else if snapshot.focused {
-                    let _ = window.set_focus();
+                Err(error) => {
+                    log::warn!(
+                        "failed to rebuild Messenger window {} \
+                         (attempt {attempt}/{MAX_BUILD_ATTEMPTS}): {error}",
+                        snapshot.label
+                    );
+                    if attempt < MAX_BUILD_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(250 * attempt)).await;
+                    }
                 }
             }
-            Err(error) => {
-                crate::webview_watchdog::realtime_window_rebuild_failed(&snapshot.label);
-                log::error!(
-                    "failed to rebuild Messenger window {}: {error}",
-                    snapshot.label
-                );
-            }
+        }
+        let Some(window) = rebuilt else {
+            crate::webview_watchdog::realtime_window_rebuild_failed(&snapshot.label);
+            continue;
+        };
+        if snapshot.label == "main" {
+            install_main_close_handler(app, &window);
+        }
+        if let Some((position, size)) = snapshot.geometry {
+            let _ = window.set_position(tauri::Position::Physical(position));
+            let _ = window.set_size(tauri::Size::Physical(size));
+        }
+        if snapshot.maximized {
+            let _ = window.maximize();
+        }
+        if snapshot.fullscreen {
+            let _ = window.set_fullscreen(true);
+        }
+        if snapshot.visible {
+            let _ = window.show();
+        } else {
+            let _ = window.hide();
+        }
+        if snapshot.minimized {
+            let _ = window.minimize();
+        } else if snapshot.focused {
+            let _ = window.set_focus();
         }
     }
     app.state::<AppState>()
