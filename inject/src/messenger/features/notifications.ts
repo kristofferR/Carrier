@@ -1490,7 +1490,8 @@ export function initNotificationBridge() {
       clearTimeout(readConfirmationTimer);
       readConfirmationTimer = undefined;
       let nextReadConfirmationIn: number | null = null;
-      const confirmedReads: { thread: string; fingerprint: string; body_hash: string }[] = [];
+      // Each conversation confirmed read now, and when it started rendering read.
+      const confirmedReads: { thread: string; since: number }[] = [];
       for (const key of readCandidates.keys()) {
         if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
       }
@@ -1525,11 +1526,7 @@ export function initNotificationBridge() {
           if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
             readConfirmedAt.delete(readConfirmedAt.keys().next().value!);
           }
-          confirmedReads.push({
-            thread: conversation.key,
-            fingerprint: notificationDedupeKey(conversation.title, conversation.body),
-            body_hash: notificationDedupeKey("", conversation.body),
-          });
+          confirmedReads.push({ thread: conversation.key, since: candidate.since });
         } else {
           // Once the elapsed-time guard is met, keep scanning until the
           // observation guard is met too. Otherwise the scheduled scan at the
@@ -1542,7 +1539,8 @@ export function initNotificationBridge() {
         }
       }
       // Whichever window confirms the read, and whether or not it delivered the
-      // preview, native's ledger forgets that preview: an identical one is news.
+      // preview, native's ledger forgets what the conversation announced before
+      // it started rendering read: an identical message is news again.
       if (confirmedReads.length > 0) {
         invoke("plugin:event|emit", {
           event: "carrier:notify-read",
@@ -1557,11 +1555,14 @@ export function initNotificationBridge() {
       }
       const readTransitions = new Set<string>();
       // When this arrival's conversation was confirmed read, for its ledger claim.
+      // A repeat recovered from a read retired before a reload keeps that read's
+      // time, so it cannot pass another window's delivery of the same message.
+      const recoveredReadAt = new Map<string, number>();
       const readAtFor = (key: string, repeat: boolean) =>
         readTransitions.has(key)
           ? (readConfirmedAt.get(key) ?? detectedAt)
           : repeat
-            ? detectedAt
+            ? (recoveredReadAt.get(key) ?? detectedAt)
             : 0;
       const changed = new Set(
         conversationTracker.observe(
@@ -1696,6 +1697,8 @@ export function initNotificationBridge() {
               routeCandidates,
             )
           : null;
+        const retiredReadAt = notifiedStore.readAt(conversation.key);
+        if (retiredReadAt !== undefined) recoveredReadAt.set(conversation.key, retiredReadAt);
         let reconciliation = notifiedStore.reconcileFingerprint(
           conversation.key,
           conversation.title,

@@ -6563,6 +6563,11 @@ ${button.innerHTML}`)
     alreadyNotified(conversationKey, fingerprint) {
       return this.entries.get(conversationKey)?.fingerprint === fingerprint;
     }
+    /** When a confirmed read retired this conversation's preview, while remembered. */
+    readAt(conversationKey) {
+      const retired = this.readFingerprints.get(conversationKey);
+      return retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS ? retired.retiredAt : void 0;
+    }
     /** The fingerprint last delivered or deliberately suppressed, if any. */
     notifiedFingerprint(conversationKey) {
       return this.entries.get(conversationKey)?.fingerprint;
@@ -8677,11 +8682,7 @@ ${button.innerHTML}`)
             if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
               readConfirmedAt.delete(readConfirmedAt.keys().next().value);
             }
-            confirmedReads.push({
-              thread: conversation.key,
-              fingerprint: notificationDedupeKey(conversation.title, conversation.body),
-              body_hash: notificationDedupeKey("", conversation.body)
-            });
+            confirmedReads.push({ thread: conversation.key, since: candidate.since });
           } else {
             const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed2);
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
@@ -8701,7 +8702,8 @@ ${button.innerHTML}`)
           );
         }
         const readTransitions = /* @__PURE__ */ new Set();
-        const readAtFor = (key, repeat) => readTransitions.has(key) ? readConfirmedAt.get(key) ?? detectedAt : repeat ? detectedAt : 0;
+        const recoveredReadAt = /* @__PURE__ */ new Map();
+        const readAtFor = (key, repeat) => readTransitions.has(key) ? readConfirmedAt.get(key) ?? detectedAt : repeat ? recoveredReadAt.get(key) ?? detectedAt : 0;
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
@@ -8810,6 +8812,8 @@ ${button.innerHTML}`)
             PAGE_NOTIFICATION_RECOVERY_MS,
             routeCandidates
           ) : null;
+          const retiredReadAt = notifiedStore.readAt(conversation.key);
+          if (retiredReadAt !== void 0) recoveredReadAt.set(conversation.key, retiredReadAt);
           let reconciliation = notifiedStore.reconcileFingerprint(
             conversation.key,
             conversation.title,

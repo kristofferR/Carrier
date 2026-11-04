@@ -398,6 +398,14 @@ export class NotifiedSignatureStore {
     return this.entries.get(conversationKey)?.fingerprint === fingerprint;
   }
 
+  /** When a confirmed read retired this conversation's preview, while remembered. */
+  readAt(conversationKey: string): number | undefined {
+    const retired = this.readFingerprints.get(conversationKey);
+    return retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS
+      ? retired.retiredAt
+      : undefined;
+  }
+
   /** The fingerprint last delivered or deliberately suppressed, if any. */
   notifiedFingerprint(conversationKey: string): string | undefined {
     return this.entries.get(conversationKey)?.fingerprint;

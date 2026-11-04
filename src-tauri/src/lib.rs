@@ -1866,15 +1866,24 @@ pub fn run() {
             });
             app.listen_any("carrier:notify-read", |event| {
                 #[derive(serde::Deserialize)]
+                struct ConfirmedRead {
+                    thread: String,
+                    /// Unix milliseconds since when the row rendered read.
+                    since: u64,
+                }
+                #[derive(serde::Deserialize)]
                 struct ReadMsg {
                     account: String,
-                    reads: Vec<notification_ledger::HandledMessage>,
+                    reads: Vec<ConfirmedRead>,
                 }
                 match serde_json::from_str::<ReadMsg>(event.payload()) {
                     Ok(read) => {
-                        for mut preview in read.reads {
-                            preview.account.clone_from(&read.account);
-                            notification_ledger::forget(&preview);
+                        for confirmed in read.reads {
+                            notification_ledger::forget(
+                                &read.account,
+                                &confirmed.thread,
+                                confirmed.since,
+                            );
                         }
                     }
                     Err(e) => log::warn!("carrier:notify-read payload did not parse: {e}"),

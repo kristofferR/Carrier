@@ -21,8 +21,8 @@ const LEDGER_LIMIT: usize = 1000;
 /// its entry expires instead of silencing an identical preview forever.
 const ENTRY_MAX_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
-/// A conversation preview the page says it announced, or saw read. Validated
-/// before it touches the ledger.
+/// A conversation preview the page says it announced. Validated before it
+/// touches the ledger.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct HandledMessage {
     #[serde(default)]
@@ -128,12 +128,16 @@ impl NotificationLedger {
         self.persist();
     }
 
-    /// The page saw `read` read, so an identical future preview is news. A
-    /// newer preview another window recorded meanwhile stays.
-    fn forget(&mut self, read: &HandledMessage) {
+    /// The page confirmed the conversation read, rendering read since `since`.
+    /// Whatever it announced before then, even if a reply has replaced that
+    /// preview, the read covered, so an identical future preview is news. A
+    /// later delivery, from another window, stays.
+    fn forget(&mut self, account: &str, thread: &str, since: u64) {
         let before = self.entries.len();
-        self.entries
-            .retain(|entry| !entry.message.same_preview(read));
+        self.entries.retain(|entry| {
+            let handled = &entry.message;
+            !(handled.account == account && handled.thread == thread && entry.at < since)
+        });
         if self.entries.len() != before {
             self.persist();
         }
@@ -194,8 +198,8 @@ pub(crate) fn record(message: &HandledMessage) {
     ledger().lock().unwrap().record(message, now_ms());
 }
 
-pub(crate) fn forget(read: &HandledMessage) {
-    ledger().lock().unwrap().forget(read);
+pub(crate) fn forget(account: &str, thread: &str, since: u64) {
+    ledger().lock().unwrap().forget(account, thread, since);
 }
 
 #[cfg(test)]
@@ -238,16 +242,17 @@ mod tests {
     }
 
     #[test]
-    fn reading_a_preview_lets_it_notify_again_but_keeps_a_newer_one() {
+    fn a_read_retires_what_came_before_it_but_not_a_later_delivery() {
         let mut ledger = NotificationLedger::default();
-        ledger.record(&message("1", A, B), 0);
-        ledger.forget(&message("1", A, B));
-        assert!(!ledger.already_handled(&message("1", A, B), 0, 0));
+        ledger.record(&message("1", A, B), 100);
+        // Rendering read since 200, even with a reply as the preview by now.
+        ledger.forget("100", "1", 200);
+        assert!(!ledger.already_handled(&message("1", A, B), 0, 300));
 
-        // Another window recorded a newer preview before this read arrived.
-        ledger.record(&message("1", C, C), 0);
-        ledger.forget(&message("1", A, B));
-        assert!(ledger.already_handled(&message("1", C, C), 0, 0));
+        // Another window recorded a new message after this read began.
+        ledger.record(&message("1", C, C), 300);
+        ledger.forget("100", "1", 250);
+        assert!(ledger.already_handled(&message("1", C, C), 0, 301));
     }
 
     #[test]
