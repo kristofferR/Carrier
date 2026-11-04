@@ -75,6 +75,41 @@ pub(crate) struct NotifyMsg {
     /// The signed-in Facebook account the notification arrived for.
     #[serde(default)]
     account: String,
+    /// Set by the row-driven fallback, the one path a reload, rebuild or
+    /// restart can replay: which conversation preview this announces.
+    #[serde(default)]
+    row: Option<RowClaim>,
+}
+
+/// A row fallback's claim on the notification ledger.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct RowClaim {
+    #[serde(default)]
+    thread: String,
+    #[serde(default)]
+    fingerprint: String,
+    #[serde(default)]
+    body_hash: String,
+    /// Unix milliseconds when the page confirmed this conversation read before
+    /// the arrival, or 0. An identical preview announced before that read was
+    /// an earlier message.
+    #[serde(default)]
+    read_at: u64,
+}
+
+impl NotifyMsg {
+    fn row_message(&self) -> Option<(crate::notification_ledger::HandledMessage, u64)> {
+        let row = self.row.as_ref()?;
+        Some((
+            crate::notification_ledger::HandledMessage {
+                account: self.account.clone(),
+                thread: row.thread.clone(),
+                fingerprint: row.fingerprint.clone(),
+                body_hash: row.body_hash.clone(),
+            },
+            row.read_at,
+        ))
+    }
 }
 
 /// What a shown notification announced, for its 👍 and Mute actions: the raw
@@ -268,6 +303,19 @@ impl NotificationDeduper {
             },
         );
         Delivery::Show
+    }
+
+    /// Give back a reservation whose notification was never shown, so a later
+    /// copy is not mistaken for a duplicate of a banner that exists.
+    fn release(&mut self, msg: &NotifyMsg, delivered_id: u64) {
+        let fingerprint = Self::fingerprint(msg);
+        if self
+            .seen
+            .get(&fingerprint)
+            .is_some_and(|seen| seen.delivered_id == delivered_id)
+        {
+            self.seen.remove(&fingerprint);
+        }
     }
 
     /// Test helper: the delivery decision reduced to a bool.
@@ -2253,12 +2301,32 @@ pub(crate) fn show_message_notification(
     let page_id = msg.id;
     let native_id = next_native_notification_id();
     let thread_path = validated_thread_path(&msg.thread_path);
+    // A row that a reload, rebuild or restart re-hydrated as unread is not a
+    // new message. The page's own memory may be gone; the ledger is not.
+    let row_message = msg.row_message();
+    if let Some((message, read_at)) = &row_message
+        && crate::notification_ledger::already_handled(message, *read_at)
+    {
+        log::info!(
+            "carrier:notify replayed an already announced preview (id {})",
+            msg.id
+        );
+        return NativeNotificationDelivery::Duplicate;
+    }
     let decision = NOTIFICATION_DEDUPER
         .get_or_init(|| Mutex::new(NotificationDeduper::default()))
         .lock()
         .unwrap()
         .classify(&msg, native_id, Instant::now());
+    // Record a row claim only once its banner exists: shown now, or by the
+    // emit this one duplicates.
+    let record_row = || {
+        if let Some((message, _)) = &row_message {
+            crate::notification_ledger::record(message);
+        }
+    };
     if let Delivery::Suppress { delivered_id } = decision {
+        record_row();
         // The duplicate is dropped, but it may carry the reload-safe route the
         // shown notification lacked (a page-first notification whose row paired
         // only after the page pairing window, inside the native dedupe window).
@@ -2293,8 +2361,14 @@ pub(crate) fn show_message_notification(
         log::warn!("carrier:notify suppressed by native rate limit");
     }
     if rate_decision != RateLimitDecision::Allow {
+        // No banner: an identical emit must not count as its duplicate, and
+        // so must not reach the ledger either.
+        if let Some(deduper) = NOTIFICATION_DEDUPER.get() {
+            deduper.lock().unwrap().release(&msg, native_id);
+        }
         return NativeNotificationDelivery::Suppressed;
     }
+    record_row();
 
     // Redact the conversation subtitle too: it can contain private names.
     let (title, subtitle, body) = msg.content(hide_preview);
@@ -3015,6 +3089,7 @@ mod tests {
             english_ui: false,
             match_body: String::new(),
             account: String::new(),
+            row: None,
         }
     }
 
@@ -3580,6 +3655,22 @@ mod tests {
             Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 900),
             Delivery::Show => panic!("an identical second notification must be suppressed"),
         }
+    }
+
+    #[test]
+    fn a_rate_limited_notification_reserves_nothing_for_its_copies() {
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let dropped = notify_msg(1, "Jane", "Hello", "0123456789abcdef");
+        let copy = notify_msg(2, "Jane", "Hello", "0123456789abcdef");
+        assert!(matches!(
+            deduper.classify(&dropped, 900, now),
+            Delivery::Show
+        ));
+
+        deduper.release(&dropped, 900);
+
+        assert!(matches!(deduper.classify(&copy, 901, now), Delivery::Show));
     }
 
     #[test]

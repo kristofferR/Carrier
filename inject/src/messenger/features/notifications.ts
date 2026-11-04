@@ -56,6 +56,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
+import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
@@ -177,17 +178,11 @@ export function initNotificationBridge() {
 
   const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
-  // The trackers die with every page reload, and the auto-refresh reloads an
-  // unfocused window periodically. Keep the page receipt store alive in
-  // localStorage so even a native result delivered to the new document can be
-  // attached to the emit that the previous document queued.
-  const notificationStorage = (() => {
-    try {
-      return window.localStorage;
-    } catch (_) {
-      return null;
-    }
-  })();
+  // The trackers die with every page reload, and recovery reloads an unfocused
+  // window. Keep the notification stores in reload-safe storage so a native
+  // result delivered to the new document can be attached to the emit that the
+  // previous document queued, and hydration cannot replay delivered rows.
+  const notificationStorage = pageReloadSafeStorage();
   const pageReceiptKey = accountScopedStorageKey(
     "__carrier_page_notification_receipts__",
     document.cookie,
@@ -249,6 +244,8 @@ export function initNotificationBridge() {
     image = "",
     // The message's raw text, before link or photo rewording: what 👍 matches.
     matchBody = "",
+    // The row fallback's claim on native's notification ledger.
+    row?: { thread: string; fingerprint: string; body_hash: string; read_at: number },
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -273,6 +270,7 @@ export function initNotificationBridge() {
         english_ui: /^en\b/i.test(document.documentElement.lang),
         match_body: matchBody,
         account: accountId(document.cookie) || "",
+        row,
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
@@ -295,6 +293,23 @@ export function initNotificationBridge() {
   // Persist delivered fingerprints so hydration after a reload cannot replay
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+  // Native keeps a durable ledger of what each conversation already announced,
+  // shared by every window. Each delivery below is mirrored there, except the
+  // row fallback's: its emit carries the claim, so native can still turn away
+  // a row that a reload, rebuild or restart replayed. Muted previews stay
+  // page-side: after an unmute, the page lets an identical new arrival through.
+  const markNotified = (key: string, fingerprint: string, bodyHash?: string) => {
+    notifiedStore.markNotified(key, fingerprint, bodyHash);
+    invoke("plugin:event|emit", {
+      event: "carrier:notify-handled",
+      payload: {
+        account: accountId(document.cookie) || "",
+        thread: key,
+        fingerprint,
+        body_hash: bodyHash ?? "",
+      },
+    })?.catch?.(() => {});
+  };
   const senderAvatars = new SenderAvatarStore(notificationStorage);
   const conversationNames = (threadId: string) =>
     readConversationNotificationNames(
@@ -333,6 +348,8 @@ export function initNotificationBridge() {
     fingerprint: string;
     dedupeKey: string;
     confirmedRepeat: boolean;
+    /** When the page confirmed the conversation read before this arrival, else 0. */
+    readAt: number;
     /** False when this row exists only to correlate an already-suppressed page signal. */
     deliverable: boolean;
   }
@@ -661,7 +678,7 @@ export function initNotificationBridge() {
           pageMatch.deliver &&
           notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
         ) {
-          notifiedStore.markNotified(
+          markNotified(
             pageMatch.deliver.key,
             pageMatch.deliver.fingerprint,
             pageMatch.deliver.bodyHash,
@@ -671,7 +688,7 @@ export function initNotificationBridge() {
           pageMatch.signal.emitted = true;
           const delivery = pageMatch.signal.pendingDelivery;
           if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-            notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+            markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
           }
         }
       });
@@ -1078,7 +1095,7 @@ export function initNotificationBridge() {
           scheduleFallback(conversation, detectedAt, true, routeCandidates);
           return;
         }
-        notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+        markNotified(conversation.key, fingerprint, bodyHash);
       };
       if (pageSignal.nativeDelivery) {
         finishDelivery(pageSignal.nativeDelivery);
@@ -1143,6 +1160,12 @@ export function initNotificationBridge() {
       "",
       "",
       hidePreview ? "" : rowPreviewMatchText(fallback.body),
+      {
+        thread: fallback.key,
+        fingerprint: fallback.fingerprint,
+        body_hash: notificationDedupeKey("", fallback.body),
+        read_at: fallback.readAt,
+      },
     );
   };
 
@@ -1158,6 +1181,9 @@ export function initNotificationBridge() {
     detectedAt: number,
     confirmedRepeat = false,
     routeCandidates?: Iterable<Conversation>,
+    // An identical preview after a confirmed read is news, even when this
+    // document never delivered the earlier one (after a restart or rebuild).
+    readAt = confirmedRepeat ? detectedAt : 0,
   ) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -1196,6 +1222,7 @@ export function initNotificationBridge() {
         fingerprint,
         dedupeKey,
         confirmedRepeat,
+        readAt,
         deliverable: false,
       });
       return;
@@ -1331,6 +1358,7 @@ export function initNotificationBridge() {
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
         hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
+        { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({
@@ -1345,6 +1373,7 @@ export function initNotificationBridge() {
       fingerprint,
       dedupeKey,
       confirmedRepeat,
+      readAt,
       deliverable: true,
     });
   };
@@ -1368,6 +1397,10 @@ export function initNotificationBridge() {
   // before the title's count establishes a baseline.
   const READ_OBSERVED_LIMIT = 500;
   const readObservedKeys = new Set<string>();
+  // When each conversation in readObservedKeys was confirmed read. A claim
+  // carries it so native tells this arrival apart from the delivery the read
+  // covered, and from another window's claim on this same arrival.
+  const readConfirmedAt = new Map<string, number>();
   const readCandidates = new Map<string, { since: number; observations: number }>();
   // When the previous scan actually examined the list. Row mutations are
   // attributed against real elapsed time, but the scan that reads them is
@@ -1457,6 +1490,8 @@ export function initNotificationBridge() {
       clearTimeout(readConfirmationTimer);
       readConfirmationTimer = undefined;
       let nextReadConfirmationIn: number | null = null;
+      // Each conversation confirmed read now, and when it started rendering read.
+      const confirmedReads: { thread: string; since: number }[] = [];
       for (const key of readCandidates.keys()) {
         if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
       }
@@ -1486,6 +1521,12 @@ export function initNotificationBridge() {
           if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
             readObservedKeys.delete(readObservedKeys.keys().next().value!);
           }
+          readConfirmedAt.delete(conversation.key);
+          readConfirmedAt.set(conversation.key, detectedAt);
+          if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
+            readConfirmedAt.delete(readConfirmedAt.keys().next().value!);
+          }
+          confirmedReads.push({ thread: conversation.key, since: candidate.since });
         } else {
           // Once the elapsed-time guard is met, keep scanning until the
           // observation guard is met too. Otherwise the scheduled scan at the
@@ -1497,6 +1538,15 @@ export function initNotificationBridge() {
               : Math.min(nextReadConfirmationIn, remaining);
         }
       }
+      // Whichever window confirms the read, and whether or not it delivered the
+      // preview, native's ledger forgets what the conversation announced before
+      // it started rendering read: an identical message is news again.
+      if (confirmedReads.length > 0) {
+        invoke("plugin:event|emit", {
+          event: "carrier:notify-read",
+          payload: { account: accountId(document.cookie) || "", reads: confirmedReads },
+        })?.catch?.(() => {});
+      }
       if (nextReadConfirmationIn !== null) {
         readConfirmationTimer = setTimeout(
           scanUnreadConversations,
@@ -1504,6 +1554,16 @@ export function initNotificationBridge() {
         );
       }
       const readTransitions = new Set<string>();
+      // When this arrival's conversation was confirmed read, for its ledger claim.
+      // A repeat recovered from a read retired before a reload keeps that read's
+      // time, so it cannot pass another window's delivery of the same message.
+      const recoveredReadAt = new Map<string, number>();
+      const readAtFor = (key: string, repeat: boolean) =>
+        readTransitions.has(key)
+          ? (readConfirmedAt.get(key) ?? detectedAt)
+          : repeat
+            ? (recoveredReadAt.get(key) ?? detectedAt)
+            : 0;
       const changed = new Set(
         conversationTracker.observe(
           hydrated.map(({ key, body }) => ({ key, signature: body })),
@@ -1637,6 +1697,8 @@ export function initNotificationBridge() {
               routeCandidates,
             )
           : null;
+        const retiredReadAt = notifiedStore.readAt(conversation.key);
+        if (retiredReadAt !== undefined) recoveredReadAt.set(conversation.key, retiredReadAt);
         let reconciliation = notifiedStore.reconcileFingerprint(
           conversation.key,
           conversation.title,
@@ -1684,10 +1746,16 @@ export function initNotificationBridge() {
           updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           pageSignal.onNativeDelivery = (delivery) => {
             if (delivery === "duplicate") {
-              scheduleFallback(conversation, detectedAt, true, routeCandidates);
+              scheduleFallback(
+                conversation,
+                detectedAt,
+                true,
+                routeCandidates,
+                readAtFor(conversation.key, true),
+              );
               return;
             }
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            markNotified(conversation.key, fingerprint, bodyHash);
           };
           changed.delete(conversation.key);
           continue;
@@ -1696,7 +1764,13 @@ export function initNotificationBridge() {
           // The native layer did not show the page emit. A reload also erased
           // the in-memory page signal, but the confirmed row transition still
           // proves this is a new logical delivery, so retry it with a fresh key.
-          scheduleFallback(conversation, detectedAt, true, routeCandidates);
+          scheduleFallback(
+            conversation,
+            detectedAt,
+            true,
+            routeCandidates,
+            readAtFor(conversation.key, true),
+          );
           changed.delete(conversation.key);
           continue;
         }
@@ -1711,7 +1785,7 @@ export function initNotificationBridge() {
             notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
             changed.delete(conversation.key);
           } else {
-            notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+            markNotified(conversation.key, fingerprint, bodyHash);
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
           }
           // Retain repeated-delivery evidence for emitted receipts, while a
@@ -1803,6 +1877,7 @@ export function initNotificationBridge() {
             detectedAt,
             confirmedRepeats.has(conversation.key),
             routeCandidates,
+            readAtFor(conversation.key, confirmedRepeats.has(conversation.key)),
           );
         }
       }

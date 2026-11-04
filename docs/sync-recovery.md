@@ -316,6 +316,26 @@ dedicated-worker recovery and draft/call/offline protections still apply. This i
 a workaround for the observed process-lifetime failure, not a guarantee against
 all OS resource reclamation; validate it on the affected Mac after installation.
 
+### Several windows share one engine
+
+Facebook lets only one dedicated-worker engine hold the encrypted session at a
+time (`MAWAppMutex`, a localStorage lock under `armadillo_msgr_mutex`). A tab
+that starts writes `armadillo_msgr_local_takeover`, and the previous holder
+terminates its worker and goes idle. With two dedicated windows, Carrier's
+recovery saw the idle window as a dead transport and reloaded it, which took the
+session back: the windows reloaded each other every few minutes indefinitely.
+
+So the first extra window moves the whole session onto Facebook's shared engine,
+which skips that lock. Carrier destroys every open Messenger window, and its
+engine with it, then rebuilds each in place with the choice in its init script
+before it builds the new window. If a window cannot be destroyed or does not
+close in time, no new window opens and the session stays on per-window engines.
+After a successful move the session keeps the shared engine until Carrier
+restarts, so the two engine kinds never run against the same encrypted store.
+If the rebuild would interrupt a call or an unsent message, Carrier asks first.
+The shared engine brings back the memory-pressure exposure described above, but
+only while more than one window has been open.
+
 ### A replaced dedicated worker needs a reload
 
 Messenger restarts shared workers in place, but registers no restart for a

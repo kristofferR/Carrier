@@ -15,6 +15,7 @@ import {
   observeConversationMute,
   observeOpenThreadMute,
 } from "../lib/mute";
+import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { threadIdFromHref } from "../lib/threads";
 import {
   didMutedFilterPolicyChange,
@@ -32,13 +33,7 @@ import { RATE_LIMIT_EVENT, rateLimitRemainingMs } from "./rate-limit";
 export function initUnreadBadge() {
   if (!window.__TAURI_INTERNALS__) return;
 
-  const unreadStorage = (() => {
-    try {
-      return window.localStorage;
-    } catch (_) {
-      return null;
-    }
-  })();
+  const unreadStorage = pageReloadSafeStorage();
   const accountStorageKey = mutedUnreadStorageKey(document.cookie);
   const listReadiness = new UnreadListReadiness();
 

@@ -37,6 +37,7 @@ mod linux_startup;
 mod macos;
 mod media_permissions;
 mod menu;
+mod notification_ledger;
 mod notifications;
 mod preflight;
 mod render_recovery;
@@ -88,7 +89,8 @@ use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{
-    build_app_window, install_main_close_handler, should_prevent_app_exit, show_settings_window,
+    build_app_window, install_main_close_handler, is_messenger_window_label,
+    should_prevent_app_exit, show_settings_window,
 };
 
 pub(crate) fn refresh_unread_indicators(
@@ -1823,6 +1825,7 @@ pub fn run() {
             // macOS delivery now goes through UNUserNotificationCenter under the
             // app's own bundle id (set up in `setup_macos_notifications` once the
             // app is ready), so there's no per-process registration to do here.
+            notification_ledger::init(app.handle());
             let notify_handle = app.handle().clone();
             app.listen_any("carrier:notify", move |event| {
                 // Content-free receipt breadcrumb: with the page-side
@@ -1833,9 +1836,14 @@ pub fn run() {
                         log::info!("carrier:notify received (id {})", msg.id());
                         let id = msg.id();
                         let delivery = show_message_notification(notify_handle.clone(), msg);
-                        if let Some(window) = notify_handle.get_webview_window("main") {
-                            let delivery = serde_json::to_string(&delivery)
-                                .expect("notification delivery serializes");
+                        let delivery = serde_json::to_string(&delivery)
+                            .expect("notification delivery serializes");
+                        // The event does not say which window emitted it. Ids
+                        // are unique across windows, and the others ignore it.
+                        for (label, window) in notify_handle.webview_windows() {
+                            if !is_messenger_window_label(&label) {
+                                continue;
+                            }
                             if let Err(e) = window
                                 .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
                             {
@@ -1844,6 +1852,41 @@ pub fn run() {
                         }
                     }
                     Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
+                }
+            });
+
+            // The page's other deliveries (banners it paired with a row after
+            // showing them) and its confirmed reads keep the ledger in step
+            // with what each conversation has announced.
+            app.listen_any("carrier:notify-handled", |event| {
+                match serde_json::from_str::<notification_ledger::HandledMessage>(event.payload()) {
+                    Ok(message) => notification_ledger::record(&message),
+                    Err(e) => log::warn!("carrier:notify-handled payload did not parse: {e}"),
+                }
+            });
+            app.listen_any("carrier:notify-read", |event| {
+                #[derive(serde::Deserialize)]
+                struct ConfirmedRead {
+                    thread: String,
+                    /// Unix milliseconds since when the row rendered read.
+                    since: u64,
+                }
+                #[derive(serde::Deserialize)]
+                struct ReadMsg {
+                    account: String,
+                    reads: Vec<ConfirmedRead>,
+                }
+                match serde_json::from_str::<ReadMsg>(event.payload()) {
+                    Ok(read) => {
+                        for confirmed in read.reads {
+                            notification_ledger::forget(
+                                &read.account,
+                                &confirmed.thread,
+                                confirmed.since,
+                            );
+                        }
+                    }
+                    Err(e) => log::warn!("carrier:notify-read payload did not parse: {e}"),
                 }
             });
 

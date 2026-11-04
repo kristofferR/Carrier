@@ -78,7 +78,9 @@ export function initFacebookModuleInterception() {
         workerRecovery.observeLifecycleExports(exports);
         workerReplacement.observeLifecycleExports(exports);
       },
-      /mac/i.test(navigator.platform),
+      // macOS keeps Messenger's encrypted engine per window (#295), unless a
+      // second window moved the session onto Facebook's shared engine.
+      /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
       nicknamePreference,
     );
     wrappedDefines.add(wrapped);

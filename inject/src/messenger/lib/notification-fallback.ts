@@ -264,10 +264,10 @@ export type FingerprintReconciliation =
 
 /**
  * Remembers the last handled preview fingerprint (a [[notificationDedupeKey]]
- * hash — never raw text) per conversation,
- * persisted via the given storage (localStorage in production) so the memory
- * survives the auto-refresh reload and app restarts. Without it, re-priming
- * the trackers after a reload races Facebook's hydration and can re-notify a
+ * hash — never raw text) per conversation, persisted via the given storage
+ * (reload-safe storage in production) so the memory survives recovery reloads
+ * and, where localStorage persists, restarts. Without it, re-priming the
+ * trackers after a reload races Facebook's hydration and can re-notify a
  * conversation that has been sitting unread for an hour. Entries are dropped
  * once the conversation is observed read, so a genuinely new message that
  * repeats the same preview text still notifies.
@@ -396,6 +396,14 @@ export class NotifiedSignatureStore {
 
   alreadyNotified(conversationKey: string, fingerprint: string): boolean {
     return this.entries.get(conversationKey)?.fingerprint === fingerprint;
+  }
+
+  /** When a confirmed read retired this conversation's preview, while remembered. */
+  readAt(conversationKey: string): number | undefined {
+    const retired = this.readFingerprints.get(conversationKey);
+    return retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS
+      ? retired.retiredAt
+      : undefined;
   }
 
   /** The fingerprint last delivered or deliberately suppressed, if any. */

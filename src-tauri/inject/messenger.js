@@ -4736,7 +4736,9 @@ ${button.innerHTML}`)
           workerRecovery.observeLifecycleExports(exports);
           workerReplacement.observeLifecycleExports(exports);
         },
-        /mac/i.test(navigator.platform),
+        // macOS keeps Messenger's encrypted engine per window (#295), unless a
+        // second window moved the session onto Facebook's shared engine.
+        /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
         nicknamePreference
       );
       wrappedDefines.add(wrapped3);
@@ -6561,6 +6563,11 @@ ${button.innerHTML}`)
     alreadyNotified(conversationKey, fingerprint) {
       return this.entries.get(conversationKey)?.fingerprint === fingerprint;
     }
+    /** When a confirmed read retired this conversation's preview, while remembered. */
+    readAt(conversationKey) {
+      const retired = this.readFingerprints.get(conversationKey);
+      return retired && Date.now() - retired.retiredAt <= RETIRED_FINGERPRINT_TTL_MS ? retired.retiredAt : void 0;
+    }
     /** The fingerprint last delivered or deliberately suppressed, if any. */
     notifiedFingerprint(conversationKey) {
       return this.entries.get(conversationKey)?.fingerprint;
@@ -7528,6 +7535,52 @@ ${button.innerHTML}`)
     return title ? `Sent a link: ${title} (${target.host})`.slice(0, 240) : body;
   }
 
+  // inject/src/messenger/lib/reload-safe-storage.ts
+  function reloadSafeStorage(local, session) {
+    if (!local && !session) return null;
+    const read = (storage, key) => {
+      try {
+        return storage?.getItem(key) ?? null;
+      } catch (_) {
+        return null;
+      }
+    };
+    const remove = (storage, key) => {
+      try {
+        storage?.removeItem(key);
+      } catch (_) {
+      }
+    };
+    return {
+      getItem: (key) => read(local, key) ?? read(session, key),
+      setItem: (key, value) => {
+        try {
+          local?.setItem(key, value);
+        } catch (_) {
+          remove(local, key);
+        }
+        try {
+          session?.setItem(key, value);
+        } catch (_) {
+        }
+      },
+      removeItem: (key) => {
+        remove(local, key);
+        remove(session, key);
+      }
+    };
+  }
+  function pageReloadSafeStorage() {
+    const storage = (name) => {
+      try {
+        return window[name];
+      } catch (_) {
+        return null;
+      }
+    };
+    return reloadSafeStorage(storage("localStorage"), storage("sessionStorage"));
+  }
+
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7735,13 +7788,7 @@ ${button.innerHTML}`)
       });
     };
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
-    const notificationStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
+    const notificationStorage = pageReloadSafeStorage();
     const pageReceiptKey = accountScopedStorageKey(
       "__carrier_page_notification_receipts__",
       document.cookie
@@ -7781,7 +7828,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "") => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "", row) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -7804,7 +7851,8 @@ ${button.innerHTML}`)
           // Like/Mute match English control labels; native offers them only then.
           english_ui: /^en\b/i.test(document.documentElement.lang),
           match_body: matchBody,
-          account: accountId(document.cookie) || ""
+          account: accountId(document.cookie) || "",
+          row
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -7818,6 +7866,19 @@ ${button.innerHTML}`)
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
+    const markNotified = (key, fingerprint, bodyHash) => {
+      notifiedStore.markNotified(key, fingerprint, bodyHash);
+      invoke("plugin:event|emit", {
+        event: "carrier:notify-handled",
+        payload: {
+          account: accountId(document.cookie) || "",
+          thread: key,
+          fingerprint,
+          body_hash: bodyHash ?? ""
+        }
+      })?.catch?.(() => {
+      });
+    };
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     const conversationNames = (threadId) => readConversationNotificationNames(
       threadId,
@@ -8043,7 +8104,7 @@ ${button.innerHTML}`)
             hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-            notifiedStore.markNotified(
+            markNotified(
               pageMatch.deliver.key,
               pageMatch.deliver.fingerprint,
               pageMatch.deliver.bodyHash
@@ -8053,7 +8114,7 @@ ${button.innerHTML}`)
             pageMatch.signal.emitted = true;
             const delivery = pageMatch.signal.pendingDelivery;
             if (delivery && notifiedStore.notifiedFingerprint(delivery.key) === delivery.expect) {
-              notifiedStore.markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
+              markNotified(delivery.key, delivery.fingerprint, delivery.bodyHash);
             }
           }
         });
@@ -8310,7 +8371,7 @@ ${button.innerHTML}`)
             scheduleFallback(conversation, detectedAt, true, routeCandidates);
             return;
           }
-          notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+          markNotified(conversation.key, fingerprint, bodyHash);
         };
         if (pageSignal.nativeDelivery) {
           finishDelivery(pageSignal.nativeDelivery);
@@ -8357,7 +8418,13 @@ ${button.innerHTML}`)
         void 0,
         "",
         "",
-        hidePreview ? "" : rowPreviewMatchText(fallback.body)
+        hidePreview ? "" : rowPreviewMatchText(fallback.body),
+        {
+          thread: fallback.key,
+          fingerprint: fallback.fingerprint,
+          body_hash: notificationDedupeKey("", fallback.body),
+          read_at: fallback.readAt
+        }
       );
     };
     const retainPendingFallback = (fallback) => {
@@ -8366,7 +8433,7 @@ ${button.innerHTML}`)
       clearTimeout(displaced.row.timer);
       if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
     };
-    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates, readAt = confirmedRepeat ? detectedAt : 0) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -8396,6 +8463,7 @@ ${button.innerHTML}`)
           fingerprint,
           dedupeKey,
           confirmedRepeat,
+          readAt,
           deliverable: false
         });
         return;
@@ -8500,7 +8568,8 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body)
+          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
+          { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt }
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -8515,6 +8584,7 @@ ${button.innerHTML}`)
         fingerprint,
         dedupeKey,
         confirmedRepeat,
+        readAt,
         deliverable: true
       });
     };
@@ -8527,6 +8597,7 @@ ${button.innerHTML}`)
     const pendingArrivalKeys = /* @__PURE__ */ new Set();
     const READ_OBSERVED_LIMIT = 500;
     const readObservedKeys = /* @__PURE__ */ new Set();
+    const readConfirmedAt = /* @__PURE__ */ new Map();
     const readCandidates = /* @__PURE__ */ new Map();
     let lastScanAt = 0;
     const MAX_MUTATION_GRACE_MS = 9e4;
@@ -8582,6 +8653,7 @@ ${button.innerHTML}`)
         clearTimeout(readConfirmationTimer);
         readConfirmationTimer = void 0;
         let nextReadConfirmationIn = null;
+        const confirmedReads = [];
         for (const key of readCandidates.keys()) {
           if (!hydratedReadKeys.has(key)) readCandidates.delete(key);
         }
@@ -8605,10 +8677,23 @@ ${button.innerHTML}`)
             if (readObservedKeys.size > READ_OBSERVED_LIMIT) {
               readObservedKeys.delete(readObservedKeys.keys().next().value);
             }
+            readConfirmedAt.delete(conversation.key);
+            readConfirmedAt.set(conversation.key, detectedAt);
+            if (readConfirmedAt.size > READ_OBSERVED_LIMIT) {
+              readConfirmedAt.delete(readConfirmedAt.keys().next().value);
+            }
+            confirmedReads.push({ thread: conversation.key, since: candidate.since });
           } else {
             const remaining = Math.max(1, READ_TRANSITION_CONFIRM_MS - elapsed2);
             nextReadConfirmationIn = nextReadConfirmationIn === null ? remaining : Math.min(nextReadConfirmationIn, remaining);
           }
+        }
+        if (confirmedReads.length > 0) {
+          invoke("plugin:event|emit", {
+            event: "carrier:notify-read",
+            payload: { account: accountId(document.cookie) || "", reads: confirmedReads }
+          })?.catch?.(() => {
+          });
         }
         if (nextReadConfirmationIn !== null) {
           readConfirmationTimer = setTimeout(
@@ -8617,6 +8702,8 @@ ${button.innerHTML}`)
           );
         }
         const readTransitions = /* @__PURE__ */ new Set();
+        const recoveredReadAt = /* @__PURE__ */ new Map();
+        const readAtFor = (key, repeat) => readTransitions.has(key) ? readConfirmedAt.get(key) ?? detectedAt : repeat ? recoveredReadAt.get(key) ?? detectedAt : 0;
         const changed = new Set(
           conversationTracker.observe(
             hydrated.map(({ key, body }) => ({ key, signature: body })),
@@ -8725,6 +8812,8 @@ ${button.innerHTML}`)
             PAGE_NOTIFICATION_RECOVERY_MS,
             routeCandidates
           ) : null;
+          const retiredReadAt = notifiedStore.readAt(conversation.key);
+          if (retiredReadAt !== void 0) recoveredReadAt.set(conversation.key, retiredReadAt);
           let reconciliation = notifiedStore.reconcileFingerprint(
             conversation.key,
             conversation.title,
@@ -8746,16 +8835,28 @@ ${button.innerHTML}`)
             updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             pageSignal.onNativeDelivery = (delivery) => {
               if (delivery === "duplicate") {
-                scheduleFallback(conversation, detectedAt, true, routeCandidates);
+                scheduleFallback(
+                  conversation,
+                  detectedAt,
+                  true,
+                  routeCandidates,
+                  readAtFor(conversation.key, true)
+                );
                 return;
               }
-              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              markNotified(conversation.key, fingerprint, bodyHash);
             };
             changed.delete(conversation.key);
             continue;
           }
           if (receiptSuppressedRepeat) {
-            scheduleFallback(conversation, detectedAt, true, routeCandidates);
+            scheduleFallback(
+              conversation,
+              detectedAt,
+              true,
+              routeCandidates,
+              readAtFor(conversation.key, true)
+            );
             changed.delete(conversation.key);
             continue;
           }
@@ -8767,7 +8868,7 @@ ${button.innerHTML}`)
               notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
               changed.delete(conversation.key);
             } else {
-              notifiedStore.markNotified(conversation.key, fingerprint, bodyHash);
+              markNotified(conversation.key, fingerprint, bodyHash);
               updateNotificationRoute(pageReceipt.nativeId, conversation.threadPath);
             }
             reconciliation = pageReceipt.suppressedDraft ? "suppressed" : "matched";
@@ -8820,7 +8921,8 @@ ${button.innerHTML}`)
               conversation,
               detectedAt,
               confirmedRepeats.has(conversation.key),
-              routeCandidates
+              routeCandidates,
+              readAtFor(conversation.key, confirmedRepeats.has(conversation.key))
             );
           }
         }
@@ -11527,13 +11629,7 @@ ${text}`)) {
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
-    const unreadStorage = (() => {
-      try {
-        return window.localStorage;
-      } catch (_) {
-        return null;
-      }
-    })();
+    const unreadStorage = pageReloadSafeStorage();
     const accountStorageKey = mutedUnreadStorageKey(document.cookie);
     const listReadiness = new UnreadListReadiness();
     const unreadConversationState = () => {

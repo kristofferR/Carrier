@@ -141,6 +141,8 @@ interface Window {
   __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Conversation id a recycled window reopens; set only in rebuilt windows. */
   __CARRIER_RESTORE_THREAD__?: string;
+  /** macOS: built after a second window moved the session to Messenger's shared engine. */
+  __CARRIER_SHARED_ENGINE__?: boolean;
   /** Native watchdog generation baked into this Messenger window. */
   __CARRIER_HEARTBEAT_ID__?: number;
 
