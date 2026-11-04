@@ -158,6 +158,29 @@ fn rate_limit_account(value: Option<&str>) -> &str {
 }
 
 static NEXT_WATCHDOG_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Messenger windows whose latest heartbeat reported a draft, a send in
+/// flight, or a call, by watchdog id.
+#[cfg(target_os = "macos")]
+static PROTECTED_WINDOWS: Mutex<std::collections::BTreeSet<u64>> =
+    Mutex::new(std::collections::BTreeSet::new());
+
+/// Whether reloading any Messenger window now would interrupt the user.
+#[cfg(target_os = "macos")]
+pub(crate) fn any_messenger_window_protected() -> bool {
+    !PROTECTED_WINDOWS.lock().unwrap().is_empty()
+}
+
+#[cfg(target_os = "macos")]
+fn set_window_protected(watchdog_id: u64, protected: bool) {
+    let mut windows = PROTECTED_WINDOWS.lock().unwrap();
+    if protected {
+        windows.insert(watchdog_id);
+    } else {
+        windows.remove(&watchdog_id);
+    }
+}
+
 // Survives window recreation (which builds a fresh watchdog). A new document
 // must stay healthy before it can replenish the rebuild budget.
 static REALTIME_RECREATE_BUDGET: Mutex<RealtimeRecreateBudget> =
@@ -803,6 +826,8 @@ impl WebviewWatchdog {
                 payload.content_present,
                 payload.realtime,
             );
+            #[cfg(target_os = "macos")]
+            set_window_protected(watchdog_id, payload.protected);
             let healthy = payload.realtime == Some(RealtimeSignal::Ok) && !cooling_down;
             memory_sampling_available(&listener_window, &mut state);
             match &payload.render {
@@ -877,6 +902,8 @@ impl WebviewWatchdog {
                 #[cfg(target_os = "linux")]
                 MEMORY_WINDOW_GENERATION.fetch_add(1, Ordering::Relaxed);
                 window_alive.store(false, Ordering::Release);
+                #[cfg(target_os = "macos")]
+                set_window_protected(watchdog_id, false);
                 REALTIME_RECREATE_BUDGET
                     .lock()
                     .unwrap()

@@ -109,6 +109,95 @@ pub(crate) fn splash_background(s: &Settings) -> Color {
     }
 }
 
+/// The Messenger windows, as opposed to Settings.
+pub(crate) fn is_messenger_window_label(label: &str) -> bool {
+    label == "main" || label.starts_with("win-")
+}
+
+/// Which encrypted engine Messenger windows run on macOS. Carrier normally
+/// keeps one engine per window (#295): macOS discards the shared engine's
+/// separate process under memory pressure. Facebook lets only one per-window
+/// engine hold the session, and a newly loaded window takes it over, so two
+/// windows would keep reloading each other. Once a session has a second
+/// window, every window uses Facebook's shared engine until Carrier restarts.
+#[cfg(target_os = "macos")]
+static SHARED_MESSENGER_ENGINE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Completed Messenger page loads per window, so the engine switch can wait
+/// until every old page, and the engine it ran, is gone.
+#[cfg(target_os = "macos")]
+static MESSENGER_PAGE_LOADS: std::sync::Mutex<std::collections::BTreeMap<String, u64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Whether opening another window first reloads the open ones.
+#[cfg(target_os = "macos")]
+pub(crate) fn opening_window_reloads_others() -> bool {
+    !SHARED_MESSENGER_ENGINE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
+fn messenger_page_loads(label: &str) -> u64 {
+    MESSENGER_PAGE_LOADS
+        .lock()
+        .unwrap()
+        .get(label)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Open another Messenger window (File > New Window).
+pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
+    // Serialize so a second request cannot build its window while the first
+    // is still moving the open windows to the shared engine.
+    static OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _opening = OPENING.lock().await;
+    #[cfg(target_os = "macos")]
+    if !SHARED_MESSENGER_ENGINE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        move_windows_to_shared_engine(&app).await;
+    }
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let n = app
+        .state::<AppState>()
+        .next_window
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    if let Err(error) = build_app_window(&app, &format!("win-{n}"), &settings) {
+        log::warn!("failed to open a new Messenger window: {error}");
+    }
+}
+
+/// Reload every open Messenger page onto the shared engine, and wait until
+/// each old page has unloaded. Its per-window engine goes with it, so the two
+/// kinds never run against the same encrypted store at once.
+#[cfg(target_os = "macos")]
+async fn move_windows_to_shared_engine(app: &tauri::AppHandle) {
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+    let mut pending: Vec<(String, u64)> = Vec::new();
+    for (label, window) in app.webview_windows() {
+        let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
+        if !is_messenger_window_label(&label) || !on_messenger {
+            continue;
+        }
+        let loads = messenger_page_loads(&label);
+        match window.eval("window.__carrierUseSharedEngine?.();") {
+            Ok(()) => pending.push((label, loads)),
+            Err(error) => {
+                log::warn!("could not move Messenger window {label} to the shared engine: {error}")
+            }
+        }
+    }
+    let started = std::time::Instant::now();
+    while !pending.is_empty() && started.elapsed() < MAX_WAIT {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        pending.retain(|(label, loads)| {
+            app.get_webview_window(label).is_some() && messenger_page_loads(label) == *loads
+        });
+    }
+    for (label, _) in pending {
+        log::warn!("Messenger window {label} did not reload onto the shared engine in time");
+    }
+}
+
 /// Build a Carrier window (used for the main window and any extra windows).
 pub(crate) fn build_app_window(
     app: &tauri::AppHandle,
@@ -183,6 +272,14 @@ fn build_app_window_with_render_budget(
                     page_load_watchdog.disarm();
                 }
                 if is_messenger_web_url(payload.url()) {
+                    #[cfg(target_os = "macos")]
+                    {
+                        *MESSENGER_PAGE_LOADS
+                            .lock()
+                            .unwrap()
+                            .entry(window.label().to_owned())
+                            .or_default() += 1;
+                    }
                     crate::actions::messenger_page_finished(&window);
                     // Re-assert the zoom in case the engine keys it per origin
                     // (the first load hops from the bundled page to Facebook).
@@ -349,6 +446,13 @@ fn build_app_window_with_render_budget(
             serde_json::to_string(&id).expect("thread id serialises")
         )),
         None => builder,
+    };
+    // Read when Facebook defines its modules, after every init script has run.
+    #[cfg(target_os = "macos")]
+    let builder = if SHARED_MESSENGER_ENGINE.load(std::sync::atomic::Ordering::SeqCst) {
+        builder.initialization_script("window.__CARRIER_SHARED_ENGINE__ = true;")
+    } else {
+        builder
     };
     let window = builder.build().inspect(|window| {
         #[cfg(target_os = "linux")]

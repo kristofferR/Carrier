@@ -89,7 +89,8 @@ use tray::show_main;
 #[cfg(target_os = "macos")]
 use tray::{reopen_main_if_needed, tray_unread_title};
 use window::{
-    build_app_window, install_main_close_handler, should_prevent_app_exit, show_settings_window,
+    build_app_window, install_main_close_handler, is_messenger_window_label,
+    should_prevent_app_exit, show_settings_window,
 };
 
 pub(crate) fn refresh_unread_indicators(
@@ -1835,9 +1836,14 @@ pub fn run() {
                         log::info!("carrier:notify received (id {})", msg.id());
                         let id = msg.id();
                         let delivery = show_message_notification(notify_handle.clone(), msg);
-                        if let Some(window) = notify_handle.get_webview_window("main") {
-                            let delivery = serde_json::to_string(&delivery)
-                                .expect("notification delivery serializes");
+                        let delivery = serde_json::to_string(&delivery)
+                            .expect("notification delivery serializes");
+                        // The event does not say which window emitted it. Ids
+                        // are unique across windows, and the others ignore it.
+                        for (label, window) in notify_handle.webview_windows() {
+                            if !is_messenger_window_label(&label) {
+                                continue;
+                            }
                             if let Err(e) = window
                                 .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
                             {

@@ -1,6 +1,5 @@
 //! The native menu bar: construction and the menu-event handler.
 
-use std::sync::atomic::Ordering;
 #[cfg(target_os = "macos")]
 use std::time::Instant;
 
@@ -28,7 +27,7 @@ use crate::settings::{
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
 use crate::tray::show_main;
-use crate::window::{build_app_window, recreate_on_theme_change, show_settings_window};
+use crate::window::{recreate_on_theme_change, show_settings_window};
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
@@ -541,6 +540,44 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
     });
 }
 
+/// File > New Window. On macOS the first extra window reloads the open ones
+/// onto Messenger's shared engine, so ask first if that would interrupt a call
+/// or an unsent message.
+fn request_new_window(app: &tauri::AppHandle) {
+    // Off the event-loop handler to avoid the Windows window-creation deadlock.
+    let open = |app: tauri::AppHandle| {
+        tauri::async_runtime::spawn(crate::window::open_messenger_window(app));
+    };
+    #[cfg(target_os = "macos")]
+    if crate::window::opening_window_reloads_others()
+        && crate::webview_watchdog::any_messenger_window_protected()
+    {
+        let app_handle = app.clone();
+        let mut dialog = app
+            .dialog()
+            .message(
+                "To keep every window in sync, Carrier reloads Messenger in your open window. \
+                 A call or an unsent message there will be interrupted.",
+            )
+            .title("Open a New Window?")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Open Window".into(),
+                "Cancel".into(),
+            ));
+        if let Some(window) = target_window(app) {
+            dialog = dialog.parent(&window);
+        }
+        dialog.show(move |confirmed| {
+            if confirmed {
+                open(app_handle);
+            }
+        });
+        return;
+    }
+    open(app.clone());
+}
+
 pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::MenuEvent) {
     if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
         let state = app.state::<AppState>();
@@ -643,19 +680,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 }
             }
         }
-        "new_window" => {
-            // Off the event-loop handler to avoid the Windows window-creation
-            // deadlock.
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let s = app.state::<AppState>().settings.lock().unwrap().clone();
-                let n = app
-                    .state::<AppState>()
-                    .next_window
-                    .fetch_add(1, Ordering::SeqCst);
-                let _ = build_app_window(&app, &format!("win-{n}"), &s);
-            });
-        }
+        "new_window" => request_new_window(app),
         "close_window" => {
             if let Some(window) = focused_window(app) {
                 let _ = window.close();
@@ -1032,7 +1057,7 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
         }
         let ptr = menu.ns_menu();
         DOCK_MENU_KEEPALIVE.with(|slot| *slot.borrow_mut() = Some(menu));
-        DOCK_NS_MENU.store(ptr, Ordering::SeqCst);
+        DOCK_NS_MENU.store(ptr, std::sync::atomic::Ordering::SeqCst);
     }
     #[cfg(not(target_os = "macos"))]
     {

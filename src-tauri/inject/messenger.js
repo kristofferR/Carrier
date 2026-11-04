@@ -4683,6 +4683,15 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/facebook-modules.ts
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
+  var SHARED_ENGINE_KEY = "__carrier_shared_engine__";
+  var usesSharedEngine = () => {
+    if (window.__CARRIER_SHARED_ENGINE__ === true) return true;
+    try {
+      return sessionStorage.getItem(SHARED_ENGINE_KEY) === "1";
+    } catch (_) {
+      return false;
+    }
+  };
   function initFacebookModuleInterception() {
     const page = window;
     const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
@@ -4696,6 +4705,17 @@ ${button.innerHTML}`)
       }
     };
     let pauseTimer;
+    let dedicatedEngine;
+    window.__carrierUseSharedEngine = () => {
+      if (dedicatedEngine === false) return;
+      try {
+        sessionStorage.setItem(SHARED_ENGINE_KEY, "1");
+      } catch (_) {
+        diag("sync.shared-engine", "could not keep the shared engine choice across a reload");
+        return;
+      }
+      location.reload();
+    };
     const wakeSearchIndex = () => {
       searchIndex.wake();
       if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
@@ -4723,6 +4743,7 @@ ${button.innerHTML}`)
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
+      dedicatedEngine ?? (dedicatedEngine = /mac/i.test(navigator.platform) && !usesSharedEngine());
       const wrapped3 = createFacebookModuleDefineInterceptor(
         value,
         shouldBlockTelemetry,
@@ -4736,7 +4757,7 @@ ${button.innerHTML}`)
           workerRecovery.observeLifecycleExports(exports);
           workerReplacement.observeLifecycleExports(exports);
         },
-        /mac/i.test(navigator.platform),
+        dedicatedEngine,
         nicknamePreference
       );
       wrappedDefines.add(wrapped3);
