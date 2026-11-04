@@ -305,6 +305,19 @@ impl NotificationDeduper {
         Delivery::Show
     }
 
+    /// Give back a reservation whose notification was never shown, so a later
+    /// copy is not mistaken for a duplicate of a banner that exists.
+    fn release(&mut self, msg: &NotifyMsg, delivered_id: u64) {
+        let fingerprint = Self::fingerprint(msg);
+        if self
+            .seen
+            .get(&fingerprint)
+            .is_some_and(|seen| seen.delivered_id == delivered_id)
+        {
+            self.seen.remove(&fingerprint);
+        }
+    }
+
     /// Test helper: the delivery decision reduced to a bool.
     #[cfg(test)]
     fn should_deliver_at(&mut self, msg: &NotifyMsg, now: Instant) -> bool {
@@ -2348,6 +2361,11 @@ pub(crate) fn show_message_notification(
         log::warn!("carrier:notify suppressed by native rate limit");
     }
     if rate_decision != RateLimitDecision::Allow {
+        // No banner: an identical emit must not count as its duplicate, and
+        // so must not reach the ledger either.
+        if let Some(deduper) = NOTIFICATION_DEDUPER.get() {
+            deduper.lock().unwrap().release(&msg, native_id);
+        }
         return NativeNotificationDelivery::Suppressed;
     }
     record_row();
@@ -3637,6 +3655,22 @@ mod tests {
             Delivery::Suppress { delivered_id } => assert_eq!(delivered_id, 900),
             Delivery::Show => panic!("an identical second notification must be suppressed"),
         }
+    }
+
+    #[test]
+    fn a_rate_limited_notification_reserves_nothing_for_its_copies() {
+        let now = Instant::now();
+        let mut deduper = NotificationDeduper::default();
+        let dropped = notify_msg(1, "Jane", "Hello", "0123456789abcdef");
+        let copy = notify_msg(2, "Jane", "Hello", "0123456789abcdef");
+        assert!(matches!(
+            deduper.classify(&dropped, 900, now),
+            Delivery::Show
+        ));
+
+        deduper.release(&dropped, 900);
+
+        assert!(matches!(deduper.classify(&copy, 901, now), Delivery::Show));
     }
 
     #[test]
