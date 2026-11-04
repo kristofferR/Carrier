@@ -529,15 +529,16 @@ export class NotifiedSignatureStore {
    * text before its unread styling, so such a scan is treated as no evidence
    * either way: it neither advances nor is allowed to satisfy a streak.
    *
-   * Returns the conversations this observation confirmed read.
+   * Returns the conversations this observation confirmed read, with the
+   * preview each had announced.
    */
   observeRead(
     unreadKeys: ReadonlySet<string>,
     observedKeys: Iterable<string>,
     observedAt = Date.now(),
     listHydrated = true,
-  ): string[] {
-    const dropped: string[] = [];
+  ): { key: string; fingerprint: string; bodyHash?: string }[] {
+    const dropped: { key: string; fingerprint: string; bodyHash?: string }[] = [];
     const observed = new Set(observedKeys);
     for (const key of this.readStreaks.keys()) {
       if (!observed.has(key)) this.readStreaks.delete(key);
@@ -570,15 +571,13 @@ export class NotifiedSignatureStore {
       this.readStreaks.delete(key);
       this.observedUnread.delete(key);
       this.readFingerprints.delete(key);
-      this.readFingerprints.set(key, {
-        fingerprint: this.entries.get(key)!.fingerprint,
-        retiredAt: Date.now(),
-      });
+      const { fingerprint, bodyHash } = this.entries.get(key)!;
+      this.readFingerprints.set(key, { fingerprint, retiredAt: Date.now() });
       while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
         this.readFingerprints.delete(this.readFingerprints.keys().next().value!);
       }
       this.entries.delete(key);
-      dropped.push(key);
+      dropped.push({ key, fingerprint, bodyHash });
     }
     if (dropped.length > 0) this.persist();
     return dropped;

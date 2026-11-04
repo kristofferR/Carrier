@@ -4683,15 +4683,6 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/facebook-modules.ts
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
-  var SHARED_ENGINE_KEY = "__carrier_shared_engine__";
-  var usesSharedEngine = () => {
-    if (window.__CARRIER_SHARED_ENGINE__ === true) return true;
-    try {
-      return sessionStorage.getItem(SHARED_ENGINE_KEY) === "1";
-    } catch (_) {
-      return false;
-    }
-  };
   function initFacebookModuleInterception() {
     const page = window;
     const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
@@ -4705,17 +4696,6 @@ ${button.innerHTML}`)
       }
     };
     let pauseTimer;
-    let dedicatedEngine;
-    window.__carrierUseSharedEngine = () => {
-      if (dedicatedEngine === false) return;
-      try {
-        sessionStorage.setItem(SHARED_ENGINE_KEY, "1");
-      } catch (_) {
-        diag("sync.shared-engine", "could not keep the shared engine choice across a reload");
-        return;
-      }
-      location.reload();
-    };
     const wakeSearchIndex = () => {
       searchIndex.wake();
       if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
@@ -4743,7 +4723,6 @@ ${button.innerHTML}`)
     );
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-      dedicatedEngine ?? (dedicatedEngine = /mac/i.test(navigator.platform) && !usesSharedEngine());
       const wrapped3 = createFacebookModuleDefineInterceptor(
         value,
         shouldBlockTelemetry,
@@ -4757,7 +4736,9 @@ ${button.innerHTML}`)
           workerRecovery.observeLifecycleExports(exports);
           workerReplacement.observeLifecycleExports(exports);
         },
-        dedicatedEngine,
+        // macOS keeps Messenger's encrypted engine per window (#295), unless a
+        // second window moved the session onto Facebook's shared engine.
+        /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
         nicknamePreference
       );
       wrappedDefines.add(wrapped3);
@@ -6675,7 +6656,8 @@ ${button.innerHTML}`)
      * text before its unread styling, so such a scan is treated as no evidence
      * either way: it neither advances nor is allowed to satisfy a streak.
      *
-     * Returns the conversations this observation confirmed read.
+     * Returns the conversations this observation confirmed read, with the
+     * preview each had announced.
      */
     observeRead(unreadKeys, observedKeys, observedAt = Date.now(), listHydrated = true) {
       const dropped = [];
@@ -6706,15 +6688,13 @@ ${button.innerHTML}`)
         this.readStreaks.delete(key);
         this.observedUnread.delete(key);
         this.readFingerprints.delete(key);
-        this.readFingerprints.set(key, {
-          fingerprint: this.entries.get(key).fingerprint,
-          retiredAt: Date.now()
-        });
+        const { fingerprint, bodyHash } = this.entries.get(key);
+        this.readFingerprints.set(key, { fingerprint, retiredAt: Date.now() });
         while (this.readFingerprints.size > NOTIFIED_STORE_LIMIT) {
           this.readFingerprints.delete(this.readFingerprints.keys().next().value);
         }
         this.entries.delete(key);
-        dropped.push(key);
+        dropped.push({ key, fingerprint, bodyHash });
       }
       if (dropped.length > 0) this.persist();
       return dropped;
@@ -7883,9 +7863,8 @@ ${button.innerHTML}`)
       })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
-    const markHandled = (suppressed) => (key, fingerprint, bodyHash) => {
-      if (suppressed) notifiedStore.markSuppressed(key, fingerprint, bodyHash);
-      else notifiedStore.markNotified(key, fingerprint, bodyHash);
+    const markNotified = (key, fingerprint, bodyHash) => {
+      notifiedStore.markNotified(key, fingerprint, bodyHash);
       invoke("plugin:event|emit", {
         event: "carrier:notify-handled",
         payload: {
@@ -7897,8 +7876,6 @@ ${button.innerHTML}`)
       })?.catch?.(() => {
       });
     };
-    const markNotified = markHandled(false);
-    const markSuppressed = markHandled(true);
     const senderAvatars = new SenderAvatarStore(notificationStorage);
     const conversationNames = (threadId) => readConversationNotificationNames(
       threadId,
@@ -8043,7 +8020,7 @@ ${button.innerHTML}`)
           }
           pendingPageNotifications.remove(id);
           if (pageMatch.suppressed) {
-            markSuppressed(
+            notifiedStore.markSuppressed(
               pageMatch.suppressed.key,
               pageMatch.suppressed.fingerprint,
               pageMatch.suppressed.bodyHash
@@ -8058,9 +8035,13 @@ ${button.innerHTML}`)
             retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
             if (suppressed && notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect) {
-              markSuppressed(suppressed.key, suppressed.fingerprint, suppressed.bodyHash);
+              notifiedStore.markSuppressed(
+                suppressed.key,
+                suppressed.fingerprint,
+                suppressed.bodyHash
+              );
             } else if (threadId && !suppressed) {
-              markSuppressed(
+              notifiedStore.markSuppressed(
                 threadId,
                 notificationDedupeKey(originalTitle, originalBody),
                 notificationDedupeKey("", originalBody)
@@ -8136,7 +8117,7 @@ ${button.innerHTML}`)
         });
       } else {
         if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
-          markSuppressed(
+          notifiedStore.markSuppressed(
             pageMatch.deliver.key,
             pageMatch.deliver.fingerprint,
             pageMatch.deliver.bodyHash
@@ -8369,7 +8350,7 @@ ${button.innerHTML}`)
       const previous = notificationCorrelations.removeRow(conversation.key);
       if (previous) clearTimeout(previous.timer);
       if (pageSignal.suppressedBeforeMatch) {
-        markSuppressed(conversation.key, fingerprint, bodyHash);
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         return true;
       }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
@@ -8379,7 +8360,7 @@ ${button.innerHTML}`)
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
       if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
-        markSuppressed(conversation.key, fingerprint, bodyHash);
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         pageSignal.pendingDelivery = void 0;
       } else if (pageSignal.emitted) {
         const finishDelivery = (delivery) => {
@@ -8409,7 +8390,11 @@ ${button.innerHTML}`)
       if (!fallback.deliverable) return;
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
-        markSuppressed(fallback.key, fallback.fingerprint, notificationDedupeKey("", fallback.body));
+        notifiedStore.markSuppressed(
+          fallback.key,
+          fallback.fingerprint,
+          notificationDedupeKey("", fallback.body)
+        );
         return;
       }
       const hidePreview = settings.hide_notification_preview === true;
@@ -8435,7 +8420,7 @@ ${button.innerHTML}`)
           thread: fallback.key,
           fingerprint: fallback.fingerprint,
           body_hash: notificationDedupeKey("", fallback.body),
-          repeat: fallback.confirmedRepeat
+          after_read: fallback.afterRead
         }
       );
     };
@@ -8445,7 +8430,7 @@ ${button.innerHTML}`)
       clearTimeout(displaced.row.timer);
       if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
     };
-    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates) => {
+    const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates, afterRead = confirmedRepeat) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
       const dedupeKey = notificationDeliveryDedupeKey(
         fingerprint,
@@ -8457,7 +8442,7 @@ ${button.innerHTML}`)
       if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
         return;
       if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
-        markSuppressed(conversation.key, fingerprint, bodyHash);
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
             notificationCorrelations.removeRow(conversation.key);
@@ -8475,6 +8460,7 @@ ${button.innerHTML}`)
           fingerprint,
           dedupeKey,
           confirmedRepeat,
+          afterRead,
           deliverable: false
         });
         return;
@@ -8502,7 +8488,7 @@ ${button.innerHTML}`)
       const timer = setTimeout(async () => {
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
-          markSuppressed(conversation.key, fingerprint, bodyHash);
+          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
           }
@@ -8528,7 +8514,7 @@ ${button.innerHTML}`)
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
         const hidePreview = deliverySettings.hide_notification_preview === true;
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
-          markSuppressed(conversation.key, fingerprint, bodyHash);
+          notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
           return;
         }
@@ -8580,7 +8566,7 @@ ${button.innerHTML}`)
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
-          { thread: conversation.key, fingerprint, body_hash: bodyHash, repeat: confirmedRepeat }
+          { thread: conversation.key, fingerprint, body_hash: bodyHash, after_read: afterRead }
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({
@@ -8595,6 +8581,7 @@ ${button.innerHTML}`)
         fingerprint,
         dedupeKey,
         confirmedRepeat,
+        afterRead,
         deliverable: true
       });
     };
@@ -8653,7 +8640,14 @@ ${button.innerHTML}`)
         if (read.length > 0) {
           invoke("plugin:event|emit", {
             event: "carrier:notify-read",
-            payload: { account: accountId(document.cookie) || "", threads: read }
+            payload: {
+              account: accountId(document.cookie) || "",
+              reads: read.map(({ key, fingerprint, bodyHash }) => ({
+                thread: key,
+                fingerprint,
+                body_hash: bodyHash ?? ""
+              }))
+            }
           })?.catch?.(() => {
           });
         }
@@ -8851,7 +8845,7 @@ ${button.innerHTML}`)
             if (pending) clearTimeout(pending.timer);
             notificationCorrelations.removeRow(conversation.key);
             if (pageReceipt.suppressedDraft) {
-              markSuppressed(conversation.key, fingerprint, bodyHash);
+              notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
               changed.delete(conversation.key);
             } else {
               markNotified(conversation.key, fingerprint, bodyHash);
@@ -8907,7 +8901,8 @@ ${button.innerHTML}`)
               conversation,
               detectedAt,
               confirmedRepeats.has(conversation.key),
-              routeCandidates
+              routeCandidates,
+              confirmedRepeats.has(conversation.key) || readTransitions.has(conversation.key)
             );
           }
         }

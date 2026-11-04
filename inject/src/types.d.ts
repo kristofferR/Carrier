@@ -141,7 +141,7 @@ interface Window {
   __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Conversation id a recycled window reopens; set only in rebuilt windows. */
   __CARRIER_RESTORE_THREAD__?: string;
-  /** macOS: this window was built after a second window moved Messenger to its shared engine. */
+  /** macOS: built after a second window moved the session to Messenger's shared engine. */
   __CARRIER_SHARED_ENGINE__?: boolean;
   /** Native watchdog generation baked into this Messenger window. */
   __CARRIER_HEARTBEAT_ID__?: number;
@@ -171,8 +171,6 @@ interface Window {
   };
   __carrierNotifyClick?: (id: number) => boolean;
   __carrierNotifyResult?: (id: number, delivery: string) => void;
-  /** Native asks this page to reload onto Messenger's shared engine (macOS). */
-  __carrierUseSharedEngine?: () => void;
   /** Share-extension payload delivery from the native intake (macOS). */
   __carrierShareMedia?: (payload: unknown) => void;
   /** Deliver a native notification reply without raising the Carrier window. */

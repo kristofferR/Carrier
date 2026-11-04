@@ -1855,10 +1855,9 @@ pub fn run() {
                 }
             });
 
-            // The page's other notification verdicts (banners it paired with a
-            // row after showing them, and previews it kept quiet because the
-            // conversation is muted) and its confirmed reads keep the ledger
-            // in step with what each conversation has announced.
+            // The page's other deliveries (banners it paired with a row after
+            // showing them) and its confirmed reads keep the ledger in step
+            // with what each conversation has announced.
             app.listen_any("carrier:notify-handled", |event| {
                 match serde_json::from_str::<notification_ledger::HandledMessage>(event.payload()) {
                     Ok(message) => notification_ledger::record(&message),
@@ -1869,10 +1868,15 @@ pub fn run() {
                 #[derive(serde::Deserialize)]
                 struct ReadMsg {
                     account: String,
-                    threads: Vec<String>,
+                    reads: Vec<notification_ledger::HandledMessage>,
                 }
                 match serde_json::from_str::<ReadMsg>(event.payload()) {
-                    Ok(read) => notification_ledger::forget(&read.account, &read.threads),
+                    Ok(read) => {
+                        for mut preview in read.reads {
+                            preview.account.clone_from(&read.account);
+                            notification_ledger::forget(&preview);
+                        }
+                    }
                     Err(e) => log::warn!("carrier:notify-read payload did not parse: {e}"),
                 }
             });

@@ -90,10 +90,10 @@ pub(crate) struct RowClaim {
     fingerprint: String,
     #[serde(default)]
     body_hash: String,
-    /// The page saw this conversation read and then unread again with the
-    /// same preview: a new message, even though it matches the ledger.
+    /// The page confirmed this conversation read before the arrival, so it is
+    /// a new message even when its preview matches the ledger.
     #[serde(default)]
-    repeat: bool,
+    after_read: bool,
 }
 
 impl NotifyMsg {
@@ -106,7 +106,7 @@ impl NotifyMsg {
                 fingerprint: row.fingerprint.clone(),
                 body_hash: row.body_hash.clone(),
             },
-            row.repeat,
+            row.after_read,
         ))
     }
 }

@@ -124,26 +124,10 @@ pub(crate) fn is_messenger_window_label(label: &str) -> bool {
 static SHARED_MESSENGER_ENGINE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Completed Messenger page loads per window, so the engine switch can wait
-/// until every old page, and the engine it ran, is gone.
-#[cfg(target_os = "macos")]
-static MESSENGER_PAGE_LOADS: std::sync::Mutex<std::collections::BTreeMap<String, u64>> =
-    std::sync::Mutex::new(std::collections::BTreeMap::new());
-
-/// Whether opening another window first reloads the open ones.
+/// Whether opening another window first rebuilds the open ones.
 #[cfg(target_os = "macos")]
 pub(crate) fn opening_window_reloads_others() -> bool {
     !SHARED_MESSENGER_ENGINE.load(std::sync::atomic::Ordering::SeqCst)
-}
-
-#[cfg(target_os = "macos")]
-fn messenger_page_loads(label: &str) -> u64 {
-    MESSENGER_PAGE_LOADS
-        .lock()
-        .unwrap()
-        .get(label)
-        .copied()
-        .unwrap_or(0)
 }
 
 /// Open another Messenger window (File > New Window).
@@ -153,8 +137,8 @@ pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
     static OPENING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _opening = OPENING.lock().await;
     #[cfg(target_os = "macos")]
-    if !SHARED_MESSENGER_ENGINE.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        move_windows_to_shared_engine(&app).await;
+    if opening_window_reloads_others() && !move_windows_to_shared_engine(&app).await {
+        return;
     }
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     let n = app
@@ -166,36 +150,156 @@ pub(crate) async fn open_messenger_window(app: tauri::AppHandle) {
     }
 }
 
-/// Reload every open Messenger page onto the shared engine, and wait until
-/// each old page has unloaded. Its per-window engine goes with it, so the two
-/// kinds never run against the same encrypted store at once.
+/// Rebuild every open Messenger window on Facebook's shared engine. Each is
+/// destroyed first, and its per-window engine with it, so the two kinds never
+/// run against the same encrypted store at once. Returns false, leaving the
+/// session on per-window engines, when a window could not be destroyed.
 #[cfg(target_os = "macos")]
-async fn move_windows_to_shared_engine(app: &tauri::AppHandle) {
-    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
-    let mut pending: Vec<(String, u64)> = Vec::new();
+async fn move_windows_to_shared_engine(app: &tauri::AppHandle) -> bool {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    // Theme changes and recovery rebuild windows too: never overlap them, and
+    // keep the app running while no window exists.
+    let mut claimed = false;
+    for _ in 0..100 {
+        if !app
+            .state::<AppState>()
+            .recreating
+            .swap(true, Ordering::SeqCst)
+        {
+            claimed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if !claimed {
+        log::warn!("another window rebuild is still running; not opening a new window");
+        return false;
+    }
+
+    struct Snapshot {
+        label: String,
+        geometry: Option<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>)>,
+        visible: bool,
+        minimized: bool,
+        maximized: bool,
+        fullscreen: bool,
+        focused: bool,
+        thread: Option<String>,
+    }
+    let mut destroyed = Vec::new();
+    let mut failed = false;
     for (label, window) in app.webview_windows() {
-        let on_messenger = window.url().is_ok_and(|url| is_messenger_web_url(&url));
-        if !is_messenger_window_label(&label) || !on_messenger {
+        if !is_messenger_window_label(&label) {
             continue;
         }
-        let loads = messenger_page_loads(&label);
-        match window.eval("window.__carrierUseSharedEngine?.();") {
-            Ok(()) => pending.push((label, loads)),
+        let visible = window.is_visible().unwrap_or(true);
+        let visible = if label == "main" {
+            crate::macos::background_render::user_visible(&window).unwrap_or(visible)
+        } else {
+            visible
+        };
+        let snapshot = Snapshot {
+            geometry: window.outer_position().ok().zip(window.inner_size().ok()),
+            visible,
+            minimized: window.is_minimized().unwrap_or(false),
+            maximized: window.is_maximized().unwrap_or(false),
+            fullscreen: window.is_fullscreen().unwrap_or(false),
+            focused: window.is_focused().unwrap_or(false),
+            thread: window
+                .url()
+                .ok()
+                .and_then(|url| crate::messenger_url_thread_id(&url)),
+            label,
+        };
+        crate::webview_watchdog::realtime_window_replacing(&snapshot.label);
+        match window.destroy() {
+            Ok(()) => destroyed.push(snapshot),
             Err(error) => {
-                log::warn!("could not move Messenger window {label} to the shared engine: {error}")
+                crate::webview_watchdog::realtime_window_replacement_failed(&snapshot.label);
+                log::warn!(
+                    "failed to destroy Messenger webview {} for the shared engine: {error}",
+                    snapshot.label
+                );
+                failed = true;
             }
         }
     }
-    let started = std::time::Instant::now();
-    while !pending.is_empty() && started.elapsed() < MAX_WAIT {
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        pending.retain(|(label, loads)| {
-            app.get_webview_window(label).is_some() && messenger_page_loads(label) == *loads
-        });
+    // Tauri frees a label only once the native window reports it destroyed.
+    for _ in 0..100 {
+        if destroyed
+            .iter()
+            .all(|snapshot| app.get_webview_window(&snapshot.label).is_none())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    for (label, _) in pending {
-        log::warn!("Messenger window {label} did not reload onto the shared engine in time");
+    // `destroy` only queues the close. A window still present may still run
+    // its engine, so it counts as a failed destroy and keeps its place.
+    destroyed.retain(|snapshot| {
+        let gone = app.get_webview_window(&snapshot.label).is_none();
+        if !gone {
+            log::warn!(
+                "Messenger webview {} did not close in time for the shared engine",
+                snapshot.label
+            );
+            failed = true;
+        }
+        gone
+    });
+    if !failed {
+        SHARED_MESSENGER_ENGINE.store(true, Ordering::SeqCst);
     }
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    for snapshot in destroyed {
+        match build_app_window_with_render_budget(
+            app,
+            &snapshot.label,
+            &settings,
+            RenderRecoveryBudget::default(),
+            snapshot.focused,
+            snapshot.thread,
+        ) {
+            Ok(window) => {
+                if snapshot.label == "main" {
+                    install_main_close_handler(app, &window);
+                }
+                if let Some((position, size)) = snapshot.geometry {
+                    let _ = window.set_position(tauri::Position::Physical(position));
+                    let _ = window.set_size(tauri::Size::Physical(size));
+                }
+                if snapshot.maximized {
+                    let _ = window.maximize();
+                }
+                if snapshot.fullscreen {
+                    let _ = window.set_fullscreen(true);
+                }
+                if snapshot.visible {
+                    let _ = window.show();
+                } else {
+                    let _ = window.hide();
+                }
+                if snapshot.minimized {
+                    let _ = window.minimize();
+                } else if snapshot.focused {
+                    let _ = window.set_focus();
+                }
+            }
+            Err(error) => {
+                crate::webview_watchdog::realtime_window_rebuild_failed(&snapshot.label);
+                log::error!(
+                    "failed to rebuild Messenger window {}: {error}",
+                    snapshot.label
+                );
+            }
+        }
+    }
+    app.state::<AppState>()
+        .recreating
+        .store(false, Ordering::SeqCst);
+    !failed
 }
 
 /// Build a Carrier window (used for the main window and any extra windows).
@@ -272,14 +376,6 @@ fn build_app_window_with_render_budget(
                     page_load_watchdog.disarm();
                 }
                 if is_messenger_web_url(payload.url()) {
-                    #[cfg(target_os = "macos")]
-                    {
-                        *MESSENGER_PAGE_LOADS
-                            .lock()
-                            .unwrap()
-                            .entry(window.label().to_owned())
-                            .or_default() += 1;
-                    }
                     crate::actions::messenger_page_finished(&window);
                     // Re-assert the zoom in case the engine keys it per origin
                     // (the first load hops from the bundled page to Facebook).

@@ -326,12 +326,12 @@ recovery saw the idle window as a dead transport and reloaded it, which took the
 session back: the windows reloaded each other every few minutes indefinitely.
 
 So the first extra window moves the whole session onto Facebook's shared engine,
-which skips that lock. Every open Messenger page reloads with the choice in
-session storage, and native waits until each old page (and its engine) has
-unloaded before it builds the new window. Windows built afterwards carry the
-choice in their init script. The session keeps the shared engine until Carrier
-restarts, so the two engine kinds never run against the same encrypted store.
-If a reload would interrupt a call or an unsent message, Carrier asks first.
+which skips that lock. Carrier destroys every open Messenger window, and its
+engine with it, then rebuilds each in place with the choice in its init script
+before it builds the new window. If a window cannot be destroyed, no new window
+opens. The session keeps the shared engine until Carrier restarts, so the two
+engine kinds never run against the same encrypted store. If the rebuild would
+interrupt a call or an unsent message, Carrier asks first.
 The shared engine brings back the memory-pressure exposure described above, but
 only while more than one window has been open.
 

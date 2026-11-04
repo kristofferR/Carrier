@@ -21,8 +21,8 @@ const LEDGER_LIMIT: usize = 1000;
 /// its entry expires instead of silencing an identical preview forever.
 const ENTRY_MAX_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
-/// What the page says a conversation announced, or deliberately kept quiet
-/// because the conversation is muted. Validated before it touches the ledger.
+/// A conversation preview the page says it announced, or saw read. Validated
+/// before it touches the ledger.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct HandledMessage {
     #[serde(default)]
@@ -49,8 +49,16 @@ impl HandledMessage {
             && (self.body_hash.is_empty() || hash(&self.body_hash))
     }
 
-    fn same_conversation(&self, account: &str, thread: &str) -> bool {
-        self.account == account && self.thread == thread
+    fn same_conversation(&self, other: &HandledMessage) -> bool {
+        self.account == other.account && self.thread == other.thread
+    }
+
+    /// The same preview in the same conversation. A changed title alone does
+    /// not make it a different message.
+    fn same_preview(&self, other: &HandledMessage) -> bool {
+        self.same_conversation(other)
+            && (self.fingerprint == other.fingerprint
+                || (!other.body_hash.is_empty() && self.body_hash == other.body_hash))
     }
 }
 
@@ -90,30 +98,25 @@ impl NotificationLedger {
     }
 
     /// Whether `message` is the preview its conversation already announced.
-    /// The same preview under a changed title is still the same message.
     fn already_handled(&self, message: &HandledMessage, now: u64) -> bool {
         message.is_valid()
-            && self.entries.iter().any(|entry| {
-                let handled = &entry.message;
-                handled.same_conversation(&message.account, &message.thread)
-                    && !Self::expired(entry, now)
-                    && (handled.fingerprint == message.fingerprint
-                        || (!message.body_hash.is_empty()
-                            && handled.body_hash == message.body_hash))
-            })
+            && self
+                .entries
+                .iter()
+                .any(|entry| entry.message.same_preview(message) && !Self::expired(entry, now))
     }
 
     fn record(&mut self, message: &HandledMessage, now: u64) {
         if !message.is_valid() {
             return;
         }
-        let current = self.entries.iter().position(|entry| {
-            entry
-                .message
-                .same_conversation(&message.account, &message.thread)
-        });
+        let current = self
+            .entries
+            .iter()
+            .position(|entry| entry.message.same_conversation(message));
         if let Some(index) = current {
-            if self.entries[index].message == *message {
+            let entry = &self.entries[index];
+            if entry.message == *message && !Self::expired(entry, now) {
                 return;
             }
             self.entries.remove(index);
@@ -127,11 +130,12 @@ impl NotificationLedger {
         self.persist();
     }
 
-    /// The conversation was read, so an identical future preview is news.
-    fn forget(&mut self, account: &str, thread: &str) {
+    /// The page saw `read` read, so an identical future preview is news. A
+    /// newer preview another window recorded meanwhile stays.
+    fn forget(&mut self, read: &HandledMessage) {
         let before = self.entries.len();
         self.entries
-            .retain(|entry| !entry.message.same_conversation(account, thread));
+            .retain(|entry| !entry.message.same_preview(read));
         if self.entries.len() != before {
             self.persist();
         }
@@ -189,11 +193,8 @@ pub(crate) fn record(message: &HandledMessage) {
     ledger().lock().unwrap().record(message, now_ms());
 }
 
-pub(crate) fn forget(account: &str, threads: &[String]) {
-    let mut ledger = ledger().lock().unwrap();
-    for thread in threads {
-        ledger.forget(account, thread);
-    }
+pub(crate) fn forget(read: &HandledMessage) {
+    ledger().lock().unwrap().forget(read);
 }
 
 #[cfg(test)]
@@ -236,22 +237,28 @@ mod tests {
     }
 
     #[test]
-    fn reading_a_conversation_lets_an_identical_preview_notify_again() {
+    fn reading_a_preview_lets_it_notify_again_but_keeps_a_newer_one() {
         let mut ledger = NotificationLedger::default();
         ledger.record(&message("1", A, B), 0);
-
-        ledger.forget("100", "1");
-
+        ledger.forget(&message("1", A, B));
         assert!(!ledger.already_handled(&message("1", A, B), 0));
+
+        // Another window recorded a newer preview before this read arrived.
+        ledger.record(&message("1", C, C), 0);
+        ledger.forget(&message("1", A, B));
+        assert!(ledger.already_handled(&message("1", C, C), 0));
     }
 
     #[test]
-    fn old_entries_expire_instead_of_silencing_a_conversation() {
+    fn old_entries_expire_and_a_redelivery_renews_them() {
         let mut ledger = NotificationLedger::default();
         ledger.record(&message("1", A, B), 0);
-
         assert!(ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS));
         assert!(!ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS + 1));
+
+        ledger.record(&message("1", A, B), ENTRY_MAX_AGE_MS + 1);
+
+        assert!(ledger.already_handled(&message("1", A, B), ENTRY_MAX_AGE_MS + 2));
     }
 
     #[test]

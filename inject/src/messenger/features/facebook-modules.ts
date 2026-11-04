@@ -1,4 +1,3 @@
-import { diag } from "../bridge";
 import {
   createFacebookModuleDefineInterceptor,
   FacebookFTSIdleCoordinator,
@@ -12,22 +11,6 @@ import { syncProcessing } from "./sync-processing";
 import { workerRecovery, workerReplacement } from "./worker-recovery";
 
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
-const SHARED_ENGINE_KEY = "__carrier_shared_engine__";
-
-/**
- * macOS keeps Messenger's encrypted engine per window (#295), and Facebook lets
- * only one such engine hold the session. Once a second window opens, native
- * moves every window to Facebook's shared engine: a window built afterwards
- * carries the flag, and an open one reloads with it in session storage.
- */
-const usesSharedEngine = () => {
-  if (window.__CARRIER_SHARED_ENGINE__ === true) return true;
-  try {
-    return sessionStorage.getItem(SHARED_ENGINE_KEY) === "1";
-  } catch (_) {
-    return false;
-  }
-};
 
 /**
  * Intercept the few Facebook modules Carrier intentionally replaces before the
@@ -47,19 +30,6 @@ export function initFacebookModuleInterception() {
     },
   };
   let pauseTimer: number | undefined;
-  // Chosen once Facebook installs its module loader. A document never changes
-  // engines while it runs; switching takes a reload.
-  let dedicatedEngine: boolean | undefined;
-  window.__carrierUseSharedEngine = () => {
-    if (dedicatedEngine === false) return;
-    try {
-      sessionStorage.setItem(SHARED_ENGINE_KEY, "1");
-    } catch (_) {
-      diag("sync.shared-engine", "could not keep the shared engine choice across a reload");
-      return;
-    }
-    location.reload();
-  };
 
   const wakeSearchIndex = () => {
     searchIndex.wake();
@@ -95,7 +65,6 @@ export function initFacebookModuleInterception() {
 
   const wrap = (value: unknown): unknown => {
     if (typeof value !== "function" || wrappedDefines.has(value)) return value;
-    dedicatedEngine ??= /mac/i.test(navigator.platform) && !usesSharedEngine();
     const wrapped = createFacebookModuleDefineInterceptor(
       value as FacebookModuleDefine,
       shouldBlockTelemetry,
@@ -109,7 +78,9 @@ export function initFacebookModuleInterception() {
         workerRecovery.observeLifecycleExports(exports);
         workerReplacement.observeLifecycleExports(exports);
       },
-      dedicatedEngine,
+      // macOS keeps Messenger's encrypted engine per window (#295), unless a
+      // second window moved the session onto Facebook's shared engine.
+      /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
       nicknamePreference,
     );
     wrappedDefines.add(wrapped);

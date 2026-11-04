@@ -245,7 +245,7 @@ export function initNotificationBridge() {
     // The message's raw text, before link or photo rewording: what 👍 matches.
     matchBody = "",
     // The row fallback's claim on native's notification ledger.
-    row?: { thread: string; fingerprint: string; body_hash: string; repeat: boolean },
+    row?: { thread: string; fingerprint: string; body_hash: string; after_read: boolean },
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -294,25 +294,22 @@ export function initNotificationBridge() {
   // old unread rows.
   const notifiedStore = new NotifiedSignatureStore(notificationStorage);
   // Native keeps a durable ledger of what each conversation already announced,
-  // shared by every window. Each verdict below is mirrored there, except the
+  // shared by every window. Each delivery below is mirrored there, except the
   // row fallback's: its emit carries the claim, so native can still turn away
-  // a row that a reload, rebuild or restart replayed.
-  const markHandled =
-    (suppressed: boolean) => (key: string, fingerprint: string, bodyHash?: string) => {
-      if (suppressed) notifiedStore.markSuppressed(key, fingerprint, bodyHash);
-      else notifiedStore.markNotified(key, fingerprint, bodyHash);
-      invoke("plugin:event|emit", {
-        event: "carrier:notify-handled",
-        payload: {
-          account: accountId(document.cookie) || "",
-          thread: key,
-          fingerprint,
-          body_hash: bodyHash ?? "",
-        },
-      })?.catch?.(() => {});
-    };
-  const markNotified = markHandled(false);
-  const markSuppressed = markHandled(true);
+  // a row that a reload, rebuild or restart replayed. Muted previews stay
+  // page-side: after an unmute, the page lets an identical new arrival through.
+  const markNotified = (key: string, fingerprint: string, bodyHash?: string) => {
+    notifiedStore.markNotified(key, fingerprint, bodyHash);
+    invoke("plugin:event|emit", {
+      event: "carrier:notify-handled",
+      payload: {
+        account: accountId(document.cookie) || "",
+        thread: key,
+        fingerprint,
+        body_hash: bodyHash ?? "",
+      },
+    })?.catch?.(() => {});
+  };
   const senderAvatars = new SenderAvatarStore(notificationStorage);
   const conversationNames = (threadId: string) =>
     readConversationNotificationNames(
@@ -351,6 +348,8 @@ export function initNotificationBridge() {
     fingerprint: string;
     dedupeKey: string;
     confirmedRepeat: boolean;
+    /** The page confirmed the conversation read before this arrival. */
+    afterRead: boolean;
     /** False when this row exists only to correlate an already-suppressed page signal. */
     deliverable: boolean;
   }
@@ -564,7 +563,7 @@ export function initNotificationBridge() {
         }
         pendingPageNotifications.remove(id);
         if (pageMatch.suppressed) {
-          markSuppressed(
+          notifiedStore.markSuppressed(
             pageMatch.suppressed.key,
             pageMatch.suppressed.fingerprint,
             pageMatch.suppressed.bodyHash,
@@ -584,9 +583,13 @@ export function initNotificationBridge() {
             suppressed &&
             notifiedStore.notifiedFingerprint(suppressed.key) === suppressed.expect
           ) {
-            markSuppressed(suppressed.key, suppressed.fingerprint, suppressed.bodyHash);
+            notifiedStore.markSuppressed(
+              suppressed.key,
+              suppressed.fingerprint,
+              suppressed.bodyHash,
+            );
           } else if (threadId && !suppressed) {
-            markSuppressed(
+            notifiedStore.markSuppressed(
               threadId,
               notificationDedupeKey(originalTitle, originalBody),
               notificationDedupeKey("", originalBody),
@@ -694,7 +697,7 @@ export function initNotificationBridge() {
         pageMatch.deliver &&
         notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect
       ) {
-        markSuppressed(
+        notifiedStore.markSuppressed(
           pageMatch.deliver.key,
           pageMatch.deliver.fingerprint,
           pageMatch.deliver.bodyHash,
@@ -1064,7 +1067,7 @@ export function initNotificationBridge() {
     const previous = notificationCorrelations.removeRow(conversation.key);
     if (previous) clearTimeout(previous.timer);
     if (pageSignal.suppressedBeforeMatch) {
-      markSuppressed(conversation.key, fingerprint, bodyHash);
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       return true;
     }
     pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
@@ -1081,7 +1084,7 @@ export function initNotificationBridge() {
       updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
     }
     if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
-      markSuppressed(conversation.key, fingerprint, bodyHash);
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       pageSignal.pendingDelivery = undefined;
     } else if (pageSignal.emitted) {
       const finishDelivery = (delivery: NativeNotificationDelivery) => {
@@ -1127,7 +1130,11 @@ export function initNotificationBridge() {
     if (!fallback.deliverable) return;
     const settings = window.__CARRIER_SETTINGS__ || {};
     if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
-      markSuppressed(fallback.key, fallback.fingerprint, notificationDedupeKey("", fallback.body));
+      notifiedStore.markSuppressed(
+        fallback.key,
+        fallback.fingerprint,
+        notificationDedupeKey("", fallback.body),
+      );
       return;
     }
     const hidePreview = settings.hide_notification_preview === true;
@@ -1157,7 +1164,7 @@ export function initNotificationBridge() {
         thread: fallback.key,
         fingerprint: fallback.fingerprint,
         body_hash: notificationDedupeKey("", fallback.body),
-        repeat: fallback.confirmedRepeat,
+        after_read: fallback.afterRead,
       },
     );
   };
@@ -1174,6 +1181,9 @@ export function initNotificationBridge() {
     detectedAt: number,
     confirmedRepeat = false,
     routeCandidates?: Iterable<Conversation>,
+    // An identical preview after a confirmed read is news, even when this
+    // document never delivered the earlier one (after a restart or rebuild).
+    afterRead = confirmedRepeat,
   ) => {
     const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
     const dedupeKey = notificationDeliveryDedupeKey(
@@ -1190,7 +1200,7 @@ export function initNotificationBridge() {
       return;
 
     if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
-      markSuppressed(conversation.key, fingerprint, bodyHash);
+      notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       // Keep a content-only row candidate for the opposite event ordering.
       // Messenger can virtualize the row away before constructing its page
       // Notification; the candidate lets that later signal recover the mute
@@ -1212,6 +1222,7 @@ export function initNotificationBridge() {
         fingerprint,
         dedupeKey,
         confirmedRepeat,
+        afterRead,
         deliverable: false,
       });
       return;
@@ -1254,7 +1265,7 @@ export function initNotificationBridge() {
     const timer = setTimeout(async () => {
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
-        markSuppressed(conversation.key, fingerprint, bodyHash);
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
           notificationCorrelations.removeRow(conversation.key);
         }
@@ -1287,7 +1298,7 @@ export function initNotificationBridge() {
       const deliverySettings = window.__CARRIER_SETTINGS__ || {};
       const hidePreview = deliverySettings.hide_notification_preview === true;
       if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
-        markSuppressed(conversation.key, fingerprint, bodyHash);
+        notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         notificationCorrelations.removeRow(conversation.key);
         return;
       }
@@ -1347,7 +1358,7 @@ export function initNotificationBridge() {
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
         hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
-        { thread: conversation.key, fingerprint, body_hash: bodyHash, repeat: confirmedRepeat },
+        { thread: conversation.key, fingerprint, body_hash: bodyHash, after_read: afterRead },
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({
@@ -1362,6 +1373,7 @@ export function initNotificationBridge() {
       fingerprint,
       dedupeKey,
       confirmedRepeat,
+      afterRead,
       deliverable: true,
     });
   };
@@ -1456,7 +1468,14 @@ export function initNotificationBridge() {
       if (read.length > 0) {
         invoke("plugin:event|emit", {
           event: "carrier:notify-read",
-          payload: { account: accountId(document.cookie) || "", threads: read },
+          payload: {
+            account: accountId(document.cookie) || "",
+            reads: read.map(({ key, fingerprint, bodyHash }) => ({
+              thread: key,
+              fingerprint,
+              body_hash: bodyHash ?? "",
+            })),
+          },
         })?.catch?.(() => {});
       }
       // Only hydrated rows feed the signature tracker — in both directions.
@@ -1732,7 +1751,7 @@ export function initNotificationBridge() {
           if (pending) clearTimeout(pending.timer);
           notificationCorrelations.removeRow(conversation.key);
           if (pageReceipt.suppressedDraft) {
-            markSuppressed(conversation.key, fingerprint, bodyHash);
+            notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
             changed.delete(conversation.key);
           } else {
             markNotified(conversation.key, fingerprint, bodyHash);
@@ -1827,6 +1846,7 @@ export function initNotificationBridge() {
             detectedAt,
             confirmedRepeats.has(conversation.key),
             routeCandidates,
+            confirmedRepeats.has(conversation.key) || readTransitions.has(conversation.key),
           );
         }
       }
