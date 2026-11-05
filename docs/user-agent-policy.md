@@ -10,7 +10,7 @@ windows. Local Settings windows retain their defaults too.
 
 | Platform | Engine | Carrier override |
 | --- | --- | --- |
-| macOS | OS-provided WKWebView | Safari identity, installed Safari version |
+| macOS | OS-provided WKWebView | Safari identity for the running WebKit |
 | Windows | Installed WebView2 runtime | None |
 | Linux `.deb` / `.rpm` | System WebKitGTK | None |
 | Linux AppImage | Bundled WebKitGTK | None |
@@ -42,15 +42,33 @@ and video calls stopped working (#335).
   identity, including the camera and microphone fixes made with it.
 
 Carrier therefore appends Safari's own suffix, `Version/<version> Safari/605.1.15`,
-to the frozen identity. The version is read from `CFBundleShortVersionString` of
-`/Applications/Safari.app` (the system Safari, a link into the system cryptex on
-macOS 13+), never guessed: Safari and WKWebView share the system WebKit, and Safari
-updates on older macOS update that framework too, so the version describes this
-engine's real capabilities. Carrier checks that at startup: Safari's build number
-(`CFBundleVersion`) must equal the build of the WebKit framework that provides
-`WKWebView` in Carrier's process. If they differ, as they would if an older macOS
-paired a newer Safari with an older engine, or if the version is missing or
-malformed, Carrier keeps the native UA and logs a warning.
+to the frozen identity, naming the Safari release of the WebKit that provides
+`WKWebView` in Carrier's process, so the version describes this engine's real
+capabilities:
+
+- When the system Safari (`/Applications/Safari.app`, a link into the system
+  cryptex on macOS 13+) has the same build number (`CFBundleVersion`) as that
+  WebKit, Carrier uses Safari's `CFBundleShortVersionString`. This is the normal
+  case on the current macOS.
+- On older macOS, a newer Safari installs its own staged WebKit under
+  `/System/Cryptexes/App/System/Library/StagedFrameworks/Safari/` that only
+  Safari can load; apps keep the system WebKit. The [safarier
+  project](https://github.com/Cd1s/safarier/issues/8) recorded this on macOS
+  15.7.3: Safari 27.2 and its staged WebKit report `20625.2.8.18.4`, while
+  third-party processes load `20621.3.11.11.3` (Safari 18.6). Carrier 2.0.7 used
+  Safari's version only when the builds matched, so on such systems it kept the
+  native UA and #335 persisted (reported again on macOS 15.7.5).
+- So when the builds differ, or Safari can't be read, the version comes from the
+  engine's own build: its release family (`<major>.<minor>` after the OS prefix,
+  e.g. `621.3` in `20621.3.11.11.3`) maps to the Safari release that shipped it,
+  using the table in `user_agent.rs`. A family missing from the table takes the
+  newest listed release below it, so Carrier never claims a newer Safari than the
+  engine. Engines older than Safari 16 (Messenger's calling minimum) keep the
+  native UA.
+
+Startup logs the chosen version with both build numbers, or a warning when the
+native UA is kept. Extend the table when a new Safari release family ships; an
+unlisted newer engine still works, under the previous release's version.
 
 A future exception must record the failing OS and engine versions, observed
 Messenger behavior, native-versus-override results, and evidence that the override
