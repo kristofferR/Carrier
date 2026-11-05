@@ -101,7 +101,7 @@ ksni = { version = "0.3.6", default-features = false, features = ["async-io", "b
 # KDE targets its non-standard NotificationReplied signal to the exact D-Bus
 # connection that sent Notify. Keep that connection so Linux inline replies can
 # be received and routed back to Messenger.
-zbus = "5"
+zbus = "6"
 
 # macOS only: Tauri doesn't disable the WKWebView's opaque white background on
 # macOS (the webview layer is unimplemented there), so the theme-coloured window
