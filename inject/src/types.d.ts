@@ -63,11 +63,9 @@ interface CarrierSettings {
   download_behavior?: "downloads" | "ask";
 }
 
-interface CarrierToastAction {
-  label: string;
-  kind: "reveal-download";
-  url: string;
-}
+type CarrierToastAction =
+  | { label: string; kind: "reveal-download"; url: string }
+  | { label: string; kind: "open-download-privacy" };
 
 interface CarrierToastOptions {
   warning?: boolean;
@@ -78,6 +76,8 @@ interface CarrierToastOptions {
  * the request without serializing its non-extractable native authorization.
  */
 declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
+/** Opens the OS settings pane that grants Carrier folder access (macOS). */
+declare const carrierOpenDownloadPrivacy: () => Promise<unknown> | undefined;
 declare const carrierScheduledSend: (
   request: import("./messenger/lib/scheduled-send").ScheduleRequest,
 ) => Promise<import("./messenger/lib/scheduled-send").ScheduleResponse>;

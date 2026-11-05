@@ -8,8 +8,9 @@
 //      path so a click becomes an ordinary, cancelable in-page activation.
 //   2. Intercept that click and run downloadSrc() — the same fetch -> untargeted
 //      anchor -> Rust `on_download` path the working right-click "Download" uses.
-import { toastDownloadFailure, toastDownloadSaved } from "../bridge";
+import { toastDownloadAccessDenied, toastDownloadFailure, toastDownloadSaved } from "../bridge";
 import { connectedRoots } from "../lib/dom-roots";
+import { watchDeniedDownloads } from "../lib/download-completion";
 import { downloadSrc } from "./context-menu";
 
 const stripDlTarget = (a: Node | null) => {
@@ -66,6 +67,7 @@ export function registerAddedNodeSweep(fn: (root: Element) => void) {
 
 export function initDownloadAnchors() {
   sweepDlAnchors(document.documentElement);
+  watchDeniedDownloads(window, carrierVerifyResult, toastDownloadAccessDenied);
 
   if (!document.hidden) observeSweeps();
   document.addEventListener("visibilitychange", () => {

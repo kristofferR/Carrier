@@ -1,3 +1,5 @@
+import { DOWNLOAD_ACCESS_DENIED } from "./downloads";
+
 export const DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
 
 const NativePromise = Promise;
@@ -17,8 +19,12 @@ type DownloadFinishedDetail = {
   id: string;
   url: string;
   success: boolean;
+  /** The OS refused Carrier access to the destination folder. */
+  denied: boolean;
   signature: string;
 };
+
+type VerifyResult = (event: string, value: unknown, signature: unknown) => Promise<boolean>;
 
 export type NativeDownload = {
   id: string;
@@ -33,6 +39,7 @@ function detailFor(event: Event): DownloadFinishedDetail | null {
     typeof candidate.id !== "string" ||
     typeof candidate.url !== "string" ||
     typeof candidate.success !== "boolean" ||
+    typeof candidate.denied !== "boolean" ||
     typeof candidate.signature !== "string"
   )
     return null;
@@ -40,9 +47,18 @@ function detailFor(event: Event): DownloadFinishedDetail | null {
     id: candidate.id,
     url: candidate.url,
     success: candidate.success,
+    denied: candidate.denied,
     signature: candidate.signature,
   };
 }
+
+// Field order matches the native `DownloadFinished` signature payload.
+const verifyDetail = (verifyResult: VerifyResult, detail: DownloadFinishedDetail) =>
+  verifyResult(
+    DOWNLOAD_FINISHED_EVENT,
+    { id: detail.id, url: detail.url, success: detail.success, denied: detail.denied },
+    detail.signature,
+  );
 
 /**
  * Resolve only after Tauri's native download hook reports that the file was
@@ -51,9 +67,7 @@ function detailFor(event: Event): DownloadFinishedDetail | null {
 export function waitForNativeDownload(
   target: EventTarget,
   expectedUrl: string,
-  verifyResult:
-    | ((event: string, value: unknown, signature: unknown) => Promise<boolean>)
-    | undefined,
+  verifyResult: VerifyResult | undefined,
   timeoutMs = 120_000,
 ): Promise<NativeDownload> {
   return new NativePromise((resolve, reject) => {
@@ -70,17 +84,12 @@ export function waitForNativeDownload(
         reject(new Error("native download bridge unavailable"));
         return;
       }
-      const verification = verifyResult(
-        DOWNLOAD_FINISHED_EVENT,
-        { id: detail.id, url: detail.url, success: detail.success },
-        detail.signature,
-      );
-      nativeReflectApply(nativePromiseThen, verification, [
+      nativeReflectApply(nativePromiseThen, verifyDetail(verifyResult, detail), [
         (authenticated: boolean) => {
           if (!authenticated) return;
           cleanup();
           if (detail.success) resolve({ id: detail.id, url: detail.url });
-          else reject(new Error("native download failed"));
+          else reject(new Error(detail.denied ? DOWNLOAD_ACCESS_DENIED : "native download failed"));
         },
         () => {},
       ]);
@@ -95,4 +104,27 @@ export function waitForNativeDownload(
       timeoutMs,
     ]) as ReturnType<typeof setTimeout>;
   });
+}
+
+/**
+ * Call `onDenied` for every authenticated download the OS refused to save
+ * because Carrier may not access the folder. This covers downloads nobody
+ * awaits, such as attachment links the WebView turns into downloads itself.
+ */
+export function watchDeniedDownloads(
+  target: EventTarget,
+  verifyResult: VerifyResult | undefined,
+  onDenied: () => void,
+) {
+  const onFinished: EventListener = (event) => {
+    const detail = detailFor(event);
+    if (!detail || detail.success || !detail.denied || !verifyResult) return;
+    nativeReflectApply(nativePromiseThen, verifyDetail(verifyResult, detail), [
+      (authenticated: boolean) => {
+        if (authenticated) onDenied();
+      },
+      () => {},
+    ]);
+  };
+  nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
 }

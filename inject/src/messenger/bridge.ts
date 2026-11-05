@@ -1,5 +1,10 @@
 /* ------------------------- Tauri bridge + toast ----------------------- */
-import { downloadRevealLabel, isDownloadCancellation } from "./lib/downloads";
+import {
+  downloadAccessDeniedToast,
+  downloadRevealLabel,
+  isDownloadAccessDenied,
+  isDownloadCancellation,
+} from "./lib/downloads";
 import { stripFacebookTracking } from "./lib/links";
 
 // Use the always-present internal bridge directly instead of the global
@@ -66,7 +71,14 @@ export const toastDownloadSaved = (url: string) =>
     },
   );
 
+// A folder-access refusal has its own toast (`toastDownloadAccessDenied`),
+// shown for every download, so the generic failure must not replace it.
 export const toastDownloadFailure = (error: unknown, message = "Download failed") => {
-  if (isDownloadCancellation(error)) return;
+  if (isDownloadCancellation(error) || isDownloadAccessDenied(error)) return;
   toast(message);
+};
+
+export const toastDownloadAccessDenied = () => {
+  const { message, action } = downloadAccessDeniedToast(carrierMediaPlatform);
+  toast(message, action, { warning: true });
 };

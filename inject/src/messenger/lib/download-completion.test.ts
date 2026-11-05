@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { DOWNLOAD_FINISHED_EVENT, waitForNativeDownload } from "./download-completion";
+import {
+  DOWNLOAD_FINISHED_EVENT,
+  waitForNativeDownload,
+  watchDeniedDownloads,
+} from "./download-completion";
+import { DOWNLOAD_ACCESS_DENIED } from "./downloads";
 
 const acceptCompletion = async () => true;
 
-function completionEvent(url: string, success: boolean, id = "download-id") {
+function completionEvent(url: string, success: boolean, id = "download-id", denied = false) {
   const event = new Event(DOWNLOAD_FINISHED_EVENT);
   Object.defineProperty(event, "detail", {
-    value: { id, url, success, signature: "signature" },
+    value: { id, url, success, denied, signature: "signature" },
   });
   return event;
 }
@@ -32,6 +37,15 @@ describe("waitForNativeDownload", () => {
     target.dispatchEvent(completionEvent("blob:carrier/expected", false));
 
     await expect(pending).rejects.toThrow("native download failed");
+  });
+
+  test("rejects a folder-access refusal with its own error", async () => {
+    const target = new EventTarget();
+    const pending = waitForNativeDownload(target, "blob:carrier/expected", acceptCompletion, 100);
+
+    target.dispatchEvent(completionEvent("blob:carrier/expected", false, "download-id", true));
+
+    await expect(pending).rejects.toThrow(DOWNLOAD_ACCESS_DENIED);
   });
 
   test("rejects when the native hook never acknowledges the download", async () => {
@@ -74,5 +88,53 @@ describe("waitForNativeDownload", () => {
     target.dispatchEvent(completionEvent("blob:carrier/expected", true));
 
     await expect(pending).rejects.toThrow("native download timed out");
+  });
+});
+
+describe("watchDeniedDownloads", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  test("reports authenticated folder-access refusals for any download", async () => {
+    const target = new EventTarget();
+    const verified: unknown[] = [];
+    let denied = 0;
+    watchDeniedDownloads(
+      target,
+      async (_event, value) => {
+        verified.push(value);
+        return true;
+      },
+      () => {
+        denied += 1;
+      },
+    );
+
+    target.dispatchEvent(completionEvent("https://cdn.fbsbx.com/file.pdf", false, "a", true));
+    target.dispatchEvent(completionEvent("blob:carrier/failed", false, "b", false));
+    target.dispatchEvent(completionEvent("blob:carrier/saved", true, "c", false));
+    await settle();
+
+    expect(denied).toBe(1);
+    // Key order is part of the signed wire contract with the native side.
+    expect(JSON.stringify(verified)).toBe(
+      '[{"id":"a","url":"https://cdn.fbsbx.com/file.pdf","success":false,"denied":true}]',
+    );
+  });
+
+  test("ignores unauthenticated refusals", async () => {
+    const target = new EventTarget();
+    let denied = 0;
+    watchDeniedDownloads(
+      target,
+      async () => false,
+      () => {
+        denied += 1;
+      },
+    );
+
+    target.dispatchEvent(completionEvent("blob:carrier/forged", false, "a", true));
+    await settle();
+
+    expect(denied).toBe(0);
   });
 });

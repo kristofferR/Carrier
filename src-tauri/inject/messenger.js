@@ -35,6 +35,14 @@
   };
   var downloadRevealLabel = (userAgent) => /Mac/i.test(userAgent) ? "Show in Finder" : "Show in folder";
   var isDownloadCancellation = (error) => error instanceof Error && error.message === "download cancelled";
+  var DOWNLOAD_ACCESS_DENIED = "download folder access denied";
+  var isDownloadAccessDenied = (error) => error instanceof Error && error.message === DOWNLOAD_ACCESS_DENIED;
+  var downloadAccessDeniedToast = (platform) => platform === "macos" ? {
+    message: "Carrier isn't allowed to save to your Downloads folder",
+    action: { label: "Open Settings", kind: "open-download-privacy" }
+  } : {
+    message: "Carrier isn't allowed to save to your Downloads folder. Check the folder's permissions."
+  };
 
   // inject/src/messenger/lib/links.ts
   var INTERNAL_HOSTS = [
@@ -171,8 +179,12 @@
     }
   );
   var toastDownloadFailure = (error, message = "Download failed") => {
-    if (isDownloadCancellation(error)) return;
+    if (isDownloadCancellation(error) || isDownloadAccessDenied(error)) return;
     toast(message);
+  };
+  var toastDownloadAccessDenied = () => {
+    const { message, action: action2 } = downloadAccessDeniedToast(carrierMediaPlatform);
+    toast(message, action2, { warning: true });
   };
 
   // inject/src/messenger/lib/auto-refresh.ts
@@ -2684,15 +2696,21 @@ ${button.innerHTML}`)
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return null;
     const candidate = detail;
-    if (typeof candidate.id !== "string" || typeof candidate.url !== "string" || typeof candidate.success !== "boolean" || typeof candidate.signature !== "string")
+    if (typeof candidate.id !== "string" || typeof candidate.url !== "string" || typeof candidate.success !== "boolean" || typeof candidate.denied !== "boolean" || typeof candidate.signature !== "string")
       return null;
     return {
       id: candidate.id,
       url: candidate.url,
       success: candidate.success,
+      denied: candidate.denied,
       signature: candidate.signature
     };
   }
+  var verifyDetail = (verifyResult, detail) => verifyResult(
+    DOWNLOAD_FINISHED_EVENT,
+    { id: detail.id, url: detail.url, success: detail.success, denied: detail.denied },
+    detail.signature
+  );
   function waitForNativeDownload(target, expectedUrl, verifyResult, timeoutMs = 12e4) {
     return new NativePromise((resolve, reject) => {
       let timer;
@@ -2708,17 +2726,12 @@ ${button.innerHTML}`)
           reject(new Error("native download bridge unavailable"));
           return;
         }
-        const verification = verifyResult(
-          DOWNLOAD_FINISHED_EVENT,
-          { id: detail.id, url: detail.url, success: detail.success },
-          detail.signature
-        );
-        nativeReflectApply(nativePromiseThen, verification, [
+        nativeReflectApply(nativePromiseThen, verifyDetail(verifyResult, detail), [
           (authenticated) => {
             if (!authenticated) return;
             cleanup();
             if (detail.success) resolve({ id: detail.id, url: detail.url });
-            else reject(new Error("native download failed"));
+            else reject(new Error(detail.denied ? DOWNLOAD_ACCESS_DENIED : "native download failed"));
           },
           () => {
           }
@@ -2733,6 +2746,20 @@ ${button.innerHTML}`)
         timeoutMs
       ]);
     });
+  }
+  function watchDeniedDownloads(target, verifyResult, onDenied) {
+    const onFinished = (event) => {
+      const detail = detailFor(event);
+      if (!detail || detail.success || !detail.denied || !verifyResult) return;
+      nativeReflectApply(nativePromiseThen, verifyDetail(verifyResult, detail), [
+        (authenticated) => {
+          if (authenticated) onDenied();
+        },
+        () => {
+        }
+      ]);
+    };
+    nativeReflectApply(nativeAddEventListener, target, [DOWNLOAD_FINISHED_EVENT, onFinished]);
   }
 
   // inject/src/messenger/lib/menu-integrity.ts
@@ -3492,6 +3519,7 @@ ${button.innerHTML}`)
   }
   function initDownloadAnchors() {
     sweepDlAnchors(document.documentElement);
+    watchDeniedDownloads(window, carrierVerifyResult, toastDownloadAccessDenied);
     if (!document.hidden) observeSweeps();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {

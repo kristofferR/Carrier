@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  DOWNLOAD_ACCESS_DENIED,
+  downloadAccessDeniedToast,
   downloadRevealLabel,
   filenameFromUrl,
   friendlyDownloadName,
+  isDownloadAccessDenied,
   isDownloadCancellation,
   splitDownloadName,
 } from "./downloads";
@@ -69,5 +72,24 @@ describe("isDownloadCancellation", () => {
     expect(isDownloadCancellation(new Error("download rejected"))).toBe(false);
     expect(isDownloadCancellation(new Error("native download failed"))).toBe(false);
     expect(isDownloadCancellation("download cancelled")).toBe(false);
+  });
+});
+
+describe("downloadAccessDeniedToast", () => {
+  test("offers the settings pane only where one grants the access", () => {
+    expect(downloadAccessDeniedToast("macos").action).toEqual({
+      label: "Open Settings",
+      kind: "open-download-privacy",
+    });
+    for (const platform of ["windows", "linux"] as const) {
+      const toast = downloadAccessDeniedToast(platform);
+      expect(toast.action).toBeUndefined();
+      expect(toast.message).toContain("Check the folder's permissions");
+    }
+  });
+
+  test("is told apart from other download failures", () => {
+    expect(isDownloadAccessDenied(new Error(DOWNLOAD_ACCESS_DENIED))).toBe(true);
+    expect(isDownloadAccessDenied(new Error("native download failed"))).toBe(false);
   });
 });

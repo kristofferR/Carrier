@@ -99,11 +99,14 @@
     let toastRemoveTimer;
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (action?.kind !== "reveal-download" || !canActivateToastAction(event.isTrusted, navigator.userActivation?.isActive === true)) {
+      if (!action || !canActivateToastAction(event.isTrusted, navigator.userActivation?.isActive === true)) {
         return;
       }
-      carrierRevealDownload(action.url)?.catch?.(() => {
+      if (action.kind === "reveal-download") carrierRevealDownload(action.url)?.catch?.(() => {
       });
+      else if (action.kind === "open-download-privacy")
+        carrierOpenDownloadPrivacy()?.catch?.(() => {
+        });
     });
     const showToast = (msg, nextAction, options) => {
       if (!mounted) {

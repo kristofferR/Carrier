@@ -1,4 +1,4 @@
-//! Download safety for `on_download`: a strict media allowlist, filename
+//! Download safety for `on_download`: a media and attachment allowlist, filename
 //! sanitising, the executable-extension blocklist, and a short-lived trusted
 //! mapping used to reveal completed downloads in the platform file manager.
 
@@ -103,14 +103,14 @@ impl RecentDownloads {
         None
     }
 
-    fn forget(&mut self, url: &str) -> Option<String> {
-        let id = self
+    fn forget(&mut self, url: &str) -> Option<(String, PathBuf)> {
+        let forgotten = self
             .entries
             .iter()
             .find(|entry| entry.url == url)
-            .map(|entry| entry.id.clone());
+            .map(|entry| (entry.id.clone(), entry.path.clone()));
         self.entries.retain(|entry| entry.url != url);
-        id
+        forgotten
     }
 }
 
@@ -130,7 +130,8 @@ pub(crate) fn remember_download(url: &Url, id: String, path: PathBuf) {
         .remember_at(url.as_str(), id, path, Instant::now());
 }
 
-pub(crate) fn forget_download(url: &Url) -> Option<String> {
+/// Drop a failed download, returning its ID and chosen destination.
+pub(crate) fn forget_download(url: &Url) -> Option<(String, PathBuf)> {
     recent_downloads().lock().unwrap().forget(url.as_str())
 }
 
@@ -262,6 +263,44 @@ fn is_media_filename(name: &str) -> bool {
     )
 }
 
+/// Documents, text data and archives people send as Messenger file
+/// attachments (Ref #334). Office formats that can carry VBA macros (legacy
+/// `doc`/`xls`/`ppt`, macro-enabled `docm`/`xlsm`/`pptm`) and scriptable markup
+/// (`html`, `svg`, `xml`) stay out. OpenDocument stays: LibreOffice blocks
+/// unsigned macros by default.
+fn is_attachment_filename(name: &str) -> bool {
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "pdf"
+            | "txt"
+            | "rtf"
+            | "md"
+            | "csv"
+            | "tsv"
+            | "json"
+            | "docx"
+            | "xlsx"
+            | "pptx"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "pages"
+            | "numbers"
+            | "key"
+            | "epub"
+            | "zip"
+            | "7z"
+            | "rar"
+            | "tar"
+            | "gz"
+            | "tgz"
+    )
+}
+
 fn is_media_data_url(url: &Url) -> bool {
     let Some(rest) = url.as_str().strip_prefix("data:") else {
         return false;
@@ -274,11 +313,16 @@ fn is_media_data_url(url: &Url) -> bool {
         || media_type.starts_with("audio/")
 }
 
+/// Media and file attachments from Messenger's hosts or page-made blobs (how
+/// end-to-end encrypted attachments arrive once decrypted). `data:` URLs stay
+/// media-only: Messenger never uses them for files. On macOS WebKit quarantines
+/// every download it writes, so Gatekeeper still checks archive contents.
 pub(crate) fn is_allowed_download(url: &Url, name: &str) -> bool {
+    let media_or_attachment = || is_media_filename(name) || is_attachment_filename(name);
     match url.scheme() {
-        "blob" => is_media_filename(name),
+        "blob" => media_or_attachment(),
         "data" => is_media_data_url(url) && is_media_filename(name),
-        _ => is_fetchable_media_host(url) && is_media_filename(name),
+        _ => is_fetchable_media_host(url) && media_or_attachment(),
     }
 }
 
@@ -330,6 +374,33 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
             | "deb"
             | "rpm"
             | "appimage"
+    )
+}
+
+/// True when the OS refuses to let Carrier save into `folder`: the macOS
+/// Downloads folder permission was denied, or the folder is read-only. Probes
+/// with a uniquely named empty file (`create_new` never touches an existing
+/// one) and removes it. Call it off the main thread: while macOS hasn't asked
+/// yet, this check shows the permission prompt and waits for the answer.
+pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
+    let probe = folder.join(format!(".carrier-access-{}", uuid::Uuid::new_v4().simple()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            false
+        }
+        Err(error) => error.kind() == std::io::ErrorKind::PermissionDenied,
+    }
+}
+
+/// Where the user can give Carrier folder access again.
+pub(crate) fn folder_privacy_url(platform: &str) -> Option<&'static str> {
+    (platform == "macos").then_some(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
     )
 }
 
@@ -424,15 +495,28 @@ mod tests {
     }
 
     #[test]
-    fn allowed_download_requires_media_for_generated_urls() {
-        assert!(is_allowed_download(
-            &u("blob:https://www.facebook.com/123"),
-            "photo.png"
-        ));
-        assert!(!is_allowed_download(
-            &u("blob:https://www.facebook.com/123"),
-            "document.pdf"
-        ));
+    fn generated_urls_allow_media_and_attachments() {
+        // Decrypted end-to-end encrypted attachments arrive as page blobs.
+        let blob = u("blob:https://www.facebook.com/123");
+        for name in [
+            "photo.png",
+            "report.pdf",
+            "notes.docx",
+            "photos.zip",
+            "book.epub",
+        ] {
+            assert!(is_allowed_download(&blob, name), "{name}");
+        }
+        for name in [
+            "setup.exe",
+            "macro.docm",
+            "legacy.doc",
+            "page.html",
+            "image.svg",
+            "download",
+        ] {
+            assert!(!is_allowed_download(&blob, name), "{name}");
+        }
         assert!(is_allowed_download(
             &u("data:image/png;base64,iVBORw0KGgo="),
             "photo.png"
@@ -448,13 +532,21 @@ mod tests {
     }
 
     #[test]
-    fn allowed_download_requires_media_host_and_name_for_remote_urls() {
+    fn remote_urls_require_a_messenger_host_and_allowed_name() {
         assert!(is_allowed_download(
             &u("https://scontent.fbcdn.net/v/photo.jpg"),
             "photo.jpg"
         ));
+        assert!(is_allowed_download(
+            &u("https://cdn.fbsbx.com/v/t59/document.pdf?dl=1"),
+            "document.pdf"
+        ));
         assert!(!is_allowed_download(
-            &u("https://scontent.fbcdn.net/v/document.pdf"),
+            &u("https://cdn.fbsbx.com/v/t59/installer.pkg?dl=1"),
+            "installer.pkg"
+        ));
+        assert!(!is_allowed_download(
+            &u("https://example.com/document.pdf"),
             "document.pdf"
         ));
         assert!(!is_allowed_download(
@@ -493,6 +585,38 @@ mod tests {
         assert_eq!(unique_path(first), third);
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_access_denied_only_for_permission_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "carrier-folder-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!is_folder_access_denied(&dir));
+        assert!(!is_folder_access_denied(&dir.join("missing")));
+        // The probe leaves nothing behind.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+
+        let denied_for = |mode| {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            let denied = is_folder_access_denied(&dir);
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            denied
+        };
+        let unreadable = denied_for(0o000);
+        let read_only = denied_for(0o500);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(unreadable);
+        assert!(read_only);
     }
 
     #[test]
@@ -547,7 +671,10 @@ mod tests {
             PathBuf::from("failed.png"),
             now,
         );
-        downloads.forget("blob:carrier/failed");
+        assert_eq!(
+            downloads.forget("blob:carrier/failed"),
+            Some(("failed-id".into(), PathBuf::from("failed.png")))
+        );
         assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
     }
 
