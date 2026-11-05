@@ -141,6 +141,7 @@ fn allow_navigation(url: &Url) -> bool {
 /// (see `init_script`).
 fn open_popup(
     app: &tauri::AppHandle,
+    opener: &str,
     url: &Url,
     features: tauri::webview::NewWindowFeatures,
 ) -> tauri::webview::NewWindowResponse<tauri::Wry> {
@@ -170,8 +171,21 @@ fn open_popup(
         .on_navigation(allow_navigation)
         .on_new_window({
             let app = app.clone();
-            move |url, features| open_popup(&app, &url, features)
+            let opener = label.clone();
+            move |url, features| open_popup(&app, &opener, &url, features)
         });
+    // Messenger positions the window from window.screenX/Y, which WKWebView
+    // reports wrongly (the call window landed below the screen) and Wayland
+    // not at all. Centre it on the opener's screen instead.
+    let opener_position = app.get_webview_window(opener).and_then(|window| {
+        let scale = window.scale_factor().ok()?;
+        Some(window.outer_position().ok()?.to_logical::<f64>(scale))
+    });
+    let builder = match opener_position {
+        Some(position) => builder.position(position.x, position.y),
+        None => builder.position(0.0, 0.0),
+    }
+    .center();
     #[cfg(target_os = "linux")]
     let builder = builder.on_permission_request(crate::linux::media_permission);
     let builder = match crate::user_agent::messenger_user_agent() {
@@ -497,7 +511,8 @@ fn build_app_window_with_render_budget(
         .on_navigation(allow_navigation)
         .on_new_window({
             let app = app.clone();
-            move |url, features| open_popup(&app, &url, features)
+            let opener = label.to_string();
+            move |url, features| open_popup(&app, &opener, &url, features)
         })
         .on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
