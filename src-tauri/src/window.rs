@@ -119,7 +119,7 @@ pub(crate) fn is_messenger_window_label(label: &str) -> bool {
     label == "main" || label.starts_with("win-")
 }
 
-const POPUP_LABEL_PREFIX: &str = "popup-";
+pub(crate) const POPUP_LABEL_PREFIX: &str = "popup-";
 
 /// Messenger and call windows load Messenger in the app and open other web
 /// pages in the browser.
@@ -169,6 +169,9 @@ fn open_popup(
             let _ = window.set_title(&title);
         })
         .on_navigation(allow_navigation)
+        // Deny popup downloads on per-view engines. WebKitGTK's shared-context
+        // handler applies the main window's download policy.
+        .on_download(|_, _| false)
         .on_new_window({
             let app = app.clone();
             let opener = label.clone();

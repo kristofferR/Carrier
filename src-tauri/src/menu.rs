@@ -411,9 +411,9 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
         .or_else(|| app.get_webview_window("main"))
 }
 
-/// The window that owns keyboard focus, including Settings. Editing commands
-/// and Close Window must follow focus; fall back to the main Messenger window
-/// when the platform does not report one.
+/// The window that owns keyboard focus, including Settings and call popups.
+/// Window controls and editing commands follow focus; fall back to the main
+/// Messenger window when the platform does not report one.
 fn focused_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
     app.webview_windows()
         .into_values()
@@ -512,7 +512,7 @@ fn paste_plain_text(app: &tauri::AppHandle) {
             return;
         }
     };
-    if let Some(window) = target_window(app) {
+    if let Some(window) = focused_window(app) {
         let _ = window.eval(paste_plain_text_script(&text));
     }
 }
@@ -674,7 +674,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         }
         "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
         "maximize" => {
-            if let Some(w) = target_window(app) {
+            if let Some(w) = focused_window(app) {
                 if w.is_maximized().unwrap_or(false) {
                     let _ = w.unmaximize();
                 } else {

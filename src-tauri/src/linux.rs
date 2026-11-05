@@ -52,15 +52,20 @@ pub(crate) fn enable_calls(window: &tauri::WebviewWindow) {
     }
 }
 
-/// WebKitGTK denies every permission request nobody answers. Messenger and
-/// call windows only load Messenger's hosts, so calls get the microphone,
-/// camera and screen they ask for.
+/// WebKitGTK denies every permission request nobody answers. Grant capture
+/// only while the top-level page is Messenger, not a sign-in page. The callback
+/// does not expose the requesting frame's origin.
 pub(crate) fn media_permission(
-    _webview: tauri::Webview,
+    webview: tauri::Webview,
     kind: PermissionKind,
 ) -> PermissionResponse {
+    let messenger_page = webview
+        .url()
+        .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url));
     match kind {
-        PermissionKind::Microphone | PermissionKind::Camera | PermissionKind::DisplayCapture => {
+        PermissionKind::Microphone | PermissionKind::Camera | PermissionKind::DisplayCapture
+            if messenger_page =>
+        {
             PermissionResponse::Allow
         }
         _ => PermissionResponse::Default,

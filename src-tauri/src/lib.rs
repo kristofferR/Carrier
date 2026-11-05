@@ -1087,6 +1087,8 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
                 .with_denylist(&["settings"]) // fixed-size dialog; don't persist its geometry
+                // Popup labels repeat across launches; always use fresh call geometry.
+                .with_filter(|label| !label.starts_with(window::POPUP_LABEL_PREFIX))
                 .build(),
         )
         // Warnings and errors land in a file under the app log dir (surfaced
