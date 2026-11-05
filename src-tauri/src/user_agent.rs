@@ -11,22 +11,71 @@ use std::sync::OnceLock;
 const MACOS_WEBKIT_IDENTITY: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
 
+/// WebKit release families (`<major>.<minor>` after the OS prefix of
+/// `CFBundleVersion`) and the Safari release each shipped as, oldest first.
+/// Starts at Safari 16, the oldest Messenger accepts for calls.
+const SAFARI_RELEASES: &[((u32, u32), &str)] = &[
+    ((614, 1), "16.0"),
+    ((614, 2), "16.1"),
+    ((614, 3), "16.2"),
+    ((614, 4), "16.3"),
+    ((615, 1), "16.4"),
+    ((615, 2), "16.5"),
+    ((615, 3), "16.6"),
+    ((616, 1), "17.0"),
+    ((616, 2), "17.1"),
+    ((617, 1), "17.2"),
+    ((617, 2), "17.3"),
+    ((618, 1), "17.4"),
+    ((618, 2), "17.5"),
+    ((618, 3), "17.6"),
+    ((619, 1), "18.0"),
+    ((619, 2), "18.1"),
+    ((620, 1), "18.2"),
+    ((620, 2), "18.3"),
+    ((621, 1), "18.4"),
+    ((621, 2), "18.5"),
+    ((621, 3), "18.6"),
+    ((622, 1), "26.0"),
+    ((622, 2), "26.1"),
+    ((623, 1), "26.2"),
+    ((623, 2), "26.3"),
+    ((624, 1), "26.4"),
+    ((624, 2), "26.5"),
+    ((624, 4), "26.6"),
+    ((625, 1), "27.0"),
+    ((625, 2), "27.2"),
+];
+
+/// The WebKit that provides `WKWebView` in this process, and the system Safari.
+struct WebKitBuilds {
+    /// The engine's `CFBundleVersion`, e.g. `20621.3.11.11.3`.
+    engine: String,
+    /// Safari's `CFBundleVersion` and `CFBundleShortVersionString`.
+    safari: Option<(String, String)>,
+}
+
 /// The Messenger user agent for this machine, resolved once. `None` leaves
 /// the builder's user agent unset, not an empty UA string.
 pub(crate) fn messenger_user_agent() -> Option<&'static str> {
     static USER_AGENT: OnceLock<Option<String>> = OnceLock::new();
     USER_AGENT
         .get_or_init(|| {
-            let safari_version = installed_safari_version();
-            let user_agent = override_for(std::env::consts::OS, safari_version.as_deref());
+            let builds = webkit_builds();
+            let version = builds.as_ref().and_then(engine_safari_version);
+            let user_agent = override_for(std::env::consts::OS, version);
             if std::env::consts::OS == "macos" {
-                match &user_agent {
-                    Some(_) => log::info!(
-                        "Messenger identifies as Safari {}",
-                        safari_version.as_deref().unwrap_or_default()
+                let engine = builds.as_ref().map_or("unreadable", |b| &b.engine);
+                let safari = builds
+                    .as_ref()
+                    .and_then(|b| b.safari.as_ref())
+                    .map_or("unreadable", |(build, _)| build);
+                match user_agent.as_ref().and(version) {
+                    Some(version) => log::info!(
+                        "Messenger identifies as Safari {version} (WebKit {engine}, system Safari {safari})"
                     ),
                     None => log::warn!(
-                        "system Safari unavailable or built for another WebKit; keeping WKWebView's native user agent"
+                        "no Safari release matches WebKit {engine} (system Safari {safari}); keeping WKWebView's native user agent"
                     ),
                 }
             }
@@ -35,11 +84,9 @@ pub(crate) fn messenger_user_agent() -> Option<&'static str> {
         .as_deref()
 }
 
-/// macOS identifies as the system Safari, whose version is read from the
-/// installed app rather than guessed, and only when that Safari runs the same
-/// WebKit as this process's WKWebView, so the version describes this engine's
-/// actual capabilities. Everything else, including an unreadable Safari,
-/// keeps its native identity.
+/// macOS identifies as the Safari release of the WebKit it runs, so the
+/// version describes this engine's actual capabilities. Everything else,
+/// including an engine with no known Safari release, keeps its native identity.
 /// A failed load is not evidence of a UA mismatch and must not trigger browser
 /// spoofing/reloads.
 fn override_for(platform: &str, safari_version: Option<&str>) -> Option<String> {
@@ -49,6 +96,31 @@ fn override_for(platform: &str, safari_version: Option<&str>) -> Option<String> 
             .map(|version| format!("{MACOS_WEBKIT_IDENTITY} Version/{version} Safari/605.1.15")),
         _ => None,
     }
+}
+
+/// Safari's own version when it runs this process's WebKit build. On older
+/// macOS a newer Safari brings a staged WebKit only Safari can load, and apps
+/// keep the system one: on macOS 15.7 with Safari 27.2, WKWebView runs WebKit
+/// 621.3 (Safari 18.6). The version then comes from the engine's own build.
+fn engine_safari_version(builds: &WebKitBuilds) -> Option<&str> {
+    match &builds.safari {
+        Some((build, version)) if *build == builds.engine => Some(version),
+        _ => safari_release(&builds.engine),
+    }
+}
+
+/// The newest Safari release at or below this engine build, so a build
+/// between or past the table's entries never claims a newer Safari.
+fn safari_release(engine_build: &str) -> Option<&'static str> {
+    let mut parts = engine_build.split('.');
+    // The first part is an OS prefix followed by a three-digit major.
+    let major = parts.next()?.parse::<u32>().ok()? % 1000;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    SAFARI_RELEASES
+        .iter()
+        .rev()
+        .find(|(family, _)| *family <= (major, minor))
+        .map(|(_, version)| *version)
 }
 
 /// `27`, `27.2` or `27.2.1`: dotted numbers only, so a malformed plist value
@@ -63,36 +135,40 @@ fn is_plain_version(version: &str) -> bool {
 
 /// `/Applications/Safari.app` is the system Safari (a link into the system
 /// cryptex on macOS 13+). A LaunchServices lookup could instead pick a copy on
-/// another volume that doesn't match this system's WebKit.
-///
-/// Safari's build number (`CFBundleVersion`) is the WebKit build it ships
-/// with. The version is used only when it equals the build of the WebKit that
-/// provides `WKWebView` here, so a newer Safari beside an older engine never
-/// advertises capabilities the engine lacks.
+/// another volume.
 #[cfg(target_os = "macos")]
-fn installed_safari_version() -> Option<String> {
+fn webkit_builds() -> Option<WebKitBuilds> {
     use objc2::runtime::AnyClass;
     use objc2_foundation::{NSBundle, NSString, ns_string};
 
     let string = |bundle: &NSBundle, key: &NSString| {
-        bundle
-            .objectForInfoDictionaryKey(key)?
-            .downcast::<NSString>()
-            .ok()
+        Some(
+            bundle
+                .objectForInfoDictionaryKey(key)?
+                .downcast::<NSString>()
+                .ok()?
+                .to_string(),
+        )
     };
-    let safari = NSBundle::bundleWithPath(ns_string!("/Applications/Safari.app"))?;
+    let build = ns_string!("CFBundleVersion");
     let web_view = AnyClass::get(c"WKWebView")?;
     // SAFETY: `WKWebView` is a registered Objective-C class.
     let webkit = unsafe { NSBundle::bundleForClass(web_view) };
-    let build = ns_string!("CFBundleVersion");
-    if string(&safari, build)? != string(&webkit, build)? {
-        return None;
-    }
-    Some(string(&safari, ns_string!("CFBundleShortVersionString"))?.to_string())
+    let safari =
+        NSBundle::bundleWithPath(ns_string!("/Applications/Safari.app")).and_then(|safari| {
+            Some((
+                string(&safari, build)?,
+                string(&safari, ns_string!("CFBundleShortVersionString"))?,
+            ))
+        });
+    Some(WebKitBuilds {
+        engine: string(&webkit, build)?,
+        safari,
+    })
 }
 
 #[cfg(not(target_os = "macos"))]
-fn installed_safari_version() -> Option<String> {
+fn webkit_builds() -> Option<WebKitBuilds> {
     None
 }
 
@@ -100,8 +176,15 @@ fn installed_safari_version() -> Option<String> {
 mod tests {
     use super::*;
 
+    fn builds(engine: &str, safari: Option<(&str, &str)>) -> WebKitBuilds {
+        WebKitBuilds {
+            engine: engine.into(),
+            safari: safari.map(|(build, version)| (build.into(), version.into())),
+        }
+    }
+
     #[test]
-    fn macos_identifies_as_the_installed_safari() {
+    fn macos_identifies_as_safari() {
         assert_eq!(
             override_for("macos", Some("27.2")).as_deref(),
             Some(
@@ -116,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn macos_without_a_readable_safari_keeps_its_native_identity() {
+    fn macos_without_a_plain_version_keeps_its_native_identity() {
         for version in [
             None,
             Some(""),
@@ -135,10 +218,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn safari_sharing_the_engine_gives_its_own_version() {
+        let current = builds("22625.2.8.11.9", Some(("22625.2.8.11.9", "27.2")));
+        assert_eq!(engine_safari_version(&current), Some("27.2"));
+    }
+
+    #[test]
+    fn a_staged_safari_gives_the_engine_release_instead() {
+        // macOS 15.7 with Safari 27.2: Safari runs its own staged WebKit.
+        let staged = builds("20621.3.11.11.3", Some(("20625.2.8.18.4", "27.2")));
+        assert_eq!(engine_safari_version(&staged), Some("18.6"));
+        assert_eq!(
+            engine_safari_version(&builds("19618.3.11.11.5", None)),
+            Some("17.6")
+        );
+    }
+
+    #[test]
+    fn unlisted_engines_take_the_newest_release_not_above_them() {
+        assert_eq!(safari_release("20624.3.1.1.1"), Some("26.5"));
+        assert_eq!(safari_release("22630.1.2"), Some("27.2"));
+        assert_eq!(safari_release("614.1.25"), Some("16.0"));
+    }
+
+    #[test]
+    fn engines_older_than_safari_16_or_unreadable_have_no_release() {
+        for build in ["17613.3.9.1.5", "", "20621", "abc.1", "20621.x.1"] {
+            assert_eq!(safari_release(build), None, "{build:?}");
+        }
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
-    fn reads_the_system_safari_version() {
-        let version = installed_safari_version().expect("system Safari is installed");
-        assert!(is_plain_version(&version), "{version}");
+    fn reads_the_system_webkit() {
+        let builds = webkit_builds().expect("WebKit is loaded");
+        assert!(builds.engine.split('.').count() >= 3, "{}", builds.engine);
+        // An engine older than Safari 16 has no release; the fixtures above
+        // cover the mapping itself.
+        if let Some(version) = engine_safari_version(&builds) {
+            assert!(is_plain_version(version), "{version}");
+        }
     }
 }
