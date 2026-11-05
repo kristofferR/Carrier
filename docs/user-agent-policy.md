@@ -46,8 +46,11 @@ to the frozen identity. The version is read from `CFBundleShortVersionString` of
 `/Applications/Safari.app` (the system Safari, a link into the system cryptex on
 macOS 13+), never guessed: Safari and WKWebView share the system WebKit, and Safari
 updates on older macOS update that framework too, so the version describes this
-engine's real capabilities. A missing or malformed version keeps the native UA and
-logs a warning.
+engine's real capabilities. Carrier checks that at startup: Safari's build number
+(`CFBundleVersion`) must equal the build of the WebKit framework that provides
+`WKWebView` in Carrier's process. If they differ, as they would if an older macOS
+paired a newer Safari with an older engine, or if the version is missing or
+malformed, Carrier keeps the native UA and logs a warning.
 
 A future exception must record the failing OS and engine versions, observed
 Messenger behavior, native-versus-override results, and evidence that the override

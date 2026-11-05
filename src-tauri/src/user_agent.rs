@@ -26,7 +26,7 @@ pub(crate) fn messenger_user_agent() -> Option<&'static str> {
                         safari_version.as_deref().unwrap_or_default()
                     ),
                     None => log::warn!(
-                        "system Safari version unavailable; keeping WKWebView's native user agent"
+                        "system Safari unavailable or built for another WebKit; keeping WKWebView's native user agent"
                     ),
                 }
             }
@@ -36,9 +36,10 @@ pub(crate) fn messenger_user_agent() -> Option<&'static str> {
 }
 
 /// macOS identifies as the system Safari, whose version is read from the
-/// installed app rather than guessed: Safari and WKWebView share the system
-/// WebKit, so the version describes this engine's actual capabilities.
-/// Everything else, including an unreadable Safari, keeps its native identity.
+/// installed app rather than guessed, and only when that Safari runs the same
+/// WebKit as this process's WKWebView, so the version describes this engine's
+/// actual capabilities. Everything else, including an unreadable Safari,
+/// keeps its native identity.
 /// A failed load is not evidence of a UA mismatch and must not trigger browser
 /// spoofing/reloads.
 fn override_for(platform: &str, safari_version: Option<&str>) -> Option<String> {
@@ -63,13 +64,31 @@ fn is_plain_version(version: &str) -> bool {
 /// `/Applications/Safari.app` is the system Safari (a link into the system
 /// cryptex on macOS 13+). A LaunchServices lookup could instead pick a copy on
 /// another volume that doesn't match this system's WebKit.
+///
+/// Safari's build number (`CFBundleVersion`) is the WebKit build it ships
+/// with. The version is used only when it equals the build of the WebKit that
+/// provides `WKWebView` here, so a newer Safari beside an older engine never
+/// advertises capabilities the engine lacks.
 #[cfg(target_os = "macos")]
 fn installed_safari_version() -> Option<String> {
+    use objc2::runtime::AnyClass;
     use objc2_foundation::{NSBundle, NSString, ns_string};
 
-    let bundle = NSBundle::bundleWithPath(ns_string!("/Applications/Safari.app"))?;
-    let version = bundle.objectForInfoDictionaryKey(ns_string!("CFBundleShortVersionString"))?;
-    Some(version.downcast::<NSString>().ok()?.to_string())
+    let string = |bundle: &NSBundle, key: &NSString| {
+        bundle
+            .objectForInfoDictionaryKey(key)?
+            .downcast::<NSString>()
+            .ok()
+    };
+    let safari = NSBundle::bundleWithPath(ns_string!("/Applications/Safari.app"))?;
+    let web_view = AnyClass::get(c"WKWebView")?;
+    // SAFETY: `WKWebView` is a registered Objective-C class.
+    let webkit = unsafe { NSBundle::bundleForClass(web_view) };
+    let build = ns_string!("CFBundleVersion");
+    if string(&safari, build)? != string(&webkit, build)? {
+        return None;
+    }
+    Some(string(&safari, ns_string!("CFBundleShortVersionString"))?.to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
