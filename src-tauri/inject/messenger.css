@@ -146,6 +146,13 @@ html[data-carrier-login] {
   overflow-y: auto !important;
 }
 
+/* Match the white login surface across the page surround in light mode. */
+html#facebook[data-carrier-login],
+html[data-carrier-login],
+html[data-carrier-login] body {
+  background-color: #fff !important;
+}
+
 html[data-carrier-login] body,
 html[data-carrier-login] [data-carrier-login-anc],
 html[data-carrier-login] [data-carrier-login-col],
