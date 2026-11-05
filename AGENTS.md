@@ -116,8 +116,10 @@ On `main` (committed `d8a25a6`).
 ## Architecture
 
 - **`src-tauri/src/lib.rs`** — the Rust shell: window/tray/menu/settings/theme,
-  `on_navigation` (off-site → default browser), `on_download` (media and file
-  attachments, blocks executables), updater.
+  `on_navigation` (off-site → default browser), `on_new_window` (Messenger's
+  call windows open as `popup-*` windows sharing the session; Carrier's
+  injected features skip them), `on_download` (media and file attachments,
+  blocks executables), updater.
 - **`src-tauri/inject/`** — injected at document-start: `messenger.css` (hides FB
   chrome + theme/compact/login CSS), `messenger.js` (shortcuts, zoom, image
   viewer, notifications incl. mute / hide-preview privacy, unread badge,

@@ -143,10 +143,10 @@ fn park_share(slot: &mut Option<PendingShare>, payload: String) -> bool {
 }
 
 /// The Messenger window a share should land in: the focused one when the user
-/// works in a secondary window (File → New Window), else `main`. The Settings
-/// window has no composer and is never a target.
+/// works in a secondary window (File → New Window), else `main`. Settings and
+/// call windows have no composer and are never a target.
 fn is_messenger_window(window: &tauri::WebviewWindow) -> bool {
-    window.label() != "settings"
+    crate::window::is_messenger_window_label(window.label())
         && window
             .url()
             .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url))

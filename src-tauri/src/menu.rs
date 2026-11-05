@@ -400,11 +400,13 @@ pub(crate) fn sync_setting_checks(_app: &tauri::AppHandle, _settings: &Settings)
 
 /// The focused Messenger window (a `main`/`win-*` window), falling back to
 /// `main`. Used so menu actions affect the window the user is actually looking
-/// at rather than always `main`. The local settings window is excluded.
+/// at rather than always `main`. Settings and call windows are excluded.
 pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
     app.webview_windows()
         .into_iter()
-        .find(|(label, w)| label.as_str() != "settings" && w.is_focused().unwrap_or(false))
+        .find(|(label, w)| {
+            crate::window::is_messenger_window_label(label) && w.is_focused().unwrap_or(false)
+        })
         .map(|(_, w)| w)
         .or_else(|| app.get_webview_window("main"))
 }

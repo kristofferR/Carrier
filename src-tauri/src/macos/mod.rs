@@ -6,6 +6,7 @@ pub(crate) mod background_render;
 pub(crate) mod clipboard;
 pub(crate) mod dock;
 pub(crate) mod notifications;
+pub(crate) mod popup;
 pub(crate) mod power;
 pub(crate) mod share;
 pub(crate) mod share_intake;

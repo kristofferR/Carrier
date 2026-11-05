@@ -31,6 +31,44 @@ pub(crate) fn is_messenger_content_url(url: &Url) -> bool {
         })
 }
 
+/// Where a navigation or a page-opened window goes.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Route {
+    InApp,
+    Browser(String),
+    Blocked,
+}
+
+/// Messenger and the hosts it needs to log in and load media stay in the app.
+/// Other web pages open in the browser, with Facebook's tracking redirect
+/// unwrapped. Anything else (data:, javascript:, file:, custom schemes) is
+/// blocked.
+pub(crate) fn route(url: &Url) -> Route {
+    if let Some(real) = unwrap_tracking(url) {
+        return Route::Browser(real);
+    }
+    if is_internal(url) {
+        Route::InApp
+    } else if matches!(url.scheme(), "http" | "https") {
+        Route::Browser(url.to_string())
+    } else {
+        Route::Blocked
+    }
+}
+
+/// Where a page's `window.open` goes. Messenger starts a call by opening a
+/// blank window and loading the call page into it once it has one. A remote
+/// page may open a blank or web window in the app, never one of Carrier's own
+/// pages.
+pub(crate) fn popup_route(url: &Url) -> Route {
+    let web_page = matches!(url.scheme(), "http" | "https") && !is_local_app_url(url);
+    match route(url) {
+        Route::InApp if url.as_str() == "about:blank" || web_page => Route::InApp,
+        Route::InApp => Route::Blocked,
+        other => other,
+    }
+}
+
 /// Facebook wraps external links in tracking redirects
 /// (`l.facebook.com/l.php?u=…`, `lm.facebook.com/l.php?u=…`, `facebook.com/l.php`).
 /// Return the real destination if `url` is such a redirect.
@@ -250,6 +288,51 @@ mod tests {
             "file:///messages",
         ] {
             assert!(!is_messenger_content_url(&u(url)), "{url}");
+        }
+    }
+
+    #[test]
+    fn routes_keep_messenger_in_app_and_send_the_web_to_the_browser() {
+        assert_eq!(
+            route(&u("https://www.facebook.com/messages/t/1")),
+            Route::InApp
+        );
+        assert_eq!(
+            route(&u(
+                "https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.com%2Fa"
+            )),
+            Route::Browser("https://example.com/a".into())
+        );
+        assert_eq!(
+            route(&u("https://example.com/a")),
+            Route::Browser("https://example.com/a".into())
+        );
+        assert_eq!(route(&u("file:///etc/passwd")), Route::Blocked);
+    }
+
+    #[test]
+    fn popups_open_blank_and_messenger_windows_but_never_local_pages() {
+        // Messenger's call window starts blank (or at its own host on Safari)
+        // and is navigated to the call page afterwards.
+        for url in [
+            "about:blank",
+            "https://www.facebook.com/messages/e2ee/t/www.facebook.com",
+            "https://www.facebook.com/groupcall/ROOM:1/?call_id=2",
+        ] {
+            assert_eq!(popup_route(&u(url)), Route::InApp, "{url}");
+        }
+        assert_eq!(
+            popup_route(&u("https://example.com/")),
+            Route::Browser("https://example.com/".into())
+        );
+        for url in [
+            "tauri://localhost/settings.html",
+            "http://tauri.localhost/",
+            "about:srcdoc",
+            "blob:https://www.facebook.com/1",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(popup_route(&u(url)), Route::Blocked, "{url}");
         }
     }
 
