@@ -795,6 +795,44 @@
           });
           return;
         }
+        // Inputs to Messenger's encrypted-chat call gate (#335):
+        // MWStartRTCCallUtils needs ZenonE2eeTransformGate's script transform
+        // (gk 16078, jk 5001 off, RTCRtpScriptTransform) or insertable
+        // streams, plus gk 23430. Gatekeepers are server-set per page load.
+        if (code === "__carrier_mcp_call_gate_probe__") {
+          var fbRequire = window.require;
+          var gate = function (read) {
+            try {
+              return read();
+            } catch (error) {
+              return "error: " + (error && error.message ? error.message : String(error));
+            }
+          };
+          var sender = window.RTCRtpSender && window.RTCRtpSender.prototype;
+          reply({
+            userAgent: navigator.userAgent,
+            gk16078: gate(function () {
+              return fbRequire("gkx")("16078");
+            }),
+            gk23430: gate(function () {
+              return fbRequire("gkx")("23430");
+            }),
+            gk23431: gate(function () {
+              return fbRequire("gkx")("23431");
+            }),
+            jk5001: gate(function () {
+              return fbRequire("justknobx")._("5001");
+            }),
+            transformMode: gate(function () {
+              return fbRequire("ZenonE2eeTransformGate").getE2eeTransformMode(true);
+            }),
+            scriptTransform: typeof window.RTCRtpScriptTransform === "function",
+            senderTransform: !!sender && "transform" in sender,
+            createEncodedStreams: !!sender && typeof sender.createEncodedStreams === "function",
+            peerConnection: typeof window.RTCPeerConnection === "function",
+          });
+          return;
+        }
         // CSP-safe control probe for keyboard-shortcut selector work (#18/#30).
         if (code === "__carrier_mcp_shortcut_probe__") {
           reply(shortcutProbe());

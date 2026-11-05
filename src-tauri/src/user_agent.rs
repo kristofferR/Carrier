@@ -63,6 +63,16 @@ pub(crate) fn messenger_user_agent() -> Option<&'static str> {
         .get_or_init(|| {
             let builds = webkit_builds();
             let version = builds.as_ref().and_then(engine_safari_version);
+            // Diagnostics builds can present as another Safari release to
+            // test Messenger's server-side, per-version call gates (#335).
+            #[cfg(feature = "diagnostics")]
+            let version = match std::env::var("CARRIER_DEBUG_SAFARI_VERSION") {
+                Ok(forced) if is_plain_version(&forced) => {
+                    log::warn!("CARRIER_DEBUG_SAFARI_VERSION forces Safari {forced}");
+                    Some(&*String::leak(forced))
+                }
+                _ => version,
+            };
             let user_agent = override_for(std::env::consts::OS, version);
             if std::env::consts::OS == "macos" {
                 let engine = builds.as_ref().map_or("unreadable", |b| &b.engine);
