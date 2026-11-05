@@ -377,13 +377,24 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
     )
 }
 
-/// True when the OS refuses Carrier access to `folder`, as macOS does after
-/// the Downloads folder permission was denied. Call it off the main thread:
-/// while macOS hasn't asked yet, this check shows the permission prompt and
-/// waits for the answer.
+/// True when the OS refuses to let Carrier save into `folder`: the macOS
+/// Downloads folder permission was denied, or the folder is read-only. Probes
+/// with a uniquely named empty file (`create_new` never touches an existing
+/// one) and removes it. Call it off the main thread: while macOS hasn't asked
+/// yet, this check shows the permission prompt and waits for the answer.
 pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
-    std::fs::read_dir(folder)
-        .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+    let probe = folder.join(format!(".carrier-access-{}", uuid::Uuid::new_v4().simple()));
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            false
+        }
+        Err(error) => error.kind() == std::io::ErrorKind::PermissionDenied,
+    }
 }
 
 /// Where the user can give Carrier folder access again.
@@ -592,12 +603,20 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert!(!is_folder_access_denied(&dir));
         assert!(!is_folder_access_denied(&dir.join("missing")));
+        // The probe leaves nothing behind.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
 
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let denied = is_folder_access_denied(&dir);
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let denied_for = |mode| {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            let denied = is_folder_access_denied(&dir);
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            denied
+        };
+        let unreadable = denied_for(0o000);
+        let read_only = denied_for(0o500);
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(denied);
+        assert!(unreadable);
+        assert!(read_only);
     }
 
     #[test]
