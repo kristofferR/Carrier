@@ -5404,6 +5404,9 @@ ${button.innerHTML}`)
         node.removeAttribute(FOOTER_LINKS);
         if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
         if (node === footer) break;
+        for (const sibling of node.parentElement?.children || []) {
+          if (sibling !== node && !isRequiredLoginUi(sibling)) sibling.setAttribute(FOOTER_LINKS, "");
+        }
       }
     };
     const tidyFooter = (col) => {

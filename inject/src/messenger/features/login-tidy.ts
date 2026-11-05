@@ -183,6 +183,11 @@ export function initLoginTidy() {
       node.removeAttribute(FOOTER_LINKS);
       if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
       if (node === footer) break;
+      // Flattening the footer exposes decorative siblings such as its divider.
+      // Keep only the language branch and any required consent/dialog UI.
+      for (const sibling of node.parentElement?.children || []) {
+        if (sibling !== node && !isRequiredLoginUi(sibling)) sibling.setAttribute(FOOTER_LINKS, "");
+      }
     }
   };
 

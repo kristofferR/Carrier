@@ -127,7 +127,7 @@ async function runFixture(
           <button>Log in</button>
           <svg><path id="wordmark" fill="#1C2B33" d="M0 0h10v10z"></path><path id="symbol" fill="#0180FA" d="M10 10h10v10z"></path></svg>
         </div></form></div></section>
-        <footer><div><ul class="localeSelectorList"><li><a href="#">English (US)</a></li><li><a href="#">Norsk (bokmål)</a></li></ul></div></footer>
+        <footer><div><div><hr></div><ul class="localeSelectorList"><li><a href="#">English (US)</a></li><li><a href="#">Norsk (bokmål)</a></li></ul></div></footer>
       </main>`;
     let retirements = 0;
     window.MutationObserver = class extends MutationObserver {
@@ -152,6 +152,10 @@ async function runFixture(
     const assert = (name: string, condition: boolean) => {
       if (!condition) throw new Error(name);
     };
+    assert(
+      "Decorative footer divider removed",
+      document.querySelector("hr")!.getBoundingClientRect().height === 0,
+    );
     const color = (selector: string) => getComputedStyle(document.querySelector(selector)!).color;
     const checkLanguageSpacing = () => {
       const form = document.querySelector("[data-carrier-login-form]")!;
