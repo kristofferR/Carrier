@@ -63,8 +63,8 @@ capabilities:
   e.g. `621.3` in `20621.3.11.11.3`) maps to the Safari release that shipped it,
   using the table in `user_agent.rs`. A family missing from the table takes the
   newest listed release below it, so Carrier never claims a newer Safari than the
-  engine. Engines older than Safari 16 (Messenger's calling minimum) keep the
-  native UA.
+  engine. The table starts at Safari 16 (Messenger's calling minimum); an older
+  engine without a matching Safari keeps the native UA.
 
 Startup logs the chosen version with both build numbers, or a warning when the
 native UA is kept. Extend the table when a new Safari release family ships; an
