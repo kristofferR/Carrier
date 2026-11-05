@@ -1,29 +1,53 @@
 # Messenger user-agent policy
 
-Ref #258.
+Ref #258, #335.
 
 Carrier leaves the user agent unset so the embedded engine maintains its own
-identity. `src-tauri/src/user_agent.rs` is the only compatibility-policy module;
+identity, with one recorded exception: macOS identifies as the system Safari.
+`src-tauri/src/user_agent.rs` is the only compatibility-policy module;
 `window::build_app_window` applies it to initial, extra, and recreated Messenger
 windows. Local Settings windows retain their defaults too.
 
 | Platform | Engine | Carrier override |
 | --- | --- | --- |
-| macOS | OS-provided WKWebView | None |
+| macOS | OS-provided WKWebView | Safari identity, installed Safari version |
 | Windows | Installed WebView2 runtime | None |
 | Linux `.deb` / `.rpm` | System WebKitGTK | None |
 | Linux AppImage | Bundled WebKitGTK | None |
 | Unrecognized platform | Platform default | None |
 
-This removes the fixed Safari 17.4 and Chrome 124 identities, including Linux's
+This removed the fixed Safari 17.4 and Chrome 124 identities, including Linux's
 claim to be Chromium despite running WebKit. Native UA tokens can themselves be
 frozen or contain compatibility tokens; Carrier passes through the engine's own
 policy rather than deriving browser versions from those tokens or the OS version.
 
-The exception table is empty. The original override's comment claimed it avoided
-a degraded/unsupported-browser experience, but recorded no platform/runtime,
-reproduction, or comparison with native behavior. It is not sufficient evidence
-for retaining those particular version claims.
+## macOS exception: calls need a Safari identity
+
+WKWebView's native UA is WebKit's frozen macOS identity with no browser token:
+`Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)`.
+Since v1.13.0 (#278) Messenger has classified it as an unknown browser, and voice
+and video calls stopped working (#335).
+
+- Reported on macOS 15.7.5 (Apple silicon): call buttons are greyed out or open
+  "This feature isn't supported by your browser" with an Install Chrome button.
+- Observed on 2026-11-05 in Carrier 2.0.6 on macOS 27.2 / Safari 27.2: Facebook's
+  `UserAgentData` module reports `browserName: "Unknown"` with engine `WebKit`.
+  `ZenonIncomingRingSDK.isCallSupported` defers to
+  `RTWebIncomingRingConfiguration.isSupportedClient()`, a list of browser checks
+  such as `Chrome >= 77`, `Firefox >= 70` and `Safari >= 16`. An unknown browser
+  matches none, so calls take the unsupported-browser dialog
+  (`useRTWebOutgoingUnsupportedBrowserDialog`). The engine itself exposes
+  `getUserMedia`, `getDisplayMedia`, insertable streams and script transforms.
+- Native versus override: calls worked under the previous fixed Safari 17.4
+  identity, including the camera and microphone fixes made with it.
+
+Carrier therefore appends Safari's own suffix, `Version/<version> Safari/605.1.15`,
+to the frozen identity. The version is read from `CFBundleShortVersionString` of
+`/Applications/Safari.app` (the system Safari, a link into the system cryptex on
+macOS 13+), never guessed: Safari and WKWebView share the system WebKit, and Safari
+updates on older macOS update that framework too, so the version describes this
+engine's real capabilities. A missing or malformed version keeps the native UA and
+logs a warning.
 
 A future exception must record the failing OS and engine versions, observed
 Messenger behavior, native-versus-override results, and evidence that the override

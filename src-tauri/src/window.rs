@@ -545,7 +545,7 @@ fn build_app_window_with_render_budget(
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
     let builder = builder.decorations(show_title_bar(settings));
-    let builder = match crate::user_agent::override_for(std::env::consts::OS) {
+    let builder = match crate::user_agent::messenger_user_agent() {
         Some(user_agent) => builder.user_agent(user_agent),
         None => builder,
     };
