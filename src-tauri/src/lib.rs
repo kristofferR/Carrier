@@ -1383,7 +1383,7 @@ pub fn run() {
                 };
                 if !asks || !allowed {
                     log::warn!(
-                        "carrier:choose-download rejected (ask mode: {asks}, allowed media: {allowed})"
+                        "carrier:choose-download rejected (ask mode: {asks}, allowed download: {allowed})"
                     );
                     send_choose_download_result(
                         &choose_download_handle,
@@ -1423,7 +1423,7 @@ pub fn run() {
                                 if !is_allowed_download_path(&result_parsed_url, &path) =>
                             {
                                 log::warn!(
-                                    "carrier:choose-download selection failed the media policy"
+                                    "carrier:choose-download selection failed the download policy"
                                 );
                                 DownloadChoice::Rejected
                             }

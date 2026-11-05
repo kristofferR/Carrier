@@ -261,7 +261,7 @@ typed feature modules that remove Facebook chrome and add desktop behavior.
 
 Because Facebook is a remote origin, page features communicate with the native
 shell through narrowly scoped Tauri plugins and events. Off-site navigation is
-routed to the default browser, downloads are restricted to expected media, and
+routed to the default browser, downloads are restricted to media and common file attachments, and
 the window hides to the tray when configured.
 
 Messenger is a remote service and its markup changes occasionally. Carrier logs

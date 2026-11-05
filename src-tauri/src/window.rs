@@ -442,9 +442,9 @@ fn build_app_window_with_render_budget(
                     .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
                 #[cfg(not(target_os = "macos"))]
                 let download_id = uuid::Uuid::new_v4().simple().to_string();
-                // Only accept downloads of Messenger's own media or page-generated
-                // blob:/data: content; refuse anything else a remote page might try
-                // to write to the user's Downloads folder.
+                // Only accept Messenger media and file attachments from its own
+                // hosts or page-generated blob:/data: content; refuse anything else
+                // a remote page might try to write to the user's Downloads folder.
                 // Prefer the WebView's suggested filename — it carries the real
                 // extension (e.g. a blob the page named via `download="photo.png"`);
                 // fall back to the URL's last path segment.
