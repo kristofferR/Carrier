@@ -115,7 +115,17 @@ there is no tested Windows/Linux minimum implied by this table.
 | Current supported Windows / current WebView2 | Pending | Pending | Pending | Pending | Pending | Pending |
 | Oldest supported Linux packages / system WebKitGTK | Pending | Pending | Pending | Pending | Pending | Pending |
 | Omarchy / system WebKitGTK 2.52.6 (standalone probe) | Form only | Pending | Pending | Pending | Pending | Pending |
+| Omarchy / system WebKitGTK 2.54.1 (Carrier 2.0.8 debug) | Pending | Pending | Microphone granted | Unsupported: no WebRTC | Pending | Pending |
 | Linux AppImage / bundled WebKitGTK | Pending | Pending | Pending | Pending | Pending | Pending |
+
+Linux calls depend on how WebKitGTK was built. On 2026-11-05 Omarchy's Arch
+WebKitGTK 2.54.1 granted Carrier's microphone requests, but Messenger greyed out
+calls in end-to-end encrypted chats. Arch builds WebKitGTK with upstream
+defaults, which leave WebRTC off for the GTK port, so `RTCPeerConnection` and
+`RTCRtpScriptTransform` stay undefined even with the `enable-webrtc` setting on.
+Messenger needs one of those transforms (`ZenonE2eeTransformGate`) before it
+offers encrypted calls. Carrier turns WebRTC on for WebKitGTK builds that
+include it.
 
 For each row, use an actual Carrier build with native UA, record OS, architecture,
 engine/runtime version and package format, then check:
