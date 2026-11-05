@@ -770,6 +770,31 @@
           reply(runPerformanceExperiment(performanceExperiment[1]));
           return;
         }
+        // Hover the chat header's voice call button with a synthetic pointer
+        // event and report whether Carrier's Linux call notice opened (#345).
+        if (code === "__carrier_mcp_call_button_hover__") {
+          var callButton = document.querySelector(
+            '[role="button"][aria-label="Voice calling is not supported on this browser"], [role="button"][aria-label="Start a voice call"]',
+          );
+          if (!callButton) {
+            reply({ found: false });
+            return;
+          }
+          var callRect = callButton.getBoundingClientRect();
+          callButton.dispatchEvent(
+            new PointerEvent("pointerover", {
+              bubbles: true,
+              clientX: callRect.left + callRect.width / 2,
+              clientY: callRect.top + callRect.height / 2,
+            }),
+          );
+          reply({
+            found: true,
+            disabledLabel: callButton.getAttribute("aria-label") !== "Start a voice call",
+            notice: !!document.getElementById("carrier-linux-call-notice"),
+          });
+          return;
+        }
         // CSP-safe control probe for keyboard-shortcut selector work (#18/#30).
         if (code === "__carrier_mcp_shortcut_probe__") {
           reply(shortcutProbe());

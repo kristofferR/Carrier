@@ -4,6 +4,7 @@ use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
 use gtk::prelude::{GtkWindowExt, WidgetExt};
 use tauri::Manager;
+use tauri::webview::{PermissionKind, PermissionResponse};
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
 
 use crate::settings::AppState;
@@ -35,6 +36,54 @@ pub(crate) fn configure_messenger_webview_memory(window: &tauri::WebviewWindow) 
         }
     }) {
         log::warn!("failed to configure Messenger WebKit memory policy: {error}");
+    }
+}
+
+/// WebKitGTK ships WebRTC and camera/microphone capture switched off, so a
+/// Messenger call could never connect.
+pub(crate) fn enable_calls(window: &tauri::WebviewWindow) {
+    if let Err(error) = window.with_webview(|platform_webview| {
+        if let Some(settings) = WebViewExt::settings(&platform_webview.inner()) {
+            settings.set_enable_media_stream(true);
+            settings.set_enable_webrtc(true);
+        }
+    }) {
+        log::warn!("failed to enable WebRTC for Messenger calls: {error}");
+    }
+}
+
+/// WebKitGTK denies every permission request nobody answers. Grant capture
+/// only while the top-level page is Messenger, not a sign-in page. The callback
+/// does not expose the requesting frame's origin.
+pub(crate) fn media_permission(
+    webview: tauri::Webview,
+    kind: PermissionKind,
+) -> PermissionResponse {
+    let messenger_page = webview
+        .url()
+        .is_ok_and(|url| crate::url_rules::is_messenger_web_url(&url));
+    match kind {
+        PermissionKind::Microphone | PermissionKind::Camera | PermissionKind::DisplayCapture
+            if messenger_page =>
+        {
+            PermissionResponse::Allow
+        }
+        _ => PermissionResponse::Default,
+    }
+}
+
+/// A page's `window.close()` makes wry destroy only the WebKitGTK view, which
+/// leaves an empty window behind. Close the window when its view goes, as
+/// when a call window's call ends. (wry's `close` handler disconnects any
+/// later `close` handler as it destroys the view, so listen for `destroy`.)
+pub(crate) fn close_on_page_request(window: &tauri::WebviewWindow) {
+    let target = window.clone();
+    if let Err(error) = window.with_webview(move |platform_webview| {
+        platform_webview.inner().connect_destroy(move |_| {
+            let _ = target.close();
+        });
+    }) {
+        log::warn!("failed to let a page close its window: {error}");
     }
 }
 

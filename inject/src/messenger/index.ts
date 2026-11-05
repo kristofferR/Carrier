@@ -23,6 +23,7 @@ import { initForceTheme } from "./features/force-theme";
 import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
 import { initLinkHandling } from "./features/link-handling";
+import { initLinuxCallNotice } from "./features/linux-call-notice";
 import { initLoginTidy } from "./features/login-tidy";
 import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
@@ -94,6 +95,7 @@ function main() {
   initFeature("hide-names", initHideNames);
   initFeature("system-emoji", initSystemEmoji);
   initFeature("media-permissions", initMediaPermissionWarning);
+  initFeature("linux-call-notice", initLinuxCallNotice);
   initFeature("cookie-consent", initCookieAutoDecline);
   initFeature("login-tidy", initLoginTidy);
   initFeature("media-viewer", initMediaViewer);

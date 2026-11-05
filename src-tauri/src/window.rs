@@ -23,7 +23,7 @@ use crate::settings::{
     AppState, SaveOutcome, Settings, ZOOM_MAX, ZOOM_MIN, apply_page_zoom, load_settings,
     save_settings,
 };
-use crate::url_rules::{is_internal, is_messenger_web_url, unwrap_tracking};
+use crate::url_rules::{Route, is_messenger_web_url, popup_route, route};
 use crate::webview_watchdog::WebviewWatchdog;
 use crate::{
     APP_TITLE, INJECT_CSS, INJECT_JS, INJECT_MCP_BRIDGE, INJECT_PANEL, INJECT_WEB_AUDIO_IDLE,
@@ -113,9 +113,105 @@ pub(crate) fn splash_background(s: &Settings) -> Color {
     }
 }
 
-/// The Messenger windows, as opposed to Settings.
+/// The Messenger windows, as opposed to Settings and the windows Messenger
+/// opens itself (calls).
 pub(crate) fn is_messenger_window_label(label: &str) -> bool {
     label == "main" || label.starts_with("win-")
+}
+
+pub(crate) const POPUP_LABEL_PREFIX: &str = "popup-";
+
+/// Messenger and call windows load Messenger in the app and open other web
+/// pages in the browser.
+fn allow_navigation(url: &Url) -> bool {
+    match route(url) {
+        Route::InApp => true,
+        Route::Browser(url) => {
+            let _ = open::that(url);
+            false
+        }
+        Route::Blocked => false,
+    }
+}
+
+/// A window a page opened with `window.open`. Messenger starts a call this way
+/// (Ref #335): it opens a blank window, then loads the call page into it, and
+/// does nothing when no window comes back. The window shares its opener's web
+/// session, so the call runs signed in. Carrier's own features stay out of it
+/// (see `init_script`).
+fn open_popup(
+    app: &tauri::AppHandle,
+    opener: &str,
+    url: &Url,
+    features: tauri::webview::NewWindowFeatures,
+) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    use tauri::webview::NewWindowResponse;
+
+    match popup_route(url) {
+        Route::InApp => {}
+        Route::Browser(url) => {
+            let _ = open::that(url);
+            return NewWindowResponse::Deny;
+        }
+        Route::Blocked => return NewWindowResponse::Deny,
+    }
+    static NEXT_POPUP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let label = format!(
+        "{POPUP_LABEL_PREFIX}{}",
+        NEXT_POPUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    // The engine loads the requested page itself once the window exists.
+    let blank = WebviewUrl::External("about:blank".parse().expect("about:blank parses"));
+    let builder = WebviewWindowBuilder::new(app, &label, blank)
+        .title(APP_TITLE)
+        .window_features(features)
+        .on_document_title_changed(|window, title| {
+            let _ = window.set_title(&title);
+        })
+        .on_navigation(allow_navigation)
+        // Deny popup downloads on per-view engines. WebKitGTK's shared-context
+        // handler applies the main window's download policy.
+        .on_download(|_, _| false)
+        .on_new_window({
+            let app = app.clone();
+            let opener = label.clone();
+            move |url, features| open_popup(&app, &opener, &url, features)
+        });
+    // Messenger positions the window from window.screenX/Y, which WKWebView
+    // reports wrongly (the call window landed below the screen) and Wayland
+    // not at all. Centre it on the opener's screen instead.
+    let opener_position = app.get_webview_window(opener).and_then(|window| {
+        let scale = window.scale_factor().ok()?;
+        Some(window.outer_position().ok()?.to_logical::<f64>(scale))
+    });
+    let builder = match opener_position {
+        Some(position) => builder.position(position.x, position.y),
+        None => builder.position(0.0, 0.0),
+    }
+    .center();
+    #[cfg(target_os = "linux")]
+    let builder = builder.on_permission_request(crate::linux::media_permission);
+    let builder = match crate::user_agent::messenger_user_agent() {
+        Some(user_agent) => builder.user_agent(user_agent),
+        None => builder,
+    };
+    match builder.build() {
+        Ok(window) => {
+            #[cfg(target_os = "macos")]
+            crate::macos::popup::close_on_page_request(&window);
+            #[cfg(target_os = "linux")]
+            {
+                crate::linux::enable_calls(&window);
+                crate::linux::close_on_page_request(&window);
+            }
+            log::info!("opened {label} for a page");
+            NewWindowResponse::Create { window }
+        }
+        Err(error) => {
+            log::warn!("failed to open a window for a page: {error}");
+            NewWindowResponse::Deny
+        }
+    }
 }
 
 /// Which encrypted engine Messenger windows run on macOS. Carrier normally
@@ -415,23 +511,11 @@ fn build_app_window_with_render_budget(
                 apply_custom_css(&window, payload.url());
             }
         })
-        .on_navigation(|url| {
-            // External tracking redirect -> open the real (web-only) destination.
-            if let Some(real) = unwrap_tracking(url) {
-                if Url::parse(&real).is_ok_and(|r| matches!(r.scheme(), "http" | "https")) {
-                    let _ = open::that(real);
-                }
-                return false;
-            }
-            if is_internal(url) {
-                return true;
-            }
-            // Open ordinary web links in the browser; block anything else
-            // (data:, javascript:, file:, custom schemes).
-            if matches!(url.scheme(), "http" | "https") {
-                let _ = open::that(url.as_str());
-            }
-            false
+        .on_navigation(allow_navigation)
+        .on_new_window({
+            let app = app.clone();
+            let opener = label.to_string();
+            move |url, features| open_popup(&app, &opener, &url, features)
         })
         .on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
@@ -586,7 +670,9 @@ fn build_app_window_with_render_budget(
         });
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
-    let builder = builder.decorations(show_title_bar(settings));
+    let builder = builder
+        .decorations(show_title_bar(settings))
+        .on_permission_request(crate::linux::media_permission);
     let builder = match crate::user_agent::messenger_user_agent() {
         Some(user_agent) => builder.user_agent(user_agent),
         None => builder,
@@ -609,6 +695,7 @@ fn build_app_window_with_render_budget(
         #[cfg(target_os = "linux")]
         {
             crate::linux::configure_messenger_webview_memory(window);
+            crate::linux::enable_calls(window);
             crate::linux::install_webview_diagnostics(window);
         }
         // New windows inherit the current always-on-top preference and zoom.
@@ -1108,11 +1195,12 @@ pub(crate) fn recreate_themed_windows(app: &tauri::AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         // Snapshot label + geometry, then destroy (not close — close would just
-        // hide it), so we can rebuild each window where it was.
+        // hide it), so we can rebuild each window where it was. A call window
+        // keeps its call.
         let targets: Vec<(String, _)> = app
             .webview_windows()
             .into_iter()
-            .filter(|(label, _)| label != "settings")
+            .filter(|(label, _)| is_messenger_window_label(label))
             .filter_map(|(label, window)| {
                 let geometry = window.outer_position().ok().zip(window.inner_size().ok());
                 crate::webview_watchdog::realtime_window_replacing(&label);
@@ -1238,6 +1326,9 @@ fn init_script(
   // WebView2 currently ignores Tauri's main-frame-only flag. Enforce it here
   // too so native bridges never initialize in child frames.
   if (window.top !== window.self) return;
+  // A window Messenger opened (a call). On macOS it shares its opener's
+  // scripts, but Carrier's features and bridges belong to its own windows.
+  if (window.opener) return;
   var carrierInjectable =
     carrierHost === 'facebook.com' ||
     carrierHost.endsWith('.facebook.com') ||
