@@ -75,7 +75,7 @@ pub(crate) fn messenger_user_agent() -> Option<&'static str> {
                         "Messenger identifies as Safari {version} (WebKit {engine}, system Safari {safari})"
                     ),
                     None => log::warn!(
-                        "no Safari release matches WebKit {engine}; keeping WKWebView's native user agent"
+                        "no Safari release matches WebKit {engine} (system Safari {safari}); keeping WKWebView's native user agent"
                     ),
                 }
             }
@@ -253,7 +253,11 @@ mod tests {
     #[test]
     fn reads_the_system_webkit() {
         let builds = webkit_builds().expect("WebKit is loaded");
-        let version = engine_safari_version(&builds).expect("a known Safari release");
-        assert!(is_plain_version(version), "{version}");
+        assert!(builds.engine.split('.').count() >= 3, "{}", builds.engine);
+        // An engine older than Safari 16 has no release; the fixtures above
+        // cover the mapping itself.
+        if let Some(version) = engine_safari_version(&builds) {
+            assert!(is_plain_version(version), "{version}");
+        }
     }
 }
