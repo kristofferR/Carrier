@@ -18,6 +18,7 @@ const COL = "data-carrier-login-col";
 const ANC = "data-carrier-login-anc";
 const FORM = "data-carrier-login-form";
 const CARD = "data-carrier-login-card";
+const LIGHT_BG = "data-carrier-login-light-bg";
 const REQUIRED = "data-carrier-login-required";
 const FOOTER = "data-carrier-login-footer";
 const FOOTER_KEEP = "data-carrier-login-footer-keep";
@@ -77,7 +78,7 @@ export function initLoginTidy() {
 
   const prefersDark = () => !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
   // Follow the forced theme (Settings → Theme) when set, else the system. FB's
-  // login page ships only a light theme, so this drives our dark swap.
+  // login page ships only a light theme, so this drives our scoped login palette.
   const wantDark = () => {
     const t = window.__CARRIER_SETTINGS__?.theme;
     if (t === "dark") return true;
@@ -156,7 +157,7 @@ export function initLoginTidy() {
     return root;
   };
 
-  // Keep the language switcher visible (pinned across the bottom by CSS) and
+  // Keep the language switcher visible below the login column and
   // exempt it from the chrome-hiding pass. `languageRoot` is the smallest box
   // holding every locale link; `footer` is the highest ancestor that doesn't
   // also contain the login column — i.e. the sibling branch the hide pass would
@@ -212,6 +213,7 @@ export function initLoginTidy() {
   function tidy() {
     const loginRecovery = returnToMessengerAfterLogin();
     const html = document.documentElement;
+    document.querySelectorAll(`[${LIGHT_BG}]`).forEach((el) => el.removeAttribute(LIGHT_BG));
     // Facebook's logged-out auth interstitials (verify-with-provider /
     // checkpoint / 2FA) render their body copy in near-black even though the
     // page is in Facebook's dark theme, leaving it unreadable. Flag them by URL
@@ -243,11 +245,7 @@ export function initLoginTidy() {
         document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
         document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
         clearFooterMarks();
-        // Undo our login dark swap so the logged-in app keeps FB's own theme.
-        if (html.hasAttribute("data-carrier-darkswap")) {
-          html.classList.replace("__fb-dark-mode", "__fb-light-mode");
-          html.removeAttribute("data-carrier-darkswap");
-        }
+        html.removeAttribute("data-carrier-login-dark");
       }
       // Once confidently logged in (auth cookie set, not on a checkpoint/2FA
       // interstitial, page fully loaded), stop watching: this observer fires
@@ -270,17 +268,10 @@ export function initLoginTidy() {
       return;
     }
     html.setAttribute("data-carrier-login", "");
-    // Use Facebook's native dark palette on the login page when the system is
-    // dark (the login page itself ships only a light theme). Reacts to the
-    // system theme changing while the login screen is open.
-    const dark = wantDark();
-    if (dark && html.classList.contains("__fb-light-mode")) {
-      html.classList.replace("__fb-light-mode", "__fb-dark-mode");
-      html.setAttribute("data-carrier-darkswap", "");
-    } else if (!dark && html.hasAttribute("data-carrier-darkswap")) {
-      html.classList.replace("__fb-dark-mode", "__fb-light-mode");
-      html.removeAttribute("data-carrier-darkswap");
-    }
+    // Newer login layouts define a light palette below <html>, so changing
+    // Facebook's root class alone cannot theme them. Keep this independent of
+    // force-theme, which may already have set the root class before we run.
+    html.toggleAttribute("data-carrier-login-dark", wantDark());
     const form = pass.closest("form");
     if (!form) return;
     document.querySelectorAll(`[${FORM}]`).forEach((el) => {
@@ -369,30 +360,12 @@ export function initLoginTidy() {
       if (node !== col && !node.hasAttribute(ANC)) node.setAttribute(ANC, "");
       node = node.parentElement;
     }
-    // Belt-and-braces: clear any large opaque-light backdrop the ancestor walk
-    // didn't catch, so nothing white surrounds the (dark) login card. Undo it
-    // first so switching back to light/system restores the white backgrounds.
-    for (const el of document.querySelectorAll<HTMLElement>("[data-carrier-cleared-bg]")) {
-      el.style.removeProperty("background-color");
-      el.removeAttribute("data-carrier-cleared-bg");
-    }
-    if (dark) {
-      const clearLight = (el: HTMLElement) => {
-        if (!isLightFill(getComputedStyle(el).backgroundColor)) return;
-        el.setAttribute("data-carrier-cleared-bg", "");
-        el.style.setProperty("background-color", "transparent", "important");
-      };
-      // Large light backdrops anywhere — the ancestor wrappers behind the card.
-      for (const el of document.body.querySelectorAll<HTMLElement>("*")) {
-        const r = el.getBoundingClientRect();
-        if (r.width >= window.innerWidth * 0.6 && r.height >= window.innerHeight * 0.5)
-          clearLight(el);
+    // Older login headers use literal white instead of a surface token. Keep
+    // that fallback inside the login column, without mutating Facebook's styles.
+    if (wantDark()) {
+      for (const el of col.querySelectorAll("*")) {
+        if (isLightFill(getComputedStyle(el).backgroundColor)) el.setAttribute(LIGHT_BG, "");
       }
-      // Light bands *inside* the login column (e.g. the logo/title header),
-      // which the size heuristic above misses at narrow/tall window shapes.
-      // Safe: isLightFill only matches near-white opaque fills, so FB's dark
-      // inputs and the blue submit button are left untouched.
-      for (const el of col.querySelectorAll<HTMLElement>("*")) clearLight(el);
     }
   }
 
