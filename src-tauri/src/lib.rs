@@ -446,18 +446,25 @@ pub(crate) fn download_finished_signature(
     id: &str,
     url: &str,
     success: bool,
+    denied: bool,
 ) -> Option<String> {
     #[derive(serde::Serialize)]
     struct DownloadFinished<'a> {
         id: &'a str,
         url: &'a str,
         success: bool,
+        denied: bool,
     }
 
     result_signature(
         secret,
         "carrier:download-finished",
-        &DownloadFinished { id, url, success },
+        &DownloadFinished {
+            id,
+            url,
+            success,
+            denied,
+        },
     )
 }
 
@@ -1324,6 +1331,34 @@ pub fn run() {
                 tauri::async_runtime::spawn_blocking(move || {
                     if let Err(error) = h.opener().reveal_item_in_dir(path) {
                         log::warn!("failed to reveal recent download: {error}");
+                    }
+                });
+            });
+
+            // The download-access toast's trusted button opens the OS pane where
+            // folder access is granted. It takes no page-supplied URL.
+            let download_privacy_handle = app.handle().clone();
+            app.listen_any("carrier:open-download-privacy", move |event| {
+                let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
+                    return;
+                };
+                if signed_action_window(
+                    &download_privacy_handle,
+                    "carrier:open-download-privacy",
+                    &signed,
+                )
+                .is_none()
+                {
+                    log::warn!("carrier:open-download-privacy was not authorized");
+                    return;
+                }
+                let Some(url) = crate::download::folder_privacy_url(std::env::consts::OS) else {
+                    return;
+                };
+                let h = download_privacy_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = h.opener().open_url(url, None::<&str>) {
+                        log::warn!("failed to open folder privacy settings: {error}");
                     }
                 });
             });
@@ -2361,13 +2396,18 @@ mod tests {
 
     #[test]
     fn download_finished_results_bind_the_native_identity() {
-        let first = download_finished_signature("test-secret", "download-1", "blob:one", true);
-        let second = download_finished_signature("test-secret", "download-2", "blob:one", true);
+        let first =
+            download_finished_signature("test-secret", "download-1", "blob:one", true, false);
+        let second =
+            download_finished_signature("test-secret", "download-2", "blob:one", true, false);
+        let denied =
+            download_finished_signature("test-secret", "download-1", "blob:one", false, true);
         assert_eq!(
             first.as_deref(),
-            Some("a78b039568c100b2dcf4c7d1030481696bf0fb715f9b7d65fb89f45837f9422e")
+            Some("4e10ddd7757d5bc423b46b743848740acfdd19a13f30bc08cd8f5f8f5b65191d")
         );
         assert_ne!(first, second);
+        assert_ne!(first, denied);
     }
 
     #[test]

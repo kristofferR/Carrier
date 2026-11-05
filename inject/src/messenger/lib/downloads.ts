@@ -41,3 +41,23 @@ export const downloadRevealLabel = (userAgent: string): string =>
 
 export const isDownloadCancellation = (error: unknown): boolean =>
   error instanceof Error && error.message === "download cancelled";
+
+export const DOWNLOAD_ACCESS_DENIED = "download folder access denied";
+
+export const isDownloadAccessDenied = (error: unknown): boolean =>
+  error instanceof Error && error.message === DOWNLOAD_ACCESS_DENIED;
+
+/** What the page says when the OS blocked Carrier from the download folder.
+ *  Only macOS has a settings pane that grants the access back. */
+export const downloadAccessDeniedToast = (
+  platform: "macos" | "windows" | "linux",
+): { message: string; action?: CarrierToastAction } =>
+  platform === "macos"
+    ? {
+        message: "Carrier isn't allowed to save to your Downloads folder",
+        action: { label: "Open Settings", kind: "open-download-privacy" },
+      }
+    : {
+        message:
+          "Carrier isn't allowed to save to your Downloads folder. Check the folder's permissions.",
+      };

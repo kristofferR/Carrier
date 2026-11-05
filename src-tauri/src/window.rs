@@ -13,8 +13,8 @@ use url::Url;
 use crate::custom_css::apply_custom_css;
 use crate::download::{
     complete_download, downloads_dir, filename_from_url, forget_download, is_allowed_download,
-    is_allowed_download_path, is_unsafe_download, remember_download, sanitize_filename,
-    unique_path,
+    is_allowed_download_path, is_folder_access_denied, is_unsafe_download, remember_download,
+    sanitize_filename, unique_path,
 };
 #[cfg(target_os = "macos")]
 use crate::macos::theme::make_webview_transparent;
@@ -35,6 +35,7 @@ fn notify_download_finished(
     id: &str,
     url: &Url,
     success: bool,
+    denied: bool,
 ) {
     let signature = app
         .state::<AppState>()
@@ -42,7 +43,9 @@ fn notify_download_finished(
         .lock()
         .unwrap()
         .get(webview.label())
-        .and_then(|secret| crate::download_finished_signature(secret, id, url.as_str(), success));
+        .and_then(|secret| {
+            crate::download_finished_signature(secret, id, url.as_str(), success, denied)
+        });
     let Some(signature) = signature else {
         return;
     };
@@ -50,6 +53,7 @@ fn notify_download_finished(
         "id": id,
         "url": url.as_str(),
         "success": success,
+        "denied": denied,
         "signature": signature,
     });
     let script = format!(
@@ -456,12 +460,26 @@ fn build_app_window_with_render_budget(
                     .unwrap_or_else(|| filename_from_url(&url));
                 let name = sanitize_filename(&suggested);
                 if !is_allowed_download(&url, &name) {
-                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
+                    notify_download_finished(
+                        &download_handle,
+                        &webview,
+                        &download_id,
+                        &url,
+                        false,
+                        false,
+                    );
                     return false;
                 }
                 // Don't silently save an executable a page might push to Downloads.
                 if is_unsafe_download(&name) {
-                    notify_download_finished(&download_handle, &webview, &download_id, &url, false);
+                    notify_download_finished(
+                        &download_handle,
+                        &webview,
+                        &download_id,
+                        &url,
+                        false,
+                        false,
+                    );
                     return false;
                 }
                 if let Some(chosen) =
@@ -473,6 +491,7 @@ fn build_app_window_with_render_budget(
                             &webview,
                             &download_id,
                             &url,
+                            false,
                             false,
                         );
                         return false;
@@ -499,6 +518,7 @@ fn build_app_window_with_render_budget(
                             &download_id,
                             &url,
                             false,
+                            false,
                         );
                         return false;
                     }
@@ -512,16 +532,18 @@ fn build_app_window_with_render_budget(
                             &download_id,
                             &url,
                             false,
+                            false,
                         );
                         return false;
                     };
-                    if std::fs::create_dir_all(&dir).is_err() {
+                    if let Err(error) = std::fs::create_dir_all(&dir) {
                         notify_download_finished(
                             &download_handle,
                             &webview,
                             &download_id,
                             &url,
                             false,
+                            error.kind() == std::io::ErrorKind::PermissionDenied,
                         );
                         return false;
                     }
@@ -531,13 +553,33 @@ fn build_app_window_with_render_budget(
                 true
             }
             DownloadEvent::Finished { url, success, .. } => {
-                let download_id = if success {
-                    complete_download(&url)
-                } else {
-                    forget_download(&url)
+                let new_id = || uuid::Uuid::new_v4().simple().to_string();
+                if success {
+                    let download_id = complete_download(&url).unwrap_or_else(new_id);
+                    notify_download_finished(
+                        &download_handle,
+                        &webview,
+                        &download_id,
+                        &url,
+                        true,
+                        false,
+                    );
+                    return true;
                 }
-                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
-                notify_download_finished(&download_handle, &webview, &download_id, &url, success);
+                let (download_id, folder) = match forget_download(&url) {
+                    Some((id, path)) => (id, path.parent().map(std::path::Path::to_path_buf)),
+                    None => (new_id(), None),
+                };
+                // Say when the OS blocked the folder (macOS Files & Folders
+                // permission) so the page can show how to fix it.
+                let handle = download_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let denied = folder.is_some_and(|folder| is_folder_access_denied(&folder));
+                    if denied {
+                        log::warn!("a download failed because Carrier may not access its folder");
+                    }
+                    notify_download_finished(&handle, &webview, &download_id, &url, false, denied);
+                });
                 true
             }
             _ => true,
@@ -1402,6 +1444,12 @@ fn init_script(
     }}
     return carrierAuthorizedEmit('carrier:reveal-download', {{ url: url }});
   }};
+  var carrierOpenDownloadPrivacy = function () {{
+    if (!carrierAuthorizedEmit) {{
+      return NativePromise.reject(new Error('native bridge unavailable'));
+    }}
+    return carrierAuthorizedEmit('carrier:open-download-privacy', {{}});
+  }};
   var carrierClaimContextAction = function (action) {{
     if (!carrierAuthorizedEmit) {{
       return NativePromise.reject(new Error('native bridge unavailable'));
@@ -1799,6 +1847,7 @@ mod tests {
         assert!(script.contains("event + '\\n' + timestamp + '\\n' + nonce + '\\n' + message"));
         assert!(!script.contains("authorization: authorization"));
         assert!(!script.contains("__carrierDispatchContextAction"));
+        assert!(script.contains("carrierAuthorizedEmit('carrier:open-download-privacy', {})"));
     }
 
     #[test]

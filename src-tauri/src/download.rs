@@ -103,14 +103,14 @@ impl RecentDownloads {
         None
     }
 
-    fn forget(&mut self, url: &str) -> Option<String> {
-        let id = self
+    fn forget(&mut self, url: &str) -> Option<(String, PathBuf)> {
+        let forgotten = self
             .entries
             .iter()
             .find(|entry| entry.url == url)
-            .map(|entry| entry.id.clone());
+            .map(|entry| (entry.id.clone(), entry.path.clone()));
         self.entries.retain(|entry| entry.url != url);
-        id
+        forgotten
     }
 }
 
@@ -130,7 +130,8 @@ pub(crate) fn remember_download(url: &Url, id: String, path: PathBuf) {
         .remember_at(url.as_str(), id, path, Instant::now());
 }
 
-pub(crate) fn forget_download(url: &Url) -> Option<String> {
+/// Drop a failed download, returning its ID and chosen destination.
+pub(crate) fn forget_download(url: &Url) -> Option<(String, PathBuf)> {
     recent_downloads().lock().unwrap().forget(url.as_str())
 }
 
@@ -376,6 +377,22 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
     )
 }
 
+/// True when the OS refuses Carrier access to `folder`, as macOS does after
+/// the Downloads folder permission was denied. Call it off the main thread:
+/// while macOS hasn't asked yet, this check shows the permission prompt and
+/// waits for the answer.
+pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
+    std::fs::read_dir(folder)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+}
+
+/// Where the user can give Carrier folder access again.
+pub(crate) fn folder_privacy_url(platform: &str) -> Option<&'static str> {
+    (platform == "macos").then_some(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
+    )
+}
+
 /// Avoid clobbering an existing file by appending " (n)".
 pub(crate) fn unique_path(p: PathBuf) -> PathBuf {
     if !p.exists() {
@@ -559,6 +576,30 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn folder_access_denied_only_for_permission_errors() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "carrier-folder-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!is_folder_access_denied(&dir));
+        assert!(!is_folder_access_denied(&dir.join("missing")));
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = is_folder_access_denied(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(denied);
+    }
+
     #[test]
     fn recent_downloads_are_capped_and_lookup_is_non_consuming() {
         let now = Instant::now();
@@ -611,7 +652,10 @@ mod tests {
             PathBuf::from("failed.png"),
             now,
         );
-        downloads.forget("blob:carrier/failed");
+        assert_eq!(
+            downloads.forget("blob:carrier/failed"),
+            Some(("failed-id".into(), PathBuf::from("failed.png")))
+        );
         assert_eq!(downloads.lookup_at("blob:carrier/failed", now), None);
     }
 
