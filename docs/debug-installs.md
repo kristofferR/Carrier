@@ -37,7 +37,9 @@ Checks for new debug drafts run hourly. Every five minutes the scheduler tries t
 build if Carrier is **quit**, including its tray process. It never terminates,
 reloads, restarts, or focuses Carrier. Native shared/exclusive file locks protect
 against launching during installation and concurrent updater runs. The next
-normal launch uses the new debug build.
+normal launch uses the new debug build. Because the updater never quits Carrier,
+a running diagnostics build checks every ten minutes for a staged build and posts
+one notification per staged build saying that quitting Carrier installs it.
 
 - macOS app: `/Applications/Carrier.app`
 - Linux app: `~/.local/bin/carrier` (both desktop and autostart entries use it)

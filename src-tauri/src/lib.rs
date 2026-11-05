@@ -2121,6 +2121,8 @@ pub fn run() {
 
             if let tauri::RunEvent::Ready = event {
                 commands::spawn_automatic_update_checks(app.clone());
+                #[cfg(feature = "diagnostics")]
+                debug_install::spawn_staged_build_notices(app.clone());
                 // macOS needs notification authorization (for banners + the
                 // Dock badge) and the centre delegate installed once the app is
                 // ready (UNUserNotificationCenter needs the app fully launched

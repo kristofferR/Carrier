@@ -2760,15 +2760,30 @@ fn activate_notification(
 /// Delivery warnings are operational alerts, independent of muted incoming
 /// chats. Fixed copy never exposes the account, recipient, or message text.
 pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
-    let title = "Scheduled message needs attention";
-    let body = "A scheduled message was missed or its send could not be confirmed. Carrier will not retry it. Open Schedule send to review.";
+    deliver_app_notice(
+        app,
+        0,
+        "Scheduled message needs attention".into(),
+        "A scheduled message was missed or its send could not be confirmed. Carrier will not retry it. Open Schedule send to review.".into(),
+    );
+}
+
+/// A plain notice from Carrier itself: no avatar, sound, actions or thread.
+/// Clicking it only surfaces the window. Its own ID keeps it from replacing
+/// another notice that is still unread.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn show_app_notice(app: &tauri::AppHandle, title: String, body: String) {
+    deliver_app_notice(app, next_native_notification_id(), title, body);
+}
+
+fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: String) {
     #[cfg(target_os = "macos")]
     {
         let _ = app;
         deliver_notification_macos(
-            title,
-            body,
-            0,
+            &title,
+            &body,
+            id,
             None,
             false,
             MacNotificationOptions::default(),
@@ -2778,12 +2793,12 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
     crate::windows::toast::deliver_notification_windows(
         app,
         crate::windows::toast::WindowsToastOptions {
-            title: title.into(),
-            body: body.into(),
+            title,
+            body,
             avatar: None,
             image: None,
             sound: false,
-            native_id: 0,
+            native_id: id,
             page_id: None,
             thread_path: None,
             reply_eligible: false,
@@ -2795,8 +2810,8 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
         let app = app.clone();
         std::thread::spawn(move || {
             show_linux_notification(
-                title,
-                body,
+                &title,
+                &body,
                 None,
                 false,
                 false,
@@ -2806,7 +2821,7 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
                         response,
                         LinuxNotificationResponse::Open | LinuxNotificationResponse::OpenComposer
                     ) {
-                        activate_notification(app, 0, None, None, token);
+                        activate_notification(app, id, None, None, token);
                     }
                 },
             )

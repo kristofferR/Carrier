@@ -13,6 +13,63 @@ fn install_dir() -> Option<PathBuf> {
     })
 }
 
+/// A build the personal updater verified and staged in `pending.json` to
+/// install once Carrier quits.
+#[cfg(any(feature = "diagnostics", test))]
+#[derive(Debug, PartialEq)]
+struct StagedBuild {
+    version: String,
+    revision: String,
+}
+
+/// The staged build, unless it is the one already running.
+#[cfg(any(feature = "diagnostics", test))]
+fn staged_build(pending: &[u8], running_revision: &str) -> Option<StagedBuild> {
+    #[derive(serde::Deserialize)]
+    struct Pending {
+        version: String,
+        revision: String,
+    }
+    let Pending { version, revision } = serde_json::from_slice(pending).ok()?;
+    (revision != running_revision).then_some(StagedBuild { version, revision })
+}
+
+/// The updater never quits Carrier, so a session left running keeps its old
+/// build indefinitely. Say once per staged build that quitting installs it.
+#[cfg(feature = "diagnostics")]
+pub(crate) fn spawn_staged_build_notices(app: tauri::AppHandle) {
+    const INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+    tauri::async_runtime::spawn(async move {
+        let mut announced: Option<String> = None;
+        loop {
+            tokio::time::sleep(INTERVAL).await;
+            let Some(build) = install_dir()
+                .and_then(|dir| std::fs::read(dir.join("pending.json")).ok())
+                .and_then(|pending| staged_build(&pending, env!("CARRIER_BUILD_REVISION")))
+            else {
+                continue;
+            };
+            if announced.as_deref() == Some(build.revision.as_str()) {
+                continue;
+            }
+            let short = build.revision.get(..12).unwrap_or(&build.revision);
+            log::info!(
+                "debug build {} {short} is staged until Carrier quits",
+                build.version
+            );
+            crate::notifications::show_app_notice(
+                &app,
+                "Carrier debug update ready".into(),
+                format!(
+                    "Carrier {} debug ({short}) is staged. Quit Carrier to install it; the updater runs every five minutes while Carrier is closed.",
+                    build.version
+                ),
+            );
+            announced = Some(build.revision);
+        }
+    });
+}
+
 pub(crate) fn release_updates_allowed() -> Result<(), String> {
     if cfg!(debug_assertions) {
         Err(UPDATE_INSTRUCTIONS.into())
@@ -236,8 +293,24 @@ fn capture_native_output() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn debug_build_cannot_use_the_release_updater() {
-        assert!(super::release_updates_allowed().is_err());
+        assert!(release_updates_allowed().is_err());
+    }
+
+    #[test]
+    fn staged_build_is_reported_only_when_it_differs_from_the_running_one() {
+        let pending = br#"{"version":"2.0.7","revision":"390bb906b576ff11","debug":true}"#;
+        assert_eq!(
+            staged_build(pending, "414b256598f34e03"),
+            Some(StagedBuild {
+                version: "2.0.7".into(),
+                revision: "390bb906b576ff11".into(),
+            })
+        );
+        assert_eq!(staged_build(pending, "390bb906b576ff11"), None);
+        assert_eq!(staged_build(b"not json", "414b256598f34e03"), None);
     }
 }
