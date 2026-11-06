@@ -1,27 +1,29 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { build } from "esbuild";
 import type { findOptionalCookieDeclineButton } from "../features/cookie-consent";
+import type { initForceTheme } from "../features/force-theme";
 import type { initLoginTidy } from "../features/login-tidy";
 
 const chromium = Bun.which("google-chrome") || Bun.which("chromium");
 
 test.skipIf(!chromium)(
-  "login handles clipped consent controls, footer layout, and post-login navigation",
+  "login preserves scrolling, themes, required auth UI, and post-login navigation",
   async () => {
     const profile = await mkdtemp(join(tmpdir(), "carrier-login-layout-"));
     const bundle = await build({
       stdin: {
         contents: `
           import { findOptionalCookieDeclineButton } from "../features/cookie-consent";
+          import { initForceTheme } from "../features/force-theme";
           import { initLoginTidy } from "../features/login-tidy";
           const testLocation = globalThis.__carrierTestLocation = {
             hostname: "www.facebook.com", pathname: "/login.php",
             href: "https://www.facebook.com/login.php", replace() {}
           };
-          (${runFixture.toString()})(findOptionalCookieDeclineButton, initLoginTidy, testLocation);
+          (${runFixture.toString()})(findOptionalCookieDeclineButton, initLoginTidy, initForceTheme, testLocation);
         `,
         resolveDir: import.meta.dir,
       },
@@ -31,12 +33,26 @@ test.skipIf(!chromium)(
         location: "globalThis.__carrierTestLocation",
       },
     });
+    const css = await readFile(
+      new URL("../../../../src-tauri/inject/messenger.css", import.meta.url),
+      "utf8",
+    );
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch: () =>
         new Response(
-          `<!doctype html><html><body><script>${bundle.outputFiles[0]!.text}</script></body></html>`,
+          `<!doctype html><html id="facebook" class="__fb-light-mode"><head><style>${css}</style>
+            <style>
+              html,body { margin:0; height:100% }
+              .login-shell { height:100vh; max-height:100vh; overflow-y:scroll }
+              .login-palette { --primary-text:#111112; --placeholder-text:#686a6e; --surface-background:white; --input-background:white }
+              .login-palette section { min-height:110vh; background:var(--surface-background) }
+              .login-palette section > div { min-height:110vh }
+              .login-palette h2, .login-palette input { color:var(--primary-text) }
+              .login-palette input { background:var(--input-background) }
+              .login-palette label { color:var(--placeholder-text) }
+            </style></head><body><script>${bundle.outputFiles[0]!.text}</script></body></html>`,
           {
             headers: { "content-type": "text/html" },
           },
@@ -75,6 +91,7 @@ test.skipIf(!chromium)(
 async function runFixture(
   findDecline: typeof findOptionalCookieDeclineButton,
   initTidy: typeof initLoginTidy,
+  initTheme: typeof initForceTheme,
   testLocation: Pick<Location, "hostname" | "pathname" | "href" | "replace">,
 ) {
   try {
@@ -104,9 +121,13 @@ async function runFixture(
     document.body.append(cover);
     if (findDecline() !== null) throw new Error("Selected a covered control");
     document.body.innerHTML = `
-      <main style="width:100%">
-        <section style="width:400px"><form><input name="email"><input name="pass" type="password"></form></section>
-        <footer><div><ul class="localeSelectorList"><li><a href="#">English (US)</a></li><li><a href="#">Norsk (bokmål)</a></li></ul></div></footer>
+      <main class="login-shell login-palette" style="width:100%">
+        <section style="width:400px"><div><h2>Log into Facebook</h2><form><div style="min-height:120vh"><div id="legacy-band" style="background:white">Login</div>
+          <label>Email<input name="email"></label><input name="pass" type="password">
+          <button>Log in</button>
+          <svg><path id="wordmark" fill="#1C2B33" d="M0 0h10v10z"></path><path id="symbol" fill="#0180FA" d="M10 10h10v10z"></path></svg>
+        </div></form></div></section>
+        <footer><div><div><hr></div><ul class="localeSelectorList"><li><a href="#">English (US)</a></li><li><a href="#">Norsk (bokmål)</a></li></ul></div></footer>
       </main>`;
     let retirements = 0;
     window.MutationObserver = class extends MutationObserver {
@@ -115,6 +136,8 @@ async function runFixture(
         super.disconnect();
       }
     };
+    window.__CARRIER_SETTINGS__ = { theme: "dark" };
+    initTheme(); // Production order: the forced root class already exists.
     initTidy();
     await new Promise((resolve) => setTimeout(resolve, 200));
     const languageRoot = document.querySelector("[data-carrier-login-languages]");
@@ -125,6 +148,105 @@ async function runFixture(
       if (!wrapper.closest("[data-carrier-login-footer]") || !wrapper.contains(languageRoot))
         throw new Error("Footer styling escaped the language branch");
     }
+    const html = document.documentElement;
+    const assert = (name: string, condition: boolean) => {
+      if (!condition) throw new Error(name);
+    };
+    assert(
+      "Decorative footer divider removed",
+      document.querySelector("hr")!.getBoundingClientRect().height === 0,
+    );
+    const color = (selector: string) => getComputedStyle(document.querySelector(selector)!).color;
+    const checkLanguageSpacing = () => {
+      const form = document.querySelector("[data-carrier-login-form]")!;
+      const gap = languageRoot.getBoundingClientRect().top - form.getBoundingClientRect().bottom;
+      assert("Language selector follows the form without a large gap", gap >= 16 && gap <= 48);
+      assert(
+        "Language selector scrolls with the page",
+        getComputedStyle(languageRoot).position === "static",
+      );
+    };
+    const checkScroll = () => {
+      for (const element of document.querySelectorAll<HTMLElement>("body, body *")) {
+        const style = getComputedStyle(element);
+        assert(
+          `Nested login scrollport: ${element.tagName}`,
+          !/auto|scroll/.test(style.overflowY) || element.scrollHeight <= element.clientHeight,
+        );
+      }
+      assert("Document allows scrolling", getComputedStyle(html).overflowY === "auto");
+      window.scrollTo(0, 100);
+      assert("Tall login content remains reachable", window.scrollY > 0);
+      window.scrollTo(0, 0);
+    };
+    assert(
+      "Forced dark is applied after force-theme",
+      html.hasAttribute("data-carrier-login-dark"),
+    );
+    assert("Nested light text palette replaced", color("h2") === "rgb(243, 244, 245)");
+    assert("Input text follows dark palette", color('input[name="email"]') === color("h2"));
+    assert("Field labels follow dark palette", color("label") === "rgb(161, 164, 168)");
+    assert(
+      "Dark input surface",
+      getComputedStyle(document.querySelector("input")!).backgroundColor === "rgb(36, 37, 38)",
+    );
+    assert(
+      "Wordmark readable",
+      getComputedStyle(document.querySelector("#wordmark")!).fill === color("h2"),
+    );
+    assert(
+      "Logo symbol preserved",
+      getComputedStyle(document.querySelector("#symbol")!).fill === "rgb(1, 128, 250)",
+    );
+    assert(
+      "Legacy literal-white band cleared",
+      getComputedStyle(document.querySelector("#legacy-band")!).backgroundColor ===
+        "rgba(0, 0, 0, 0)",
+    );
+    checkScroll();
+    checkLanguageSpacing();
+    const content = document.querySelector<HTMLElement>("form > div")!;
+    content.style.minHeight = "0";
+    checkLanguageSpacing(); // A short form must not push languages to the window bottom.
+    content.style.minHeight = "120vh";
+    const theme = async (value: "light" | "dark" | "system") => {
+      window.__CARRIER_SETTINGS__ = { theme: value };
+      window.dispatchEvent(new Event("carrier:settings"));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    };
+    await theme("light");
+    assert("Light palette restored", color("h2") === "rgb(17, 17, 18)");
+    assert("Light marker removed", !html.hasAttribute("data-carrier-login-dark"));
+    assert(
+      "Literal-white band restored in light mode",
+      getComputedStyle(document.querySelector("#legacy-band")!).backgroundColor ===
+        "rgb(255, 255, 255)",
+    );
+    checkScroll();
+    await theme("system");
+    assert(
+      "System theme followed",
+      html.hasAttribute("data-carrier-login-dark") ===
+        matchMedia("(prefers-color-scheme: dark)").matches,
+    );
+    await theme("dark");
+    // Saved-account and PIN/E2EE screens must keep their own layout and theme.
+    const login = document.body.innerHTML;
+    for (const content of [
+      '<main><button>Saved account</button><a href="/login/">Use another account</a></main>',
+      '<main><form><h2>Restore your chats</h2><input type="password" inputmode="numeric"><button>Restore</button></form></main>',
+    ]) {
+      document.body.innerHTML = content;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert("Non-login layout preserved", !html.hasAttribute("data-carrier-login"));
+      assert("Login palette cleaned up", !html.hasAttribute("data-carrier-login-dark"));
+      assert(
+        "Required controls visible",
+        document.querySelector("button")!.getBoundingClientRect().height > 0,
+      );
+    }
+    document.body.innerHTML = login;
+    await new Promise((resolve) => setTimeout(resolve, 40));
     const redirects: string[] = [];
     testLocation.replace = (url) => redirects.push(String(url));
     const checkNavigation = async (path: string, expected: number) => {

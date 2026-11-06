@@ -5299,6 +5299,7 @@ ${button.innerHTML}`)
   var ANC = "data-carrier-login-anc";
   var FORM = "data-carrier-login-form";
   var CARD = "data-carrier-login-card";
+  var LIGHT_BG = "data-carrier-login-light-bg";
   var REQUIRED = "data-carrier-login-required";
   var FOOTER = "data-carrier-login-footer";
   var FOOTER_KEEP = "data-carrier-login-footer-keep";
@@ -5403,6 +5404,9 @@ ${button.innerHTML}`)
         node.removeAttribute(FOOTER_LINKS);
         if (node !== footer && node !== languageRoot) node.setAttribute(FOOTER_KEEP, "");
         if (node === footer) break;
+        for (const sibling of node.parentElement?.children || []) {
+          if (sibling !== node && !isRequiredLoginUi(sibling)) sibling.setAttribute(FOOTER_LINKS, "");
+        }
       }
     };
     const tidyFooter = (col) => {
@@ -5428,6 +5432,7 @@ ${button.innerHTML}`)
     function tidy() {
       const loginRecovery = returnToMessengerAfterLogin();
       const html = document.documentElement;
+      document.querySelectorAll(`[${LIGHT_BG}]`).forEach((el) => el.removeAttribute(LIGHT_BG));
       if (onFacebookHost() && /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
         location.pathname
       )) {
@@ -5447,10 +5452,7 @@ ${button.innerHTML}`)
           document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
           document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
           clearFooterMarks();
-          if (html.hasAttribute("data-carrier-darkswap")) {
-            html.classList.replace("__fb-dark-mode", "__fb-light-mode");
-            html.removeAttribute("data-carrier-darkswap");
-          }
+          html.removeAttribute("data-carrier-login-dark");
         }
         if (tidyObserver && /\bc_user=/.test(document.cookie) && (loginRecovery === "settled" || loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname)) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
           tidyObserver.disconnect();
@@ -5460,14 +5462,7 @@ ${button.innerHTML}`)
         return;
       }
       html.setAttribute("data-carrier-login", "");
-      const dark = wantDark();
-      if (dark && html.classList.contains("__fb-light-mode")) {
-        html.classList.replace("__fb-light-mode", "__fb-dark-mode");
-        html.setAttribute("data-carrier-darkswap", "");
-      } else if (!dark && html.hasAttribute("data-carrier-darkswap")) {
-        html.classList.replace("__fb-dark-mode", "__fb-light-mode");
-        html.removeAttribute("data-carrier-darkswap");
-      }
+      html.toggleAttribute("data-carrier-login-dark", wantDark());
       const form = pass.closest("form");
       if (!form) return;
       document.querySelectorAll(`[${FORM}]`).forEach((el) => {
@@ -5539,22 +5534,10 @@ ${button.innerHTML}`)
         if (node !== col && !node.hasAttribute(ANC)) node.setAttribute(ANC, "");
         node = node.parentElement;
       }
-      for (const el of document.querySelectorAll("[data-carrier-cleared-bg]")) {
-        el.style.removeProperty("background-color");
-        el.removeAttribute("data-carrier-cleared-bg");
-      }
-      if (dark) {
-        const clearLight = (el) => {
-          if (!isLightFill(getComputedStyle(el).backgroundColor)) return;
-          el.setAttribute("data-carrier-cleared-bg", "");
-          el.style.setProperty("background-color", "transparent", "important");
-        };
-        for (const el of document.body.querySelectorAll("*")) {
-          const r = el.getBoundingClientRect();
-          if (r.width >= window.innerWidth * 0.6 && r.height >= window.innerHeight * 0.5)
-            clearLight(el);
+      if (wantDark()) {
+        for (const el of col.querySelectorAll("*")) {
+          if (isLightFill(getComputedStyle(el).backgroundColor)) el.setAttribute(LIGHT_BG, "");
         }
-        for (const el of col.querySelectorAll("*")) clearLight(el);
       }
     }
     const schedule = () => {

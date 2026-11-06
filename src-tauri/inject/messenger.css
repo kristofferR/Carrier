@@ -136,13 +136,38 @@ html[data-carrier-login] [data-carrier-login-anc] {
   min-width: 0 !important;
   max-width: 100% !important;
   float: none !important;
-  overflow-x: hidden !important;
+  overflow-x: clip !important;
+}
+
+/* Only the document scrolls. overflow-x:hidden would compute overflow-y to
+   auto on these wrappers, recreating nested scrollports. clip does not. */
+html#facebook[data-carrier-login],
+html[data-carrier-login] {
+  overflow-y: auto !important;
+}
+
+/* Match the white login surface across the page surround in light mode. */
+html#facebook[data-carrier-login],
+html[data-carrier-login],
+html[data-carrier-login] body {
+  background-color: #fff !important;
+}
+
+html[data-carrier-login] body,
+html[data-carrier-login] [data-carrier-login-anc],
+html[data-carrier-login] [data-carrier-login-col],
+html[data-carrier-login] [data-carrier-login-col] :has([data-carrier-login-form]),
+html[data-carrier-login] [data-carrier-login-form] {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 html[data-carrier-login] body {
   display: block !important;
   min-height: 100vh !important;
-  padding: 24px 20px 96px !important;
+  padding: 24px 20px !important;
   box-sizing: border-box !important;
 }
 
@@ -200,27 +225,23 @@ html[data-carrier-login] [data-carrier-login-col] a[role="link"] {
   box-sizing: border-box !important;
 }
 
-/* Footer: keep only the language switcher, pinned across the bottom; the JS
-   marks the language strip and the marketing links separately. */
+/* Footer: keep the language switcher in normal flow below the login form.
+   The JS marks the language strip and the marketing links separately. */
 html[data-carrier-login] [data-carrier-login-footer],
 html[data-carrier-login] [data-carrier-login-footer-keep] {
   display: contents !important;
 }
 
 html[data-carrier-login] [data-carrier-login-languages] {
-  position: fixed !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  z-index: 2147483646 !important;
+  position: static !important;
   display: flex !important;
   flex-wrap: wrap !important;
   justify-content: center !important;
   align-items: center !important;
   gap: 6px 18px !important;
   box-sizing: border-box !important;
-  padding: 8px 20px 16px !important;
-  margin: 0 !important;
+  padding: 8px 0 !important;
+  margin: 24px auto 0 !important;
   list-style: none !important;
   text-align: center !important;
 }
@@ -237,33 +258,55 @@ html[data-carrier-login] [data-carrier-login-footer-links] {
   display: none !important;
 }
 
-/* Dark mode on the login page is handled by swapping Facebook's own theme
-   class (__fb-light-mode -> __fb-dark-mode) in messenger.js, which uses FB's
-   native dark palette rather than a fragile colour-invert filter. When that
-   swap happens (marked with data-carrier-darkswap), darken the page backdrop so
-   the centred login card isn't surrounded by white. The `#facebook` id selector
-   matches Facebook's own high-specificity background rule on <html>. */
-html#facebook[data-carrier-darkswap],
-html[data-carrier-darkswap],
-html[data-carrier-darkswap] body {
+/* Facebook's newer login layout defines its own light palette inside the
+   page. Set the semantic tokens at every scope so fields, labels, links and
+   icons share a dark palette without recolouring individual text nodes.
+   JS follows Carrier's forced theme or the system, independently of FB's root
+   theme class. Removing the marker restores Facebook's original palette. */
+html[data-carrier-login-dark],
+html[data-carrier-login-dark] body,
+html[data-carrier-login-dark] body * {
+  color-scheme: dark !important;
+  --primary-text: #f3f4f5 !important;
+  --secondary-text: #a1a4a8 !important;
+  --placeholder-text: #a1a4a8 !important;
+  --primary-icon: #f3f4f5 !important;
+  --secondary-icon: #a1a4a8 !important;
+  --surface-background: #18191a !important;
+  --card-background: #242526 !important;
+  --input-background: #242526 !important;
+  --input-border-color: #525456 !important;
+  --input-border-color-hover: #8a8d91 !important;
+  --border-focused: #acafb2 !important;
+  --blue-link: #58a7ff !important;
+  --primary-button-text: #f3f4f5 !important;
+  --secondary-button-text: #f3f4f5 !important;
+  --secondary-button-background: #242526 !important;
+  --secondary-button-stroke: #525456 !important;
+  --secondary-emphasized-button-stroke: #58a7ff !important;
+  --filter-primary-icon: invert(89%) sepia(6%) hue-rotate(185deg) !important;
+}
+
+html#facebook[data-carrier-login-dark],
+html[data-carrier-login-dark],
+html[data-carrier-login-dark] body {
   background-color: #18191a !important;
+  color: var(--primary-text) !important;
 }
 
-html[data-carrier-login][data-carrier-darkswap] body > div {
+/* Legacy login wrappers use literal white backgrounds rather than tokens. */
+html[data-carrier-login-dark] [data-carrier-login-anc],
+html[data-carrier-login-dark] [data-carrier-login-col],
+html[data-carrier-login-dark] [data-carrier-login-card],
+html[data-carrier-login-dark] [data-carrier-login-form],
+html[data-carrier-login-dark] [data-carrier-login-light-bg] {
   background-color: transparent !important;
   background-image: none !important;
 }
 
-/* The login card and its ancestor wrappers often carry a white background; clear
-   it so the dark page shows through seamlessly around the centred card. The
-   logo/title band inside the card is cleared from JS (it's too small for the
-   ancestor walk to catch at narrow widths). */
-html[data-carrier-darkswap] [data-carrier-login-anc],
-html[data-carrier-login][data-carrier-darkswap] [data-carrier-login-col],
-html[data-carrier-login][data-carrier-darkswap] [data-carrier-login-card],
-html[data-carrier-login][data-carrier-darkswap] [data-carrier-login-form] {
-  background-color: transparent !important;
-  background-image: none !important;
+/* The Meta wordmark uses a literal SVG fill; keep its blue symbol intact. */
+html[data-carrier-login-dark] [data-carrier-login-col] svg [fill="#1c2b33" i] {
+  fill: var(--primary-text) !important;
 }
 
 /* Facebook's logged-out auth interstitials (verify-with-provider / checkpoint /
