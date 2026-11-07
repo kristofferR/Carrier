@@ -51,12 +51,49 @@ export async function readThreadIsGroup(
   }
 }
 
-/** Whether a notification for this conversation should be held back as a group message. */
-export async function suppressAsGroupChat(
-  notifyGroupChats: boolean | undefined,
-  threadId: string | null,
-  isGroup: (threadId: string) => Promise<boolean | null>,
-): Promise<boolean> {
-  if (notifyGroupChats !== false || !threadId) return false;
-  return (await isGroup(threadId)) === true;
+const KIND_LIMIT = 500;
+
+/**
+ * Known conversation kinds, filled ahead of delivery so the synchronous
+ * notification decisions can read them. Only definite answers are kept.
+ */
+export class ThreadKindCache {
+  private readonly kinds = new Map<string, boolean>();
+  private readonly pending = new Map<string, Promise<boolean | null>>();
+
+  constructor(private readonly read: (threadId: string) => Promise<boolean | null>) {}
+
+  /** true for a known group chat, false for a known one-to-one, undefined if unknown. */
+  isGroup(threadId: string): boolean | undefined {
+    return this.kinds.get(threadId);
+  }
+
+  /** Read the kind once; concurrent callers share the read. */
+  ensure(threadId: string): Promise<boolean | null> {
+    const known = this.kinds.get(threadId);
+    if (known !== undefined) return Promise.resolve(known);
+    let read = this.pending.get(threadId);
+    if (!read) {
+      read = this.read(threadId)
+        .catch(() => null)
+        .then((isGroup) => {
+          this.pending.delete(threadId);
+          if (isGroup !== null) {
+            this.kinds.set(threadId, isGroup);
+            if (this.kinds.size > KIND_LIMIT) this.kinds.delete(this.kinds.keys().next().value!);
+          }
+          return isGroup;
+        });
+      this.pending.set(threadId, read);
+    }
+    return read;
+  }
+}
+
+/** A group chat's notification is held back: the setting is off and the chat is a known group. */
+export function suppressGroupChat(
+  settings: { notify_group_chats?: boolean } | null | undefined,
+  isGroup: boolean | undefined,
+): boolean {
+  return settings?.notify_group_chats === false && isGroup === true;
 }

@@ -8829,9 +8829,38 @@ ${button.innerHTML}`)
       clearTimeout(timer);
     }
   }
-  async function suppressAsGroupChat(notifyGroupChats, threadId, isGroup) {
-    if (notifyGroupChats !== false || !threadId) return false;
-    return await isGroup(threadId) === true;
+  var KIND_LIMIT = 500;
+  var ThreadKindCache = class {
+    constructor(read) {
+      __publicField(this, "read", read);
+      __publicField(this, "kinds", /* @__PURE__ */ new Map());
+      __publicField(this, "pending", /* @__PURE__ */ new Map());
+    }
+    /** true for a known group chat, false for a known one-to-one, undefined if unknown. */
+    isGroup(threadId) {
+      return this.kinds.get(threadId);
+    }
+    /** Read the kind once; concurrent callers share the read. */
+    ensure(threadId) {
+      const known = this.kinds.get(threadId);
+      if (known !== void 0) return Promise.resolve(known);
+      let read = this.pending.get(threadId);
+      if (!read) {
+        read = this.read(threadId).catch(() => null).then((isGroup) => {
+          this.pending.delete(threadId);
+          if (isGroup !== null) {
+            this.kinds.set(threadId, isGroup);
+            if (this.kinds.size > KIND_LIMIT) this.kinds.delete(this.kinds.keys().next().value);
+          }
+          return isGroup;
+        });
+        this.pending.set(threadId, read);
+      }
+      return read;
+    }
+  };
+  function suppressGroupChat(settings, isGroup) {
+    return settings?.notify_group_chats === false && isGroup === true;
   }
 
   // inject/src/messenger/lib/unread.ts
@@ -9091,41 +9120,26 @@ ${button.innerHTML}`)
           deliveryHandlers.delete(deliveryHandlers.keys().next().value);
         }
       }
-      const send = () => {
-        invoke("plugin:event|emit", {
-          event: "carrier:notify",
-          payload: {
-            id,
-            title,
-            subtitle,
-            body,
-            icon,
-            image,
-            dedupe_key: dedupeKey,
-            thread_path: threadPath || "",
-            // Like/Mute match English control labels; native offers them only then.
-            english_ui: /^en\b/i.test(document.documentElement.lang),
-            match_body: matchBody,
-            account: accountId(document.cookie) || "",
-            row
-          }
-        })?.catch?.(() => {
-          deliveryHandlers.delete(id);
-          diag("notify.emit", "carrier:notify emit failed");
-        });
-      };
-      const threadId = threadPathId(threadPath || "") || null;
-      if (window.__CARRIER_SETTINGS__?.notify_group_chats !== false || !threadId) {
-        send();
-        return;
-      }
-      void suppressAsGroupChat(
-        false,
-        threadId,
-        (thread2) => readThreadIsGroup(thread2, window.require)
-      ).then((suppress) => {
-        if (suppress) window.__carrierNotifyResult?.(id, "suppressed");
-        else send();
+      invoke("plugin:event|emit", {
+        event: "carrier:notify",
+        payload: {
+          id,
+          title,
+          subtitle,
+          body,
+          icon,
+          image,
+          dedupe_key: dedupeKey,
+          thread_path: threadPath || "",
+          // Like/Mute match English control labels; native offers them only then.
+          english_ui: /^en\b/i.test(document.documentElement.lang),
+          match_body: matchBody,
+          account: accountId(document.cookie) || "",
+          row
+        }
+      })?.catch?.(() => {
+        deliveryHandlers.delete(id);
+        diag("notify.emit", "carrier:notify emit failed");
       });
     };
     const updateNotificationRoute = (id, threadPath) => {
@@ -9149,6 +9163,13 @@ ${button.innerHTML}`)
       });
     };
     const senderAvatars = new SenderAvatarStore(notificationStorage);
+    const threadKinds = new ThreadKindCache(
+      (thread2) => readThreadIsGroup(thread2, window.require)
+    );
+    const groupFiltering = () => window.__CARRIER_SETTINGS__?.notify_group_chats === false;
+    const groupSuppressed = (thread2) => !!thread2 && suppressGroupChat(window.__CARRIER_SETTINGS__, threadKinds.isGroup(thread2));
+    const learnThreadKind = (thread2) => groupFiltering() && thread2 ? threadKinds.ensure(thread2).then(() => {
+    }) : Promise.resolve();
     const conversationNames = (threadId) => readConversationNotificationNames(
       threadId,
       window.require
@@ -9274,7 +9295,7 @@ ${button.innerHTML}`)
             pageMatch.signal.thread
           );
         }
-        const matchWait = pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && !taggedThread && (ignoresMutedConversations(s) || groupFiltering()) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
         const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
         const names2 = Promise.all([matchWait, identityMatchWait]).then(
           () => hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : conversationNames(
@@ -9293,9 +9314,14 @@ ${button.innerHTML}`)
           );
           return notificationThumbnail(source, imageDeadline - Date.now());
         });
+        const kindWait = matchWait.then(
+          () => learnThreadKind(
+            threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || null
+          )
+        );
         Promise.all([
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
-          matchWait,
+          kindWait,
           thumbnail,
           names2
         ]).then(([icon, , image, group]) => {
@@ -9322,7 +9348,7 @@ ${button.innerHTML}`)
           const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-          if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+          if (suppressNotificationDelivery(threadMuted, deliverySettings) || groupSuppressed(threadId)) {
             if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
             retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
@@ -9652,7 +9678,7 @@ ${button.innerHTML}`)
       if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
-      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__) || groupSuppressed(conversation.key)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         pageSignal.pendingDelivery = void 0;
       } else if (pageSignal.emitted) {
@@ -9682,7 +9708,7 @@ ${button.innerHTML}`)
     const completeCapacityEviction = (fallback) => {
       if (!fallback.deliverable) return;
       const settings = window.__CARRIER_SETTINGS__ || {};
-      if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
+      if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) || groupSuppressed(fallback.key)) {
         notifiedStore.markSuppressed(
           fallback.key,
           fallback.fingerprint,
@@ -9734,7 +9760,7 @@ ${button.innerHTML}`)
       if (previous) clearTimeout(previous.timer);
       if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
         return;
-      if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+      if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__) || groupSuppressed(conversation.key)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
@@ -9779,8 +9805,9 @@ ${button.innerHTML}`)
         )
       );
       const timer = setTimeout(async () => {
+        await learnThreadKind(conversation.key);
         const settings = window.__CARRIER_SETTINGS__ || {};
-        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
             notificationCorrelations.removeRow(conversation.key);
@@ -9806,7 +9833,7 @@ ${button.innerHTML}`)
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
         const hidePreview = deliverySettings.hide_notification_preview === true;
-        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+        if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           notificationCorrelations.removeRow(conversation.key);
           return;
@@ -9914,6 +9941,7 @@ ${button.innerHTML}`)
         const conversations = observed.filter(
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft
         );
+        for (const conversation of conversations) void learnThreadKind(conversation.key);
         const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
         const notifyKeys = new Set(
           conversations.filter((conversation) => !(ignoreMuted && conversation.muted)).map(({ key }) => key)

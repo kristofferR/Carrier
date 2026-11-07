@@ -62,7 +62,7 @@ import {
 import { pageMessages } from "../lib/page-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
-import { readThreadIsGroup, suppressAsGroupChat } from "../lib/thread-kind";
+import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/thread-kind";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -261,42 +261,26 @@ export function initNotificationBridge() {
         deliveryHandlers.delete(deliveryHandlers.keys().next().value!);
       }
     }
-    const send = () => {
-      invoke("plugin:event|emit", {
-        event: "carrier:notify",
-        payload: {
-          id,
-          title,
-          subtitle,
-          body,
-          icon,
-          image,
-          dedupe_key: dedupeKey,
-          thread_path: threadPath || "",
-          // Like/Mute match English control labels; native offers them only then.
-          english_ui: /^en\b/i.test(document.documentElement.lang),
-          match_body: matchBody,
-          account: accountId(document.cookie) || "",
-          row,
-        },
-      })?.catch?.(() => {
-        deliveryHandlers.delete(id);
-        diag("notify.emit", "carrier:notify emit failed");
-      });
-    };
-    // Group chats switched off: answer as native does for a muted delivery,
-    // so dedupe and receipts treat the message as handled (Ref #368). A
-    // conversation of unknown kind is delivered.
-    const threadId = threadPathId(threadPath || "") || null;
-    if (window.__CARRIER_SETTINGS__?.notify_group_chats !== false || !threadId) {
-      send();
-      return;
-    }
-    void suppressAsGroupChat(false, threadId, (thread) =>
-      readThreadIsGroup(thread, (window as unknown as { require?: unknown }).require),
-    ).then((suppress) => {
-      if (suppress) window.__carrierNotifyResult?.(id, "suppressed");
-      else send();
+    invoke("plugin:event|emit", {
+      event: "carrier:notify",
+      payload: {
+        id,
+        title,
+        subtitle,
+        body,
+        icon,
+        image,
+        dedupe_key: dedupeKey,
+        thread_path: threadPath || "",
+        // Like/Mute match English control labels; native offers them only then.
+        english_ui: /^en\b/i.test(document.documentElement.lang),
+        match_body: matchBody,
+        account: accountId(document.cookie) || "",
+        row,
+      },
+    })?.catch?.(() => {
+      deliveryHandlers.delete(id);
+      diag("notify.emit", "carrier:notify emit failed");
     });
   };
 
@@ -333,6 +317,18 @@ export function initNotificationBridge() {
     })?.catch?.(() => {});
   };
   const senderAvatars = new SenderAvatarStore(notificationStorage);
+  // Group Chat Notifications off (Ref #368): group chats are held back like
+  // muted ones and recorded as suppressed, so a later identical arrival after
+  // turning it back on still notifies. Kinds come from Messenger's database,
+  // read ahead of delivery; an unknown kind is delivered.
+  const threadKinds = new ThreadKindCache((thread) =>
+    readThreadIsGroup(thread, (window as unknown as { require?: unknown }).require),
+  );
+  const groupFiltering = () => window.__CARRIER_SETTINGS__?.notify_group_chats === false;
+  const groupSuppressed = (thread: string | null | undefined) =>
+    !!thread && suppressGroupChat(window.__CARRIER_SETTINGS__, threadKinds.isGroup(thread));
+  const learnThreadKind = (thread: string | null | undefined) =>
+    groupFiltering() && thread ? threadKinds.ensure(thread).then(() => {}) : Promise.resolve();
   const conversationNames = (threadId: string) =>
     readConversationNotificationNames(
       threadId,
@@ -549,7 +545,9 @@ export function initNotificationBridge() {
       }
       // A tagged conversation needs no row to establish identity or mute.
       const matchWait =
-        pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s)
+        pageMatch.signal?.matchPromise &&
+        !taggedThread &&
+        (ignoresMutedConversations(s) || groupFiltering())
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
       // Names and link enrichment need a bounded route wait even when muted
@@ -584,9 +582,15 @@ export function initNotificationBridge() {
             );
             return notificationThumbnail(source, imageDeadline - Date.now());
           });
+      // Once the row has named the conversation, learn its kind before deciding.
+      const kindWait = matchWait.then(() =>
+        learnThreadKind(
+          threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || null,
+        ),
+      );
       Promise.all([
         avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
-        matchWait,
+        kindWait,
         thumbnail,
         names,
       ]).then(([icon, , image, group]) => {
@@ -622,7 +626,10 @@ export function initNotificationBridge() {
         const threadMuted = threadId
           ? mutedThreads.isMuted(threadId)
           : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
-        if (suppressNotificationDelivery(threadMuted, deliverySettings)) {
+        if (
+          suppressNotificationDelivery(threadMuted, deliverySettings) ||
+          groupSuppressed(threadId)
+        ) {
           if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
           retainSuppressedDraft(id);
           const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
@@ -1131,7 +1138,10 @@ export function initNotificationBridge() {
     if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
       updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
     }
-    if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__)) {
+    if (
+      suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__) ||
+      groupSuppressed(conversation.key)
+    ) {
       notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       pageSignal.pendingDelivery = undefined;
     } else if (pageSignal.emitted) {
@@ -1177,7 +1187,10 @@ export function initNotificationBridge() {
     // retires its opposite-order correlation window.
     if (!fallback.deliverable) return;
     const settings = window.__CARRIER_SETTINGS__ || {};
-    if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings)) {
+    if (
+      suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) ||
+      groupSuppressed(fallback.key)
+    ) {
       notifiedStore.markSuppressed(
         fallback.key,
         fallback.fingerprint,
@@ -1247,7 +1260,10 @@ export function initNotificationBridge() {
     if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
       return;
 
-    if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__)) {
+    if (
+      suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__) ||
+      groupSuppressed(conversation.key)
+    ) {
       notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
       // Keep a content-only row candidate for the opposite event ordering.
       // Messenger can virtualize the row away before constructing its page
@@ -1311,8 +1327,12 @@ export function initNotificationBridge() {
           ),
     );
     const timer = setTimeout(async () => {
+      await learnThreadKind(conversation.key);
       const settings = window.__CARRIER_SETTINGS__ || {};
-      if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings)) {
+      if (
+        suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) ||
+        groupSuppressed(conversation.key)
+      ) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
           notificationCorrelations.removeRow(conversation.key);
@@ -1345,7 +1365,10 @@ export function initNotificationBridge() {
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const deliverySettings = window.__CARRIER_SETTINGS__ || {};
       const hidePreview = deliverySettings.hide_notification_preview === true;
-      if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings)) {
+      if (
+        suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings) ||
+        groupSuppressed(conversation.key)
+      ) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         notificationCorrelations.removeRow(conversation.key);
         return;
@@ -1488,6 +1511,7 @@ export function initNotificationBridge() {
         (conversation) =>
           conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft,
       );
+      for (const conversation of conversations) void learnThreadKind(conversation.key);
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const notifyKeys = new Set(
         conversations
