@@ -1178,10 +1178,16 @@ mod tests {
             s.hides_names() && s.hides_avatars(),
             "nothing hidden: hide both"
         );
+    }
+
+    #[test]
     fn settings_json_missing_focus_composer_on_return_defaults_to_true() {
         // Existing installs gain the focus behavior without resetting settings.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.focus_composer_on_return);
+    }
+
+    #[test]
     fn muted_conversation_policy_loads_known_values_only() {
         let s: Settings = serde_json::from_str(r#"{"muted_conversations":"badge"}"#).unwrap();
         assert_eq!(s.muted_conversations.as_deref(), Some("badge"));
@@ -1190,10 +1196,16 @@ mod tests {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.muted_conversations, None);
         assert!(s.ignore_muted_conversations);
+    }
+
+    #[test]
     fn settings_json_missing_notify_group_chats_defaults_to_true() {
         // Existing installs keep notifying for group chats.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.notify_group_chats);
+    }
+
+    #[test]
     fn update_check_hours_default_and_sanitize_to_offered_choices() {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.update_check_hours, 4);

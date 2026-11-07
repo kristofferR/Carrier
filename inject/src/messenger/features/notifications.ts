@@ -548,8 +548,9 @@ export function initNotificationBridge() {
       }
       // A tagged conversation needs no row to establish identity or mute.
       const matchWait =
-        pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s)
-        pageMatch.signal?.matchPromise && (ignoresMutedConversations(s) || groupFiltering())
+        pageMatch.signal?.matchPromise &&
+        !taggedThread &&
+        (ignoresMutedConversations(s) || groupFiltering())
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
       // Names and link enrichment need a bounded route wait even when muted

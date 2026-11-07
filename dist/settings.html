@@ -177,14 +177,11 @@
           fields: ["mute_notifications", "notification_sound", "notify_group_chats", "hide_notification_preview",
                    ...(IS_MAC ? ["group_notifications_by_conversation"] : []),
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
-                   "unread_badge", "ignore_muted_conversations", "badge_mode"] },
+                   "unread_badge", "muted_conversations", "badge_mode", "test_notification"] },
         { id: "privacy", label: "Privacy", icon: ICONS.privacy,
           fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"] },
-                   "unread_badge", "ignore_muted_conversations", "badge_mode", "test_notification"] },
-                   "unread_badge", "muted_conversations", "badge_mode"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
-          fields: ["automatic_update_checks", "hold_failures", "send_with_accelerator", "multi_instance", "custom_css", "open_logs"] },
-          fields: ["automatic_update_checks", "update_check_hours", "hold_failures", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
+          fields: ["automatic_update_checks", "update_check_hours", "hold_failures", "send_with_accelerator", "multi_instance", "custom_css", "open_logs"] },
       ];
 
       let activeTab = "general";
@@ -304,6 +301,9 @@
           "Muted conversations",
           "Chats you muted in Messenger, including muted communities: leave them out, count them on the badge without notifying, or treat them like any other chat.",
           false,
+        );
+      }
+
       // How often automatic update checks run; only meaningful while they are on.
       function updateCheckHoursRow() {
         return selectRow(
