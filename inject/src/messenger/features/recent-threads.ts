@@ -4,6 +4,7 @@
 // tray menu so a conversation is one right-click away. The list lives in
 // memory only — nothing is persisted to disk.
 import { invoke } from "../bridge";
+import { hidesNames } from "../lib/privacy";
 import { SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
 import { chatRows } from "./conversation-actions";
 
@@ -58,7 +59,7 @@ export function initRecentThreads() {
   let emptySince = 0;
   const push = () => {
     // Hide Names & Avatars: never let contact names cross into native menus.
-    const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const hide = hidesNames(window.__CARRIER_SETTINGS__);
     const threads = hide ? [] : scan();
     if (threads === null) return;
     // An empty scan usually means the chat list hasn't rendered (mid-reload),

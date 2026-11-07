@@ -45,10 +45,16 @@ interface CarrierSettings {
   clear_notifications_on_view?: boolean;
   attention_on_message?: boolean;
   hide_names_avatars?: boolean;
+  /** Blur names; absent (null) keeps hide_names_avatars. */
+  hide_names?: boolean | null;
+  /** Blur avatars; absent (null) keeps hide_names_avatars. */
+  hide_avatars?: boolean | null;
   nickname_scope?: "all" | "direct" | "groups" | "off" | null;
   show_nicknames?: boolean;
   nicknames_group_only?: boolean;
   system_emoji?: boolean;
+  /** Never tell others you are typing (regular and encrypted chats). */
+  block_typing_indicator?: boolean;
   /** Pause video/GIF playback unless it follows a recent user interaction. */
   stop_media_autoplay?: boolean;
   /** Page zoom in percent (30–200; 100 = no zoom). */

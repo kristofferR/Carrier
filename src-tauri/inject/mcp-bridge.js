@@ -3133,7 +3133,7 @@
       var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
       var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
       var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
-      var IDENTITY_SEL = "[data-carrier-private-identity]";
+      var IDENTITY_SEL = "[data-carrier-private-identity], [data-carrier-private-avatar]";
       var WRAPPER_SEL = "[data-carrier-private-wrapper]";
       var PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
       var PREVIEW_EVENT_RE =
@@ -3170,6 +3170,7 @@
             style: n.getAttribute("style") ? "[present]" : "",
             className: n.getAttribute("class") ? "[present]" : "",
             carrierIdentity: n.hasAttribute("data-carrier-private-identity"),
+            carrierAvatar: n.hasAttribute("data-carrier-private-avatar"),
             carrierWrapper: n.hasAttribute("data-carrier-private-wrapper"),
             rect: rect(n),
           });
@@ -3200,6 +3201,7 @@
             previewNamePattern: PREVIEW_NAME_RE.test(text),
             previewEventPattern: PREVIEW_EVENT_RE.test(text),
             carrierIdentity: el.hasAttribute("data-carrier-private-identity"),
+            carrierAvatar: el.hasAttribute("data-carrier-private-avatar"),
             carrierIdentityAncestor: !!el.closest(IDENTITY_SEL),
             carrierWrapper: el.hasAttribute("data-carrier-private-wrapper"),
             carrierWrapperAncestor: !!el.closest(WRAPPER_SEL),
@@ -3262,6 +3264,7 @@
       return {
         url: location.href.replace(/\d{3,}/g, "{id}"),
         hasHideAttr: document.documentElement.hasAttribute("data-carrier-hide-names"),
+        hasHideAvatarsAttr: document.documentElement.hasAttribute("data-carrier-hide-avatars"),
         selectors: {
           conversationRows: rows(5),
           identityMarkers: list(IDENTITY_SEL, 40),

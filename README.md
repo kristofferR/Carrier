@@ -107,7 +107,7 @@ cryptographically verified updates.
 - Forced light or dark theme, or follow the operating system
 - Adjustable and persistent page zoom
 - Optional system emoji instead of Facebook's emoji sprites
-- Hide names and avatars for screen sharing or working in public
+- Hide names, avatars or both for screen sharing or working in public
 - Optional top application menu on Windows and Linux
 
 ### Messenger tools
@@ -119,6 +119,7 @@ cryptographically verified updates.
 - Double-click photos and videos for zooming and panning
 - Copy, download, and open message media from richer right-click menus
 - Copy images that Messenger exposes only as in-page blobs
+- Optionally hide that you are typing, in regular and encrypted chats
 - Voice and video call permissions
 - Spell-check controls
 
@@ -165,7 +166,7 @@ blur. Messenger itself still communicates with Meta, and update checks use
 GitHub Releases.
 
 - Known Facebook analytics and logging requests can be blocked without blocking
-  messaging (**Settings → Advanced → Block Facebook telemetry**, enabled by
+  messaging (**Settings → Privacy → Block Facebook telemetry**, enabled by
   default).
 - Off-site links open in your normal browser; Facebook tracking redirects are
   removed first.

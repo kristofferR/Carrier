@@ -1,11 +1,14 @@
 /* ----------------------- Hide names & avatars ------------------------- */
 // Toggle marker attributes the injected CSS keys off of to blur contact
-// names and avatars (Settings / View ▸ Hide Names & Avatars / Cmd+Shift+H).
+// names and avatars (Settings ▸ Privacy, View ▸ Hide Names and Avatars,
+// Cmd+Shift+H). Names and avatars are marked separately so either can be
+// hidden alone (Ref #364).
 // Facebook's generated class names churn, so this keeps the selectors shallow
 // and marks identity surfaces by stable roles, links, and layout shape.
-import { isMetaText, previewIdentity } from "../lib/privacy";
+import { hidesAvatars, hidesNames, isMetaText, previewIdentity } from "../lib/privacy";
 
 const IDENTITY_ATTR = "data-carrier-private-identity";
+const AVATAR_ATTR = "data-carrier-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -16,7 +19,9 @@ export function initHideNames() {
   let pending = false;
   let suppressMutations = false;
 
-  const on = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+  const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+  const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+  const on = () => namesHidden() || avatarsHidden();
 
   function textValue(el: Element | null | undefined) {
     return (el?.textContent || "").replace(/\s+/g, " ").trim();
@@ -29,13 +34,36 @@ export function initHideNames() {
     return cs.display !== "none" && cs.visibility !== "hidden";
   }
 
+  /** A picture by what it renders: an image element, or any background
+   * image however it is applied (inline shorthand, class, inherited rule). */
+  function isPicture(el: Element) {
+    if (el.matches("img, svg, image")) return true;
+    return /url\(/.test(getComputedStyle(el).backgroundImage || "");
+  }
+
+  function pictureWithin(el: Element) {
+    return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
+  }
+
+  /** A name or other identifying text. Pictures inside it are avatars too, so
+   * Hide Avatars alone still covers a face nested in a heading or attribution. */
   function mark(el: Element | null | undefined) {
-    if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
+    if (!el?.setAttribute) return;
+    el.setAttribute(IDENTITY_ATTR, "");
+    for (const node of [el, ...el.querySelectorAll("*")]) {
+      if (isPicture(node)) markAvatar(node);
+    }
+  }
+
+  /** An avatar, group picture or read-receipt face. */
+  function markAvatar(el: Element | null | undefined) {
+    if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
   }
 
   function clearMarkers() {
-    document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
+    document.querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}]`).forEach((el) => {
       el.removeAttribute(IDENTITY_ATTR);
+      el.removeAttribute(AVATAR_ATTR);
     });
   }
 
@@ -141,7 +169,7 @@ export function initHideNames() {
           r.width <= 34 &&
           r.height >= 12 &&
           r.height <= 34;
-        if (leftAvatar || rightReceipt) mark(el);
+        if (leftAvatar || rightReceipt) markAvatar(el);
       });
 
       const surfaces = textSurfaces(row).filter((el) => {
@@ -187,9 +215,44 @@ export function initHideNames() {
         r.width >= 20 &&
         r.height >= 20
       ) {
-        mark(el);
+        markAvatar(el);
       }
     });
+  }
+
+  /** A bare (non-whitespace) text node directly inside this element. */
+  function hasBareText(el: Element) {
+    return [...el.childNodes].some(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim(),
+    );
+  }
+
+  /**
+   * Profile links whose name shares an element with a picture (bare text in
+   * the link or in a picture-bearing descendant, or text on a link drawn as a
+   * background image) have no element holding just the name, so mark the
+   * whole link as a name. Names-only then blurs its picture too, erring on the
+   * side of hiding; links whose name sits in its own element stay precise.
+   */
+  function markMixedProfileLinks(main: Element) {
+    main
+      .querySelectorAll(
+        'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]',
+      )
+      .forEach((link) => {
+        if (!visible(link)) return;
+        // Every picture in a profile link is an avatar, however it is drawn
+        // (the CSS only sees inline backgrounds).
+        for (const node of [link, ...link.querySelectorAll("*")]) {
+          if (isPicture(node)) markAvatar(node);
+        }
+        if (!textValue(link) || !pictureWithin(link)) return;
+        const textBesidePicture =
+          isPicture(link) ||
+          hasBareText(link) ||
+          [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
+        if (textBesidePicture) mark(link);
+      });
   }
 
   function markThreadMessages(main: Element) {
@@ -200,10 +263,10 @@ export function initHideNames() {
 
       article
         .querySelectorAll(
-          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]',
+          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"], a[href^="/"][href$="/"]:not([href*="/messages/"]) [style*="background-image"], a[href*="/profile.php"] [style*="background-image"]',
         )
         .forEach((el) => {
-          if (visible(el)) mark(el);
+          if (visible(el)) markAvatar(el);
         });
 
       textLeaves(article).forEach((el) => {
@@ -229,6 +292,7 @@ export function initHideNames() {
       if (main) {
         markThreadHeader(main);
         markThreadMessages(main);
+        markMixedProfileLinks(main);
       }
     } finally {
       queueMicrotask(() => {
@@ -279,7 +343,8 @@ export function initHideNames() {
   }
 
   const apply = () => {
-    html.toggleAttribute("data-carrier-hide-names", on());
+    html.toggleAttribute("data-carrier-hide-names", namesHidden());
+    html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
     if (on()) {
       start();
       schedule();
