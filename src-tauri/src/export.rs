@@ -824,6 +824,30 @@ fn send_result(
     }
 }
 
+/// One export at a time. A pending export holds its rendered file until its
+/// save dialog closes, so without this cap a page could queue requests until
+/// memory runs out. Held from parsing until the file is written or the
+/// export ends any other way.
+static EXPORT_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct ExportPermit;
+
+impl ExportPermit {
+    fn acquire() -> Option<Self> {
+        use std::sync::atomic::Ordering::SeqCst;
+        EXPORT_IN_FLIGHT
+            .compare_exchange(false, true, SeqCst, SeqCst)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for ExportPermit {
+    fn drop(&mut self) {
+        EXPORT_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 pub(crate) fn install(app: &tauri::AppHandle) {
     let handle = app.clone();
     app.listen_any(EVENT, move |event| {
@@ -857,6 +881,9 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         let (Some(format), Some(reveal)) = (Format::parse(&msg.format), reveal_url(&msg.reveal))
         else {
             return fail("invalid format or reveal key");
+        };
+        let Some(permit) = ExportPermit::acquire() else {
+            return fail("another export is in progress");
         };
         let export = match serde_json::from_str::<ExportMsg<PageExport>>(&signed.message) {
             Ok(full) => full.conversation,
@@ -892,6 +919,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         let result_label = label.clone();
         let request = msg.request.clone();
         dialog.save_file(move |selection| {
+            let permit = permit;
             let Some(selection) = selection else {
                 send_result(
                     &result_handle,
@@ -918,6 +946,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
                 return;
             };
             tauri::async_runtime::spawn_blocking(move || {
+                let _permit = permit;
                 let outcome = match std::fs::write(&path, content.as_bytes()) {
                     Ok(()) => {
                         let id = reveal.path().to_string();
@@ -986,6 +1015,14 @@ mod tests {
 
     fn rendered(format: Format, value: serde_json::Value) -> String {
         render(format, parse(value), T0 + 3_600_000).expect("renders")
+    }
+
+    #[test]
+    fn only_one_export_runs_at_a_time() {
+        let first = ExportPermit::acquire().expect("free");
+        assert!(ExportPermit::acquire().is_none());
+        drop(first);
+        assert!(ExportPermit::acquire().is_some());
     }
 
     #[test]
