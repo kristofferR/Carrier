@@ -143,9 +143,11 @@ declare const carrierShareDownload: (
 /** Write an image through the native pasteboard after its menu row is selected. */
 declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;
 
-/** Show Carrier's media actions in a native context menu. */
+/** Show Carrier's media and message actions in a native context menu. A
+ * keyboard-opened menu passes the viewport point to pop up at. */
 declare const carrierShowContextMenu: (
-  items: { label: string; action: string; value?: string }[],
+  items: { label: string; action: string; value?: string; reaction?: true; checked?: true }[],
+  position?: [x: number, y: number],
 ) => Promise<void>;
 
 /** Verify the native context-menu selection without exposing the window secret. */

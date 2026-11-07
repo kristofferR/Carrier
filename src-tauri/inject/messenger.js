@@ -2919,6 +2919,222 @@ ${button.innerHTML}`)
     return rectsMatch(expected, current) && pointInRect(current, x, y);
   }
 
+  // inject/src/messenger/lib/message-menu.ts
+  var MESSAGE_CONTEXT_MENU_LABELS = [
+    "Reply",
+    "Copy text",
+    "Edit",
+    "Forward",
+    "Pin",
+    "Unpin",
+    "Unsend",
+    "Remove"
+  ];
+  var DRIVEN_ACTIONS = MESSAGE_CONTEXT_MENU_LABELS.filter(
+    (action2) => action2 !== "Copy text"
+  );
+  function menuRowAction(text) {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    return DRIVEN_ACTIONS.find((action2) => action2 === normalized) ?? null;
+  }
+  function toolbarAction(label2) {
+    if (/^Reply\b/.test(label2)) return "Reply";
+    if (/^Forward\b/.test(label2)) return "Forward";
+    return null;
+  }
+  function messageActions(offer) {
+    return MESSAGE_CONTEXT_MENU_LABELS.filter(
+      (action2) => action2 === "Copy text" ? offer.text.length > 0 : offer.actions.includes(action2)
+    );
+  }
+  function reactionLabel(emoji) {
+    const codePoints = [...emoji];
+    const first = codePoints[0]?.codePointAt(0) ?? 0;
+    return codePoints.length === 1 && first >= 8192 && first < 13056 ? `${emoji}️` : emoji;
+  }
+  function uniqueReactions(reactions) {
+    const seen = /* @__PURE__ */ new Set();
+    return reactions.filter(({ emoji }) => {
+      if (!emoji || seen.has(emoji)) return false;
+      seen.add(emoji);
+      return true;
+    });
+  }
+  function keyboardMenuPoint(point, target, anchor) {
+    const inside2 = point.x >= target.x && point.x <= target.x + target.width && point.y >= target.y && point.y <= target.y + target.height;
+    if (inside2 && (point.x !== 0 || point.y !== 0)) return null;
+    return [Math.max(0, Math.round(anchor.x)), Math.max(0, Math.round(anchor.y + anchor.height))];
+  }
+
+  // inject/src/messenger/features/message-menu.ts
+  var MESSAGE = '[aria-roledescription="message"]';
+  var PROBE_ATTRIBUTE = "data-carrier-message-menu-probe";
+  var POLL_MS = 16;
+  var TOOLBAR_WAIT_MS = 600;
+  var MENU_WAIT_MS = 800;
+  var MAX_REACTIONS = 12;
+  var messageFor = (target) => target.closest(MESSAGE);
+  var toolbarButton = (message, label2) => message.querySelector(`[role="toolbar"] [role="button"][aria-label^="${label2}"]`);
+  async function waitFor(read, ms) {
+    const deadline = Date.now() + ms;
+    while (true) {
+      const value = read();
+      if (value) return value;
+      if (Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    }
+  }
+  async function ensureToolbar(message) {
+    const mounted = () => message.querySelector('[role="toolbar"] [role="button"][aria-label]');
+    if (mounted()) return true;
+    const rect = message.getBoundingClientRect();
+    const point = { bubbles: true, clientX: rect.x + rect.width / 2, clientY: rect.y + 4 };
+    message.dispatchEvent(new MouseEvent("mouseover", point));
+    message.dispatchEvent(new MouseEvent("mousemove", point));
+    return await waitFor(mounted, TOOLBAR_WAIT_MS) !== null;
+  }
+  var expanded = (button) => button.getAttribute("aria-expanded") === "true";
+  function openMenu() {
+    const menus = document.querySelectorAll('[role="menu"]');
+    for (let index = menus.length - 1; index >= 0; index -= 1) {
+      const menu = menus[index];
+      if (menu?.querySelector('[role^="menuitem"]')) return menu;
+    }
+    return null;
+  }
+  async function withHiddenMenu(button, use, picks = false) {
+    const root = document.documentElement;
+    const focused = document.activeElement;
+    root.setAttribute(PROBE_ATTRIBUTE, "");
+    try {
+      if (!expanded(button)) button.click();
+      const menu = await waitFor(() => expanded(button) ? openMenu() : null, MENU_WAIT_MS);
+      if (!menu) return null;
+      const result = use(menu);
+      if (picks && result) await waitFor(() => !expanded(button), MENU_WAIT_MS);
+      return result;
+    } finally {
+      if (expanded(button)) {
+        button.click();
+        await waitFor(() => !expanded(button), MENU_WAIT_MS);
+      }
+      root.removeAttribute(PROBE_ATTRIBUTE);
+      if (!picks && focused instanceof HTMLElement && focused.isConnected)
+        focused.focus({ preventScroll: true });
+    }
+  }
+  var reactionRows = (menu) => menu.querySelectorAll('[role="menuitemradio"]');
+  var reactionEmoji = (row) => (row.querySelector("img[alt]")?.getAttribute("alt") || row.textContent || "").trim();
+  var moreRows = (menu) => menu.querySelectorAll('[role="menuitem"]');
+  function readableText(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (!(node instanceof Element)) return "";
+    if (node.tagName === "IMG") return node.getAttribute("alt") ?? "";
+    if (node.tagName === "BR") return "\n";
+    let text = "";
+    for (const child of node.childNodes) {
+      const part = readableText(child);
+      if (part && text && child instanceof HTMLDivElement && !text.endsWith("\n")) text += "\n";
+      text += part;
+    }
+    return text;
+  }
+  function messageTextBlock(message) {
+    const blocks = [
+      ...message.querySelectorAll('span[dir="auto"] > div[dir="auto"]')
+    ].filter((block) => !block.closest('[role="toolbar"]'));
+    return blocks[blocks.length - 1] ?? null;
+  }
+  function messageText(message) {
+    const block = messageTextBlock(message);
+    return block ? readableText(block).trim() : "";
+  }
+  function toolbarActions(message) {
+    const found = [];
+    for (const button of message.querySelectorAll(
+      '[role="toolbar"] [role="button"][aria-label]'
+    )) {
+      const action2 = toolbarAction(button.getAttribute("aria-label") ?? "");
+      if (action2) found.push([action2, button]);
+    }
+    return found;
+  }
+  async function readMessageOffer(message) {
+    const text = messageText(message);
+    if (!await ensureToolbar(message)) return { reactions: [], text, actions: [] };
+    const react = toolbarButton(message, "React");
+    const reactions = react ? await withHiddenMenu(
+      react,
+      (menu) => [...reactionRows(menu)].map((row) => ({
+        emoji: reactionEmoji(row),
+        checked: row.getAttribute("aria-checked") === "true"
+      }))
+    ) ?? [] : [];
+    const actions = toolbarActions(message).map(([action2]) => action2);
+    const more = toolbarButton(message, "More");
+    if (more)
+      actions.push(
+        ...await withHiddenMenu(
+          more,
+          (menu) => [...moreRows(menu)].map((row) => menuRowAction(row.textContent ?? "")).filter((action2) => action2 !== null)
+        ) ?? []
+      );
+    return { reactions: uniqueReactions(reactions).slice(0, MAX_REACTIONS), text, actions };
+  }
+  async function drive(message, run, what) {
+    if (!message.isConnected) {
+      toast("That message is no longer on screen");
+      return;
+    }
+    if (await run()) return;
+    diag("message-menu.action", `${what} was not offered when chosen`);
+    toast("Messenger no longer offers that action");
+  }
+  var reactTo = (message, emoji) => drive(
+    message,
+    async () => {
+      const react = await ensureToolbar(message) ? toolbarButton(message, "React") : null;
+      if (!react) return false;
+      const picked = await withHiddenMenu(
+        react,
+        (menu) => {
+          const row = [...reactionRows(menu)].find((item) => reactionEmoji(item) === emoji);
+          row?.click();
+          return row !== void 0;
+        },
+        true
+      );
+      return picked === true;
+    },
+    "reaction"
+  );
+  var runMessageAction = (message, action2) => drive(
+    message,
+    async () => {
+      if (!await ensureToolbar(message)) return false;
+      const button = toolbarActions(message).find(([offered]) => offered === action2)?.[1];
+      if (button) {
+        button.click();
+        return true;
+      }
+      const more = toolbarButton(message, "More");
+      if (!more) return false;
+      const picked = await withHiddenMenu(
+        more,
+        (menu) => {
+          const row = [...moreRows(menu)].find(
+            (item) => menuRowAction(item.textContent ?? "") === action2
+          );
+          row?.click();
+          return row !== void 0;
+        },
+        true
+      );
+      return picked === true;
+    },
+    action2
+  );
+
   // inject/src/messenger/features/context-menu.ts
   var MAX_BLOB = 512 * 1024 * 1024;
   var MAX_CLIPBOARD_IMAGE = 16 * 1024 * 1024;
@@ -3003,6 +3219,7 @@ ${button.innerHTML}`)
     y: nativeReflectApply3(nativeGetMouseClientY, event, [])
   });
   var isMac2 = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+  var isLinux = !isMac2 && /linux/i.test(navigator.platform);
   function contextActionToken() {
     const bytes = new NativeUint8Array(16);
     nativeGetRandomValues(bytes);
@@ -3033,7 +3250,7 @@ ${button.innerHTML}`)
       return;
     }
   }
-  function showNativeContextMenu(items) {
+  function showNativeContextMenu(items, position) {
     const nativeItems = [];
     clearNativeActionHandlers();
     for (let index = 0; index < items.length; index += 1) {
@@ -3044,14 +3261,15 @@ ${button.innerHTML}`)
         item[1](isMac2 ? action2 : void 0);
       };
       appendOwn(nativeActionHandlers, [action2, run]);
-      appendOwn(
-        nativeItems,
-        item[2] ? { label: item[0], action: action2, value: item[2] } : { label: item[0], action: action2 }
-      );
+      const nativeItem = { label: item[0], action: action2 };
+      if (item[2]) nativeItem.value = item[2];
+      if (item[3]) nativeItem.reaction = true;
+      if (item[3]?.checked) nativeItem.checked = true;
+      appendOwn(nativeItems, nativeItem);
     }
     if (!nativeShowContextMenu)
       return NativePromise2.reject(new Error("native context menu unavailable"));
-    return nativeShowContextMenu(nativeItems).catch((error) => {
+    return nativeShowContextMenu(nativeItems, position ?? void 0).catch((error) => {
       clearNativeActionHandlers();
       throw error;
     });
@@ -3063,6 +3281,7 @@ ${button.innerHTML}`)
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
+  var copyText = (text) => navigator.clipboard?.writeText(text).then(() => toast("Text copied")).catch(() => toast("Copy failed"));
   async function downloadSrc(src, fallbackName, action2) {
     const res = await fetch(src);
     if (!res.ok) throw new Error(`download failed (${res.status})`);
@@ -3157,244 +3376,350 @@ ${button.innerHTML}`)
       runNativeAction,
       true
     ]);
-    nativeReflectApply3(nativeAddEventListener2, document, [
-      "contextmenu",
-      async (e) => {
-        if (!e.isTrusted) return;
-        const t = eventTargetOf(e);
-        const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-        const img = t.closest?.("img[alt]");
-        const anchor = t.closest?.("a[href]");
-        const imgSrc = img && (img.currentSrc || img.src);
-        const vidSrc = video && (video.currentSrc || video.src);
-        const linkHref = anchor?.href;
-        const contextPoint = clientPointOf(e);
-        const fx = contextPoint.x / Math.max(1, innerWidth);
-        const fy = contextPoint.y / Math.max(1, innerHeight);
-        const items = [];
-        const addItem = (item) => {
-          appendOwn(items, item);
-        };
-        if (imgSrc) {
-          addItem([
-            IMAGE_CONTEXT_MENU_LABELS[0],
-            (action2) => copyImageSrc(imgSrc, action2).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
-          ]);
-          addItem([
-            IMAGE_CONTEXT_MENU_LABELS[1],
-            () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
-          ]);
-          if (isMac2) {
-            addItem([
-              IMAGE_CONTEXT_MENU_LABELS[2],
-              (action2) => action2 ? shareSrc(imgSrc, "image", fx, fy, action2).catch(
-                (error) => toastDownloadFailure(error, "Share failed")
-              ) : void 0
-            ]);
-          }
-          addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
-          addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
-        } else if (vidSrc) {
-          addItem([
-            VIDEO_CONTEXT_MENU_LABELS[0],
-            () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
-          ]);
-          if (isMac2) {
-            addItem([
-              VIDEO_CONTEXT_MENU_LABELS[1],
-              (action2) => action2 ? shareSrc(vidSrc, "video", fx, fy, action2).catch(
-                (error) => toastDownloadFailure(error, "Share failed")
-              ) : void 0
-            ]);
-          }
-          addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
-        } else if (linkHref && !linkHref.startsWith("javascript:")) {
-          addItem([
-            LINK_CONTEXT_MENU_LABELS[0],
-            () => copyAddress(linkHref),
-            cleanSharedUrl(linkHref)
-          ]);
-          addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
-        }
-        if (!items.length) return;
-        let nativeItemsAreValid = true;
-        for (let index = 0; index < items.length; index += 1) {
-          const item = items[index];
-          if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
-            nativeItemsAreValid = false;
-            break;
-          }
-        }
-        nativeReflectApply3(nativePreventDefault, e, []);
-        const nativeImageCopyIsSafe = isMac2 || !imgSrc;
-        if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe) {
-          try {
-            await showNativeContextMenu(items);
-            return;
-          } catch {
-          }
-        }
-        const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
-        const previouslyFocused = document.activeElement;
-        const priorReturnFocus = ctxMenu && nativeReflectApply3(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
-        closeMenu();
-        ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
-        ctxMenu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
-        const ctxMenuStyle = nativeReflectApply3(nativeGetStyle, ctxMenu, []);
-        applyStyles(ctxMenuStyle, {
-          position: "fixed",
-          left: `${contextPoint.x}px`,
-          top: `${contextPoint.y}px`,
-          zIndex: "2147483647"
-        });
-        const shadow = nativeReflectApply3(nativeAttachShadow, ctxMenu, [
-          { mode: "closed" }
+    const openContextMenu = async (t, contextPoint, keyboard, prevent) => {
+      const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
+      const img = t.closest?.("img[alt]");
+      const anchor = t.closest?.("a[href]");
+      const imgSrc = img && (img.currentSrc || img.src);
+      const vidSrc = video && (video.currentSrc || video.src);
+      const linkHref = anchor?.href;
+      const fx = contextPoint.x / Math.max(1, innerWidth);
+      const fy = contextPoint.y / Math.max(1, innerHeight);
+      const items = [];
+      const addItem = (item) => {
+        appendOwn(items, item);
+      };
+      if (imgSrc) {
+        addItem([
+          IMAGE_CONTEXT_MENU_LABELS[0],
+          (action2) => copyImageSrc(imgSrc, action2).then(() => toast("Image copied")).catch(() => toast("Copy failed"))
         ]);
-        const menu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
-        nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
-        nativeReflectApply3(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
-        const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
-        applyStyles(menuStyle, {
-          background: "var(--card-background, Canvas)",
-          color: "var(--primary-text, CanvasText)",
-          border: "1px solid var(--divider, rgba(127,127,127,.3))",
-          borderRadius: "8px",
-          padding: "4px",
-          boxShadow: "0 6px 24px rgba(0,0,0,.4)",
-          minWidth: "170px",
-          font: "13px -apple-system, system-ui, sans-serif"
-        });
-        const menuItems = [];
-        const laidOutRects = [];
-        let focusedIndex = 0;
-        const activate = (fn, restoreFocus = false) => {
-          closeMenu(restoreFocus);
-          fn();
-        };
-        for (let index = 0; index < items.length; index += 1) {
-          const item = items[index];
-          if (!item) continue;
-          const label2 = item[0];
-          if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_LABELS[2] || label2 === VIDEO_CONTEXT_MENU_LABELS[1])) {
-            continue;
-          }
-          const fn = item[1];
-          const rowIndex = menuItems.length;
-          const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
-          nativeReflectApply3(nativeSetTextContent, el, [label2]);
-          nativeReflectApply3(nativeSetAttribute, el, ["role", "menuitem"]);
-          nativeReflectApply3(nativeSetTabIndex, el, [-1]);
-          const elStyle = nativeReflectApply3(nativeGetStyle, el, []);
-          applyStyles(elStyle, {
-            padding: "8px 12px",
-            cursor: "pointer",
-            borderRadius: "6px",
-            outline: "none"
+        addItem([
+          IMAGE_CONTEXT_MENU_LABELS[1],
+          () => downloadSrc(imgSrc, "image").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
+        ]);
+        if (isMac2) {
+          addItem([
+            IMAGE_CONTEXT_MENU_LABELS[2],
+            (action2) => action2 ? shareSrc(imgSrc, "image", fx, fy, action2).catch(
+              (error) => toastDownloadFailure(error, "Share failed")
+            ) : void 0
+          ]);
+        }
+        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
+        addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
+      } else if (vidSrc) {
+        addItem([
+          VIDEO_CONTEXT_MENU_LABELS[0],
+          () => downloadSrc(vidSrc, "video").then(({ url }) => toastDownloadSaved(url)).catch((error) => toastDownloadFailure(error))
+        ]);
+        if (isMac2) {
+          addItem([
+            VIDEO_CONTEXT_MENU_LABELS[1],
+            (action2) => action2 ? shareSrc(vidSrc, "video", fx, fy, action2).catch(
+              (error) => toastDownloadFailure(error, "Share failed")
+            ) : void 0
+          ]);
+        }
+        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
+      } else if (linkHref && !linkHref.startsWith("javascript:")) {
+        addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
+        addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
+      }
+      const selection = getSelection();
+      const selected = selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
+      const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(t) ?? null : null;
+      if (!items.length && !message) return;
+      prevent();
+      const keyboardPoint = message ? keyboardMenuPoint(contextPoint, rectOf(t), rectOf(messageTextBlock(message) ?? message)) : null;
+      if (message) {
+        const offer = await readMessageOffer(message);
+        for (let index = 0; index < offer.reactions.length; index += 1) {
+          const reaction = offer.reactions[index];
+          if (reaction)
+            addItem([
+              reactionLabel(reaction.emoji),
+              () => reactTo(message, reaction.emoji),
+              void 0,
+              reaction
+            ]);
+        }
+        const actions = messageActions(offer);
+        for (let index = 0; index < actions.length; index += 1) {
+          const action2 = actions[index];
+          if (action2 === MESSAGE_CONTEXT_MENU_LABELS[1])
+            addItem([action2, () => copyText(offer.text), offer.text]);
+          else if (action2) addItem([action2, () => runMessageAction(message, action2)]);
+        }
+        if (!items.length) {
+          toast("Messenger offers no actions for this message");
+          return;
+        }
+      }
+      let nativeItemsAreValid = true;
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
+          nativeItemsAreValid = false;
+          break;
+        }
+      }
+      const nativeImageCopyIsSafe = isMac2 || !imgSrc;
+      const nativeTakesKeyboard = !keyboard || !isLinux;
+      if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe && nativeTakesKeyboard) {
+        try {
+          const zoom = (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100;
+          const point = keyboardPoint ?? (isLinux ? [contextPoint.x, contextPoint.y] : null);
+          await showNativeContextMenu(
+            items,
+            point ? [Math.round(point[0] * zoom), Math.round(point[1] * zoom)] : null
+          );
+          return;
+        } catch {
+        }
+      }
+      const focusableSelector = 'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+      const previouslyFocused = document.activeElement;
+      const priorReturnFocus = ctxMenu && nativeReflectApply3(nativeContains, ctxMenu, [previouslyFocused]) ? ctxMenuReturnFocus : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body ? previouslyFocused : null;
+      closeMenu();
+      ctxMenuReturnFocus = t.closest?.(focusableSelector) ?? priorReturnFocus;
+      ctxMenu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+      const ctxMenuStyle = nativeReflectApply3(nativeGetStyle, ctxMenu, []);
+      applyStyles(ctxMenuStyle, {
+        position: "fixed",
+        left: `${keyboardPoint?.[0] ?? contextPoint.x}px`,
+        top: `${keyboardPoint?.[1] ?? contextPoint.y}px`,
+        zIndex: "2147483647"
+      });
+      const shadow = nativeReflectApply3(nativeAttachShadow, ctxMenu, [
+        { mode: "closed" }
+      ]);
+      const menu = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+      nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
+      nativeReflectApply3(nativeSetAttribute, menu, [
+        "aria-label",
+        message ? "Message actions" : "Media actions"
+      ]);
+      const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
+      applyStyles(menuStyle, {
+        background: "var(--card-background, Canvas)",
+        color: "var(--primary-text, CanvasText)",
+        border: "1px solid var(--divider, rgba(127,127,127,.3))",
+        borderRadius: "8px",
+        padding: "4px",
+        boxShadow: "0 6px 24px rgba(0,0,0,.4)",
+        minWidth: "170px",
+        font: "13px -apple-system, system-ui, sans-serif"
+      });
+      const menuItems = [];
+      let reactionRow = null;
+      let previousGroup = null;
+      const laidOutRects = [];
+      let focusedIndex = 0;
+      const activate = (fn, restoreFocus = false) => {
+        closeMenu(restoreFocus);
+        fn();
+      };
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        if (!item) continue;
+        const label2 = item[0];
+        if (isMac2 && (label2 === IMAGE_CONTEXT_MENU_LABELS[2] || label2 === VIDEO_CONTEXT_MENU_LABELS[1])) {
+          continue;
+        }
+        const fn = item[1];
+        const rowIndex = menuItems.length;
+        const reaction = item[3];
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : 0;
+        if (previousGroup !== null && previousGroup !== group) {
+          const divider = nativeReflectApply3(nativeCreateElement, document, [
+            "div"
+          ]);
+          nativeReflectApply3(nativeSetAttribute, divider, ["role", "separator"]);
+          applyStyles(nativeReflectApply3(nativeGetStyle, divider, []), {
+            height: "1px",
+            margin: "4px 8px",
+            background: "var(--divider, rgba(127,127,127,.3))"
           });
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "mouseenter",
-            () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
-          ]);
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "mouseleave",
-            () => setStyleProperty(elStyle, "background", "")
-          ]);
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "focus",
-            () => {
-              focusedIndex = rowIndex;
-              setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+          nativeReflectApply3(nativeAppendChild, menu, [divider]);
+        }
+        previousGroup = group;
+        const el = nativeReflectApply3(nativeCreateElement, document, ["div"]);
+        nativeReflectApply3(nativeSetTextContent, el, [label2]);
+        nativeReflectApply3(nativeSetAttribute, el, [
+          "role",
+          reaction ? "menuitemcheckbox" : "menuitem"
+        ]);
+        if (reaction) {
+          nativeReflectApply3(nativeSetAttribute, el, ["aria-label", `React ${label2}`]);
+          nativeReflectApply3(nativeSetAttribute, el, ["aria-checked", `${reaction.checked}`]);
+        }
+        nativeReflectApply3(nativeSetTabIndex, el, [-1]);
+        const elStyle = nativeReflectApply3(nativeGetStyle, el, []);
+        applyStyles(elStyle, {
+          padding: reaction ? "6px 8px" : "8px 12px",
+          cursor: "pointer",
+          borderRadius: "6px",
+          outline: "none"
+        });
+        if (reaction) {
+          applyStyles(elStyle, { fontSize: "18px", lineHeight: "1" });
+          if (reaction.checked) setStyleProperty(elStyle, "box-shadow", "inset 0 0 0 2px Highlight");
+        }
+        nativeReflectApply3(nativeAddEventListener2, el, [
+          "mouseenter",
+          () => setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))")
+        ]);
+        nativeReflectApply3(nativeAddEventListener2, el, [
+          "mouseleave",
+          () => setStyleProperty(elStyle, "background", "")
+        ]);
+        nativeReflectApply3(nativeAddEventListener2, el, [
+          "focus",
+          () => {
+            focusedIndex = rowIndex;
+            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+          }
+        ]);
+        nativeReflectApply3(nativeAddEventListener2, el, [
+          "blur",
+          () => setStyleProperty(elStyle, "background", "")
+        ]);
+        nativeReflectApply3(nativeAddEventListener2, el, [
+          "click",
+          (ev) => {
+            if (!ev.isTrusted) return;
+            nativeReflectApply3(nativeStopPropagation, ev, []);
+            const expected = laidOutRects[rowIndex];
+            const point = clientPointOf(ev);
+            if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
+              closeMenu();
+              toast("Menu action cancelled");
+              return;
             }
-          ]);
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "blur",
-            () => setStyleProperty(elStyle, "background", "")
-          ]);
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "click",
-            (ev) => {
-              if (!ev.isTrusted) return;
-              nativeReflectApply3(nativeStopPropagation, ev, []);
-              const expected = laidOutRects[rowIndex];
-              const point = clientPointOf(ev);
-              if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
-                closeMenu();
-                toast("Menu action cancelled");
-                return;
-              }
-              activate(fn);
-            }
-          ]);
-          nativeReflectApply3(nativeAddEventListener2, el, [
-            "keydown",
-            (event) => {
-              const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
-              if (key !== "Enter" && key !== " ") return;
-              if (!event.isTrusted) return;
-              nativeReflectApply3(nativePreventDefault, event, []);
-              nativeReflectApply3(nativeStopPropagation, event, []);
-              activate(fn, true);
-            }
-          ]);
-          appendOwn(menuItems, el);
-          nativeReflectApply3(nativeAppendChild, menu, [el]);
-        }
-        nativeReflectApply3(nativeAppendChild, shadow, [menu]);
-        nativeReflectApply3(nativeAppendChild, document.body, [ctxMenu]);
-        const r = rectOf(menu);
-        if (r.x + r.width > innerWidth) {
-          setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
-        }
-        if (r.y + r.height > innerHeight) {
-          setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
-        }
-        for (let i = 0; i < menuItems.length; i += 1) {
-          const row = menuItems[i];
-          appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
-        }
-        nativeReflectApply3(nativeAddEventListener2, ctxMenu, [
+            activate(fn);
+          }
+        ]);
+        nativeReflectApply3(nativeAddEventListener2, el, [
           "keydown",
           (event) => {
-            if (!event.isTrusted) return;
             const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
-            const current = focusedIndex;
-            let next = null;
-            if (key === "ArrowDown") next = (current + 1) % menuItems.length;
-            if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-            if (key === "Home") next = 0;
-            if (key === "End") next = menuItems.length - 1;
-            if (key === "Escape") {
-              nativeReflectApply3(nativePreventDefault, event, []);
-              closeMenu(true);
-              return;
-            }
-            if (key === "Tab") {
-              nativeReflectApply3(nativePreventDefault, event, []);
-              closeMenu(true);
-              return;
-            }
-            if (next !== null) {
-              nativeReflectApply3(nativePreventDefault, event, []);
-              focusedIndex = next;
-              const nextItem = menuItems[next];
-              if (nextItem) nativeReflectApply3(nativeFocus, nextItem, []);
-            }
+            if (key !== "Enter" && key !== " ") return;
+            if (!event.isTrusted) return;
+            nativeReflectApply3(nativePreventDefault, event, []);
+            nativeReflectApply3(nativeStopPropagation, event, []);
+            activate(fn, true);
           }
         ]);
-        focusedIndex = 0;
-        const firstItem = menuItems[0];
-        if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
-        nativeReflectApply3(nativeSetTimeout4, window, [
-          () => {
-            nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
-            nativeReflectApply3(nativeAddEventListener2, document, [
-              "scroll",
-              closeMenuFromScroll,
-              true
+        appendOwn(menuItems, el);
+        if (reaction) {
+          if (!reactionRow) {
+            reactionRow = nativeReflectApply3(nativeCreateElement, document, [
+              "div"
             ]);
-          },
-          0
-        ]);
+            nativeReflectApply3(nativeSetAttribute, reactionRow, ["role", "group"]);
+            nativeReflectApply3(nativeSetAttribute, reactionRow, ["aria-label", "React"]);
+            applyStyles(nativeReflectApply3(nativeGetStyle, reactionRow, []), {
+              display: "flex",
+              gap: "2px"
+            });
+            nativeReflectApply3(nativeAppendChild, menu, [reactionRow]);
+          }
+          nativeReflectApply3(nativeAppendChild, reactionRow, [el]);
+        } else {
+          nativeReflectApply3(nativeAppendChild, menu, [el]);
+        }
+      }
+      nativeReflectApply3(nativeAppendChild, shadow, [menu]);
+      nativeReflectApply3(nativeAppendChild, document.body, [ctxMenu]);
+      const r = rectOf(menu);
+      if (r.x + r.width > innerWidth) {
+        setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+      }
+      if (r.y + r.height > innerHeight) {
+        setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+      }
+      for (let i = 0; i < menuItems.length; i += 1) {
+        const row = menuItems[i];
+        appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
+      }
+      nativeReflectApply3(nativeAddEventListener2, ctxMenu, [
+        "keydown",
+        (event) => {
+          if (!event.isTrusted) return;
+          const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
+          const current = focusedIndex;
+          let next = null;
+          if (key === "ArrowDown") next = (current + 1) % menuItems.length;
+          if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+          if (key === "Home") next = 0;
+          if (key === "End") next = menuItems.length - 1;
+          if (key === "Escape") {
+            nativeReflectApply3(nativePreventDefault, event, []);
+            closeMenu(true);
+            return;
+          }
+          if (key === "Tab") {
+            nativeReflectApply3(nativePreventDefault, event, []);
+            closeMenu(true);
+            return;
+          }
+          if (next !== null) {
+            nativeReflectApply3(nativePreventDefault, event, []);
+            focusedIndex = next;
+            const nextItem = menuItems[next];
+            if (nextItem) nativeReflectApply3(nativeFocus, nextItem, []);
+          }
+        }
+      ]);
+      focusedIndex = 0;
+      const firstItem = menuItems[0];
+      if (firstItem) nativeReflectApply3(nativeFocus, firstItem, [{ preventScroll: true }]);
+      nativeReflectApply3(nativeSetTimeout4, window, [
+        () => {
+          nativeReflectApply3(nativeAddEventListener2, document, ["click", closeMenuFromClick, true]);
+          nativeReflectApply3(nativeAddEventListener2, document, ["scroll", closeMenuFromScroll, true]);
+        },
+        0
+      ]);
+    };
+    let keyboardMenu = null;
+    nativeReflectApply3(nativeAddEventListener2, window, [
+      "keydown",
+      (event) => {
+        if (!event.isTrusted) return;
+        const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
+        if (key !== "ContextMenu" && !(key === "F10" && event.shiftKey)) return;
+        const focused = document.activeElement;
+        const message = focused && messageFor(focused);
+        if (!focused || !message) return;
+        const selection = getSelection();
+        if (selection && !selection.isCollapsed && selection.containsNode(message, true)) return;
+        nativeReflectApply3(nativePreventDefault, event, []);
+        nativeReflectApply3(nativeStopPropagation, event, []);
+        keyboardMenu = { target: focused, at: Date.now() };
+        void openContextMenu(focused, { x: -1, y: -1 }, true, () => {
+        });
+      },
+      true
+    ]);
+    nativeReflectApply3(nativeAddEventListener2, document, [
+      "contextmenu",
+      (e) => {
+        if (!e.isTrusted) return;
+        const target = eventTargetOf(e);
+        const duplicate = keyboardMenu?.target === target && Date.now() - keyboardMenu.at < 1e3;
+        keyboardMenu = null;
+        if (duplicate) {
+          nativeReflectApply3(nativePreventDefault, e, []);
+          return;
+        }
+        void openContextMenu(
+          target,
+          clientPointOf(e),
+          false,
+          () => nativeReflectApply3(nativePreventDefault, e, [])
+        );
       },
       true
     ]);
@@ -10846,10 +11171,10 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/quick-mute.ts
-  var POLL_MS = 250;
+  var POLL_MS2 = 250;
   var MUTE_BUDGET_MS = 12e3;
   var muteExpiries = /* @__PURE__ */ new Map();
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
   var PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
   function threadMuteControl(stale) {
@@ -11069,13 +11394,13 @@ ${button.innerHTML}`)
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/features/quick-reply.ts
-  var POLL_MS2 = 250;
+  var POLL_MS3 = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
   var replyAttempts = /* @__PURE__ */ new Map();
-  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
+  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS3));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {

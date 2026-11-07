@@ -121,6 +121,10 @@ On `main` (committed `d8a25a6`).
   sender-avatar harvest would take, what it cached, and whether each visible
   group preview's sender resolves to a face). Both report classifications and
   counts only.
+- The message context menu has `__carrier_mcp_message_probe__:<n>:<step>`: the
+  nth-newest message's shape, hover-toolbar labels, and open menu rows, where
+  `<step>` is `shape`, `hover`, `more`, `react` or `escape`. Message text and
+  names are reduced to lengths.
 
 ---
 

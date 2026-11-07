@@ -826,6 +826,14 @@
           reply(mediaProbe());
           return;
         }
+        // Sanitized message-bubble shape and hover-toolbar / menu labels for the
+        // message context menu. Index counts back from the newest bubble.
+        var messageProbe =
+          /^__carrier_mcp_message_probe__:(\d{1,2}):(shape|hover|more|react|escape)$/.exec(code);
+        if (messageProbe) {
+          reply(messageBubbleProbe(Number(messageProbe[1]), messageProbe[2]));
+          return;
+        }
         var mediaAction = /^__carrier_mcp_media_action__:(scroll-first|click-first|close)$/.exec(code);
         if (mediaAction) {
           if (mediaAction[1] === "close") {
@@ -3397,6 +3405,119 @@
     function firstLargeMediaTarget() {
       var candidates = largeMessageMedia();
       return candidates.length ? candidates[0].target : null;
+    }
+
+    // Message bubbles: shape, hover toolbar, and its menus. Bubble labels are
+    // reduced to their prefix and ownership; menu and toolbar labels are UI
+    // strings. Message text, names, and URLs are never returned.
+    function messageBubbleProbe(index, step) {
+      var bubbles = document.querySelectorAll('[aria-roledescription="message"]');
+      var bubble = bubbles[bubbles.length - 1 - index];
+      if (!bubble) return { found: false, bubbles: bubbles.length };
+      var scope = bubble;
+      var label = bubble.getAttribute("aria-label") || "";
+      var ancestors = [];
+      for (var el = bubble, depth = 0; el && depth < 14; el = el.parentElement, depth++) {
+        ancestors.push(
+          el.tagName.toLowerCase() +
+            (el.getAttribute("role") ? "[role=" + el.getAttribute("role") + "]" : "") +
+            (el.hasAttribute("tabindex") ? "[tabindex=" + el.getAttribute("tabindex") + "]" : "") +
+            (el === scope ? "{scope}" : ""),
+        );
+      }
+      var uiLabels = function (root, selector) {
+        return Array.prototype.map.call(root.querySelectorAll(selector), function (node) {
+          return {
+            role: node.getAttribute("role") || node.tagName.toLowerCase(),
+            label: (node.getAttribute("aria-label") || "").slice(0, 60),
+            text: (node.textContent || "").trim().slice(0, 40),
+            alt: (node.querySelector("img[alt]") || { alt: "" }).alt.slice(0, 8),
+            checked: node.getAttribute("aria-checked"),
+            expanded: node.getAttribute("aria-expanded"),
+            controls: !!node.getAttribute("aria-controls"),
+          };
+        });
+      };
+      var toolbarButtons = function () {
+        return Array.prototype.filter
+          .call(scope.querySelectorAll('[role="toolbar"] [role="button"][aria-label]'), function () {
+            return true;
+          })
+          .map(function (node) {
+            return {
+              label: (node.getAttribute("aria-label") || "").slice(0, 40),
+              group: !!node.closest('[role="group"]'),
+              expanded: node.getAttribute("aria-expanded"),
+            };
+          });
+      };
+      var clickToolbar = function (pattern) {
+        var buttons = scope.querySelectorAll('[role="toolbar"] [role="button"][aria-label]');
+        for (var i = 0; i < buttons.length; i++) {
+          if (pattern.test(buttons[i].getAttribute("aria-label") || "")) {
+            buttons[i].click();
+            return buttons[i].getAttribute("aria-label");
+          }
+        }
+        return null;
+      };
+      var r = bubble.getBoundingClientRect();
+      if (step === "hover" || step === "more" || step === "react") {
+        var point = { clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, bubbles: true };
+        bubble.dispatchEvent(new MouseEvent("mouseover", point));
+        bubble.dispatchEvent(new MouseEvent("mousemove", point));
+      }
+      var clicked = null;
+      if (step === "more") clicked = clickToolbar(/^More/);
+      if (step === "react") clicked = clickToolbar(/^React/);
+      if (step === "escape") {
+        document.activeElement &&
+          document.activeElement.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+          );
+      }
+      var media = {
+        img: bubble.querySelectorAll("img").length,
+        imgAlt: Array.prototype.map.call(bubble.querySelectorAll("img[alt]"), function (img) {
+          return img.alt.length;
+        }),
+        video: bubble.querySelectorAll("video").length,
+        links: bubble.querySelectorAll("a[href]").length,
+        scopeImg: scope.querySelectorAll("img").length,
+        scopeVideo: scope.querySelectorAll("video").length,
+      };
+      return {
+        found: true,
+        bubbles: bubbles.length,
+        own: /^At [^,]*, You(?::|$)/.test(label),
+        labelShape: label.replace(/^At [^,]*, ([^:]*)(: [\s\S]*)?$/, function (m, who, text) {
+          return "At <when>, " + (who === "You" ? "You" : "<who>") + (text ? ": <" + (text.length - 2) + " chars>" : "");
+        }),
+        textNodes: bubble.querySelectorAll('span[dir="auto"] > div[dir="auto"]').length,
+        rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        bubbleRole: bubble.getAttribute("role"),
+        bubbleTabindex: bubble.getAttribute("tabindex"),
+        ancestors: ancestors,
+        media: media,
+        toolbar: toolbarButtons(),
+        clicked: clicked,
+        active: document.activeElement
+          ? document.activeElement.tagName.toLowerCase() +
+            "[" + (document.activeElement.getAttribute("role") || "") + "]" +
+            (bubble.contains(document.activeElement) ? "{in bubble}" : "") +
+            (scope.contains(document.activeElement) ? "{in scope}" : "")
+          : null,
+        menus: Array.prototype.map.call(
+          document.querySelectorAll('[role="menu"], [role="dialog"]'),
+          function (menu) {
+            return {
+              role: menu.getAttribute("role"),
+              label: (menu.getAttribute("aria-label") || "").slice(0, 40),
+              items: uiLabels(menu, '[role^="menuitem"], [role="button"][aria-label]').slice(0, 40),
+            };
+          },
+        ),
+      };
     }
 
     function mediaProbe() {
