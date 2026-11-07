@@ -604,6 +604,28 @@ describe("NotifiedSignatureStore", () => {
   });
 });
 
+describe("PendingPageNotificationStore", () => {
+  test("a tagged pending notification is recovered or retired only by its own conversation", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Jane", "Hi", 5, 1_000, "7");
+    const reloaded = new PendingPageNotificationStore(storage, undefined, undefined, 2_000);
+    reloaded.discardReadMatches([{ key: "8", title: "Jane", body: "Hi" }], 2_000);
+    expect(
+      reloaded.consumeUniquelyMatching([{ key: "8", title: "Jane", body: "Hi" }], 2_000).size,
+    ).toBe(0);
+    expect([
+      ...reloaded.consumeUniquelyMatching(
+        [
+          { key: "7", title: "Jane", body: "Hi" },
+          { key: "8", title: "Jane", body: "Hi" },
+        ],
+        2_000,
+      ),
+    ]).toEqual(["7"]);
+  });
+});
+
 describe("PageNotificationReceiptStore", () => {
   test("classifies a known draft before trimming ordinary receipts", () => {
     const storage = memoryStorage();
@@ -619,6 +641,20 @@ describe("PageNotificationReceiptStore", () => {
     expect(
       reloaded.consumeMatching({ key: "1", title: "Jane", body: "Incoming message" }, 2_000),
     ).toEqual({ nativeId: 21 });
+  });
+
+  test("a tagged receipt is claimed only by its own conversation, across reloads", () => {
+    const storage = memoryStorage();
+    const receipts = new PageNotificationReceiptStore(storage, undefined, undefined, 1_000);
+    receipts.add("Jane", "Hi", 5, 1_000, undefined, "7");
+    const reloaded = new PageNotificationReceiptStore(storage, undefined, undefined, 2_000);
+    expect(reloaded.consumeMatching({ key: "8", title: "Jane", body: "Hi" }, 2_000)).toBeNull();
+    expect(
+      reloaded.consumeUniquelyMatching([{ key: "8", title: "Jane", body: "Hi" }], 2_000).size,
+    ).toBe(0);
+    expect(reloaded.consumeMatching({ key: "7", title: "Jane", body: "Hi" }, 2_000)).toEqual({
+      nativeId: 5,
+    });
   });
 
   test("bounds unresolved draft receipts across reloads", () => {
@@ -1080,6 +1116,33 @@ describe("PageNotificationQueue", () => {
     expect(queue.consumeMatching({ title: "Jane", body: "First" }, 1_100, 2_000)?.nativeId).toBe(
       42,
     );
+  });
+
+  test("a tagged signal pairs only with rows from its own conversation", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "Hi", thread: "7" });
+    // Same text in another conversation: never this signal's row.
+    expect(queue.consumeMatching({ key: "8", title: "Jane", body: "Hi" }, 1_100, 2_000)).toBeNull();
+    // Identical text elsewhere does not make its own row ambiguous.
+    const candidates = [
+      { key: "7", title: "Jane", body: "Hi" },
+      { key: "8", title: "Jane", body: "Hi" },
+    ];
+    expect(
+      queue.consumeMatching({ key: "7", title: "Jane", body: "Hi" }, 1_200, 2_000, candidates),
+    ).toBe(signal);
+  });
+
+  test("a tagged signal survives a same-title draft in another conversation", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "Hi", thread: "7" });
+    const candidates = [
+      { key: "7", title: "Jane", body: "" },
+      { key: "8", title: "Jane", body: "" },
+    ];
+    expect(
+      queue.consumeMatchingDraft({ key: "7", title: "Jane", body: "" }, 1_100, 2_000, candidates),
+    ).toEqual([signal]);
   });
 
   test("expires stale signals without consuming unrelated ones", () => {

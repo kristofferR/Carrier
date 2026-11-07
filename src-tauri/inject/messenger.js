@@ -4728,6 +4728,178 @@ ${button.innerHTML}`)
     }
   }
 
+  // inject/src/messenger/lib/page-notifications.ts
+  var CHAT_POPPER_MODULE = "useMWLSChatPopperUpper";
+  var DESKTOP_NOTIFICATIONS_MODULE = "MWDesktopNotifications";
+  var CHAT_POPPER_REWRITES = [
+    // Notify while the window is merely unfocused, not only when hidden.
+    [
+      /(\w+)\("VisibilityAPI"\)\.isVisibilityHidden\(\)===!0/,
+      '($1("VisibilityAPI").isVisibilityHidden()===!0||!document.hasFocus())'
+    ],
+    // The installed-app gate.
+    [/\w+\("isMessengerPWA"\)\(\)&&\w+\("justknobx"\)\._\("1465"\)/, "!0"]
+  ];
+  function rewriteChatPopperSource(source) {
+    let rewritten = source;
+    for (const [pattern, replacement] of CHAT_POPPER_REWRITES) {
+      if (rewritten.match(new RegExp(pattern.source, "g"))?.length !== 1) return null;
+      rewritten = rewritten.replace(pattern, replacement);
+    }
+    return rewritten;
+  }
+  function messengerId(value, i64ToString) {
+    let text = value;
+    if (typeof value === "number" || typeof value === "bigint") text = String(value);
+    else if (typeof value !== "string" && value != null && i64ToString) {
+      try {
+        text = i64ToString(value);
+      } catch {
+        return null;
+      }
+    }
+    return typeof text === "string" && /^\d+$/.test(text) ? text : null;
+  }
+  var MESSAGE_LIMIT = 100;
+  var PageMessageIndex = class {
+    constructor() {
+      __publicField(this, "threads", /* @__PURE__ */ new Map());
+    }
+    record(messageId, threadId) {
+      this.threads.delete(messageId);
+      this.threads.set(messageId, threadId);
+      if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value);
+    }
+    /** The conversation of the notification tagged with this message id. */
+    threadFor(tag) {
+      return typeof tag === "string" ? this.threads.get(tag) : void 0;
+    }
+  };
+  var pageMessages = new PageMessageIndex();
+  function recordNotifiedMessage(message, load) {
+    if (!message || typeof message !== "object") return;
+    const row = message;
+    if (typeof row.messageId !== "string" || !row.messageId) return;
+    let i64ToString;
+    try {
+      const i64 = typeof load === "function" ? load("I64") : null;
+      if (typeof i64?.to_string === "function") {
+        i64ToString = i64.to_string.bind(i64);
+      }
+    } catch {
+    }
+    const threadId = messengerId(row.threadKey, i64ToString);
+    if (threadId) pageMessages.record(row.messageId, threadId);
+  }
+  function sameArity(wrapped3, original) {
+    try {
+      Object.defineProperty(wrapped3, "length", { value: original.length });
+    } catch {
+    }
+    return wrapped3;
+  }
+  function wrapDesktopNotificationsFactory(factory, load) {
+    const patch = (exports) => {
+      if (!exports || typeof exports !== "object") return false;
+      const record3 = exports;
+      const trigger = record3.triggerLocalNotification;
+      if (typeof trigger !== "function") return false;
+      record3.triggerLocalNotification = function(...args) {
+        try {
+          recordNotifiedMessage(args[1], load());
+        } catch {
+        }
+        return Reflect.apply(trigger, this, args);
+      };
+      return true;
+    };
+    return sameArity(function(...args) {
+      const result = Reflect.apply(factory, this, args);
+      for (const candidate of [result, ...args.slice(-2)]) {
+        if (patch(candidate)) break;
+        if (candidate && typeof candidate === "object" && patch(candidate.exports)) {
+          break;
+        }
+      }
+      return result;
+    }, factory);
+  }
+  function wrapChatPopperFactory(factory, loadRewritten2, onUnmatched) {
+    let rewritten = null;
+    const source = rewriteChatPopperSource(Function.prototype.toString.call(factory));
+    if (source === null) onUnmatched();
+    else {
+      loadRewritten2(source, (ready2) => {
+        rewritten = ready2;
+      });
+    }
+    return sameArity(function(...args) {
+      return Reflect.apply(rewritten ?? factory, this, args);
+    }, factory);
+  }
+  var rewriteSeq = 0;
+  function loadRewrittenScript(source, ready2, doc, global, report) {
+    const key = `__carrierRewritten${++rewriteSeq}`;
+    const url = URL.createObjectURL(
+      new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
+    );
+    const script = doc.createElement("script");
+    script.src = url;
+    const done = () => {
+      URL.revokeObjectURL(url);
+      script.remove();
+    };
+    script.onload = () => {
+      const rewritten = global[key];
+      delete global[key];
+      done();
+      if (typeof rewritten === "function") {
+        ready2(rewritten);
+        report("loaded");
+      } else report("invalid");
+    };
+    script.onerror = () => {
+      done();
+      report("refused");
+    };
+    (doc.head ?? doc.documentElement).append(script);
+  }
+
+  // inject/src/messenger/features/page-notifications.ts
+  function loadRewritten(source, ready2) {
+    loadRewrittenScript(source, ready2, document, globalThis, (outcome) => {
+      if (outcome === "loaded")
+        diag("notify.page-enabled", "Messenger's own notifications are enabled");
+      else if (outcome === "refused") {
+        diag("notify.page-rewrite", "the page refused the rewritten notification module");
+      } else diag("notify.page-rewrite", "rewritten notification module did not load");
+    });
+  }
+  function interceptNotificationModules(define) {
+    const load = () => window.require;
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const name = args[0];
+        const factory = args[2];
+        if (typeof factory === "function") {
+          if (name === CHAT_POPPER_MODULE) {
+            args[2] = wrapChatPopperFactory(
+              factory,
+              loadRewritten,
+              () => diag(
+                "notify.page-rewrite",
+                "Messenger's notification gate changed; using the fallback"
+              )
+            );
+          } else if (name === DESKTOP_NOTIFICATIONS_MODULE) {
+            args[2] = wrapDesktopNotificationsFactory(factory, load);
+          }
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
   // inject/src/messenger/features/facebook-modules.ts
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
   function initFacebookModuleInterception() {
@@ -4771,7 +4943,7 @@ ${button.innerHTML}`)
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
       const wrapped3 = createFacebookModuleDefineInterceptor(
-        value,
+        interceptNotificationModules(value),
         shouldBlockTelemetry,
         (restore2) => searchIndex.register(restore2),
         (error) => {
@@ -7168,7 +7340,7 @@ ${button.innerHTML}`)
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.id === "number" && Number.isSafeInteger(candidate.id) && candidate.id > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.id === "number" && Number.isSafeInteger(candidate.id) && candidate.id > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.thread === void 0 || typeof candidate.thread === "string" && HASH_RE.test(candidate.thread)) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
               this.receipts.push(candidate);
             }
           }
@@ -7197,9 +7369,14 @@ ${button.innerHTML}`)
       }
       if (changed) this.persist();
     }
-    add(title, body, id, at = Date.now()) {
+    add(title, body, id, at = Date.now(), thread2) {
       this.prune(at);
-      this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+      this.receipts.push({
+        at,
+        id,
+        identity: opaqueNotificationIdentity(title, body),
+        ...thread2 && { thread: hashText(thread2) }
+      });
       if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
       this.persist();
     }
@@ -7225,6 +7402,7 @@ ${button.innerHTML}`)
         let match = null;
         let ambiguous = false;
         for (const [key, identity] of identities) {
+          if (receipt.thread && receipt.thread !== hashText(key)) continue;
           if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
           if (match !== null && match !== key) {
             ambiguous = true;
@@ -7245,12 +7423,16 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      const read = [...readRows].map((row) => ({
+        key: row.key ? hashText(row.key) : null,
+        identity: opaqueNotificationIdentity(row.title, row.body)
+      }));
       if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const receipt = this.receipts[index];
         if (!read.some(
-          (identity) => opaqueNotificationMatches(this.receipts[index].identity, identity)
+          ({ key, identity }) => (!receipt.thread || receipt.thread === key) && opaqueNotificationMatches(receipt.identity, identity)
         )) {
           continue;
         }
@@ -7273,7 +7455,7 @@ ${button.innerHTML}`)
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && now - candidate.at <= (candidate.draftThread === void 0 ? this.ttlMs : DRAFT_RECEIPT_TTL_MS)) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.nativeId === "number" && Number.isSafeInteger(candidate.nativeId) && candidate.nativeId > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.nativeDelivery === void 0 || candidate.nativeDelivery === "accepted" || candidate.nativeDelivery === "duplicate" || candidate.nativeDelivery === "suppressed") && (candidate.draftThread === void 0 || typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread)) && (candidate.thread === void 0 || typeof candidate.thread === "string" && HASH_RE.test(candidate.thread)) && (candidate.suppressedDraft === void 0 || candidate.suppressedDraft === true && candidate.draftThread !== void 0) && now - candidate.at >= 0 && now - candidate.at <= (candidate.draftThread === void 0 ? this.ttlMs : DRAFT_RECEIPT_TTL_MS)) {
               this.receipts.push(candidate);
             }
           }
@@ -7315,13 +7497,14 @@ ${button.innerHTML}`)
       }
       if (changed) this.persist();
     }
-    add(title, body, nativeId, at = Date.now(), draft) {
+    add(title, body, nativeId, at = Date.now(), draft, thread2) {
       this.prune(at);
       this.receipts.push({
         at,
         nativeId,
         identity: opaqueNotificationIdentity(title, body),
-        ...draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }
+        ...draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed },
+        ...thread2 && { thread: hashText(thread2) }
       });
       this.trimReceipts();
       this.persist();
@@ -7381,6 +7564,7 @@ ${button.innerHTML}`)
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
+        if (receipt.thread && receipt.thread !== hashText(row.key || "")) continue;
         if (!(receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)))
           continue;
         this.receipts.splice(index, 1);
@@ -7417,6 +7601,7 @@ ${button.innerHTML}`)
         let defer = false;
         for (const [key, candidates] of identities) {
           if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
+          if (receipt.thread && receipt.thread !== hashText(key)) continue;
           if (!candidates.some(
             (identity) => receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity)
           ))
@@ -7462,7 +7647,7 @@ ${button.innerHTML}`)
       for (let index = this.receipts.length - 1; index >= 0; index--) {
         const receipt = this.receipts[index];
         if (!read.some(
-          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
+          ({ key, identity }) => (!receipt.draftThread || receipt.draftThread === key) && (!receipt.thread || receipt.thread === key) && (receipt.draftThread ? opaqueNotificationBodyMatches(receipt.identity, identity) : opaqueNotificationMatches(receipt.identity, identity))
         )) {
           continue;
         }
@@ -7503,6 +7688,8 @@ ${button.innerHTML}`)
       for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
         const signal2 = this.signals[index2];
         const age = rowChangeAt - signal2.at;
+        if (signal2.thread !== void 0 && row.key !== void 0 && row.key !== signal2.thread)
+          continue;
         if (age >= 0 && notificationTextMatches(signal2.title, signal2.body, row.title, row.body)) {
           matches.push(index2);
         }
@@ -7516,6 +7703,7 @@ ${button.innerHTML}`)
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
+          if (signal.thread !== void 0 && candidate.key !== signal.thread) continue;
           if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
             candidateKeys.add(candidate.key);
           }
@@ -7541,9 +7729,12 @@ ${button.innerHTML}`)
           this.signals.splice(index, 1);
           continue;
         }
-        if (age < 0 || signal.draftTitleAmbiguous || !notificationTextMatches(signal.title, "", row.title, ""))
+        if (age < 0 || signal.draftTitleAmbiguous || signal.thread !== void 0 && signal.thread !== row.key || !notificationTextMatches(signal.title, "", row.title, ""))
           continue;
-        const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+        const unique = uniqueNotificationTitleMatch(
+          signal.title,
+          signal.thread === void 0 ? candidates : candidates.filter((candidate) => candidate.key === signal.thread)
+        );
         if (unique?.key !== row.key) {
           if (!unique) {
             if (signal.suppressedBeforeMatch) signal.draftTitleAmbiguous = true;
@@ -7618,15 +7809,16 @@ ${button.innerHTML}`)
       this.rows.delete(key);
       return row;
     }
-    consumeRowForPage(title, body, at, matchWindowMs, candidateRows) {
+    consumeRowForPage(title, body, at, matchWindowMs, candidateRows, thread2) {
       const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
-        return age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
+        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
       });
       if (matches.length !== 1) return null;
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
+          if (thread2 !== void 0 && candidate.key !== thread2) continue;
           if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
             candidateKeys.add(candidate.key);
           }
@@ -8310,13 +8502,14 @@ ${button.innerHTML}`)
         window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
       });
     };
-    const markPageNotification = (title, body) => {
+    const markPageNotification = (title, body, thread2) => {
       const match = notificationCorrelations.consumeRowForPage(
         title,
         body,
         Date.now(),
         PAGE_NOTIFICATION_MATCH_MS,
-        currentPageRouteCandidates()
+        currentPageRouteCandidates(),
+        thread2
       );
       if (match) {
         clearTimeout(match.timer);
@@ -8343,7 +8536,14 @@ ${button.innerHTML}`)
           dedupeKey: match.dedupeKey
         };
       }
-      return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
+      return {
+        signal: notificationCorrelations.addPage({
+          at: Date.now(),
+          title,
+          body,
+          ...thread2 ? { thread: thread2, threadPath: `/t/${thread2}/` } : {}
+        })
+      };
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -8352,7 +8552,13 @@ ${button.innerHTML}`)
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
-      const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const taggedThread = pageMessages.threadFor(opts.tag);
+      if (taggedThread) diag("notify.identity", "page notification carried its exact conversation");
+      const pageMatch = markPageNotification(
+        String(title || "Messenger"),
+        String(opts.body || ""),
+        taggedThread
+      );
       const retainSuppressedDraft = (id) => {
         const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
         if (!pageMatch.signal?.matchedDraft || !threadId) return;
@@ -8375,10 +8581,16 @@ ${button.innerHTML}`)
         const id = ++notifySeq;
         if (pageMatch.signal) {
           pageMatch.signal.nativeId = id;
-          pendingPageNotifications.add(originalTitle, originalBody, id);
+          pendingPageNotifications.add(
+            originalTitle,
+            originalBody,
+            id,
+            Date.now(),
+            pageMatch.signal.thread
+          );
         }
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        const identityMatchWait = pageMatch.signal && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
+        const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
         const names2 = Promise.all([matchWait, identityMatchWait]).then(
           () => hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : conversationNames(
             threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || ""
@@ -8453,7 +8665,8 @@ ${button.innerHTML}`)
               originalBody,
               id,
               Date.now(),
-              draftThread ? { threadKey: draftThread } : void 0
+              draftThread ? { threadKey: draftThread } : void 0,
+              pageMatch.signal.thread
             );
             if (draftThread) {
               cancelFallbackForDraftReceipt(draftThread, originalBody);
@@ -8750,7 +8963,7 @@ ${button.innerHTML}`)
       }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
       if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+      if (!pageSignal.emitted && !pageSignal.thread) pageSignal.threadPath = conversation.threadPath;
       if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
@@ -9160,7 +9373,7 @@ ${button.innerHTML}`)
               continue;
             }
             signal.matchedDraft = true;
-            signal.threadPath = conversation.threadPath;
+            if (!signal.thread) signal.threadPath = conversation.threadPath;
             signal.threadMuted = conversation.muted;
             if (signal.nativeId !== void 0) {
               pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);

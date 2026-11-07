@@ -93,6 +93,12 @@ export interface PageNotificationSignal extends NotificationText {
   nativeId?: number;
   /** Route learned while the async native notification emit is still pending. */
   threadPath?: string;
+  /**
+   * The conversation Messenger itself named for this notification (its tag
+   * resolved to the message's thread). Authoritative: rows from any other
+   * conversation never pair with it, however alike their text.
+   */
+  thread?: string;
   /** A draft supplied only the route; the real preview still needs a receipt. */
   matchedDraft?: boolean;
   /** Global mute handled this page notification before a row identified its thread. */
@@ -618,6 +624,8 @@ interface PageNotificationReceipt {
   nativeDelivery?: NativeNotificationDelivery;
   draftThread?: string;
   suppressedDraft?: boolean;
+  /** Hash of the conversation Messenger tagged: only its rows may claim this receipt. */
+  thread?: string;
 }
 
 type PageNotificationReceiptMatch = Pick<
@@ -722,6 +730,8 @@ interface PendingPageNotificationReceipt {
   at: number;
   id: number;
   identity: OpaqueNotificationIdentity;
+  /** Hash of the conversation Messenger tagged: only its rows may claim this receipt. */
+  thread?: string;
 }
 
 /**
@@ -751,6 +761,8 @@ export class PendingPageNotificationStore {
             Number.isSafeInteger(candidate.id) &&
             candidate.id > 0 &&
             validOpaqueNotificationIdentity(candidate.identity) &&
+            (candidate.thread === undefined ||
+              (typeof candidate.thread === "string" && HASH_RE.test(candidate.thread))) &&
             now - candidate.at >= 0 &&
             now - candidate.at <= this.ttlMs
           ) {
@@ -783,9 +795,14 @@ export class PendingPageNotificationStore {
     if (changed) this.persist();
   }
 
-  add(title: string, body: string, id: number, at = Date.now()): void {
+  add(title: string, body: string, id: number, at = Date.now(), thread?: string): void {
     this.prune(at);
-    this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+    this.receipts.push({
+      at,
+      id,
+      identity: opaqueNotificationIdentity(title, body),
+      ...(thread && { thread: hashText(thread) }),
+    });
     if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
     this.persist();
   }
@@ -816,6 +833,7 @@ export class PendingPageNotificationStore {
       let match: string | null = null;
       let ambiguous = false;
       for (const [key, identity] of identities) {
+        if (receipt.thread && receipt.thread !== hashText(key)) continue;
         if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
         if (match !== null && match !== key) {
           ambiguous = true;
@@ -834,16 +852,25 @@ export class PendingPageNotificationStore {
     return recovered;
   }
 
-  discardReadMatches(readRows: Iterable<NotificationText>, now = Date.now()): void {
+  discardReadMatches(
+    readRows: Iterable<NotificationText & { key?: string }>,
+    now = Date.now(),
+  ): void {
     this.prune(now);
     if (!this.receipts.length) return;
-    const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    const read = [...readRows].map((row) => ({
+      key: row.key ? hashText(row.key) : null,
+      identity: opaqueNotificationIdentity(row.title, row.body),
+    }));
     if (!read.length) return;
     let changed = false;
     for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const receipt = this.receipts[index]!;
       if (
-        !read.some((identity) =>
-          opaqueNotificationMatches(this.receipts[index]!.identity, identity),
+        !read.some(
+          ({ key, identity }) =>
+            (!receipt.thread || receipt.thread === key) &&
+            opaqueNotificationMatches(receipt.identity, identity),
         )
       ) {
         continue;
@@ -904,6 +931,8 @@ export class PageNotificationReceiptStore {
               candidate.nativeDelivery === "suppressed") &&
             (candidate.draftThread === undefined ||
               (typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread))) &&
+            (candidate.thread === undefined ||
+              (typeof candidate.thread === "string" && HASH_RE.test(candidate.thread))) &&
             (candidate.suppressedDraft === undefined ||
               (candidate.suppressedDraft === true && candidate.draftThread !== undefined)) &&
             now - candidate.at >= 0 &&
@@ -944,6 +973,7 @@ export class PageNotificationReceiptStore {
     nativeId: number,
     at = Date.now(),
     draft?: { threadKey: string; suppressed?: boolean },
+    thread?: string,
   ): void {
     this.prune(at);
     this.receipts.push({
@@ -951,6 +981,7 @@ export class PageNotificationReceiptStore {
       nativeId,
       identity: opaqueNotificationIdentity(title, body),
       ...(draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }),
+      ...(thread && { thread: hashText(thread) }),
     });
     this.trimReceipts();
     this.persist();
@@ -1025,6 +1056,7 @@ export class PageNotificationReceiptStore {
     for (let index = this.receipts.length - 1; index >= 0; index--) {
       const receipt = this.receipts[index]!;
       if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
+      if (receipt.thread && receipt.thread !== hashText(row.key || "")) continue;
       if (
         !(receipt.draftThread
           ? opaqueNotificationBodyMatches(receipt.identity, identity)
@@ -1072,6 +1104,7 @@ export class PageNotificationReceiptStore {
       let defer = false;
       for (const [key, candidates] of identities) {
         if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
+        if (receipt.thread && receipt.thread !== hashText(key)) continue;
         if (
           !candidates.some((identity) =>
             receipt.draftThread
@@ -1133,6 +1166,7 @@ export class PageNotificationReceiptStore {
         !read.some(
           ({ key, identity }) =>
             (!receipt.draftThread || receipt.draftThread === key) &&
+            (!receipt.thread || receipt.thread === key) &&
             (receipt.draftThread
               ? opaqueNotificationBodyMatches(receipt.identity, identity)
               : opaqueNotificationMatches(receipt.identity, identity)),
@@ -1184,6 +1218,8 @@ export class PageNotificationQueue {
     for (let index = this.signals.length - 1; index >= 0; index--) {
       const signal = this.signals[index]!;
       const age = rowChangeAt - signal.at;
+      if (signal.thread !== undefined && row.key !== undefined && row.key !== signal.thread)
+        continue;
       if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
         matches.push(index);
       }
@@ -1201,6 +1237,7 @@ export class PageNotificationQueue {
     if (candidateRows) {
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
+        if (signal.thread !== undefined && candidate.key !== signal.thread) continue;
         if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
           candidateKeys.add(candidate.key);
         }
@@ -1235,10 +1272,17 @@ export class PageNotificationQueue {
       if (
         age < 0 ||
         signal.draftTitleAmbiguous ||
+        (signal.thread !== undefined && signal.thread !== row.key) ||
         !notificationTextMatches(signal.title, "", row.title, "")
       )
         continue;
-      const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+      // A tagged signal's title only has to be unique within its own thread.
+      const unique = uniqueNotificationTitleMatch(
+        signal.title,
+        signal.thread === undefined
+          ? candidates
+          : candidates.filter((candidate) => candidate.key === signal.thread),
+      );
       if (unique?.key !== row.key) {
         if (!unique) {
           // Global mute needs this signal when the real preview eventually
@@ -1360,10 +1404,12 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     at: number,
     matchWindowMs: number,
     candidateRows?: Iterable<NotificationText & { key: string }>,
+    thread?: string,
   ): Row | null {
     const matches = [...this.rows.values()].filter((row) => {
       const age = at - row.at;
       return (
+        (thread === undefined || row.key === thread) &&
         age >= 0 &&
         age <= matchWindowMs &&
         notificationTextMatches(title, body, row.title, row.body)
@@ -1373,6 +1419,7 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     if (candidateRows) {
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
+        if (thread !== undefined && candidate.key !== thread) continue;
         if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
           candidateKeys.add(candidate.key);
         }

@@ -59,6 +59,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
+import { pageMessages } from "../lib/page-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
@@ -402,6 +403,7 @@ export function initNotificationBridge() {
   const markPageNotification = (
     title: string,
     body: string,
+    thread?: string,
   ): {
     threadPath?: string;
     threadMuted?: boolean;
@@ -423,6 +425,7 @@ export function initNotificationBridge() {
       Date.now(),
       PAGE_NOTIFICATION_MATCH_MS,
       currentPageRouteCandidates(),
+      thread,
     );
     if (match) {
       clearTimeout(match.timer);
@@ -451,13 +454,20 @@ export function initNotificationBridge() {
     }
     // Page-first: no row matched yet. Return the queued signal so the emitter
     // can stamp it with the native id, letting the row-driven pairing route it.
-    return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
+    return {
+      signal: notificationCorrelations.addPage({
+        at: Date.now(),
+        title,
+        body,
+        ...(thread ? { thread, threadPath: `/t/${thread}/` } : {}),
+      }),
+    };
   };
 
   function CarrierNotification(
     this: CarrierNotificationInstance,
     title?: string,
-    options: { icon?: string; image?: string; body?: string } | null = {},
+    options: { icon?: string; image?: string; body?: string; tag?: string } | null = {},
   ) {
     const opts = options || {};
     const s = window.__CARRIER_SETTINGS__ || {};
@@ -468,7 +478,16 @@ export function initNotificationBridge() {
       "notify.fired",
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
-    const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+    // Messenger tags its notification with the message id it just recorded,
+    // which names the exact conversation; no row has to vouch for it, and no
+    // row from another conversation may claim it.
+    const taggedThread = pageMessages.threadFor(opts.tag);
+    if (taggedThread) diag("notify.identity", "page notification carried its exact conversation");
+    const pageMatch = markPageNotification(
+      String(title || "Messenger"),
+      String(opts.body || ""),
+      taggedThread,
+    );
     const retainSuppressedDraft = (id: number) => {
       const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
       if (!pageMatch.signal?.matchedDraft || !threadId) return;
@@ -503,16 +522,23 @@ export function initNotificationBridge() {
       const id = ++notifySeq;
       if (pageMatch.signal) {
         pageMatch.signal.nativeId = id;
-        pendingPageNotifications.add(originalTitle, originalBody, id);
+        pendingPageNotifications.add(
+          originalTitle,
+          originalBody,
+          id,
+          Date.now(),
+          pageMatch.signal.thread,
+        );
       }
+      // A tagged conversation needs no row to establish identity or mute.
       const matchWait =
-        pageMatch.signal?.matchPromise && ignoresMutedConversations(s)
+        pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s)
           ? waitForPageMatchWhileFiltering(pageMatch.signal)
           : Promise.resolve();
       // Names and link enrichment need a bounded route wait even when muted
       // filtering is disabled. Never infer a group identity from a display name.
       const identityMatchWait =
-        pageMatch.signal && !hidePreviewAtConstruction
+        pageMatch.signal && !taggedThread && !hidePreviewAtConstruction
           ? waitForPageNotificationMatch(pageMatch.signal, 1000)
           : Promise.resolve();
       const names = Promise.all([matchWait, identityMatchWait]).then(() =>
@@ -621,6 +647,7 @@ export function initNotificationBridge() {
             id,
             Date.now(),
             draftThread ? { threadKey: draftThread } : undefined,
+            pageMatch.signal.thread,
           );
           if (draftThread) {
             cancelFallbackForDraftReceipt(draftThread, originalBody);
@@ -1083,7 +1110,7 @@ export function initNotificationBridge() {
     // If avatar conversion is still in flight, put the route directly into
     // the initial native request. Otherwise retrofit the still-pending macOS
     // request (and retain the route for click/clear fallback on every OS).
-    if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+    if (!pageSignal.emitted && !pageSignal.thread) pageSignal.threadPath = conversation.threadPath;
     if (pageSignal.emitted && pageSignal.nativeId !== undefined && conversation.threadPath) {
       updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
     }
@@ -1652,7 +1679,7 @@ export function initNotificationBridge() {
             continue;
           }
           signal.matchedDraft = true;
-          signal.threadPath = conversation.threadPath;
+          if (!signal.thread) signal.threadPath = conversation.threadPath;
           signal.threadMuted = conversation.muted;
           if (signal.nativeId !== undefined) {
             pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);
