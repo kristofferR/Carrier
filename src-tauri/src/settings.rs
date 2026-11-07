@@ -72,7 +72,8 @@ pub(crate) struct Settings {
     /// Show the unread count on the Dock/taskbar icon.
     pub(crate) unread_badge: bool,
     /// What the unread badge counts: "messages" (Facebook's total unread message
-    /// count, from the page title) or "conversations" (unread chats in the list).
+    /// count, from the page title), "conversations" (unread chats in the list),
+    /// or "dot" (that something is unread, without a number).
     pub(crate) badge_mode: String,
     /// Skip Dock/taskbar badges and native notifications for conversations the
     /// user has muted in Messenger.

@@ -6,6 +6,8 @@ pub(crate) enum UnreadBucket {
     None,
     Count(u8),
     NinePlus,
+    /// Badge mode "dot": something is unread, without saying how much.
+    Dot,
 }
 
 impl UnreadBucket {
@@ -14,6 +16,15 @@ impl UnreadBucket {
             ..=0 => Self::None,
             1..=9 => Self::Count(count as u8),
             _ => Self::NinePlus,
+        }
+    }
+
+    /// The bucket a badge shows: a plain dot in dot mode, else the count.
+    pub(crate) fn for_badge(count: i64, dot: bool) -> Self {
+        match Self::from_count(count) {
+            Self::None => Self::None,
+            _ if dot => Self::Dot,
+            bucket => bucket,
         }
     }
 
@@ -31,6 +42,7 @@ impl UnreadBucket {
             Self::Count(9) => "9",
             Self::Count(_) => "9+",
             Self::NinePlus => "9+",
+            Self::Dot => "",
         }
     }
 }
@@ -124,6 +136,9 @@ pub(crate) fn draw_unread_badge(
     }
 
     let label = bucket.label();
+    if label.is_empty() {
+        return pixels;
+    }
     let glyph_count = label.chars().count() as u32;
     let glyph_width = glyph_count * 3 + glyph_count.saturating_sub(1);
     let scale = ((diameter as u32 * 7 / 10) / glyph_width)
@@ -170,9 +185,8 @@ pub(crate) fn draw_unread_badge(
 pub(crate) const OVERLAY_BADGE_SIZE: u32 = 32;
 
 #[cfg(any(target_os = "windows", test))]
-pub(crate) fn overlay_badge_rgba(count: i64) -> Option<Vec<u8>> {
+pub(crate) fn overlay_badge_rgba(bucket: UnreadBucket) -> Option<Vec<u8>> {
     const SIZE: u32 = OVERLAY_BADGE_SIZE;
-    let bucket = UnreadBucket::from_count(count);
     if bucket == UnreadBucket::None {
         return None;
     }
@@ -208,6 +222,9 @@ pub(crate) fn overlay_badge_rgba(count: i64) -> Option<Vec<u8>> {
     // Centered white digits, sized to the circle the same way the tray badge
     // fits its corner disc.
     let label = bucket.label();
+    if label.is_empty() {
+        return Some(pixels);
+    }
     let glyph_count = label.chars().count() as u32;
     let glyph_width = glyph_count * 3 + glyph_count.saturating_sub(1);
     let diameter = (radius * 2.0) as u32;
@@ -415,14 +432,32 @@ mod tests {
     }
 
     #[test]
+    fn dot_mode_draws_the_disc_without_digits() {
+        assert_eq!(UnreadBucket::for_badge(0, true), UnreadBucket::None);
+        assert_eq!(UnreadBucket::for_badge(5, true), UnreadBucket::Dot);
+        assert_eq!(UnreadBucket::for_badge(5, false), UnreadBucket::Count(5));
+        let dot = draw_unread_badge(&transparent_icon(128), 128, 128, UnreadBucket::Dot);
+        assert_eq!(white_pixels(&dot), 0);
+        assert!(
+            dot.as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel == &BADGE_RED)
+        );
+        let overlay = overlay_badge_rgba(UnreadBucket::Dot).expect("a dot renders");
+        assert_eq!(white_pixels(&overlay), 0);
+    }
+
+    #[test]
     fn overlay_badge_is_empty_for_zero_or_negative_counts() {
-        assert!(overlay_badge_rgba(0).is_none());
-        assert!(overlay_badge_rgba(-3).is_none());
+        assert!(overlay_badge_rgba(UnreadBucket::from_count(0)).is_none());
+        assert!(overlay_badge_rgba(UnreadBucket::from_count(-3)).is_none());
     }
 
     #[test]
     fn overlay_badge_is_a_32x32_rgba_buffer_with_an_opaque_red_disc() {
-        let badge = overlay_badge_rgba(1).expect("a positive count renders");
+        let badge =
+            overlay_badge_rgba(UnreadBucket::from_count(1)).expect("a positive count renders");
         assert_eq!(badge.len(), 32 * 32 * 4);
         // The centre of the disc is fully covered, so it is opaque Messenger-red.
         assert!(
@@ -438,15 +473,18 @@ mod tests {
 
     #[test]
     fn overlay_badge_digits_differ_by_bucket() {
-        let one = overlay_badge_rgba(1).unwrap();
-        let nine = overlay_badge_rgba(9).unwrap();
-        let nine_plus = overlay_badge_rgba(42).unwrap();
+        let one = overlay_badge_rgba(UnreadBucket::from_count(1)).unwrap();
+        let nine = overlay_badge_rgba(UnreadBucket::from_count(9)).unwrap();
+        let nine_plus = overlay_badge_rgba(UnreadBucket::from_count(42)).unwrap();
         assert!(white_pixels(&one) > 0);
         assert!(white_pixels(&nine_plus) > white_pixels(&nine));
         assert_ne!(one, nine);
         assert_ne!(nine, nine_plus);
         // The bucket, not the raw count, drives the artwork.
-        assert_eq!(overlay_badge_rgba(42), overlay_badge_rgba(999));
+        assert_eq!(
+            overlay_badge_rgba(UnreadBucket::from_count(42)),
+            overlay_badge_rgba(UnreadBucket::from_count(999))
+        );
     }
 
     #[test]

@@ -11834,8 +11834,9 @@ ${text}`)) {
       if (n === last && dockError === lastDockError && !force) return;
       last = n;
       lastDockError = dockError;
+      const dot = window.__CARRIER_SETTINGS__?.badge_mode === "dot";
       const command = isMac4 ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
-      const value = isMac4 ? dockError ? "ERR" : n > 0 ? String(n) : null : n > 0 ? n : null;
+      const value = isMac4 ? dockError ? "ERR" : n > 0 ? dot ? "•" : String(n) : null : n > 0 && !dot ? n : null;
       invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
       invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(
         () => diag("badge.emit", "carrier:unread emit failed")

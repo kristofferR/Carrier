@@ -26,7 +26,7 @@ interface CarrierSettings {
   spellcheck?: boolean;
   unread_badge?: boolean;
   /** "messages" (page-title total) or "conversations" (bold chat rows). */
-  badge_mode?: "messages" | "conversations";
+  badge_mode?: "messages" | "conversations" | "dot";
   /** Skip badge and native notifications for Facebook-muted conversations. */
   ignore_muted_conversations?: boolean;
   /** "system", "light", or "dark". */
