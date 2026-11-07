@@ -6477,6 +6477,87 @@ ${button.innerHTML}`)
     );
   }
 
+  // inject/src/messenger/lib/messenger-dnd.ts
+  var muteUntilSeconds = null;
+  function setMessengerDndUntil(seconds) {
+    muteUntilSeconds = seconds;
+  }
+  function messengerDndActive(nowMs = Date.now()) {
+    const until = muteUntilSeconds;
+    if (until === null) return false;
+    return until < 0 || until * 1e3 > nowMs;
+  }
+  function muteUntilFromDatabase(raw, i64ToString) {
+    let text = raw;
+    if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
+    if (typeof raw === "bigint") text = raw.toString();
+    else if (typeof raw !== "string" && raw != null && i64ToString) text = i64ToString(raw);
+    if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
+    const seconds = Number(text);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
+  async function readMessengerDndUntil(account2, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(account2) || typeof load !== "function") return null;
+    let timer;
+    const read = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      const table = db?.tables?.notification_settings;
+      if (typeof table?.get !== "function" || typeof i64?.of_string !== "function") return null;
+      const row = await table.get(i64.of_string(account2));
+      if (!row || typeof row !== "object") return 0;
+      return muteUntilFromDatabase(
+        row.globalMuteUntil,
+        i64.to_string?.bind(i64)
+      );
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/features/messenger-dnd.ts
+  var REFRESH_MS = 3e4;
+  function initMessengerDnd() {
+    let reading = false;
+    let lastActive = null;
+    let unavailableReported = false;
+    const refresh = () => {
+      const account2 = accountId(document.cookie);
+      if (reading || !account2) return;
+      reading = true;
+      readMessengerDndUntil(account2, window.require).then((until) => {
+        if (until === null) {
+          if (!unavailableReported) {
+            diag("notify.messenger-dnd-unreadable", "Do Not Disturb unreadable");
+          }
+          unavailableReported = true;
+          lastActive = null;
+          return;
+        }
+        unavailableReported = false;
+        setMessengerDndUntil(until);
+        const active = messengerDndActive();
+        if (active !== lastActive) diag("notify.messenger-dnd", active ? "on" : "off");
+        lastActive = active;
+      }).finally(() => {
+        reading = false;
+      });
+    };
+    setInterval(refresh, REFRESH_MS);
+    window.addEventListener("focus", refresh);
+    if (document.readyState === "complete") refresh();
+    else window.addEventListener("load", refresh, { once: true });
+  }
+
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
   var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
@@ -6584,8 +6665,11 @@ ${button.innerHTML}`)
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
   }
+  function notificationsGloballyMuted(settings) {
+    return settings?.mute_notifications === true || messengerDndActive();
+  }
   function suppressNotificationDelivery(muted, settings) {
-    return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
+    return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
   }
   function conversationMuteFromLabel(value) {
     const text = (value || "").replace(/\s+/g, " ").trim();
@@ -8472,7 +8556,7 @@ ${button.innerHTML}`)
         );
         cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
       };
-      if (!s.mute_notifications) {
+      if (!notificationsGloballyMuted(s)) {
         const hidePreviewAtConstruction = s.hide_notification_preview === true;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
@@ -8515,7 +8599,7 @@ ${button.innerHTML}`)
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
-          if (deliverySettings.mute_notifications === true) {
+          if (notificationsGloballyMuted(deliverySettings)) {
             pendingPageNotifications.remove(id);
           }
           if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
@@ -12466,6 +12550,7 @@ ${text}`)) {
     initFeature("telemetry", initTelemetryBlocking);
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("mute-action-tracking", initMuteActionTracking);
+    initFeature("messenger-dnd", initMessengerDnd);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);

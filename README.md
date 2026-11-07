@@ -94,7 +94,7 @@ cryptographically verified updates.
 ### Desktop integration
 
 - Native notifications with sender avatars and optional hidden previews
-- Notification sound and mute controls
+- Notification sound and mute controls, and Messenger's own Do Not Disturb is honored
 - Unread count on the Dock or taskbar icon, or just a dot for privacy
 - Tray support, start to tray, start on login, and hide on close
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey

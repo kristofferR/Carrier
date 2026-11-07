@@ -30,6 +30,7 @@ import { initLoginTidy } from "./features/login-tidy";
 import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
+import { initMessengerDnd } from "./features/messenger-dnd";
 import { initNotificationBridge } from "./features/notifications";
 import { initQuickLike } from "./features/quick-like";
 import { initQuickMute } from "./features/quick-mute";
@@ -84,6 +85,7 @@ function main() {
   initFeature("telemetry", initTelemetryBlocking);
   initFeature("media-autoplay", initMediaAutoplay);
   initFeature("mute-action-tracking", initMuteActionTracking);
+  initFeature("messenger-dnd", initMessengerDnd);
   initFeature("notifications", initNotificationBridge);
   initFeature("share-intake", initShareIntake);
   initFeature("sync-health", initSyncHealth);
