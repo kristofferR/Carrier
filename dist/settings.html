@@ -96,7 +96,6 @@
         ["autostart", "Start on System Startup", "Launch Carrier when you log in."],
         ["hide_on_close", "Hide on Close", "Closing the window hides it instead of quitting."],
         ["unread_badge", "Unread Badge", "Show the unread count on the Dock / taskbar icon."],
-        ["ignore_muted_conversations", "Ignore muted conversations", "Don't badge or notify for chats you've muted in Messenger, including muted communities."],
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
         ["notification_sound", "Notification sound", "Play the system sound when a notification arrives."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
@@ -170,7 +169,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    ...(IS_MAC ? ["group_notifications_by_conversation"] : []),
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
-                   "unread_badge", "ignore_muted_conversations", "badge_mode", "test_notification"] },
+                   "unread_badge", "muted_conversations", "badge_mode", "test_notification"] },
         { id: "privacy", label: "Privacy", icon: ICONS.privacy,
           fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
@@ -279,6 +278,21 @@
           "zoom", 100, options,
           "Page zoom", "Scale the Messenger page (Cmd/Ctrl + − / = / 0 also works).",
           false, Number,
+        );
+      }
+
+      // Muted conversations: a three-way policy. Older installs only have the
+      // on/off switch, which maps to "ignore" (on) or "include" (off).
+      function mutedConversationsRow() {
+        const current =
+          settings.muted_conversations ||
+          (settings.ignore_muted_conversations === false ? "include" : "ignore");
+        return selectRow(
+          "muted_conversations", current,
+          [["ignore", "Leave out"], ["badge", "Badge only"], ["include", "Badge and notify"]],
+          "Muted conversations",
+          "Chats you muted in Messenger, including muted communities: leave them out, count them on the badge without notifying, or treat them like any other chat.",
+          false,
         );
       }
 
@@ -567,6 +581,7 @@
         zoom: zoomRow,
         title_bar: titleBarRow,
         badge_mode: badgeModeRow,
+        muted_conversations: mutedConversationsRow,
         download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,
         custom_css: customCssRow,
