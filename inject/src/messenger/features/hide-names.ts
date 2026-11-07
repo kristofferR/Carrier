@@ -5,7 +5,15 @@
 // hidden alone (Ref #364).
 // Facebook's generated class names churn, so this keeps the selectors shallow
 // and marks identity surfaces by stable roles, links, and layout shape.
-import { hidesAvatars, hidesNames, isMetaText, prefixSpan, previewIdentity } from "../lib/privacy";
+import {
+  hidesAvatars,
+  hidesNames,
+  isMetaText,
+  locateSpan,
+  mentionRanges,
+  prefixRange,
+  previewIdentity,
+} from "../lib/privacy";
 
 const IDENTITY_ATTR = "data-carrier-private-identity";
 const AVATAR_ATTR = "data-carrier-private-avatar";
@@ -130,61 +138,69 @@ export function initHideNames() {
     return count > 0;
   }
 
-  function markPreviewSenderPrefix(el: Element) {
-    const value = textValue(el);
-    const identity = previewIdentity(value);
-    if (!identity) return false;
-
-    const candidates = [el, ...textSurfaces(el)]
-      .filter((candidate, index, all) => all.indexOf(candidate) === index)
-      .filter((candidate) => {
-        // An element that also holds the message's emoji or image is not
-        // just the name; blurring it would hide content.
-        if (candidate.querySelector(VISUAL_SEL)) return false;
-        const candidateText = textValue(candidate);
-        if (!candidateText) return false;
-        if (candidateText === identity.prefix) return true;
-        if (identity.colon && candidateText === `${identity.prefix}:`) return true;
-        return false;
-      })
-      .sort((a, b) => area(a) - area(b));
-
-    if (candidates.length) {
-      mark(candidates[0]);
-      return true;
+  /** The sender prefix and any @mentions in a preview line. Names with an
+   * element of their own are blurred; names inside the message's text node
+   * get a highlight range, which leaves React's text alone. */
+  function markPreviewNames(el: Element) {
+    const identity = previewIdentity(textValue(el));
+    let prefixDone = !identity;
+    if (identity) {
+      const candidate = [el, ...textSurfaces(el)]
+        .filter((candidate) => {
+          // An element that also holds the message's emoji or image is not
+          // just the name; blurring it would hide content.
+          if (candidate.querySelector(VISUAL_SEL)) return false;
+          const candidateText = textValue(candidate);
+          return (
+            candidateText === identity.prefix ||
+            (identity.colon && candidateText === `${identity.prefix}:`)
+          );
+        })
+        .sort((a, b) => area(a) - area(b))[0];
+      if (candidate) {
+        mark(candidate);
+        prefixDone = true;
+      }
     }
 
-    // Messenger often writes "Name: message" into one text node. Hide just the
-    // name with a highlight range, which leaves React's text alone. Without
-    // the Highlight API, blur the whole preview rather than show the name.
-    if (!highlightPrefix(el, identity.prefix)) mark(el);
-    return true;
-  }
-
-  function highlightPrefix(el: Element, prefix: string) {
-    const highlights = globalThis.CSS?.highlights;
-    if (!highlights || typeof Highlight === "undefined") return false;
     const nodes: Text[] = [];
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-    const span = prefixSpan(
-      nodes.map((node) => node.data),
-      prefix,
-    );
-    if (!span) return false;
-    const start = nodes[span.start[0]]!;
-    for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
-      node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+    const texts = nodes.map((node) => node.data);
+    const joined = texts.join("");
+    const ranges = mentionRanges(joined);
+    if (identity && !prefixDone) {
+      const prefix = prefixRange(joined, identity.prefix);
+      if (prefix) ranges.push(prefix);
+      else ranges.length = 0;
     }
-    const range = document.createRange();
-    range.setStart(start, span.start[1]);
-    range.setEnd(nodes[span.end[0]]!, span.end[1]);
+    if (!ranges.length) {
+      // A prefix that is in neither its own element nor the text nodes.
+      if (identity && !prefixDone) mark(el);
+      return;
+    }
+    // Without the Highlight API, blur the whole line rather than show names.
+    if (!highlightRanges(nodes, texts, ranges)) mark(el);
+  }
+
+  function highlightRanges(nodes: Text[], texts: string[], ranges: [number, number][]) {
+    const highlights = globalThis.CSS?.highlights;
+    if (!highlights || typeof Highlight === "undefined") return false;
     let highlight = highlights.get(PREFIX_HIGHLIGHT);
     if (!highlight) {
       highlight = new Highlight();
       highlights.set(PREFIX_HIGHLIGHT, highlight);
     }
-    highlight.add(range);
+    for (const [from, to] of ranges) {
+      const span = locateSpan(texts, from, to);
+      for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
+        node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+      }
+      const range = document.createRange();
+      range.setStart(nodes[span.start[0]]!, span.start[1]);
+      range.setEnd(nodes[span.end[0]]!, span.end[1]);
+      highlight.add(range);
+    }
     return true;
   }
 
@@ -222,7 +238,7 @@ export function initHideNames() {
       surfaces.forEach((el) => {
         const r = el.getBoundingClientRect();
         if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
-        else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
+        else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el);
       });
       markDeepest(firstLine);
     }

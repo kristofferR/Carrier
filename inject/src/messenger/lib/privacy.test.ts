@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { hidesAvatars, hidesNames, isMetaText, prefixSpan, previewIdentity } from "./privacy";
+import {
+  hidesAvatars,
+  hidesNames,
+  isMetaText,
+  locateSpan,
+  mentionRanges,
+  prefixRange,
+  previewIdentity,
+} from "./privacy";
 
 describe("previewIdentity", () => {
   test("finds the sender prefix in 'Name: message' previews", () => {
@@ -60,28 +68,47 @@ describe("hidesNames / hidesAvatars", () => {
   });
 });
 
-describe("prefixSpan", () => {
+describe("prefixRange / locateSpan", () => {
   test("finds the sender inside the preview's own text node", () => {
-    expect(prefixSpan(["Kari Nordmann: hei!"], "Kari Nordmann")).toEqual({
-      start: [0, 0],
-      end: [0, 13],
-    });
+    const texts = ["Kari Nordmann: hei!"];
+    expect(prefixRange(texts.join(""), "Kari Nordmann")).toEqual([0, 13]);
+    expect(locateSpan(texts, 0, 13)).toEqual({ start: [0, 0], end: [0, 13] });
   });
 
   test("spans nodes and skips leading whitespace", () => {
-    expect(prefixSpan(["  Kari ", "Nordmann", ": hei"], "Kari Nordmann")).toEqual({
-      start: [0, 2],
-      end: [1, 8],
-    });
+    const texts = ["  Kari ", "Nordmann", ": hei"];
+    const [from, to] = prefixRange(texts.join(""), "Kari Nordmann")!;
+    expect(locateSpan(texts, from, to)).toEqual({ start: [0, 2], end: [1, 8] });
   });
 
   test("starts in the next node when one ends right before the name", () => {
-    expect(prefixSpan([" ", "Kari: hei"], "Kari")).toEqual({ start: [1, 0], end: [1, 4] });
+    const texts = [" ", "Kari: hei"];
+    const [from, to] = prefixRange(texts.join(""), "Kari")!;
+    expect(locateSpan(texts, from, to)).toEqual({ start: [1, 0], end: [1, 4] });
   });
 
   test("is null when the text does not start with the name", () => {
-    expect(prefixSpan(["Kari\u00a0Nordmann: hei"], "Kari Nordmann")).toBeNull();
-    expect(prefixSpan(["hei"], "Kari")).toBeNull();
-    expect(prefixSpan([], "Kari")).toBeNull();
+    expect(prefixRange("Kari\u00a0Nordmann: hei", "Kari Nordmann")).toBeNull();
+    expect(prefixRange("hei", "Kari")).toBeNull();
+    expect(prefixRange("", "Kari")).toBeNull();
+  });
+});
+
+describe("mentionRanges", () => {
+  const mentions = (text: string) => mentionRanges(text).map(([a, b]) => text.slice(a, b));
+
+  test("takes the name after @ with its capitalized words", () => {
+    expect(mentions("Frank: @Martine Rieck")).toEqual(["@Martine Rieck"]);
+    expect(mentions("@Kari kan du ta med kake?")).toEqual(["@Kari"]);
+    expect(mentions("hei @Åse Marie Øien og @ola")).toEqual(["@Åse Marie Øien", "@ola"]);
+  });
+
+  test("keeps name particles and combining marks with the name", () => {
+    expect(mentions("Anne: @Martine van der Berg kommer")).toEqual(["@Martine van der Berg"]);
+    expect(mentions("@Jose\u0301 Garci\u0301a")).toEqual(["@Jose\u0301 Garci\u0301a"]);
+  });
+
+  test("skips e-mail addresses and lone @", () => {
+    expect(mentions("send til kari@example.com @ 12")).toEqual([]);
   });
 });

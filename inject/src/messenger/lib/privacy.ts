@@ -38,18 +38,14 @@ export function previewIdentity(value: string): { prefix: string; colon: boolean
 export type TextPoint = [number, number];
 
 /**
- * Where `prefix` sits in an element's text nodes, when the element's text
- * starts with it (after leading whitespace). Null otherwise, including when
- * whitespace differs from the normalized prefix. The end stays inside the
- * node holding the prefix's last character.
+ * Node positions of the [from, to) offsets in the nodes' joined text. The
+ * end stays inside the node holding the last character.
  */
-export function prefixSpan(
+export function locateSpan(
   texts: string[],
-  prefix: string,
-): { start: TextPoint; end: TextPoint } | null {
-  const joined = texts.join("");
-  const lead = joined.length - joined.trimStart().length;
-  if (!prefix || !joined.startsWith(prefix, lead)) return null;
+  from: number,
+  to: number,
+): { start: TextPoint; end: TextPoint } {
   const locate = (index: number, atEnd: boolean): TextPoint => {
     let offset = index;
     for (let node = 0; node < texts.length; node += 1) {
@@ -59,7 +55,40 @@ export function prefixSpan(
     }
     return [texts.length - 1, texts[texts.length - 1]!.length];
   };
-  return { start: locate(lead, false), end: locate(lead + prefix.length, true) };
+  return { start: locate(from, false), end: locate(to, true) };
+}
+
+/**
+ * Offsets of `prefix` when the text starts with it (after leading
+ * whitespace). Null otherwise, including when whitespace differs from the
+ * normalized prefix.
+ */
+export function prefixRange(text: string, prefix: string): [number, number] | null {
+  const lead = text.length - text.trimStart().length;
+  if (!prefix || !text.startsWith(prefix, lead)) return null;
+  return [lead, lead + prefix.length];
+}
+
+// "@" (not inside a word, so not an e-mail address), the word after it, then
+// up to three more words that start with a capital: "@Martine Rieck". Name
+// particles before such a word belong to it ("@Martine van der Berg"), and
+// combining marks count as letters ("José" written decomposed).
+const NAME_CHAR = "[\\p{L}\\p{M}\\p{N}_.'-]";
+const PARTICLE = "(?:van|von|der|den|de|del|della|di|da|du|dos|das|la|le|ten|ter|bin|ibn|al)";
+// No lookbehind: WebKit before Safari 16.4 (older macOS) cannot parse it,
+// and a throw here would stop every injected feature from starting.
+const MENTION_RE = new RegExp(
+  `(^|[^\\p{L}\\p{M}\\p{N}_])(@${NAME_CHAR}+(?:[ \\u00a0](?:${PARTICLE}[ \\u00a0])*\\p{Lu}${NAME_CHAR}*){0,3})`,
+  "gu",
+);
+
+/** Offsets of @mentions in preview text. A capitalized word right after a
+ * name counts as part of it, erring on the side of hiding. */
+export function mentionRanges(text: string): [number, number][] {
+  return [...text.matchAll(MENTION_RE)].map((m) => {
+    const start = m.index + m[1]!.length;
+    return [start, start + m[2]!.length];
+  });
 }
 
 type IdentitySettings = {

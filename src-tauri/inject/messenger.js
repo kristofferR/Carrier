@@ -5647,10 +5647,7 @@ ${button.innerHTML}`)
     if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
     return { prefix, colon: !!colon };
   }
-  function prefixSpan(texts, prefix) {
-    const joined = texts.join("");
-    const lead = joined.length - joined.trimStart().length;
-    if (!prefix || !joined.startsWith(prefix, lead)) return null;
+  function locateSpan(texts, from, to) {
     const locate = (index, atEnd) => {
       let offset = index;
       for (let node = 0; node < texts.length; node += 1) {
@@ -5660,7 +5657,24 @@ ${button.innerHTML}`)
       }
       return [texts.length - 1, texts[texts.length - 1].length];
     };
-    return { start: locate(lead, false), end: locate(lead + prefix.length, true) };
+    return { start: locate(from, false), end: locate(to, true) };
+  }
+  function prefixRange(text, prefix) {
+    const lead = text.length - text.trimStart().length;
+    if (!prefix || !text.startsWith(prefix, lead)) return null;
+    return [lead, lead + prefix.length];
+  }
+  var NAME_CHAR = "[\\p{L}\\p{M}\\p{N}_.'-]";
+  var PARTICLE = "(?:van|von|der|den|de|del|della|di|da|du|dos|das|la|le|ten|ter|bin|ibn|al)";
+  var MENTION_RE = new RegExp(
+    `(^|[^\\p{L}\\p{M}\\p{N}_])(@${NAME_CHAR}+(?:[ \\u00a0](?:${PARTICLE}[ \\u00a0])*\\p{Lu}${NAME_CHAR}*){0,3})`,
+    "gu"
+  );
+  function mentionRanges(text) {
+    return [...text.matchAll(MENTION_RE)].map((m) => {
+      const start = m.index + m[1].length;
+      return [start, start + m[2].length];
+    });
   }
   function hidesNames(settings) {
     return (settings?.hide_names ?? settings?.hide_names_avatars) === true;
@@ -5765,49 +5779,55 @@ ${button.innerHTML}`)
       });
       return count > 0;
     }
-    function markPreviewSenderPrefix(el) {
-      const value = textValue(el);
-      const identity = previewIdentity(value);
-      if (!identity) return false;
-      const candidates = [el, ...textSurfaces(el)].filter((candidate, index, all) => all.indexOf(candidate) === index).filter((candidate) => {
-        if (candidate.querySelector(VISUAL_SEL)) return false;
-        const candidateText = textValue(candidate);
-        if (!candidateText) return false;
-        if (candidateText === identity.prefix) return true;
-        if (identity.colon && candidateText === `${identity.prefix}:`) return true;
-        return false;
-      }).sort((a, b) => area(a) - area(b));
-      if (candidates.length) {
-        mark(candidates[0]);
-        return true;
+    function markPreviewNames(el) {
+      const identity = previewIdentity(textValue(el));
+      let prefixDone = !identity;
+      if (identity) {
+        const candidate = [el, ...textSurfaces(el)].filter((candidate2) => {
+          if (candidate2.querySelector(VISUAL_SEL)) return false;
+          const candidateText = textValue(candidate2);
+          return candidateText === identity.prefix || identity.colon && candidateText === `${identity.prefix}:`;
+        }).sort((a, b) => area(a) - area(b))[0];
+        if (candidate) {
+          mark(candidate);
+          prefixDone = true;
+        }
       }
-      if (!highlightPrefix(el, identity.prefix)) mark(el);
-      return true;
-    }
-    function highlightPrefix(el, prefix) {
-      const highlights = globalThis.CSS?.highlights;
-      if (!highlights || typeof Highlight === "undefined") return false;
       const nodes = [];
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) nodes.push(walker.currentNode);
-      const span = prefixSpan(
-        nodes.map((node) => node.data),
-        prefix
-      );
-      if (!span) return false;
-      const start2 = nodes[span.start[0]];
-      for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
-        node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+      const texts = nodes.map((node) => node.data);
+      const joined = texts.join("");
+      const ranges = mentionRanges(joined);
+      if (identity && !prefixDone) {
+        const prefix = prefixRange(joined, identity.prefix);
+        if (prefix) ranges.push(prefix);
+        else ranges.length = 0;
       }
-      const range = document.createRange();
-      range.setStart(start2, span.start[1]);
-      range.setEnd(nodes[span.end[0]], span.end[1]);
+      if (!ranges.length) {
+        if (identity && !prefixDone) mark(el);
+        return;
+      }
+      if (!highlightRanges(nodes, texts, ranges)) mark(el);
+    }
+    function highlightRanges(nodes, texts, ranges) {
+      const highlights = globalThis.CSS?.highlights;
+      if (!highlights || typeof Highlight === "undefined") return false;
       let highlight = highlights.get(PREFIX_HIGHLIGHT);
       if (!highlight) {
         highlight = new Highlight();
         highlights.set(PREFIX_HIGHLIGHT, highlight);
       }
-      highlight.add(range);
+      for (const [from, to] of ranges) {
+        const span = locateSpan(texts, from, to);
+        for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
+          node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+        }
+        const range = document.createRange();
+        range.setStart(nodes[span.start[0]], span.start[1]);
+        range.setEnd(nodes[span.end[0]], span.end[1]);
+        highlight.add(range);
+      }
       return true;
     }
     function markConversationRows() {
@@ -5836,7 +5856,7 @@ ${button.innerHTML}`)
         surfaces.forEach((el) => {
           const r = el.getBoundingClientRect();
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
-          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
+          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el);
         });
         markDeepest(firstLine);
       }
