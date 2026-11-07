@@ -367,19 +367,20 @@ html[data-carrier-hide-names][data-carrier-hide-avatars]
 
 /* Names only. A link with no picture is all name; in a mixed link, blur
    every element that neither is nor holds a picture, whatever its tag.
-   Inline backgrounds that load an image count as pictures here, matching
-   messenger.js, which also detects class-defined ones. A name written straight into a mixed link has no
-   element of its own, so messenger.js marks such links whole. */
+   Pictures are image elements, inline backgrounds that load an image, and
+   anything messenger.js marked as an avatar (it also detects class-defined
+   backgrounds). A name written straight into a mixed link has no element of
+   its own, so messenger.js marks such links whole. */
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]):not(
-    :has(img, svg, image, [style*="url("])
-  ):not([style*="url("]),
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  ):not([style*="url("], [data-carrier-private-avatar]),
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :not(img, svg, svg *, image, [style*="url("]):not(
-    :has(img, svg, image, [style*="url("])
+  :not(img, svg, svg *, image, [style*="url("], [data-carrier-private-avatar]):not(
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
   ) {
   filter: blur(6px) !important;
 }
