@@ -5714,37 +5714,51 @@ ${button.innerHTML}`)
     }
     function mark(el) {
       if (!el?.setAttribute) return;
-      el.setAttribute(IDENTITY_ATTR, "");
+      want(el, IDENTITY_ATTR);
       for (const node of [el, ...el.querySelectorAll("*")]) {
         if (isPicture(node)) markAvatar(node);
       }
     }
     function markAvatar(el) {
-      if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
+      if (el?.setAttribute) want(el, AVATAR_ATTR);
+    }
+    const MARKER_ATTRS = [IDENTITY_ATTR, AVATAR_ATTR, PREFIX_HOST_ATTR];
+    let wanted = /* @__PURE__ */ new Map();
+    let wantedRanges = [];
+    let appliedRanges = [];
+    function want(el, attr) {
+      let attrs = wanted.get(el);
+      if (!attrs) {
+        attrs = /* @__PURE__ */ new Set();
+        wanted.set(el, attrs);
+      }
+      attrs.add(attr);
+    }
+    const sameRange = (a, b) => a.startContainer === b.startContainer && a.startOffset === b.startOffset && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+    function applyMarkers() {
+      document.querySelectorAll(MARKER_ATTRS.map((attr) => `[${attr}]`).join(", ")).forEach((el) => {
+        const attrs = wanted.get(el);
+        for (const attr of MARKER_ATTRS) {
+          if (!attrs?.has(attr)) el.removeAttribute(attr);
+        }
+      });
+      wanted.forEach((attrs, el) => {
+        attrs.forEach((attr) => {
+          if (!el.hasAttribute(attr)) el.setAttribute(attr, "");
+        });
+      });
+      const highlights = globalThis.CSS?.highlights;
+      const unchanged = wantedRanges.length === appliedRanges.length && wantedRanges.every((range, i) => sameRange(range, appliedRanges[i]));
+      if (highlights && !unchanged) {
+        if (wantedRanges.length) highlights.set(PREFIX_HIGHLIGHT, new Highlight(...wantedRanges));
+        else highlights.delete(PREFIX_HIGHLIGHT);
+      }
+      appliedRanges = wantedRanges;
     }
     function clearMarkers() {
-      globalThis.CSS?.highlights?.delete(PREFIX_HIGHLIGHT);
-      document.querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}], [${PREFIX_HOST_ATTR}]`).forEach((el) => {
-        el.removeAttribute(IDENTITY_ATTR);
-        el.removeAttribute(AVATAR_ATTR);
-        el.removeAttribute(PREFIX_HOST_ATTR);
-      });
-    }
-    function textLeaves(root) {
-      const out = [];
-      root.querySelectorAll?.(TEXT_SURFACE_SEL).forEach((el) => {
-        if (!visible(el) || el.closest?.('[contenteditable="true"]')) return;
-        if (!textValue(el)) return;
-        for (const child of el.children || []) {
-          if (textValue(child)) return;
-        }
-        out.push(el);
-      });
-      return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return ar.y - br.y || ar.x - br.x;
-      });
+      wanted = /* @__PURE__ */ new Map();
+      wantedRanges = [];
+      applyMarkers();
     }
     function textSurfaces(root) {
       const out = [];
@@ -5811,22 +5825,16 @@ ${button.innerHTML}`)
       if (!highlightRanges(nodes, texts, ranges)) mark(el);
     }
     function highlightRanges(nodes, texts, ranges) {
-      const highlights = globalThis.CSS?.highlights;
-      if (!highlights || typeof Highlight === "undefined") return false;
-      let highlight = highlights.get(PREFIX_HIGHLIGHT);
-      if (!highlight) {
-        highlight = new Highlight();
-        highlights.set(PREFIX_HIGHLIGHT, highlight);
-      }
+      if (!globalThis.CSS?.highlights || typeof Highlight === "undefined") return false;
       for (const [from, to] of ranges) {
         const span = locateSpan(texts, from, to);
         for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
-          node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+          if (node.parentElement) want(node.parentElement, PREFIX_HOST_ATTR);
         }
         const range = document.createRange();
         range.setStart(nodes[span.start[0]], span.start[1]);
         range.setEnd(nodes[span.end[0]], span.end[1]);
-        highlight.add(range);
+        wantedRanges.push(range);
       }
       return true;
     }
@@ -5868,16 +5876,19 @@ ${button.innerHTML}`)
       const mr = main2.getBoundingClientRect();
       const headerBottom = mr.top + 96;
       const actionStart = mr.right - 150;
-      textLeaves(main2).forEach((el) => {
+      const inHeader = (el) => {
         const r = el.getBoundingClientRect();
-        if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
+        return r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart;
+      };
+      main2.querySelectorAll(TEXT_SURFACE_SEL).forEach((el) => {
+        if (!inHeader(el) || !visible(el) || el.closest('[contenteditable="true"]')) return;
+        if (!textValue(el) || [...el.children].some((child) => textValue(child))) return;
+        mark(el);
       });
       main2.querySelectorAll(VISUAL_SEL).forEach((el) => {
-        if (!visible(el)) return;
+        if (!inHeader(el) || !visible(el)) return;
         const r = el.getBoundingClientRect();
-        if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
-          markAvatar(el);
-        }
+        if (r.width >= 20 && r.height >= 20) markAvatar(el);
       });
     }
     function hasBareText(el) {
@@ -5900,7 +5911,7 @@ ${button.innerHTML}`)
     }
     function markThreadMessages(main2) {
       main2.querySelectorAll('[role="article"]').forEach((article) => {
-        article.querySelectorAll("h3, h3 *").forEach((el) => {
+        article.querySelectorAll("h4, h4 *").forEach((el) => {
           if (visible(el) && textValue(el)) mark(el);
         });
         article.querySelectorAll(
@@ -5908,29 +5919,36 @@ ${button.innerHTML}`)
         ).forEach((el) => {
           if (visible(el)) markAvatar(el);
         });
-        textLeaves(article).forEach((el) => {
-          if (/\breplied to\b/i.test(textValue(el))) mark(el);
-        });
       });
-      textSurfaces(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
-        if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
-          mark(el);
+      const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!/\breplied to\b/i.test(node.data)) continue;
+        let target = null;
+        for (let el = node.parentElement; el && el !== main2; el = el.parentElement) {
+          if (el.closest('[contenteditable="true"]')) break;
+          const r = el.getBoundingClientRect();
+          if (r.height > 32 || r.width > 420) break;
+          target = el;
         }
-      });
+        if (target && visible(target)) mark(target);
+      }
     }
     function scan() {
       suppressMutations = true;
       try {
-        clearMarkers();
-        if (!on2()) return;
-        markConversationRows();
-        const main2 = mainPane();
-        if (main2) {
-          markThreadHeader(main2);
-          markThreadMessages(main2);
-          markMixedProfileLinks(main2);
+        wanted = /* @__PURE__ */ new Map();
+        wantedRanges = [];
+        if (on2()) {
+          markConversationRows();
+          const main2 = mainPane();
+          if (main2) {
+            markThreadHeader(main2);
+            markThreadMessages(main2);
+            markMixedProfileLinks(main2);
+          }
         }
+        applyMarkers();
       } finally {
         queueMicrotask(() => {
           suppressMutations = false;

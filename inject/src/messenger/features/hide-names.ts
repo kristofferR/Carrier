@@ -60,7 +60,7 @@ export function initHideNames() {
    * Hide Avatars alone still covers a face nested in a heading or attribution. */
   function mark(el: Element | null | undefined) {
     if (!el?.setAttribute) return;
-    el.setAttribute(IDENTITY_ATTR, "");
+    want(el, IDENTITY_ATTR);
     for (const node of [el, ...el.querySelectorAll("*")]) {
       if (isPicture(node)) markAvatar(node);
     }
@@ -68,35 +68,59 @@ export function initHideNames() {
 
   /** An avatar, group picture or read-receipt face. */
   function markAvatar(el: Element | null | undefined) {
-    if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
+    if (el?.setAttribute) want(el, AVATAR_ATTR);
+  }
+
+  // A scan collects the markers and name ranges it wants, then applies only
+  // the difference: re-marking every blurred element on each pass restyled
+  // and repainted them all, which made hovering in a conversation lag.
+  const MARKER_ATTRS = [IDENTITY_ATTR, AVATAR_ATTR, PREFIX_HOST_ATTR];
+  let wanted = new Map<Element, Set<string>>();
+  let wantedRanges: Range[] = [];
+  let appliedRanges: Range[] = [];
+
+  function want(el: Element, attr: string) {
+    let attrs = wanted.get(el);
+    if (!attrs) {
+      attrs = new Set();
+      wanted.set(el, attrs);
+    }
+    attrs.add(attr);
+  }
+
+  const sameRange = (a: Range, b: Range) =>
+    a.startContainer === b.startContainer &&
+    a.startOffset === b.startOffset &&
+    a.endContainer === b.endContainer &&
+    a.endOffset === b.endOffset;
+
+  function applyMarkers() {
+    document.querySelectorAll(MARKER_ATTRS.map((attr) => `[${attr}]`).join(", ")).forEach((el) => {
+      const attrs = wanted.get(el);
+      for (const attr of MARKER_ATTRS) {
+        if (!attrs?.has(attr)) el.removeAttribute(attr);
+      }
+    });
+    wanted.forEach((attrs, el) => {
+      attrs.forEach((attr) => {
+        if (!el.hasAttribute(attr)) el.setAttribute(attr, "");
+      });
+    });
+    const highlights = globalThis.CSS?.highlights;
+    const unchanged =
+      wantedRanges.length === appliedRanges.length &&
+      wantedRanges.every((range, i) => sameRange(range, appliedRanges[i]!));
+    if (highlights && !unchanged) {
+      if (wantedRanges.length) highlights.set(PREFIX_HIGHLIGHT, new Highlight(...wantedRanges));
+      else highlights.delete(PREFIX_HIGHLIGHT);
+    }
+    appliedRanges = wantedRanges;
   }
 
   function clearMarkers() {
-    globalThis.CSS?.highlights?.delete(PREFIX_HIGHLIGHT);
-    document
-      .querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}], [${PREFIX_HOST_ATTR}]`)
-      .forEach((el) => {
-        el.removeAttribute(IDENTITY_ATTR);
-        el.removeAttribute(AVATAR_ATTR);
-        el.removeAttribute(PREFIX_HOST_ATTR);
-      });
-  }
-
-  function textLeaves(root: Element) {
-    const out: Element[] = [];
-    root.querySelectorAll?.(TEXT_SURFACE_SEL).forEach((el) => {
-      if (!visible(el) || el.closest?.('[contenteditable="true"]')) return;
-      if (!textValue(el)) return;
-      for (const child of el.children || []) {
-        if (textValue(child)) return;
-      }
-      out.push(el);
-    });
-    return out.sort((a, b) => {
-      const ar = a.getBoundingClientRect();
-      const br = b.getBoundingClientRect();
-      return ar.y - br.y || ar.x - br.x;
-    });
+    wanted = new Map();
+    wantedRanges = [];
+    applyMarkers();
   }
 
   function textSurfaces(root: Element) {
@@ -184,22 +208,16 @@ export function initHideNames() {
   }
 
   function highlightRanges(nodes: Text[], texts: string[], ranges: [number, number][]) {
-    const highlights = globalThis.CSS?.highlights;
-    if (!highlights || typeof Highlight === "undefined") return false;
-    let highlight = highlights.get(PREFIX_HIGHLIGHT);
-    if (!highlight) {
-      highlight = new Highlight();
-      highlights.set(PREFIX_HIGHLIGHT, highlight);
-    }
+    if (!globalThis.CSS?.highlights || typeof Highlight === "undefined") return false;
     for (const [from, to] of ranges) {
       const span = locateSpan(texts, from, to);
       for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
-        node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+        if (node.parentElement) want(node.parentElement, PREFIX_HOST_ATTR);
       }
       const range = document.createRange();
       range.setStart(nodes[span.start[0]]!, span.start[1]);
       range.setEnd(nodes[span.end[0]]!, span.end[1]);
-      highlight.add(range);
+      wantedRanges.push(range);
     }
     return true;
   }
@@ -253,23 +271,22 @@ export function initHideNames() {
     const headerBottom = mr.top + 96;
     const actionStart = mr.right - 150;
 
-    textLeaves(main).forEach((el) => {
+    // Position first: the pane holds thousands of elements, and the style
+    // reads in visible() are only worth doing for the few in the header.
+    const inHeader = (el: Element) => {
       const r = el.getBoundingClientRect();
-      if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
+      return r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart;
+    };
+    main.querySelectorAll(TEXT_SURFACE_SEL).forEach((el) => {
+      if (!inHeader(el) || !visible(el) || el.closest('[contenteditable="true"]')) return;
+      if (!textValue(el) || [...el.children].some((child) => textValue(child))) return;
+      mark(el);
     });
 
     main.querySelectorAll(VISUAL_SEL).forEach((el) => {
-      if (!visible(el)) return;
+      if (!inHeader(el) || !visible(el)) return;
       const r = el.getBoundingClientRect();
-      if (
-        r.top >= mr.top &&
-        r.bottom <= headerBottom &&
-        r.left < actionStart &&
-        r.width >= 20 &&
-        r.height >= 20
-      ) {
-        markAvatar(el);
-      }
+      if (r.width >= 20 && r.height >= 20) markAvatar(el);
     });
   }
 
@@ -311,7 +328,9 @@ export function initHideNames() {
 
   function markThreadMessages(main: Element) {
     main.querySelectorAll('[role="article"]').forEach((article) => {
-      article.querySelectorAll("h3, h3 *").forEach((el) => {
+      // Group sender labels are h4. (h3 holds call titles such as "Missed
+      // audio call", which are not names.)
+      article.querySelectorAll("h4, h4 *").forEach((el) => {
         if (visible(el) && textValue(el)) mark(el);
       });
 
@@ -322,32 +341,41 @@ export function initHideNames() {
         .forEach((el) => {
           if (visible(el)) markAvatar(el);
         });
-
-      textLeaves(article).forEach((el) => {
-        if (/\breplied to\b/i.test(textValue(el))) mark(el);
-      });
     });
 
-    textSurfaces(main).forEach((el) => {
-      const r = el.getBoundingClientRect();
-      if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
-        mark(el);
+    // "Kim replied to Tobias": find the phrase in text nodes, then blur the
+    // largest attribution-sized element around it, which holds both names.
+    // Walking text is far cheaper than measuring every element in the pane.
+    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      if (!/\breplied to\b/i.test(node.data)) continue;
+      let target: Element | null = null;
+      for (let el = node.parentElement; el && el !== main; el = el.parentElement) {
+        if (el.closest('[contenteditable="true"]')) break;
+        const r = el.getBoundingClientRect();
+        if (r.height > 32 || r.width > 420) break;
+        target = el;
       }
-    });
+      if (target && visible(target)) mark(target);
+    }
   }
 
   function scan() {
     suppressMutations = true;
     try {
-      clearMarkers();
-      if (!on()) return;
-      markConversationRows();
-      const main = mainPane();
-      if (main) {
-        markThreadHeader(main);
-        markThreadMessages(main);
-        markMixedProfileLinks(main);
+      wanted = new Map();
+      wantedRanges = [];
+      if (on()) {
+        markConversationRows();
+        const main = mainPane();
+        if (main) {
+          markThreadHeader(main);
+          markThreadMessages(main);
+          markMixedProfileLinks(main);
+        }
       }
+      applyMarkers();
     } finally {
       queueMicrotask(() => {
         suppressMutations = false;
