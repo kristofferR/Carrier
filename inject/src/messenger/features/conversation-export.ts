@@ -1,20 +1,16 @@
 /* ------------------------- Conversation export ------------------------- */
 // File ▸ Export Conversation as HTML/JSON… (Ref #371). Reads the open
-// conversation from Messenger's local database, renders the file here, and
-// hands it to the native shell, which asks where to save it. Nothing is
+// conversation from Messenger's local database and hands the structured rows
+// to the native shell, which validates them, renders the file, and asks where
+// to save it. The page never renders the file: Facebook's scripts share this
+// page and must not be able to put markup or script into it. Nothing is
 // uploaded anywhere.
 import { diag, toast } from "../bridge";
-import {
-  type ExportFormat,
-  exportFileName,
-  readConversationExport,
-  renderConversationHtml,
-  renderConversationJson,
-} from "../lib/conversation-export";
+import { type ExportFormat, readConversationExport } from "../lib/conversation-export";
 import { downloadRevealLabel } from "../lib/downloads";
 import { accountId, threadIdFromHref } from "../lib/threads";
 
-// Keep well under the native signed-message cap once the content is JSON-escaped.
+// Keep well under the native signed-message cap once the model is JSON-escaped.
 const EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 
 function randomHex() {
@@ -29,32 +25,26 @@ async function exportConversation(format: ExportFormat) {
     return;
   }
   toast("Preparing export…");
-  const data = await readConversationExport(
+  const conversation = await readConversationExport(
     threadId,
     (window as unknown as { require?: unknown }).require,
-    { now: Date.now(), viewerId: accountId(document.cookie) },
+    {
+      viewerId: accountId(document.cookie),
+      utcOffsetMinutes: (timestampMs) => -new Date(timestampMs).getTimezoneOffset(),
+    },
   );
-  if (!data) {
+  if (!conversation) {
     diag("export.read", "conversation database unavailable");
     toast("Couldn't read this conversation", undefined, { warning: true });
     return;
   }
-  const content =
-    format === "html"
-      ? renderConversationHtml(data, { locale: navigator.language })
-      : renderConversationJson(data);
-  if (new TextEncoder().encode(content).length > EXPORT_MAX_BYTES) {
+  if (new TextEncoder().encode(JSON.stringify(conversation)).length > EXPORT_MAX_BYTES) {
     toast("This conversation is too large to export", undefined, { warning: true });
     return;
   }
   const reveal = `carrier-export:${randomHex()}`;
   try {
-    await carrierExportConversation({
-      format,
-      name: exportFileName(data.conversation.title),
-      content,
-      reveal,
-    });
+    await carrierExportConversation({ format, conversation, reveal });
   } catch (error) {
     if (error instanceof Error && error.message === "export cancelled") {
       toast("Export cancelled");
@@ -64,7 +54,7 @@ async function exportConversation(format: ExportFormat) {
     toast("Couldn't save the export", undefined, { warning: true });
     return;
   }
-  const count = data.messages.length;
+  const count = conversation.messages.length;
   toast(`Exported ${count.toLocaleString()} ${count === 1 ? "message" : "messages"}`, {
     label: downloadRevealLabel(navigator.userAgent),
     kind: "reveal-download",

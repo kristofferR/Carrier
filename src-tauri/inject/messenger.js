@@ -3318,8 +3318,6 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/conversation-export.ts
-  var EXPORT_FORMAT = "carrier-conversation-export";
-  var EXPORT_VERSION = 1;
   var EXPORT_MESSAGE_LIMIT = 5e4;
   var PARTICIPANT_LIMIT = 1e3;
   var ROW_LIMIT = 2e5;
@@ -3336,15 +3334,61 @@ ${button.innerHTML}`)
       return null;
     }
   }
+  var VAULT_MARKER = /\d{10}##\d{10}/;
+  function isVaulted(value) {
+    return VAULT_MARKER.test(value);
+  }
+  function revealText(value, unvault) {
+    if (typeof value !== "string" || value.trim() === "") return { text: null, unreadable: false };
+    if (!isVaulted(value)) return { text: value, unreadable: false };
+    let plain;
+    try {
+      plain = unvault?.(value);
+    } catch {
+      plain = void 0;
+    }
+    if (typeof plain !== "string" || isVaulted(plain)) return { text: null, unreadable: true };
+    return { text: plain.trim() === "" ? null : plain, unreadable: false };
+  }
   var isRow = (value) => !!value && typeof value === "object";
-  var nonEmpty = (value) => typeof value === "string" && value.trim() !== "" ? value : null;
-  function attachmentKind(row, mimeType) {
+  function attachmentKind(row, mimeType, filename) {
     if (mimeType?.startsWith("image/")) return "image";
     if (mimeType?.startsWith("video/")) return "video";
     if (mimeType?.startsWith("audio/")) return "audio";
     if (row.hasXma === true) return "link";
-    if (nonEmpty(row.filename)) return "file";
+    if (filename) return "file";
     return "other";
+  }
+  function callFromAttachment(row, unvault) {
+    const dataclass = revealText(row.xmaDataclass, unvault).text;
+    if (dataclass) {
+      try {
+        const parsed = JSON.parse(dataclass);
+        const content = isRow(parsed) ? parsed.content : null;
+        const items = !isRow(content) ? [] : content.__typename === "XMSGXmaSingleContent" ? [content] : Array.isArray(content.list) ? content.list : [];
+        for (const item of items) {
+          const data = isRow(item) ? item.custom_template_data : null;
+          if (!isRow(data) || data.__typename !== "XMSGXmaCallingTemplateData") continue;
+          const state2 = data.call_state;
+          const duration = Number(data.call_duration_sec);
+          return {
+            type: data.call_type === "VIDEO" ? "video" : "audio",
+            outcome: state2 === "MISSED" ? "missed" : state2 === "ENDED" ? "ended" : state2 === "STARTED" ? "started" : null,
+            durationSec: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null
+          };
+        }
+      } catch (_) {
+      }
+    }
+    for (const cta of [row.defaultCtaType, row.cta1Type]) {
+      if (typeof cta !== "string" || !cta.startsWith("xma_rtc_")) continue;
+      return {
+        type: cta.includes("video") ? "video" : "audio",
+        outcome: cta.includes("missed") ? "missed" : cta.includes("ended") ? "ended" : null,
+        durationSec: null
+      };
+    }
+    return null;
   }
   function exportHistory(ranges, truncated) {
     if (truncated) return "partial";
@@ -3354,29 +3398,9 @@ ${button.innerHTML}`)
     if (!oldest || typeof oldest.hasMoreBefore !== "boolean") return "unknown";
     return oldest.hasMoreBefore ? "partial" : "complete";
   }
-  function exportNotes(history2, truncated, unreadable) {
-    const notes = [];
-    if (truncated) {
-      notes.push(
-        `Only the newest ${EXPORT_MESSAGE_LIMIT.toLocaleString("en-US")} messages are included.`
-      );
-    } else if (history2 === "partial") {
-      notes.push(
-        "Older messages are not included because Messenger has not loaded them on this device. Scroll up in the conversation to load more, then export again."
-      );
-    } else if (history2 === "unknown") {
-      notes.push(
-        "Includes the messages Messenger has stored on this device. Older messages may be missing; scroll up in the conversation to load more, then export again."
-      );
-    }
-    notes.push(
-      "Photos, videos, and files are not included. Attachments are listed by type and name."
-    );
-    for (const table of unreadable) notes.push(`${table} could not be read and are not included.`);
-    return notes;
-  }
-  function buildConversationExport(rows, i64ToText) {
+  function buildConversationExport(rows, i64ToText, unvault) {
     const id = (value) => i64Text(value, i64ToText);
+    const plain = (value) => revealText(value, unvault).text;
     const people = /* @__PURE__ */ new Map();
     const participants = [];
     for (const pair of rows.participants) {
@@ -3384,16 +3408,19 @@ ${button.innerHTML}`)
       const [participant, contact] = pair;
       if (!isRow(participant)) continue;
       const personId = id(participant.contactId) ?? (isRow(contact) ? id(contact.id) : null);
-      const name = isRow(contact) ? nonEmpty(contact.name) : null;
       if (!personId || people.has(personId)) continue;
-      const person = { id: personId, name: name ?? "", nickname: nonEmpty(participant.nickname) };
+      const person = {
+        id: personId,
+        name: isRow(contact) && plain(contact.name) || "",
+        nickname: plain(participant.nickname)
+      };
       people.set(personId, person);
       participants.push(person);
     }
     for (const contact of rows.contacts) {
       if (!isRow(contact)) continue;
       const personId = id(contact.id);
-      const name = nonEmpty(contact.name);
+      const name = plain(contact.name);
       if (personId && name && !people.has(personId)) {
         people.set(personId, { id: personId, name, nickname: null });
       }
@@ -3402,7 +3429,7 @@ ${button.innerHTML}`)
     const reactionsByMessage = /* @__PURE__ */ new Map();
     for (const row of rows.reactions) {
       if (!isRow(row) || typeof row.messageId !== "string") continue;
-      const reaction = nonEmpty(row.reaction);
+      const reaction = plain(row.reaction);
       if (!reaction) continue;
       const actorId = id(row.actorId);
       const timestamp = id(row.timestampMs);
@@ -3419,16 +3446,23 @@ ${button.innerHTML}`)
       list.sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
     }
     const attachmentsByMessage = /* @__PURE__ */ new Map();
+    const callsByMessage = /* @__PURE__ */ new Map();
     for (const row of rows.attachments) {
       if (!isRow(row) || typeof row.messageId !== "string") continue;
-      const mimeType = nonEmpty(row.playableUrlMimeType) ?? nonEmpty(row.previewUrlMimeType);
+      const call = callFromAttachment(row, unvault);
+      if (call) {
+        callsByMessage.set(row.messageId, call);
+        continue;
+      }
+      const mimeType = plain(row.playableUrlMimeType) ?? plain(row.previewUrlMimeType);
+      const filename = plain(row.filename);
       const list = attachmentsByMessage.get(row.messageId) ?? [];
       list.push({
         index: Number(id(row.attachmentIndex) ?? list.length),
         value: {
-          kind: attachmentKind(row, mimeType),
-          filename: nonEmpty(row.filename),
-          title: nonEmpty(row.titleText),
+          kind: attachmentKind(row, mimeType, filename),
+          filename,
+          title: plain(row.titleText),
           mimeType
         }
       });
@@ -3445,26 +3479,29 @@ ${button.innerHTML}`)
       seen.add(row.messageId);
       const senderId = id(row.senderId);
       const unsent = row.isUnsent === true;
-      const replySource = nonEmpty(row.replySourceId);
+      const body = unsent ? { text: null, unreadable: false } : revealText(row.text, unvault);
+      const replySource = typeof row.replySourceId === "string" ? row.replySourceId : "";
       const replySenderId = id(row.replyToUserId);
       const sticker = id(row.stickerId);
       messages.push({
         id: row.messageId,
         senderId,
         senderName: nameOf(senderId),
-        timestamp: new Date(timestampMs).toISOString(),
         timestampMs,
-        text: unsent ? null : nonEmpty(row.text),
+        utcOffsetMinutes: rows.utcOffsetMinutes(timestampMs),
+        text: body.text,
         system: row.isAdminMessage === true,
         unsent,
+        unreadable: body.unreadable,
         forwarded: row.isForwarded === true,
         edited: Number(id(row.editCount) ?? 0) > 0,
         sticker: sticker !== null && sticker !== "0",
+        call: callsByMessage.get(row.messageId) ?? null,
         replyTo: replySource ? {
           messageId: replySource,
           senderId: replySenderId,
           senderName: nameOf(replySenderId),
-          text: nonEmpty(row.replyMessageText) ?? nonEmpty(row.replySnippet)
+          text: plain(row.replyMessageText) ?? plain(row.replySnippet)
         } : null,
         reactions: reactionsByMessage.get(row.messageId) ?? [],
         attachments: (attachmentsByMessage.get(row.messageId) ?? []).sort((a, b) => a.index - b.index).map(({ value }) => value)
@@ -3473,174 +3510,25 @@ ${button.innerHTML}`)
     messages.sort(
       (a, b) => a.timestampMs - b.timestampMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
     );
-    const history2 = exportHistory(rows.ranges, rows.truncated);
     return {
-      format: EXPORT_FORMAT,
-      version: EXPORT_VERSION,
-      exportedAt: new Date(rows.now).toISOString(),
       conversation: {
         id: rows.threadId,
-        title: conversationTitle(rows, participants),
+        title: conversationTitle(rows, plain(rows.threadName), participants),
         isGroup: rows.isGroup,
         participants
       },
-      history: history2,
-      notes: exportNotes(history2, rows.truncated, rows.unreadable),
+      history: exportHistory(rows.ranges, rows.truncated),
+      truncated: rows.truncated,
+      missing: rows.missing,
       messages
     };
   }
-  function conversationTitle(rows, participants) {
-    const named = nonEmpty(rows.threadName);
-    if (named) return named.trim();
+  function conversationTitle(rows, threadName, participants) {
+    if (threadName?.trim()) return threadName.trim();
     const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
     if (!rows.isGroup && others[0]) return others[0].name;
     if (others.length) return others.map((person) => person.name).join(", ");
     return "Conversation";
-  }
-  function escapeHtml(value) {
-    return value.replace(
-      /[&<>"']/g,
-      (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
-    );
-  }
-  function renderConversationJson(data) {
-    return `${JSON.stringify(data, null, 2)}
-`;
-  }
-  var ATTACHMENT_LABELS = {
-    image: "Photo",
-    video: "Video",
-    audio: "Audio",
-    file: "File",
-    link: "Link",
-    other: "Attachment"
-  };
-  function attachmentLabel(attachment) {
-    const label2 = ATTACHMENT_LABELS[attachment.kind];
-    const detail = attachment.filename ?? attachment.title;
-    return detail ? `${label2}: ${detail}` : label2;
-  }
-  var STYLE = `
-:root{color-scheme:light dark;--bg:#fff;--fg:#1c1e21;--muted:#65676b;--line:#e4e6eb;--quote:#f0f2f5}
-@media (prefers-color-scheme:dark){:root{--bg:#18191a;--fg:#e4e6eb;--muted:#b0b3b8;--line:#3a3b3c;--quote:#242526}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-header,main{max-width:760px;margin:0 auto;padding:16px 20px}
-header{border-bottom:1px solid var(--line)}
-h1{margin:0 0 4px;font-size:22px}
-.meta{margin:2px 0;color:var(--muted);font-size:13px}
-.notes{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:13px}
-.day{margin:24px 0 8px;font-size:13px;font-weight:600;color:var(--muted);text-align:center}
-.msg{padding:6px 0}
-.head{display:flex;gap:8px;align-items:baseline}
-.sender{font-weight:600}
-time,.flags{color:var(--muted);font-size:12px}
-.text{margin:2px 0;white-space:pre-wrap;overflow-wrap:anywhere}
-.system{margin:8px 0;color:var(--muted);font-size:13px;text-align:center;white-space:pre-wrap}
-.reply{margin:4px 0;padding:4px 10px;border-left:3px solid var(--line);background:var(--quote);border-radius:4px;font-size:13px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
-.reply a{color:inherit}
-.attachments{margin:2px 0;padding-left:18px;color:var(--muted);font-size:13px}
-.reactions{margin:2px 0;font-size:13px;color:var(--muted)}
-`;
-  function renderConversationHtml(data, options = {}) {
-    const day = new Intl.DateTimeFormat(options.locale, {
-      dateStyle: "full",
-      timeZone: options.timeZone
-    });
-    const time = new Intl.DateTimeFormat(options.locale, {
-      timeStyle: "short",
-      timeZone: options.timeZone
-    });
-    const stamp = new Intl.DateTimeFormat(options.locale, {
-      dateStyle: "medium",
-      timeStyle: "short",
-      timeZone: options.timeZone
-    });
-    const anchors = new Map(data.messages.map((message, index) => [message.id, `m${index + 1}`]));
-    const title = escapeHtml(data.conversation.title);
-    const count = data.messages.length;
-    const people = data.conversation.participants.map((person) => person.name || person.nickname).filter((name) => !!name);
-    const out = [
-      "<!doctype html>",
-      '<html lang="en">',
-      "<head>",
-      '<meta charset="utf-8">',
-      `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`,
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      '<meta name="generator" content="Carrier">',
-      `<title>${title}</title>`,
-      `<style>${STYLE}</style>`,
-      "</head>",
-      "<body>",
-      "<header>",
-      `<h1>${title}</h1>`,
-      `<p class="meta">${count.toLocaleString("en-US")} ${count === 1 ? "message" : "messages"}, exported ${escapeHtml(stamp.format(new Date(data.exportedAt)))}</p>`
-    ];
-    if (people.length) {
-      out.push(`<p class="meta">Participants: ${escapeHtml(people.join(", "))}</p>`);
-    }
-    if (data.notes.length) {
-      out.push(
-        `<ul class="notes">${data.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
-      );
-    }
-    out.push("</header>", "<main>");
-    let lastDay = "";
-    for (const [index, message] of data.messages.entries()) {
-      const date = new Date(message.timestampMs);
-      const dayLabel = day.format(date);
-      if (dayLabel !== lastDay) {
-        out.push(`<h2 class="day">${escapeHtml(dayLabel)}</h2>`);
-        lastDay = dayLabel;
-      }
-      const anchor = `m${index + 1}`;
-      const when = `<time datetime="${escapeHtml(message.timestamp)}">${escapeHtml(time.format(date))}</time>`;
-      if (message.system) {
-        const text = message.text ?? "Conversation update";
-        out.push(`<p class="system" id="${anchor}">${escapeHtml(text)} · ${when}</p>`);
-        continue;
-      }
-      const parts = [`<article class="msg" id="${anchor}">`];
-      const flags = [message.forwarded && "Forwarded", message.edited && "Edited"].filter(Boolean);
-      parts.push(
-        `<div class="head"><span class="sender">${escapeHtml(message.senderName ?? "Unknown sender")}</span>${when}${flags.length ? `<span class="flags">${flags.join(" · ")}</span>` : ""}</div>`
-      );
-      if (message.replyTo) {
-        const who = message.replyTo.senderName ?? "a message";
-        const target = anchors.get(message.replyTo.messageId);
-        const label2 = `Replying to ${escapeHtml(who)}`;
-        const quoted = message.replyTo.text ? `: ${escapeHtml(message.replyTo.text)}` : "";
-        parts.push(
-          `<blockquote class="reply">${target ? `<a href="#${target}">${label2}</a>` : label2}${quoted}</blockquote>`
-        );
-      }
-      if (message.unsent) parts.push('<p class="text flags">Message unsent</p>');
-      else if (message.text) parts.push(`<p class="text">${escapeHtml(message.text)}</p>`);
-      else if (message.sticker) parts.push('<p class="text flags">Sticker</p>');
-      if (message.attachments.length) {
-        parts.push(
-          `<ul class="attachments">${message.attachments.map((attachment) => `<li>${escapeHtml(attachmentLabel(attachment))}</li>`).join("")}</ul>`
-        );
-      }
-      if (message.reactions.length) {
-        parts.push(
-          `<p class="reactions">${message.reactions.map(
-            (reaction) => escapeHtml(
-              reaction.actorName ? `${reaction.reaction} ${reaction.actorName}` : reaction.reaction
-            )
-          ).join(" · ")}</p>`
-        );
-      }
-      parts.push("</article>");
-      out.push(parts.join(""));
-    }
-    if (!count) out.push('<p class="system">No messages are stored on this device yet.</p>');
-    out.push("</main>", "</body>", "</html>", "");
-    return out.join("\n");
-  }
-  function exportFileName(title) {
-    const cleaned = title.replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, " ").replace(/\s+/g, " ").trim().replace(/^\.+|\.+$/g, "");
-    return Array.from(cleaned).slice(0, 80).join("").trim() || "Conversation";
   }
   async function readConversationExport(threadId, importModule, options) {
     if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
@@ -3652,6 +3540,15 @@ time,.flags{color:var(--muted);font-size:12px}
       const i64 = load("I64");
       const q = load("ReQL");
       const i64ToText = i64.to_string?.bind(i64);
+      let unvault;
+      try {
+        const vault = load("MAWVault");
+        if (typeof vault?.unvault === "function") {
+          const fn = vault.unvault;
+          unvault = (value) => fn(value);
+        }
+      } catch (_) {
+      }
       const key = i64.of_string(threadId);
       const thread2 = await db.tables.threads.get(key);
       if (!isRow(thread2)) return null;
@@ -3666,12 +3563,12 @@ time,.flags{color:var(--muted);font-size:12px}
         if (!Array.isArray(result)) throw new Error("unexpected query result");
         return result;
       };
-      const unreadable = [];
-      const optional = async (label2, query) => {
+      const missing = [];
+      const optional = async (part, query) => {
         try {
           return await rows(query());
         } catch (_) {
-          unreadable.push(label2);
+          missing.push(part);
           return [];
         }
       };
@@ -3681,18 +3578,18 @@ time,.flags{color:var(--muted);font-size:12px}
       const truncated = messages.length > EXPORT_MESSAGE_LIMIT;
       if (truncated) messages.length = EXPORT_MESSAGE_LIMIT;
       const participants = await optional(
-        "Participant names",
+        "participants",
         () => q.leftJoin(
           q.fromTableAscending(db.tables.participants).getKeyRange(key),
           q.fromTableAscending(db.tables.contacts)
         ).take(PARTICIPANT_LIMIT)
       );
       const reactions = await optional(
-        "Reactions",
+        "reactions",
         () => q.fromTableAscending(db.tables.reactions).getKeyRange(key).take(ROW_LIMIT)
       );
       const attachments = await optional(
-        "Attachment details",
+        "attachments",
         () => q.fromTableAscending(db.tables.attachments).getKeyRange(key).take(ROW_LIMIT)
       );
       let ranges = [];
@@ -3709,16 +3606,16 @@ time,.flags{color:var(--muted);font-size:12px}
           if (personId) known.add(personId);
         }
       }
-      const missing = /* @__PURE__ */ new Set();
+      const unknown = /* @__PURE__ */ new Set();
       for (const row of [...messages, ...reactions]) {
         if (!isRow(row)) continue;
         for (const value of [row.senderId, row.actorId, row.replyToUserId]) {
           const personId = i64Text(value, i64ToText);
-          if (personId && !known.has(personId)) missing.add(personId);
+          if (personId && !known.has(personId)) unknown.add(personId);
         }
       }
       const contacts = [];
-      for (const personId of [...missing].slice(0, UNKNOWN_SENDER_LIMIT)) {
+      for (const personId of [...unknown].slice(0, UNKNOWN_SENDER_LIMIT)) {
         try {
           contacts.push(
             ...await rows(
@@ -3741,10 +3638,11 @@ time,.flags{color:var(--muted);font-size:12px}
           attachments,
           ranges,
           truncated,
-          unreadable,
-          now: options.now
+          missing,
+          utcOffsetMinutes: options.utcOffsetMinutes
         },
-        i64ToText
+        i64ToText,
+        unvault
       );
     };
     try {
@@ -3772,29 +3670,26 @@ time,.flags{color:var(--muted);font-size:12px}
       return;
     }
     toast("Preparing export…");
-    const data = await readConversationExport(
+    const conversation = await readConversationExport(
       threadId,
       window.require,
-      { now: Date.now(), viewerId: accountId(document.cookie) }
+      {
+        viewerId: accountId(document.cookie),
+        utcOffsetMinutes: (timestampMs) => -new Date(timestampMs).getTimezoneOffset()
+      }
     );
-    if (!data) {
+    if (!conversation) {
       diag("export.read", "conversation database unavailable");
       toast("Couldn't read this conversation", void 0, { warning: true });
       return;
     }
-    const content = format === "html" ? renderConversationHtml(data, { locale: navigator.language }) : renderConversationJson(data);
-    if (new TextEncoder().encode(content).length > EXPORT_MAX_BYTES) {
+    if (new TextEncoder().encode(JSON.stringify(conversation)).length > EXPORT_MAX_BYTES) {
       toast("This conversation is too large to export", void 0, { warning: true });
       return;
     }
     const reveal = `carrier-export:${randomHex()}`;
     try {
-      await carrierExportConversation({
-        format,
-        name: exportFileName(data.conversation.title),
-        content,
-        reveal
-      });
+      await carrierExportConversation({ format, conversation, reveal });
     } catch (error) {
       if (error instanceof Error && error.message === "export cancelled") {
         toast("Export cancelled");
@@ -3804,7 +3699,7 @@ time,.flags{color:var(--muted);font-size:12px}
       toast("Couldn't save the export", void 0, { warning: true });
       return;
     }
-    const count = data.messages.length;
+    const count = conversation.messages.length;
     toast(`Exported ${count.toLocaleString()} ${count === 1 ? "message" : "messages"}`, {
       label: downloadRevealLabel(navigator.userAgent),
       kind: "reveal-download",

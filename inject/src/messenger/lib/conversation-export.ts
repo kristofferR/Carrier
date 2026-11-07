@@ -1,13 +1,10 @@
 /*
- * Export the open conversation to HTML or JSON (Ref #371). The rows come from
- * Messenger's local database, the same tables its own conversation view
- * renders from, so encrypted chats export too. Nothing leaves the machine:
- * the page renders the file and the native shell saves it where the user
- * chooses.
+ * Export the open conversation (Ref #371). The rows come from Messenger's
+ * local database, the same tables its own conversation view renders from, so
+ * encrypted chats export too. This side only reads and maps rows: the native
+ * shell validates the result, renders the HTML or JSON file, and saves it
+ * where the user chooses. Nothing leaves the machine.
  */
-
-export const EXPORT_FORMAT = "carrier-conversation-export";
-export const EXPORT_VERSION = 1;
 
 /** Newest messages kept when a conversation has more than this stored locally. */
 export const EXPORT_MESSAGE_LIMIT = 50_000;
@@ -18,11 +15,14 @@ const UNKNOWN_SENDER_LIMIT = 200;
 export type ExportFormat = "html" | "json";
 
 /**
- * Whether the file holds the whole conversation: "complete" when Messenger
+ * Whether the export holds the whole conversation: "complete" when Messenger
  * reports no older history, "partial" when it does (or the export was capped),
  * "unknown" when the database has no record either way.
  */
 export type ExportHistory = "complete" | "partial" | "unknown";
+
+/** Optional tables that could not be read; the native side names them in the file. */
+export type ExportMissingPart = "participants" | "reactions" | "attachments";
 
 export interface ExportPerson {
   id: string;
@@ -46,6 +46,13 @@ export interface ExportAttachment {
   mimeType: string | null;
 }
 
+export interface ExportCall {
+  type: "audio" | "video";
+  /** Null when Messenger's record doesn't say (older call records). */
+  outcome: "missed" | "ended" | "started" | null;
+  durationSec: number | null;
+}
+
 export interface ExportReply {
   messageId: string;
   senderId: string | null;
@@ -57,24 +64,26 @@ export interface ExportMessage {
   id: string;
   senderId: string | null;
   senderName: string | null;
-  timestamp: string;
   timestampMs: number;
+  /** The local time zone's offset at this message, for the rendered dates. */
+  utcOffsetMinutes: number;
   text: string | null;
   /** Messenger's own notices ("Alex named the group …"). */
   system: boolean;
   unsent: boolean;
+  /** Encrypted text this device could not decrypt; `text` is null. */
+  unreadable: boolean;
   forwarded: boolean;
   edited: boolean;
   sticker: boolean;
+  call: ExportCall | null;
   replyTo: ExportReply | null;
   reactions: ExportReaction[];
   attachments: ExportAttachment[];
 }
 
+/** What the page hands the native side; it adds notes, dates, and the file format. */
 export interface ConversationExport {
-  format: typeof EXPORT_FORMAT;
-  version: typeof EXPORT_VERSION;
-  exportedAt: string;
   conversation: {
     id: string;
     title: string;
@@ -82,13 +91,15 @@ export interface ConversationExport {
     participants: ExportPerson[];
   };
   history: ExportHistory;
-  /** Plain-language notes on what the file leaves out. */
-  notes: string[];
+  truncated: boolean;
+  missing: ExportMissingPart[];
   messages: ExportMessage[];
 }
 
 type Row = Record<string, unknown>;
 type I64ToString = (value: unknown) => unknown;
+/** Messenger's MAWVault.unvault: decrypts at-rest encrypted text, else returns it unchanged. */
+type Unvault = (value: string) => unknown;
 
 /** A database 64-bit integer as decimal text, or null when it is not one. */
 export function i64Text(value: unknown, i64ToText?: I64ToString): string | null {
@@ -104,17 +115,96 @@ export function i64Text(value: unknown, i64ToText?: I64ToString): string | null 
   }
 }
 
-const isRow = (value: unknown): value is Row => !!value && typeof value === "object";
-const nonEmpty = (value: unknown): string | null =>
-  typeof value === "string" && value.trim() !== "" ? value : null;
+/*
+ * Encrypted chats keep text encrypted at rest: Messenger's vault wraps the
+ * ciphertext in a "<10 digits>##<10 digits>" marker on both sides
+ * (MAWVaultMaterials / MAWVault) and its views call MAWVault.unvault()
+ * synchronously before display. Text still carrying the marker after unvault
+ * could not be decrypted here and must never be exported as if it were text.
+ */
+const VAULT_MARKER = /\d{10}##\d{10}/;
 
-function attachmentKind(row: Row, mimeType: string | null): ExportAttachmentKind {
+export function isVaulted(value: string): boolean {
+  return VAULT_MARKER.test(value);
+}
+
+/** Plain text, or `unreadable` when it is vaulted and this page cannot decrypt it. */
+export function revealText(
+  value: unknown,
+  unvault?: Unvault,
+): { text: string | null; unreadable: boolean } {
+  if (typeof value !== "string" || value.trim() === "") return { text: null, unreadable: false };
+  if (!isVaulted(value)) return { text: value, unreadable: false };
+  let plain: unknown;
+  try {
+    plain = unvault?.(value);
+  } catch {
+    plain = undefined;
+  }
+  if (typeof plain !== "string" || isVaulted(plain)) return { text: null, unreadable: true };
+  return { text: plain.trim() === "" ? null : plain, unreadable: false };
+}
+
+const isRow = (value: unknown): value is Row => !!value && typeof value === "object";
+
+function attachmentKind(row: Row, mimeType: string | null, filename: string | null) {
   if (mimeType?.startsWith("image/")) return "image";
   if (mimeType?.startsWith("video/")) return "video";
   if (mimeType?.startsWith("audio/")) return "audio";
   if (row.hasXma === true) return "link";
-  if (nonEmpty(row.filename)) return "file";
+  if (filename) return "file";
   return "other";
+}
+
+/*
+ * Call records are XMA attachments. Encrypted chats store an XMA 2.0
+ * dataclass (JSON) whose template is XMSGXmaCallingTemplateData with
+ * call_type AUDIO/VIDEO and call_state MISSED/ENDED/STARTED, the fields
+ * MWXMAV2RTCCallTemplate renders. Other chats mark them with an
+ * "xma_rtc_*" CTA type (MWXMAUtils.isRTCXMA).
+ */
+export function callFromAttachment(row: Row, unvault?: Unvault): ExportCall | null {
+  const dataclass = revealText(row.xmaDataclass, unvault).text;
+  if (dataclass) {
+    try {
+      const parsed: unknown = JSON.parse(dataclass);
+      const content = isRow(parsed) ? parsed.content : null;
+      const items = !isRow(content)
+        ? []
+        : content.__typename === "XMSGXmaSingleContent"
+          ? [content]
+          : Array.isArray(content.list)
+            ? content.list
+            : [];
+      for (const item of items) {
+        const data = isRow(item) ? item.custom_template_data : null;
+        if (!isRow(data) || data.__typename !== "XMSGXmaCallingTemplateData") continue;
+        const state = data.call_state;
+        const duration = Number(data.call_duration_sec);
+        return {
+          type: data.call_type === "VIDEO" ? "video" : "audio",
+          outcome:
+            state === "MISSED"
+              ? "missed"
+              : state === "ENDED"
+                ? "ended"
+                : state === "STARTED"
+                  ? "started"
+                  : null,
+          durationSec: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null,
+        };
+      }
+    } catch (_) {}
+  }
+  for (const cta of [row.defaultCtaType, row.cta1Type]) {
+    if (typeof cta !== "string" || !cta.startsWith("xma_rtc_")) continue;
+    return {
+      type: cta.includes("video") ? "video" : "audio",
+      outcome: cta.includes("missed") ? "missed" : cta.includes("ended") ? "ended" : null,
+      durationSec: null,
+    };
+  }
+  return null;
 }
 
 export interface ExportRows {
@@ -135,9 +225,9 @@ export interface ExportRows {
   ranges: unknown[];
   /** True when the message read hit EXPORT_MESSAGE_LIMIT. */
   truncated: boolean;
-  /** Tables that could not be read; named in the notes. */
-  unreadable: string[];
-  now: number;
+  missing: ExportMissingPart[];
+  /** The local time zone's offset at a moment, in minutes east of UTC. */
+  utcOffsetMinutes: (timestampMs: number) => number;
 }
 
 /** Whether Messenger has more history than it stored locally. */
@@ -151,34 +241,14 @@ export function exportHistory(ranges: unknown[], truncated: boolean): ExportHist
   return oldest.hasMoreBefore ? "partial" : "complete";
 }
 
-function exportNotes(history: ExportHistory, truncated: boolean, unreadable: string[]): string[] {
-  const notes: string[] = [];
-  if (truncated) {
-    notes.push(
-      `Only the newest ${EXPORT_MESSAGE_LIMIT.toLocaleString("en-US")} messages are included.`,
-    );
-  } else if (history === "partial") {
-    notes.push(
-      "Older messages are not included because Messenger has not loaded them on this device. Scroll up in the conversation to load more, then export again.",
-    );
-  } else if (history === "unknown") {
-    notes.push(
-      "Includes the messages Messenger has stored on this device. Older messages may be missing; scroll up in the conversation to load more, then export again.",
-    );
-  }
-  notes.push(
-    "Photos, videos, and files are not included. Attachments are listed by type and name.",
-  );
-  for (const table of unreadable) notes.push(`${table} could not be read and are not included.`);
-  return notes;
-}
-
 /** Map raw database rows to the export model. Never throws on unexpected rows: it skips them. */
 export function buildConversationExport(
   rows: ExportRows,
   i64ToText?: I64ToString,
+  unvault?: Unvault,
 ): ConversationExport {
   const id = (value: unknown) => i64Text(value, i64ToText);
+  const plain = (value: unknown) => revealText(value, unvault).text;
   const people = new Map<string, ExportPerson>();
   const participants: ExportPerson[] = [];
   for (const pair of rows.participants) {
@@ -186,16 +256,19 @@ export function buildConversationExport(
     const [participant, contact] = pair as unknown[];
     if (!isRow(participant)) continue;
     const personId = id(participant.contactId) ?? (isRow(contact) ? id(contact.id) : null);
-    const name = isRow(contact) ? nonEmpty(contact.name) : null;
     if (!personId || people.has(personId)) continue;
-    const person = { id: personId, name: name ?? "", nickname: nonEmpty(participant.nickname) };
+    const person = {
+      id: personId,
+      name: (isRow(contact) && plain(contact.name)) || "",
+      nickname: plain(participant.nickname),
+    };
     people.set(personId, person);
     participants.push(person);
   }
   for (const contact of rows.contacts) {
     if (!isRow(contact)) continue;
     const personId = id(contact.id);
-    const name = nonEmpty(contact.name);
+    const name = plain(contact.name);
     if (personId && name && !people.has(personId)) {
       people.set(personId, { id: personId, name, nickname: null });
     }
@@ -205,7 +278,7 @@ export function buildConversationExport(
   const reactionsByMessage = new Map<string, ExportReaction[]>();
   for (const row of rows.reactions) {
     if (!isRow(row) || typeof row.messageId !== "string") continue;
-    const reaction = nonEmpty(row.reaction);
+    const reaction = plain(row.reaction);
     if (!reaction) continue;
     const actorId = id(row.actorId);
     const timestamp = id(row.timestampMs);
@@ -223,16 +296,23 @@ export function buildConversationExport(
   }
 
   const attachmentsByMessage = new Map<string, { index: number; value: ExportAttachment }[]>();
+  const callsByMessage = new Map<string, ExportCall>();
   for (const row of rows.attachments) {
     if (!isRow(row) || typeof row.messageId !== "string") continue;
-    const mimeType = nonEmpty(row.playableUrlMimeType) ?? nonEmpty(row.previewUrlMimeType);
+    const call = callFromAttachment(row, unvault);
+    if (call) {
+      callsByMessage.set(row.messageId, call);
+      continue;
+    }
+    const mimeType = plain(row.playableUrlMimeType) ?? plain(row.previewUrlMimeType);
+    const filename = plain(row.filename);
     const list = attachmentsByMessage.get(row.messageId) ?? [];
     list.push({
       index: Number(id(row.attachmentIndex) ?? list.length),
       value: {
-        kind: attachmentKind(row, mimeType),
-        filename: nonEmpty(row.filename),
-        title: nonEmpty(row.titleText),
+        kind: attachmentKind(row, mimeType, filename),
+        filename,
+        title: plain(row.titleText),
         mimeType,
       },
     });
@@ -250,27 +330,30 @@ export function buildConversationExport(
     seen.add(row.messageId);
     const senderId = id(row.senderId);
     const unsent = row.isUnsent === true;
-    const replySource = nonEmpty(row.replySourceId);
+    const body = unsent ? { text: null, unreadable: false } : revealText(row.text, unvault);
+    const replySource = typeof row.replySourceId === "string" ? row.replySourceId : "";
     const replySenderId = id(row.replyToUserId);
     const sticker = id(row.stickerId);
     messages.push({
       id: row.messageId,
       senderId,
       senderName: nameOf(senderId),
-      timestamp: new Date(timestampMs).toISOString(),
       timestampMs,
-      text: unsent ? null : nonEmpty(row.text),
+      utcOffsetMinutes: rows.utcOffsetMinutes(timestampMs),
+      text: body.text,
       system: row.isAdminMessage === true,
       unsent,
+      unreadable: body.unreadable,
       forwarded: row.isForwarded === true,
       edited: Number(id(row.editCount) ?? 0) > 0,
       sticker: sticker !== null && sticker !== "0",
+      call: callsByMessage.get(row.messageId) ?? null,
       replyTo: replySource
         ? {
             messageId: replySource,
             senderId: replySenderId,
             senderName: nameOf(replySenderId),
-            text: nonEmpty(row.replyMessageText) ?? nonEmpty(row.replySnippet),
+            text: plain(row.replyMessageText) ?? plain(row.replySnippet),
           }
         : null,
       reactions: reactionsByMessage.get(row.messageId) ?? [],
@@ -283,211 +366,30 @@ export function buildConversationExport(
     (a, b) => a.timestampMs - b.timestampMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
 
-  const history = exportHistory(rows.ranges, rows.truncated);
   return {
-    format: EXPORT_FORMAT,
-    version: EXPORT_VERSION,
-    exportedAt: new Date(rows.now).toISOString(),
     conversation: {
       id: rows.threadId,
-      title: conversationTitle(rows, participants),
+      title: conversationTitle(rows, plain(rows.threadName), participants),
       isGroup: rows.isGroup,
       participants,
     },
-    history,
-    notes: exportNotes(history, rows.truncated, rows.unreadable),
+    history: exportHistory(rows.ranges, rows.truncated),
+    truncated: rows.truncated,
+    missing: rows.missing,
     messages,
   };
 }
 
-function conversationTitle(rows: ExportRows, participants: ExportPerson[]): string {
-  const named = nonEmpty(rows.threadName);
-  if (named) return named.trim();
+function conversationTitle(
+  rows: ExportRows,
+  threadName: string | null,
+  participants: ExportPerson[],
+): string {
+  if (threadName?.trim()) return threadName.trim();
   const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
   if (!rows.isGroup && others[0]) return others[0].name;
   if (others.length) return others.map((person) => person.name).join(", ");
   return "Conversation";
-}
-
-/* ------------------------------ Rendering ------------------------------ */
-
-export function escapeHtml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!,
-  );
-}
-
-/** Versioned JSON for archiving; `JSON.parse` returns the export model unchanged. */
-export function renderConversationJson(data: ConversationExport): string {
-  return `${JSON.stringify(data, null, 2)}\n`;
-}
-
-const ATTACHMENT_LABELS: Record<ExportAttachmentKind, string> = {
-  image: "Photo",
-  video: "Video",
-  audio: "Audio",
-  file: "File",
-  link: "Link",
-  other: "Attachment",
-};
-
-function attachmentLabel(attachment: ExportAttachment): string {
-  const label = ATTACHMENT_LABELS[attachment.kind];
-  const detail = attachment.filename ?? attachment.title;
-  return detail ? `${label}: ${detail}` : label;
-}
-
-const STYLE = `
-:root{color-scheme:light dark;--bg:#fff;--fg:#1c1e21;--muted:#65676b;--line:#e4e6eb;--quote:#f0f2f5}
-@media (prefers-color-scheme:dark){:root{--bg:#18191a;--fg:#e4e6eb;--muted:#b0b3b8;--line:#3a3b3c;--quote:#242526}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-header,main{max-width:760px;margin:0 auto;padding:16px 20px}
-header{border-bottom:1px solid var(--line)}
-h1{margin:0 0 4px;font-size:22px}
-.meta{margin:2px 0;color:var(--muted);font-size:13px}
-.notes{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:13px}
-.day{margin:24px 0 8px;font-size:13px;font-weight:600;color:var(--muted);text-align:center}
-.msg{padding:6px 0}
-.head{display:flex;gap:8px;align-items:baseline}
-.sender{font-weight:600}
-time,.flags{color:var(--muted);font-size:12px}
-.text{margin:2px 0;white-space:pre-wrap;overflow-wrap:anywhere}
-.system{margin:8px 0;color:var(--muted);font-size:13px;text-align:center;white-space:pre-wrap}
-.reply{margin:4px 0;padding:4px 10px;border-left:3px solid var(--line);background:var(--quote);border-radius:4px;font-size:13px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
-.reply a{color:inherit}
-.attachments{margin:2px 0;padding-left:18px;color:var(--muted);font-size:13px}
-.reactions{margin:2px 0;font-size:13px;color:var(--muted)}
-`;
-
-export interface HtmlOptions {
-  locale?: string;
-  timeZone?: string;
-}
-
-/**
- * Self-contained HTML for reading: inline styles only, no scripts, and a CSP
- * that forbids every network load, so the file opens offline and stays
- * offline. Every value from Messenger is escaped.
- */
-export function renderConversationHtml(
-  data: ConversationExport,
-  options: HtmlOptions = {},
-): string {
-  const day = new Intl.DateTimeFormat(options.locale, {
-    dateStyle: "full",
-    timeZone: options.timeZone,
-  });
-  const time = new Intl.DateTimeFormat(options.locale, {
-    timeStyle: "short",
-    timeZone: options.timeZone,
-  });
-  const stamp = new Intl.DateTimeFormat(options.locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: options.timeZone,
-  });
-  const anchors = new Map(data.messages.map((message, index) => [message.id, `m${index + 1}`]));
-  const title = escapeHtml(data.conversation.title);
-  const count = data.messages.length;
-  const people = data.conversation.participants
-    .map((person) => person.name || person.nickname)
-    .filter((name): name is string => !!name);
-
-  const out: string[] = [
-    "<!doctype html>",
-    '<html lang="en">',
-    "<head>",
-    '<meta charset="utf-8">',
-    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`,
-    '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    '<meta name="generator" content="Carrier">',
-    `<title>${title}</title>`,
-    `<style>${STYLE}</style>`,
-    "</head>",
-    "<body>",
-    "<header>",
-    `<h1>${title}</h1>`,
-    `<p class="meta">${count.toLocaleString("en-US")} ${count === 1 ? "message" : "messages"}, exported ${escapeHtml(stamp.format(new Date(data.exportedAt)))}</p>`,
-  ];
-  if (people.length) {
-    out.push(`<p class="meta">Participants: ${escapeHtml(people.join(", "))}</p>`);
-  }
-  if (data.notes.length) {
-    out.push(
-      `<ul class="notes">${data.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`,
-    );
-  }
-  out.push("</header>", "<main>");
-
-  let lastDay = "";
-  for (const [index, message] of data.messages.entries()) {
-    const date = new Date(message.timestampMs);
-    const dayLabel = day.format(date);
-    if (dayLabel !== lastDay) {
-      out.push(`<h2 class="day">${escapeHtml(dayLabel)}</h2>`);
-      lastDay = dayLabel;
-    }
-    const anchor = `m${index + 1}`;
-    const when = `<time datetime="${escapeHtml(message.timestamp)}">${escapeHtml(time.format(date))}</time>`;
-    if (message.system) {
-      const text = message.text ?? "Conversation update";
-      out.push(`<p class="system" id="${anchor}">${escapeHtml(text)} · ${when}</p>`);
-      continue;
-    }
-    const parts: string[] = [`<article class="msg" id="${anchor}">`];
-    const flags = [message.forwarded && "Forwarded", message.edited && "Edited"].filter(Boolean);
-    parts.push(
-      `<div class="head"><span class="sender">${escapeHtml(message.senderName ?? "Unknown sender")}</span>${when}${flags.length ? `<span class="flags">${flags.join(" · ")}</span>` : ""}</div>`,
-    );
-    if (message.replyTo) {
-      const who = message.replyTo.senderName ?? "a message";
-      const target = anchors.get(message.replyTo.messageId);
-      const label = `Replying to ${escapeHtml(who)}`;
-      const quoted = message.replyTo.text ? `: ${escapeHtml(message.replyTo.text)}` : "";
-      parts.push(
-        `<blockquote class="reply">${target ? `<a href="#${target}">${label}</a>` : label}${quoted}</blockquote>`,
-      );
-    }
-    if (message.unsent) parts.push('<p class="text flags">Message unsent</p>');
-    else if (message.text) parts.push(`<p class="text">${escapeHtml(message.text)}</p>`);
-    else if (message.sticker) parts.push('<p class="text flags">Sticker</p>');
-    if (message.attachments.length) {
-      parts.push(
-        `<ul class="attachments">${message.attachments
-          .map((attachment) => `<li>${escapeHtml(attachmentLabel(attachment))}</li>`)
-          .join("")}</ul>`,
-      );
-    }
-    if (message.reactions.length) {
-      parts.push(
-        `<p class="reactions">${message.reactions
-          .map((reaction) =>
-            escapeHtml(
-              reaction.actorName ? `${reaction.reaction} ${reaction.actorName}` : reaction.reaction,
-            ),
-          )
-          .join(" · ")}</p>`,
-      );
-    }
-    parts.push("</article>");
-    out.push(parts.join(""));
-  }
-  if (!count) out.push('<p class="system">No messages are stored on this device yet.</p>');
-  out.push("</main>", "</body>", "</html>", "");
-  return out.join("\n");
-}
-
-/** A file name stem from the conversation title; the native side adds the extension. */
-export function exportFileName(title: string): string {
-  const cleaned = title
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: strip control characters from file names
-    .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^\.+|\.+$/g, "");
-  return Array.from(cleaned).slice(0, 80).join("").trim() || "Conversation";
 }
 
 /* --------------------------- Database reading -------------------------- */
@@ -516,7 +418,11 @@ interface MessengerDatabase {
 export async function readConversationExport(
   threadId: string,
   importModule: unknown,
-  options: { now: number; viewerId: string | null; timeoutMs?: number },
+  options: {
+    viewerId: string | null;
+    utcOffsetMinutes: (timestampMs: number) => number;
+    timeoutMs?: number;
+  },
 ): Promise<ConversationExport | null> {
   if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
   const load = importModule as (name: string) => unknown;
@@ -532,6 +438,14 @@ export async function readConversationExport(
     };
     const q = load("ReQL") as MessengerQueries;
     const i64ToText = i64.to_string?.bind(i64);
+    let unvault: Unvault | undefined;
+    try {
+      const vault = load("MAWVault") as { unvault?: unknown };
+      if (typeof vault?.unvault === "function") {
+        const fn = vault.unvault as (value: string) => unknown;
+        unvault = (value) => fn(value);
+      }
+    } catch (_) {}
     const key = i64.of_string(threadId);
     const thread = await db.tables.threads.get(key);
     if (!isRow(thread)) return null;
@@ -546,12 +460,12 @@ export async function readConversationExport(
       if (!Array.isArray(result)) throw new Error("unexpected query result");
       return result as unknown[];
     };
-    const unreadable: string[] = [];
-    const optional = async (label: string, query: () => Query) => {
+    const missing: ExportMissingPart[] = [];
+    const optional = async (part: ExportMissingPart, query: () => Query) => {
       try {
         return await rows(query());
       } catch (_) {
-        unreadable.push(label);
+        missing.push(part);
         return [];
       }
     };
@@ -565,7 +479,7 @@ export async function readConversationExport(
     );
     const truncated = messages.length > EXPORT_MESSAGE_LIMIT;
     if (truncated) messages.length = EXPORT_MESSAGE_LIMIT;
-    const participants = await optional("Participant names", () =>
+    const participants = await optional("participants", () =>
       q
         .leftJoin(
           q.fromTableAscending(db.tables.participants).getKeyRange(key),
@@ -573,10 +487,10 @@ export async function readConversationExport(
         )
         .take(PARTICIPANT_LIMIT),
     );
-    const reactions = await optional("Reactions", () =>
+    const reactions = await optional("reactions", () =>
       q.fromTableAscending(db.tables.reactions).getKeyRange(key).take(ROW_LIMIT),
     );
-    const attachments = await optional("Attachment details", () =>
+    const attachments = await optional("attachments", () =>
       q.fromTableAscending(db.tables.attachments).getKeyRange(key).take(ROW_LIMIT),
     );
     let ranges: unknown[] = [];
@@ -594,16 +508,16 @@ export async function readConversationExport(
         if (personId) known.add(personId);
       }
     }
-    const missing = new Set<string>();
+    const unknown = new Set<string>();
     for (const row of [...messages, ...reactions]) {
       if (!isRow(row)) continue;
       for (const value of [row.senderId, row.actorId, row.replyToUserId]) {
         const personId = i64Text(value, i64ToText);
-        if (personId && !known.has(personId)) missing.add(personId);
+        if (personId && !known.has(personId)) unknown.add(personId);
       }
     }
     const contacts: unknown[] = [];
-    for (const personId of [...missing].slice(0, UNKNOWN_SENDER_LIMIT)) {
+    for (const personId of [...unknown].slice(0, UNKNOWN_SENDER_LIMIT)) {
       try {
         contacts.push(
           ...(await rows(
@@ -626,10 +540,11 @@ export async function readConversationExport(
         attachments,
         ranges,
         truncated,
-        unreadable,
-        now: options.now,
+        missing,
+        utcOffsetMinutes: options.utcOffsetMinutes,
       },
       i64ToText,
+      unvault,
     );
   };
   try {

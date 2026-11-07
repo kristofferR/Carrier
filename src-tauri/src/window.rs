@@ -1603,7 +1603,7 @@ fn init_script(
     return carrierNativeCall(
       'carrier:export-conversation', 'saved',
       'export cancelled', 'export timed out',
-      {{ format: payload.format, name: payload.name, content: payload.content, reveal: payload.reveal }},
+      {{ format: payload.format, conversation: payload.conversation, reveal: payload.reveal }},
       true, 'cancelled', 'export failed'
     );
   }};

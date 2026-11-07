@@ -109,14 +109,13 @@ declare const carrierPrepareDownload: (action: string, url: string) => Promise<u
 declare const carrierChooseDownload: (url: string, name: string) => Promise<unknown>;
 
 /**
- * Ask the native shell to save a rendered conversation export where the user
+ * Ask the native shell to render and save a conversation export where the user
  * chooses. Rejects with "export cancelled" when the save dialog is dismissed.
  * `reveal` is an opaque key the toast's reveal action can use afterwards.
  */
 declare const carrierExportConversation: (payload: {
   format: "html" | "json";
-  name: string;
-  content: string;
+  conversation: import("./messenger/lib/conversation-export").ConversationExport;
   reveal: string;
 }) => Promise<void>;
 
