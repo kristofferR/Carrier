@@ -6,6 +6,7 @@ import {
   type ExportRows,
   exportHistory,
   i64Text,
+  listedNames,
   readConversationExport,
   revealText,
 } from "./conversation-export";
@@ -451,5 +452,18 @@ describe("readConversationExport", () => {
     const pending = (name: string) =>
       name === "LSDatabaseSingleton" ? { LSDatabaseSingleton: new Promise(() => {}) } : {};
     expect(await readConversationExport("100", pending, { ...options, timeoutMs: 1 })).toBeNull();
+  });
+});
+
+describe("listedNames", () => {
+  test("lists every member while the title is short", () => {
+    expect(listedNames(["Ada", "Alan", "Grace"])).toBe("Ada, Alan, Grace");
+  });
+
+  test("ends in a count before a long member list outgrows the title limit", () => {
+    const names = Array.from({ length: 60 }, (_, i) => `Member Number ${i} Longsurname`);
+    const title = listedNames(names);
+    expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(900);
+    expect(title).toMatch(/^Member Number 0 Longsurname, .* and \d+ more$/);
   });
 });

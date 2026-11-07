@@ -3527,8 +3527,23 @@ ${button.innerHTML}`)
     if (threadName?.trim()) return threadName.trim();
     const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
     if (!rows.isGroup && others[0]) return others[0].name;
-    if (others.length) return others.map((person) => person.name).join(", ");
+    if (others.length) return listedNames(others.map((person) => person.name));
     return "Conversation";
+  }
+  var TITLE_BYTES = 900;
+  function listedNames(names2) {
+    const bytes = (text) => new TextEncoder().encode(text).length;
+    let title = "";
+    for (const [index, name] of names2.entries()) {
+      const next = title ? `${title}, ${name}` : name;
+      const more = names2.length - index - 1;
+      const suffix = more ? ` and ${more} more` : "";
+      if (bytes(next + suffix) > TITLE_BYTES) {
+        return title ? `${title} and ${names2.length - index} more` : `${names2.length} people`;
+      }
+      title = next;
+    }
+    return title;
   }
   async function readConversationExport(threadId, importModule, options) {
     if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
@@ -3584,14 +3599,19 @@ ${button.innerHTML}`)
           q.fromTableAscending(db.tables.contacts)
         ).take(PARTICIPANT_LIMIT)
       );
-      const reactions = await optional(
-        "reactions",
-        () => q.fromTableAscending(db.tables.reactions).getKeyRange(key).take(ROW_LIMIT)
-      );
-      const attachments = await optional(
-        "attachments",
-        () => q.fromTableAscending(db.tables.attachments).getKeyRange(key).take(ROW_LIMIT)
-      );
+      const capped = async (part, table) => {
+        const found = await optional(
+          part,
+          () => q.fromTableDescending(table).getKeyRange(key).take(ROW_LIMIT + 1)
+        );
+        if (found.length > ROW_LIMIT) {
+          found.length = ROW_LIMIT;
+          if (!missing.includes(part)) missing.push(part);
+        }
+        return found;
+      };
+      const reactions = await capped("reactions", db.tables.reactions);
+      const attachments = await capped("attachments", db.tables.attachments);
       let ranges = [];
       try {
         ranges = await rows(

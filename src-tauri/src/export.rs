@@ -438,11 +438,11 @@ fn notes(export: &PageExport, history: History) -> Vec<String> {
         ),
         (
             MissingPart::Reactions,
-            "Reactions could not be read and are not included.",
+            "Not every reaction could be read, so some may be missing.",
         ),
         (
             MissingPart::Attachments,
-            "Attachments and calls could not be read and are not included.",
+            "Not every attachment or call could be read, so some may be missing.",
         ),
     ] {
         if export.missing.contains(&part) {
@@ -1130,7 +1130,7 @@ mod tests {
             .collect();
         assert!(notes[0].starts_with("Older messages are not included"));
         assert!(notes.contains(&"1 encrypted message couldn't be read on this device."));
-        assert!(notes.contains(&"Reactions could not be read and are not included."));
+        assert!(notes.contains(&"Not every reaction could be read, so some may be missing."));
     }
 
     #[test]

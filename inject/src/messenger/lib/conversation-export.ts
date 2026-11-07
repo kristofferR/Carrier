@@ -388,8 +388,28 @@ function conversationTitle(
   if (threadName?.trim()) return threadName.trim();
   const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
   if (!rows.isGroup && others[0]) return others[0].name;
-  if (others.length) return others.map((person) => person.name).join(", ");
+  if (others.length) return listedNames(others.map((person) => person.name));
   return "Conversation";
+}
+
+/** Bytes a title may use; the native side refuses names over 1,024. */
+const TITLE_BYTES = 900;
+
+/** "Ada, Alan, Grace" for an unnamed group, ending in "and N more" before
+ * a long member list outgrows the title limit. */
+export function listedNames(names: string[]): string {
+  const bytes = (text: string) => new TextEncoder().encode(text).length;
+  let title = "";
+  for (const [index, name] of names.entries()) {
+    const next = title ? `${title}, ${name}` : name;
+    const more = names.length - index - 1;
+    const suffix = more ? ` and ${more} more` : "";
+    if (bytes(next + suffix) > TITLE_BYTES) {
+      return title ? `${title} and ${names.length - index} more` : `${names.length} people`;
+    }
+    title = next;
+  }
+  return title;
 }
 
 /* --------------------------- Database reading -------------------------- */
@@ -487,12 +507,23 @@ export async function readConversationExport(
         )
         .take(PARTICIPANT_LIMIT),
     );
-    const reactions = await optional("reactions", () =>
-      q.fromTableAscending(db.tables.reactions).getKeyRange(key).take(ROW_LIMIT),
-    );
-    const attachments = await optional("attachments", () =>
-      q.fromTableAscending(db.tables.attachments).getKeyRange(key).take(ROW_LIMIT),
-    );
+    // Newest first, like messages, and one row past the cap to notice when
+    // it is reached: a capped read is incomplete and the file says so.
+    const capped = async (part: ExportMissingPart, table: unknown) => {
+      const found = await optional(part, () =>
+        q
+          .fromTableDescending(table)
+          .getKeyRange(key)
+          .take(ROW_LIMIT + 1),
+      );
+      if (found.length > ROW_LIMIT) {
+        found.length = ROW_LIMIT;
+        if (!missing.includes(part)) missing.push(part);
+      }
+      return found;
+    };
+    const reactions = await capped("reactions", db.tables.reactions);
+    const attachments = await capped("attachments", db.tables.attachments);
     let ranges: unknown[] = [];
     try {
       ranges = await rows(
