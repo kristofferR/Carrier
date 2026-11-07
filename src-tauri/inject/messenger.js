@@ -9931,12 +9931,15 @@ ${button.innerHTML}`)
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
           { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
           hidePreview ? void 0 : communicationSender(
-            visiblePresentation.title,
-            visibleContent.subtitle && !visiblePresentation.subtitle ? `${visibleContent.title}: ${visibleContent.body}` : visibleContent.body,
+            // Identity comes from the row's original "Name: message"
+            // preview through the full-prefix matcher, which refuses
+            // ambiguous prefixes; shortened display text must not decide.
+            conversation.title,
+            conversation.body,
             group,
             accountId(document.cookie),
             showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-            visiblePresentation.subtitle ? "sender" : "group",
+            "group",
             visiblePresentation.subtitle || visiblePresentation.title,
             // In a group the icon is the sender's only when their photo won.
             Boolean(sender) && icon === sender
