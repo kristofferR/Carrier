@@ -469,6 +469,8 @@ fn accent_css(accent: &str) -> String {
 }
 
 /// Font names come from Settings, but quote them defensively anyway.
+/// The message font: the messages of the open conversation and the message
+/// box, not the chat list, headers or menus.
 fn font_css(font: &str) -> String {
     let font = font.trim();
     if font.is_empty() || font.len() > 100 || font.chars().any(char::is_control) {
@@ -476,7 +478,7 @@ fn font_css(font: &str) -> String {
     }
     let quoted = font.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
-        "html :is(div, span, a, p, h1, h2, h3, h4, h5, h6, li, input, textarea, button, label) {{\n  font-family: \"{quoted}\", -apple-system, \"Segoe UI\", system-ui, sans-serif !important;\n}}\n"
+        "[role=\"main\"] :is([role=\"log\"], [contenteditable=\"true\"][role=\"textbox\"]) :is(div, span, a, p, li),\n[role=\"main\"] [contenteditable=\"true\"][role=\"textbox\"] {{\n  font-family: \"{quoted}\", -apple-system, \"Segoe UI\", system-ui, sans-serif !important;\n}}\n"
     )
 }
 
