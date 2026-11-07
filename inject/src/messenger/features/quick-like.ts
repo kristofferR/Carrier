@@ -7,8 +7,10 @@
 // message's toolbar only on hover, so a synthetic hover comes first. Message
 // bubbles and the React button are matched by English accessible labels; the
 // reaction itself is found by its emoji image, which is locale-independent.
+
 import { diag } from "../bridge";
 import { type ActionTarget, actionTargetFor } from "../lib/action-target";
+import { noteExplicitAction } from "../lib/composer-focus";
 import {
   bubbleIsFresh,
   bubbleMatchesNotification,
@@ -183,6 +185,7 @@ async function like(path: string, notified: ActionTarget, deadline: number): Pro
 
 export function initQuickLike() {
   window.__carrierQuickLike = (path, target, id, attempt, budgetMs) => {
+    noteExplicitAction();
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-like.ack", "like acknowledgement emit failed"),
