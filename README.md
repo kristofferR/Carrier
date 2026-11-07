@@ -95,6 +95,8 @@ cryptographically verified updates.
 
 - Native notifications with sender avatars and optional hidden previews
 - Notification sound and mute controls, and Messenger's own Do Not Disturb is honored
+- Notification sound and mute controls
+- Optionally leave group-chat messages to the unread badge instead of notifying
 - Unread count on the Dock or taskbar icon
 - Notification sound and mute controls
 - Unread count on the Dock or taskbar icon, or just a dot for privacy

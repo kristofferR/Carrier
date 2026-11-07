@@ -45,6 +45,8 @@ interface CarrierSettings {
   notifications_paused_until?: number | null;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;
+  /** Notify for group-chat messages too (the badge counts them either way). */
+  notify_group_chats?: boolean;
   group_notifications_by_conversation?: boolean;
   clear_notifications_on_view?: boolean;
   attention_on_message?: boolean;
