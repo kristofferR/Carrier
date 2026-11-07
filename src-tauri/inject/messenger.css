@@ -366,7 +366,8 @@ html[data-carrier-hide-names][data-carrier-hide-avatars]
 }
 
 /* Names only. A link with no picture is all name; in a mixed link, blur
-   every element that neither is nor holds a picture, whatever its tag.
+   each outermost element that neither is nor holds a picture, whatever its
+   tag (its parent holds one), so no blur sits inside another.
    Pictures are image elements, inline backgrounds that load an image, and
    anything messenger.js marked as an avatar (it also detects class-defined
    backgrounds). A name written straight into a mixed link has no element of
@@ -378,8 +379,11 @@ html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   ):not([style*="url("], [data-carrier-private-avatar]),
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
-  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :not(img, svg, svg *, image, [style*="url("], [data-carrier-private-avatar]):not(
+  :is(
+    :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]),
+    :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]) *
+  ):has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  > :not(img, svg, svg *, image, [style*="url("], [data-carrier-private-avatar]):not(
     :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
   ) {
   filter: blur(6px) !important;
@@ -408,6 +412,41 @@ html[data-carrier-hide-avatars]
 html[data-carrier-hide-avatars]
   :is(main, [role="main"]) [role="article"] img[height="14"][width="14"][tabindex="-1"] {
   filter: blur(6px) !important;
+}
+
+/* Never blur inside a blur. Each filter renders its element into a layer of
+   its own, and nested ones multiply that on every repaint of the area: with
+   group sender names blurred at every level, hovering a message pinned the
+   web process for seconds on Linux. The outer blur already covers the inner
+   element, so turn the inner filters off. Everything inside a marked element
+   is covered, including profile links the rules above blur; the :not() of two
+   ids only lifts specificity above those rules. */
+html[data-carrier-hide-names] [data-carrier-private-identity] *:not(#carrier-nest#carrier-nest),
+html[data-carrier-hide-avatars] [data-carrier-private-avatar] *:not(#carrier-nest#carrier-nest),
+html[data-carrier-hide-names][data-carrier-hide-avatars]
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
+  *,
+html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]):not(
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  ):not([style*="url("], [data-carrier-private-avatar])
+  [data-carrier-private-identity],
+html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
+  :not(img, svg, svg *, image, [style*="url("], [data-carrier-private-avatar]):not(
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  )
+  [data-carrier-private-identity],
+html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
+  :is(img, svg, image, [style*="url("])
+  * {
+  -webkit-filter: none !important;
+  filter: none !important;
 }
 
 /* ---------------------------- System emoji ----------------------------- */

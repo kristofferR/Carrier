@@ -345,8 +345,9 @@ export function initHideNames() {
   function markThreadMessages(main: Element) {
     main.querySelectorAll('[role="article"]').forEach((article) => {
       // Group sender labels are h4. (h3 holds call titles such as "Missed
-      // audio call", which are not names.)
-      article.querySelectorAll("h4, h4 *").forEach((el) => {
+      // audio call", which are not names.) The label's blur covers its
+      // children; marking them too would nest blurs (messenger.css).
+      article.querySelectorAll("h4").forEach((el) => {
         if (visible(el) && textValue(el)) mark(el);
       });
 
