@@ -383,7 +383,13 @@
         cb.onchange = () => persist(key, cb.checked);
         const text = document.createElement("div");
         let hint = meta.hint;
-        if (key === "show_tray" && trayRequired) {
+        const pausedUntil = settings.notifications_paused_until;
+        if (key === "mute_notifications" && typeof pausedUntil === "number" && pausedUntil > Date.now()) {
+          const end = new Date(pausedUntil);
+          const time = end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          const day = end.toDateString() === new Date().toDateString() ? "" : `${end.toLocaleDateString([], { weekday: "short" })} `;
+          hint = `Paused until ${day}${time} from the tray or Dock menu, which can also resume them.`;
+        } else if (key === "show_tray" && trayRequired) {
           hint = `${hint} Required by an enabled Windows tray behavior.`;
         } else if (runtimeUnavailable) {
           if (!runtimeCapabilities) {

@@ -39,6 +39,8 @@ interface CarrierSettings {
   hide_on_focus_loss?: boolean;
   hide_taskbar_icon?: boolean;
   mute_notifications?: boolean;
+  /** Notifications paused from the tray or Dock menu until this time (ms since 1970). */
+  notifications_paused_until?: number | null;
   notification_sound?: boolean;
   hide_notification_preview?: boolean;
   group_notifications_by_conversation?: boolean;

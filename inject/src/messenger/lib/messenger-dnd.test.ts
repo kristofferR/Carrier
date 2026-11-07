@@ -84,3 +84,14 @@ describe("readMessengerDndUntil", () => {
     expect(await readMessengerDndUntil("100", pending.load, 1)).toBeNull();
   });
 });
+
+describe("notificationsGloballyMuted", () => {
+  test("a tray pause silences notifications until its end time", async () => {
+    const { notificationsGloballyMuted } = await import("./mute");
+    expect(notificationsGloballyMuted({ notifications_paused_until: NOW_MS + 1 }, NOW_MS)).toBe(
+      true,
+    );
+    expect(notificationsGloballyMuted({ notifications_paused_until: NOW_MS }, NOW_MS)).toBe(false);
+    expect(notificationsGloballyMuted({ notifications_paused_until: null }, NOW_MS)).toBe(false);
+  });
+});
