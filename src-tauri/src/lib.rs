@@ -1177,6 +1177,7 @@ pub fn run() {
             commands::update_install_mode,
             commands::open_manual_update,
             commands::discovered_update,
+            commands::update_release_notes,
             commands::install_update,
             commands::connect_messenger,
             commands::open_messenger_anyway,
