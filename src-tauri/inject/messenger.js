@@ -5261,12 +5261,12 @@ ${button.innerHTML}`)
     return { htmlText: body.textContent ?? "", htmlHasImage: body.querySelector("img") !== null };
   }
   function initImagePaste() {
-    const repasted = /* @__PURE__ */ new WeakSet();
     document.addEventListener(
       "paste",
       (event) => {
+        if (!event.isTrusted || !isComposerTarget(event.target)) return;
         const data = event.clipboardData;
-        if (repasted.has(event) || !data?.files.length || !isComposerTarget(event.target)) return;
+        if (!data?.files.length) return;
         const files = [...data.files];
         const contents = {
           fileTypes: files.map((file) => file.type),
@@ -5279,7 +5279,6 @@ ${button.innerHTML}`)
         const pictures = new DataTransfer();
         for (const file of files) pictures.items.add(file);
         const again = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
-        repasted.add(again);
         dispatchTransferEvent(event.target, again, "clipboardData", pictures);
       },
       true

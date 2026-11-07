@@ -15,12 +15,15 @@ function htmlContents(html: string): { htmlText: string | null; htmlHasImage: bo
 }
 
 export function initImagePaste() {
-  const repasted = new WeakSet<Event>();
   document.addEventListener(
     "paste",
     (event) => {
+      // Only real pastes. Synthetic ones (this listener's own re-send, share
+      // intake) must not even be read: share intake treats a read of its
+      // payload as delivery.
+      if (!event.isTrusted || !isComposerTarget(event.target)) return;
       const data = event.clipboardData;
-      if (repasted.has(event) || !data?.files.length || !isComposerTarget(event.target)) return;
+      if (!data?.files.length) return;
       const files = [...data.files];
       const contents = {
         fileTypes: files.map((file) => file.type),
@@ -33,7 +36,6 @@ export function initImagePaste() {
       const pictures = new DataTransfer();
       for (const file of files) pictures.items.add(file);
       const again = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
-      repasted.add(again);
       dispatchTransferEvent(event.target as Element, again, "clipboardData", pictures);
     },
     true,
