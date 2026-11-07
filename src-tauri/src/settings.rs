@@ -136,6 +136,9 @@ pub(crate) struct Settings {
     /// Focus the message box when the window comes back to the front with a
     /// conversation open and nothing else focused. On by default.
     pub(crate) focus_composer_on_return: bool,
+    /// Never send the "typing…" indicator to others. Seeing theirs is
+    /// unaffected. Off by default.
+    pub(crate) block_typing_indicator: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -254,6 +257,7 @@ impl Default for Settings {
             system_emoji: false,
             stop_media_autoplay: false,
             focus_composer_on_return: true,
+            block_typing_indicator: false,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -1094,6 +1098,13 @@ mod tests {
         // Existing installs gain the focus behavior without resetting settings.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.focus_composer_on_return);
+    }
+
+    #[test]
+    fn settings_json_missing_block_typing_indicator_defaults_to_false() {
+        // Existing installs keep Messenger's normal typing behavior.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.block_typing_indicator);
     }
 
     #[test]
