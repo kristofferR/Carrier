@@ -1152,11 +1152,13 @@ export function initNotificationBridge() {
   // merely remove its identity while leaving a timer that can no longer pass
   // the map ownership check. Deliver without an avatar under pressure; native
   // content dedupe still absorbs a page Notification that arrives afterward.
-  const completeCapacityEviction = (fallback: PendingFallback) => {
+  const completeCapacityEviction = async (fallback: PendingFallback) => {
     // This arrival already crossed its delivery boundary as suppressed. A
     // later settings change must not revive it merely because queue pressure
     // retires its opposite-order correlation window.
     if (!fallback.deliverable) return;
+    // A burst can displace this row before the scan's kind prefetch settles.
+    if (groupFiltering()) await learnThreadKind(fallback.key);
     const settings = window.__CARRIER_SETTINGS__ || {};
     if (
       suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) ||
@@ -1205,7 +1207,7 @@ export function initNotificationBridge() {
     const displaced = notificationCorrelations.addRow(fallback);
     if (!displaced) return;
     clearTimeout(displaced.row.timer);
-    if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+    if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
   };
 
   const scheduleFallback = (
