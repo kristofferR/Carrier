@@ -6,10 +6,26 @@ fn should_default_to_http1(force_http1: Option<OsString>, allow_http2: Option<Os
     force_http1.is_none() && allow_http2.as_deref() != Some(std::ffi::OsStr::new("1"))
 }
 
+/// NVIDIA's proprietary driver gained Wayland explicit sync in 555; before
+/// that, WebKit's DMA-BUF renderer could paint blank, black or garbled frames.
+/// `version` is `/sys/module/nvidia/version`, absent when the driver is not
+/// loaded. An unreadable version counts as old.
+fn nvidia_driver_predates_explicit_sync(version: Option<&str>) -> bool {
+    version.is_some_and(|version| {
+        version
+            .trim()
+            .split('.')
+            .next()
+            .and_then(|major| major.parse::<u32>().ok())
+            .is_none_or(|major| major < 555)
+    })
+}
+
 /// Keep decisions independent of the process environment so tests can cover
 /// desktop combinations without racing GTK or other tests' environment reads.
 fn environment_defaults(
     env: impl Fn(&str) -> Option<OsString>,
+    nvidia_driver_version: Option<&str>,
 ) -> Vec<(&'static str, &'static str)> {
     let nonempty = |key| env(key).is_some_and(|value| !value.is_empty());
     let wayland = nonempty("WAYLAND_DISPLAY");
@@ -38,9 +54,13 @@ fn environment_defaults(
     if wayland && !nonempty("DISPLAY") && !nonempty("GDK_BACKEND") {
         defaults.push(("GDK_BACKEND", "wayland"));
     }
-    // Retain the existing Wayland DMABUF workaround, including when the user
-    // opts out of the additional compositing fallback with SAFE_MODE=0.
-    if (wayland || safe_mode) && env("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    // The DMA-BUF renderer hands frames to the compositor on the GPU. Without
+    // it WebKit paints on the CPU and copies every frame into shared memory,
+    // which made a large window use two to three times the CPU and turned
+    // costly effects such as nested blurs into seconds of lag. Keep the
+    // fallback only where DMA-BUF is known to break.
+    let old_nvidia = nvidia_driver_predates_explicit_sync(nvidia_driver_version);
+    if ((wayland && old_nvidia) || safe_mode) && env("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
         defaults.push(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
     }
     if safe_mode && env("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
@@ -77,7 +97,11 @@ pub(crate) fn configure() {
     // SAFETY (every `set_var` here): `run()` calls this before Tauri, GTK, or
     // any worker starts. The only live thread is the debug native-log pump,
     // which never touches the environment.
-    for (key, value) in environment_defaults(|key| std::env::var_os(key)) {
+    let nvidia_driver_version = std::fs::read_to_string("/sys/module/nvidia/version").ok();
+    for (key, value) in environment_defaults(
+        |key| std::env::var_os(key),
+        nvidia_driver_version.as_deref(),
+    ) {
         unsafe { std::env::set_var(key, value) };
     }
     // libsoup 3.6.6's HTTP/2 pool stalled on Messenger with all six connections
@@ -136,12 +160,22 @@ mod tests {
     }
 
     fn defaults(values: &[(&str, &str)]) -> Vec<(&'static str, &'static str)> {
-        environment_defaults(|key| {
-            values
-                .iter()
-                .find(|(name, _)| *name == key)
-                .map(|(_, value)| OsString::from(value))
-        })
+        defaults_with_nvidia(values, None)
+    }
+
+    fn defaults_with_nvidia(
+        values: &[(&str, &str)],
+        nvidia_driver_version: Option<&str>,
+    ) -> Vec<(&'static str, &'static str)> {
+        environment_defaults(
+            |key| {
+                values
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, value)| OsString::from(value))
+            },
+            nvidia_driver_version,
+        )
     }
 
     const DMABUF: (&str, &str) = ("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
@@ -149,11 +183,37 @@ mod tests {
     const WAYLAND: (&str, &str) = ("WAYLAND_DISPLAY", "wayland-0");
 
     #[test]
-    fn pure_wayland_selects_gtk_backend_before_renderer_defaults() {
-        assert_eq!(defaults(&[WAYLAND]), [("GDK_BACKEND", "wayland"), DMABUF]);
+    fn pure_wayland_selects_gtk_backend_and_keeps_dmabuf() {
+        assert_eq!(defaults(&[WAYLAND]), [("GDK_BACKEND", "wayland")]);
         assert_eq!(
             defaults(&[WAYLAND, ("DISPLAY", ""), ("GDK_BACKEND", "")]),
-            [("GDK_BACKEND", "wayland"), DMABUF]
+            [("GDK_BACKEND", "wayland")]
+        );
+    }
+
+    #[test]
+    fn nvidia_drivers_before_explicit_sync_keep_the_dmabuf_fallback_on_wayland() {
+        for old in ["550.144.03", "470.256.02\n", "", "garbage"] {
+            assert_eq!(
+                defaults_with_nvidia(&[WAYLAND], Some(old)),
+                [("GDK_BACKEND", "wayland"), DMABUF],
+                "{old:?}"
+            );
+        }
+        for current in ["555.42.02", "615.78.08\n"] {
+            assert_eq!(
+                defaults_with_nvidia(&[WAYLAND], Some(current)),
+                [("GDK_BACKEND", "wayland")],
+                "{current:?}"
+            );
+        }
+        assert!(defaults_with_nvidia(&[("DISPLAY", ":0")], Some("550.144.03")).is_empty());
+        assert_eq!(
+            defaults_with_nvidia(
+                &[WAYLAND, ("WEBKIT_DISABLE_DMABUF_RENDERER", "0")],
+                Some("550.144.03")
+            ),
+            [("GDK_BACKEND", "wayland")]
         );
     }
 
@@ -163,9 +223,9 @@ mod tests {
         assert!(defaults(&[("DISPLAY", ":0")]).is_empty());
         assert!(defaults(&[("WAYLAND_DISPLAY", "")]).is_empty());
         assert!(defaults(&[("DISPLAY", ":0"), ("XDG_CURRENT_DESKTOP", "niri")]).is_empty());
-        assert_eq!(defaults(&[WAYLAND, ("DISPLAY", ":0")]), [DMABUF]);
+        assert!(defaults(&[WAYLAND, ("DISPLAY", ":0")]).is_empty());
         for backend in ["x11", "wayland", "wayland,x11,*"] {
-            assert_eq!(defaults(&[WAYLAND, ("GDK_BACKEND", backend)]), [DMABUF]);
+            assert!(defaults(&[WAYLAND, ("GDK_BACKEND", backend)]).is_empty());
         }
     }
 
@@ -187,16 +247,16 @@ mod tests {
     }
 
     #[test]
-    fn other_desktops_keep_only_the_existing_wayland_workaround() {
+    fn other_desktops_keep_their_normal_renderer() {
         for desktop in ["GNOME", "KDE", "Hyprland", "sway", "niri-like", ""] {
-            assert_eq!(
+            assert!(
                 defaults(&[
                     WAYLAND,
                     ("DISPLAY", ":0"),
                     ("NIRI_SOCKET", ""),
                     ("XDG_CURRENT_DESKTOP", desktop)
-                ]),
-                [DMABUF],
+                ])
+                .is_empty(),
                 "{desktop}"
             );
         }
@@ -214,7 +274,7 @@ mod tests {
                 ("XDG_CURRENT_DESKTOP", "niri"),
                 ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "0")
             ]),
-            [("GDK_BACKEND", "wayland"), DMABUF]
+            [("GDK_BACKEND", "wayland")]
         );
         assert!(defaults(&[("CARRIER_LINUX_WEBKIT_SAFE_MODE", "0")]).is_empty());
     }
