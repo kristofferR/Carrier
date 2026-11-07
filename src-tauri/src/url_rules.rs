@@ -60,6 +60,11 @@ pub(crate) fn route(url: &Url) -> Route {
 /// blank window and loading the call page into it once it has one. A remote
 /// page may open a blank or web window in the app, never one of Carrier's own
 /// pages.
+/// Messenger's call page, which its call windows navigate to after opening blank.
+pub(crate) fn is_call_url(url: &Url) -> bool {
+    is_messenger_web_url(url) && url.path().starts_with("/groupcall/")
+}
+
 pub(crate) fn popup_route(url: &Url) -> Route {
     let web_page = matches!(url.scheme(), "http" | "https") && !is_local_app_url(url);
     match route(url) {
@@ -308,6 +313,21 @@ mod tests {
             Route::Browser("https://example.com/a".into())
         );
         assert_eq!(route(&u("file:///etc/passwd")), Route::Blocked);
+    }
+
+    #[test]
+    fn only_messenger_call_pages_count_as_calls() {
+        assert!(is_call_url(&u(
+            "https://www.facebook.com/groupcall/ROOM:1/?call_id=2"
+        )));
+        for url in [
+            "about:blank",
+            "https://www.facebook.com/login/",
+            "https://www.facebook.com/messages/t/1/",
+            "https://example.com/groupcall/x",
+        ] {
+            assert!(!is_call_url(&u(url)), "{url}");
+        }
     }
 
     #[test]
