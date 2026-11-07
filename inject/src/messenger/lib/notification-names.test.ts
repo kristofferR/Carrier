@@ -277,6 +277,7 @@ describe("communicationSender", () => {
       id: "42",
       name: "Alex Example",
       group: "",
+      photo: true,
     });
   });
 
@@ -290,12 +291,28 @@ describe("communicationSender", () => {
       id: "42",
       name: "Captain",
       group: "Weekend",
+      photo: false,
     });
-    expect(communicationSender("Alex Example", "hi", group, "100", false, "sender")).toEqual({
-      id: "42",
-      name: "Alex Example",
-      group: "Weekend",
-    });
+    // Only a picture known to be the sender's may stand for them.
+    expect(
+      communicationSender("Alex Example", "hi", group, "100", false, "sender", "", true),
+    ).toEqual({ id: "42", name: "Alex Example", group: "Weekend", photo: true });
+  });
+
+  test("an ambiguous preview prefix names nobody, whatever the display shortened", () => {
+    const group = {
+      title: "Weekend",
+      isGroup: true,
+      participants: [
+        person("100", "Me Myself"),
+        person("42", "Alex Example", "Captain: Jr"),
+        person("43", "Captain Smith"),
+      ],
+    };
+    // "Captain: Jr: hi" could be Alex (nickname "Captain: Jr") or Captain Smith.
+    expect(
+      communicationSender("Weekend", "Captain: Jr: hi", group, "100", true, "group"),
+    ).toBeUndefined();
   });
 
   test("stays undefined when the sender is not certain", () => {

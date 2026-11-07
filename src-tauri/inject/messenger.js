@@ -4146,19 +4146,19 @@ ${button.innerHTML}`)
       clearTimeout(timer);
     }
   }
-  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "") {
+  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "", photo = false) {
     if (!group || !account2) return void 0;
     const display = (person2) => showNicknames2 && person2.nickname || person2.name;
     if (!group.isGroup) {
       const others = group.participants.filter((person3) => person3.id && person3.id !== account2);
       const person2 = others.length === 1 ? others[0] : void 0;
-      return person2?.id ? { id: person2.id, name: display(person2), group: "" } : void 0;
+      return person2?.id ? { id: person2.id, name: display(person2), group: "", photo: true } : void 0;
     }
     const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
     const person = kind === "sender" ? namedParticipant(title, group) : notificationSenderPrefix(body, group)?.person;
     const name = group.title || groupTitle;
     if (!person?.id || person.id === account2 || !name) return void 0;
-    return { id: person.id, name: display(person), group: name };
+    return { id: person.id, name: display(person), group: name, photo };
   }
 
   // inject/src/messenger/lib/nickname-replies.ts
@@ -5223,9 +5223,6 @@ ${button.innerHTML}`)
       if (el.matches("img, svg, image")) return true;
       return /url\(/.test(getComputedStyle(el).backgroundImage || "");
     }
-    function pictureWithin(el) {
-      return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
-    }
     function mark(el) {
       if (!el?.setAttribute) return;
       el.setAttribute(IDENTITY_ATTR, "");
@@ -5369,11 +5366,11 @@ ${button.innerHTML}`)
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
       ).forEach((link) => {
         if (!visible(link)) return;
-        for (const node of [link, ...link.querySelectorAll("*")]) {
-          if (isPicture(node)) markAvatar(node);
-        }
-        if (!textValue(link) || !pictureWithin(link)) return;
-        const textBesidePicture = isPicture(link) || hasBareText(link) || [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
+        const nodes = [link, ...link.querySelectorAll("*")];
+        const pictures = nodes.filter(isPicture);
+        pictures.forEach(markAvatar);
+        if (!textValue(link) || !pictures.length) return;
+        const textBesidePicture = pictures[0] === link || hasBareText(link) || nodes.some((el) => hasBareText(el) && pictures.some((pic) => el.contains(pic)));
         if (textBesidePicture) mark(link);
       });
     }
@@ -9338,13 +9335,18 @@ ${button.innerHTML}`)
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
           { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
           hidePreview ? void 0 : communicationSender(
-            visiblePresentation.title,
-            visibleContent.subtitle && !visiblePresentation.subtitle ? `${visibleContent.title}: ${visibleContent.body}` : visibleContent.body,
+            // Identity comes from the row's original "Name: message"
+            // preview through the full-prefix matcher, which refuses
+            // ambiguous prefixes; shortened display text must not decide.
+            conversation.title,
+            conversation.body,
             group,
             accountId(document.cookie),
             showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-            visiblePresentation.subtitle ? "sender" : "group",
-            visiblePresentation.subtitle || visiblePresentation.title
+            "group",
+            visiblePresentation.subtitle || visiblePresentation.title,
+            // In a group the icon is the sender's only when their photo won.
+            Boolean(sender) && icon === sender
           )
         );
       }, FALLBACK_DELAY_MS);

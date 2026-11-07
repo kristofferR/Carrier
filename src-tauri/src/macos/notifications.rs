@@ -421,11 +421,8 @@ pub(crate) fn deliver_notification_macos(
     // their face (and the group's name) in place of Carrier's icon. Without
     // the communication-notifications entitlement this fails and the plain
     // content is delivered, with the avatar attached as before.
-    // A route-less notification has no conversation yet: keep its sender
-    // for the late route (update_pending_notification_route_macos).
-    if let (Some(sender), None) = (options.sender.as_ref(), thread_path.as_deref()) {
-        remember_pending_sender(id, sender);
-    }
+    // A route-less notification has no conversation yet and stays plain;
+    // routes are normally known at delivery.
     let communication = options
         .sender
         .as_ref()
@@ -527,22 +524,6 @@ pub(crate) fn update_pending_notification_route_macos(
             group_by_conversation,
             reply_eligible,
         );
-        // Now that it has a conversation, present it as its sender's message.
-        let pending = pending_senders().lock().unwrap().remove(&id);
-        let communication = pending.as_ref().and_then(|pending| {
-            let sender = MacSender {
-                identifier: &pending.identifier,
-                name: &pending.name,
-                avatar: pending.avatar.as_deref(),
-                group_name: pending.group_name.as_deref(),
-            };
-            communication_content(&content, &sender, &thread_path, &content.body().to_string())
-        });
-        let content: objc2::rc::Retained<objc2_user_notifications::UNNotificationContent> =
-            match communication {
-                Some(updated) => updated,
-                None => content.into_super(),
-            };
         let identifier = NSString::from_str(&expected_id);
         let replacement = UNNotificationRequest::requestWithIdentifier_content_trigger(
             &identifier,
@@ -634,45 +615,11 @@ pub(crate) struct MacSender<'a> {
     pub(crate) identifier: &'a str,
     /// Presentation only.
     pub(crate) name: &'a str,
-    /// The sender's picture.
+    /// The sender's own picture; None when only another picture (such as
+    /// the group's) is available.
     pub(crate) avatar: Option<&'a Path>,
     /// The group conversation's name; None for a one-to-one chat.
     pub(crate) group_name: Option<&'a str>,
-}
-
-/// A route-less notification's sender, kept until its route arrives so the
-/// late-routed notification can still become a communication notification.
-struct PendingSender {
-    identifier: String,
-    name: String,
-    avatar: Option<std::path::PathBuf>,
-    group_name: Option<String>,
-}
-
-fn pending_senders() -> &'static std::sync::Mutex<std::collections::HashMap<u64, PendingSender>> {
-    static PENDING: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<u64, PendingSender>>,
-    > = std::sync::OnceLock::new();
-    PENDING.get_or_init(Default::default)
-}
-
-fn remember_pending_sender(id: u64, sender: &MacSender<'_>) {
-    const LIMIT: usize = 50;
-    let mut pending = pending_senders().lock().unwrap();
-    if pending.len() >= LIMIT
-        && let Some(oldest) = pending.keys().min().copied()
-    {
-        pending.remove(&oldest);
-    }
-    pending.insert(
-        id,
-        PendingSender {
-            identifier: sender.identifier.to_string(),
-            name: sender.name.to_string(),
-            avatar: sender.avatar.map(Path::to_path_buf),
-            group_name: sender.group_name.map(str::to_string),
-        },
-    );
 }
 
 /// The content as a message from `sender`, via an `INSendMessageIntent`.
