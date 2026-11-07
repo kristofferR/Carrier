@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  badgeIgnoresMutedConversations,
   conversationMuteFromLabel,
   ignoresMutedConversations,
   isExplicitUnmuteAction,
   isMutedRowIconShape,
   MutedThreadStore,
+  mutedConversationPolicy,
   muteSignalFromLabels,
   muteSignalFromSource,
   muteStateAfterControlAction,
@@ -323,5 +325,31 @@ describe("MutedThreadStore", () => {
     expect(store.knownMutedUnread(["open", "muted"])).toBe(true);
     expect(store.knownMutedUnread(["open"])).toBe(false);
     expect(store.knownMutedUnread([])).toBe(false);
+  });
+});
+
+describe("mutedConversationPolicy", () => {
+  test("keeps the legacy switch until a policy is chosen", () => {
+    expect(mutedConversationPolicy({})).toBe("ignore");
+    expect(mutedConversationPolicy({ ignore_muted_conversations: false })).toBe("include");
+    expect(
+      mutedConversationPolicy({ ignore_muted_conversations: false, muted_conversations: "badge" }),
+    ).toBe("badge");
+    expect(mutedConversationPolicy({ muted_conversations: null })).toBe("ignore");
+  });
+
+  test("badge only counts muted chats on the badge but never notifies for them", () => {
+    const badgeOnly = { muted_conversations: "badge" as const };
+    expect(badgeIgnoresMutedConversations(badgeOnly)).toBe(false);
+    expect(ignoresMutedConversations(badgeOnly)).toBe(true);
+    expect(suppressMutedDelivery(true, badgeOnly)).toBe(true);
+
+    const include = { muted_conversations: "include" as const };
+    expect(badgeIgnoresMutedConversations(include)).toBe(false);
+    expect(suppressMutedDelivery(true, include)).toBe(false);
+
+    const ignore = { muted_conversations: "ignore" as const };
+    expect(badgeIgnoresMutedConversations(ignore)).toBe(true);
+    expect(suppressMutedDelivery(true, ignore)).toBe(true);
   });
 });

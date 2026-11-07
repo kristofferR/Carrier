@@ -6497,8 +6497,16 @@ ${button.innerHTML}`)
   var MUTED_THREAD_LIMIT = 500;
   var MUTE_ABSENCE_CONFIRM_MS = 1e3;
   var MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
+  function mutedConversationPolicy(settings) {
+    const policy = settings?.muted_conversations;
+    if (policy === "ignore" || policy === "badge" || policy === "include") return policy;
+    return settings?.ignore_muted_conversations === false ? "include" : "ignore";
+  }
   function ignoresMutedConversations(settings) {
-    return settings?.ignore_muted_conversations !== false;
+    return mutedConversationPolicy(settings) !== "include";
+  }
+  function badgeIgnoresMutedConversations(settings) {
+    return mutedConversationPolicy(settings) === "ignore";
   }
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
@@ -12074,7 +12082,7 @@ ${text}`)) {
     const accountStorageKey = mutedUnreadStorageKey(document.cookie);
     const listReadiness = new UnreadListReadiness();
     const unreadConversationState = () => {
-      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const ignoreMuted = badgeIgnoresMutedConversations(window.__CARRIER_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
       if (openId) {
         observeOpenThreadMute(openId, [
@@ -12167,7 +12175,7 @@ ${text}`)) {
     };
     const apply = (force) => {
       const s = window.__CARRIER_SETTINGS__ || {};
-      const ignoreMuted = ignoresMutedConversations(s);
+      const ignoreMuted = badgeIgnoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
       }

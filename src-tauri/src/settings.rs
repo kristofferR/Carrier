@@ -52,6 +52,18 @@ where
     })
 }
 
+/// Unknown policies fall back to the legacy switch rather than failing to load.
+fn deserialize_muted_conversations<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value.as_str() {
+        Some(policy @ ("ignore" | "badge" | "include")) => Some(policy.to_string()),
+        _ => None,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Settings {
@@ -75,8 +87,12 @@ pub(crate) struct Settings {
     /// count, from the page title) or "conversations" (unread chats in the list).
     pub(crate) badge_mode: String,
     /// Skip Dock/taskbar badges and native notifications for conversations the
-    /// user has muted in Messenger.
+    /// user has muted in Messenger. Legacy; `muted_conversations` wins when set.
     pub(crate) ignore_muted_conversations: bool,
+    /// Muted conversations: "ignore" (no badge, no notification), "badge"
+    /// (badge only) or "include". None keeps `ignore_muted_conversations`.
+    #[serde(deserialize_with = "deserialize_muted_conversations")]
+    pub(crate) muted_conversations: Option<String>,
     /// Force the Messenger theme: "system" (follow FB), "light", or "dark".
     pub(crate) theme: String,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
@@ -240,6 +256,7 @@ impl Default for Settings {
             unread_badge: true,
             badge_mode: "messages".into(),
             ignore_muted_conversations: true,
+            muted_conversations: None,
             theme: "system".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
@@ -1151,6 +1168,14 @@ mod tests {
         // Existing installs gain the focus behavior without resetting settings.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.focus_composer_on_return);
+    fn muted_conversation_policy_loads_known_values_only() {
+        let s: Settings = serde_json::from_str(r#"{"muted_conversations":"badge"}"#).unwrap();
+        assert_eq!(s.muted_conversations.as_deref(), Some("badge"));
+        let s: Settings = serde_json::from_str(r#"{"muted_conversations":"loud"}"#).unwrap();
+        assert_eq!(s.muted_conversations, None);
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.muted_conversations, None);
+        assert!(s.ignore_muted_conversations);
     }
 
     #[test]

@@ -11,7 +11,7 @@ import {
   isUnreadConversationText,
 } from "../lib/conversation-row";
 import {
-  ignoresMutedConversations,
+  badgeIgnoresMutedConversations,
   observeConversationMute,
   observeDatabaseMute,
   observeOpenThreadMute,
@@ -102,7 +102,7 @@ export function initUnreadBadge() {
   // visible links in the navigation list (`/t/<id>`), excluding duplicate or
   // unrelated thread links elsewhere in the page.
   const unreadConversationState = () => {
-    const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+    const ignoreMuted = badgeIgnoresMutedConversations(window.__CARRIER_SETTINGS__);
     const openId = threadIdFromHref(location.pathname);
     if (openId) {
       observeOpenThreadMute(openId, [
@@ -220,7 +220,7 @@ export function initUnreadBadge() {
   // (it lands shortly after launch) and the chat list's first render.
   const apply = (force: boolean) => {
     const s = window.__CARRIER_SETTINGS__ || {};
-    const ignoreMuted = ignoresMutedConversations(s);
+    const ignoreMuted = badgeIgnoresMutedConversations(s);
     if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
       filteredUnreadBaseline = null;
     }
