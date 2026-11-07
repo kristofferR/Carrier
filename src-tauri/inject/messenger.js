@@ -5922,7 +5922,7 @@ ${button.innerHTML}`)
     }
     function markThreadMessages(main2) {
       main2.querySelectorAll('[role="article"]').forEach((article) => {
-        article.querySelectorAll("h4, h4 *").forEach((el) => {
+        article.querySelectorAll("h4").forEach((el) => {
           if (visible(el) && textValue(el)) mark(el);
         });
         article.querySelectorAll(
