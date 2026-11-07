@@ -5,6 +5,7 @@
 //! delivery inside is gated to `target_os = "windows"`.
 
 pub(crate) mod toast;
+pub(crate) mod webview2;
 
 // The jump list is pure Win32 COM with no OS-independent helpers to test.
 #[cfg(target_os = "windows")]

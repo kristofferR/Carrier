@@ -1009,6 +1009,14 @@ pub fn run() {
     if !debug_install::startup() {
         return;
     }
+    // Without WebView2 nothing below can open a window, so say why instead of
+    // failing silently (the portable build has no installer to fetch it).
+    // After startup(), so `--build-info` stays GUI-free.
+    #[cfg(target_os = "windows")]
+    if !windows::webview2::runtime_available() {
+        windows::webview2::explain_missing_runtime();
+        return;
+    }
     #[cfg(target_os = "linux")]
     linux_startup::configure();
 
