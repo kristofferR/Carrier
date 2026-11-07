@@ -151,22 +151,35 @@ pub(crate) fn handle_pause_menu_event(app: &tauri::AppHandle, id: &str) -> bool 
 pub(crate) fn schedule_pause_expiry(app: &tauri::AppHandle, until: i64) {
     use std::sync::atomic::{AtomicI64, Ordering};
     const STEP_MS: i64 = 30_000;
-    // Settings are applied often; watch each pause once.
+    // Settings are applied often; one watcher per pause end. A watcher that
+    // stops releases its claim, so pausing again to the same time (twice
+    // "until morning") gets a new one.
     static WATCHED: AtomicI64 = AtomicI64::new(i64::MIN);
     if WATCHED.swap(until, Ordering::SeqCst) == until {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        loop {
-            // A newer pause or resume owns the menus (and its own timer) now.
-            let current = app
-                .state::<AppState>()
+        let paused_until = || {
+            app.state::<AppState>()
                 .settings
                 .lock()
                 .unwrap()
-                .notifications_paused_until;
-            if current != Some(until) {
+                .notifications_paused_until
+        };
+        loop {
+            if paused_until() != Some(until) {
+                let _ =
+                    WATCHED.compare_exchange(until, i64::MIN, Ordering::SeqCst, Ordering::SeqCst);
+                // A re-pause to this same time may have arrived between the
+                // read and the release, and found the claim still held.
+                if paused_until() == Some(until)
+                    && WATCHED
+                        .compare_exchange(i64::MIN, until, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    continue;
+                }
                 return;
             }
             let wait = until - now_ms();
@@ -175,6 +188,7 @@ pub(crate) fn schedule_pause_expiry(app: &tauri::AppHandle, until: i64) {
             }
             tokio::time::sleep(std::time::Duration::from_millis(wait.min(STEP_MS) as u64)).await;
         }
+        let _ = WATCHED.compare_exchange(until, i64::MIN, Ordering::SeqCst, Ordering::SeqCst);
         let main = app.clone();
         let _ = app.run_on_main_thread(move || crate::menu::rebuild_recent_menus(&main));
     });
