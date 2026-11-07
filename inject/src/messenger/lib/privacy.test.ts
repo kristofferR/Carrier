@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hidesAvatars, hidesNames, isMetaText, previewIdentity } from "./privacy";
+import { hidesAvatars, hidesNames, isMetaText, prefixSpan, previewIdentity } from "./privacy";
 
 describe("previewIdentity", () => {
   test("finds the sender prefix in 'Name: message' previews", () => {
@@ -57,5 +57,31 @@ describe("hidesNames / hidesAvatars", () => {
     expect(hidesAvatars({ hide_avatars: true })).toBe(true);
     expect(hidesNames({ hide_names: null })).toBe(false);
     expect(hidesNames(undefined)).toBe(false);
+  });
+});
+
+describe("prefixSpan", () => {
+  test("finds the sender inside the preview's own text node", () => {
+    expect(prefixSpan(["Kari Nordmann: hei!"], "Kari Nordmann")).toEqual({
+      start: [0, 0],
+      end: [0, 13],
+    });
+  });
+
+  test("spans nodes and skips leading whitespace", () => {
+    expect(prefixSpan(["  Kari ", "Nordmann", ": hei"], "Kari Nordmann")).toEqual({
+      start: [0, 2],
+      end: [1, 8],
+    });
+  });
+
+  test("starts in the next node when one ends right before the name", () => {
+    expect(prefixSpan([" ", "Kari: hei"], "Kari")).toEqual({ start: [1, 0], end: [1, 4] });
+  });
+
+  test("is null when the text does not start with the name", () => {
+    expect(prefixSpan(["Kari\u00a0Nordmann: hei"], "Kari Nordmann")).toBeNull();
+    expect(prefixSpan(["hei"], "Kari")).toBeNull();
+    expect(prefixSpan([], "Kari")).toBeNull();
   });
 });

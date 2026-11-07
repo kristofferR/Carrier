@@ -338,6 +338,22 @@ html[data-carrier-hide-avatars] [data-carrier-private-avatar] {
   filter: blur(6px) !important;
 }
 
+/* A sender name sharing a text node with the message preview ("Name: hi")
+   has no element to blur, so messenger.js covers just the name with a
+   highlight range: invisible text under a soft shadow that reads as a blur. */
+html[data-carrier-hide-names] ::highlight(carrier-private-identity) {
+  color: transparent;
+  text-shadow: 0 0 7px rgba(128, 128, 128, 0.9);
+}
+/* WebKit paints no highlight on user-select: none text, and an explicit
+   -webkit-text-fill-color outlasts the highlight's color. Messenger sets
+   both on previews, so reset them where a name range sits. */
+html[data-carrier-hide-names] [data-carrier-private-prefix] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-text-fill-color: currentcolor !important;
+}
+
 /* Profile links in the main Messenger pane carry the active thread header's
    name and picture and in-thread sender faces. With both hidden, blur the
    whole link; with one, only its text or only its pictures. Message text and

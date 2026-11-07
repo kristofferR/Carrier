@@ -5,13 +5,20 @@
 // hidden alone (Ref #364).
 // Facebook's generated class names churn, so this keeps the selectors shallow
 // and marks identity surfaces by stable roles, links, and layout shape.
-import { hidesAvatars, hidesNames, isMetaText, previewIdentity } from "../lib/privacy";
+import { hidesAvatars, hidesNames, isMetaText, prefixSpan, previewIdentity } from "../lib/privacy";
 
 const IDENTITY_ATTR = "data-carrier-private-identity";
 const AVATAR_ATTR = "data-carrier-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
+// Sender names that share a text node with the message, hidden through the
+// CSS Custom Highlight API so React-owned text is never split (messenger.css).
+const PREFIX_HIGHLIGHT = "carrier-private-identity";
+// WebKit paints no highlight on user-select: none text and keeps an explicit
+// -webkit-text-fill-color, both of which Messenger sets on previews. The text
+// elements under a name range get those reset (messenger.css).
+const PREFIX_HOST_ATTR = "data-carrier-private-prefix";
 
 export function initHideNames() {
   const html = document.documentElement;
@@ -57,10 +64,14 @@ export function initHideNames() {
   }
 
   function clearMarkers() {
-    document.querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}]`).forEach((el) => {
-      el.removeAttribute(IDENTITY_ATTR);
-      el.removeAttribute(AVATAR_ATTR);
-    });
+    globalThis.CSS?.highlights?.delete(PREFIX_HIGHLIGHT);
+    document
+      .querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}], [${PREFIX_HOST_ATTR}]`)
+      .forEach((el) => {
+        el.removeAttribute(IDENTITY_ATTR);
+        el.removeAttribute(AVATAR_ATTR);
+        el.removeAttribute(PREFIX_HOST_ATTR);
+      });
   }
 
   function textLeaves(root: Element) {
@@ -127,6 +138,9 @@ export function initHideNames() {
     const candidates = [el, ...textSurfaces(el)]
       .filter((candidate, index, all) => all.indexOf(candidate) === index)
       .filter((candidate) => {
+        // An element that also holds the message's emoji or image is not
+        // just the name; blurring it would hide content.
+        if (candidate.querySelector(VISUAL_SEL)) return false;
         const candidateText = textValue(candidate);
         if (!candidateText) return false;
         if (candidateText === identity.prefix) return true;
@@ -140,10 +154,37 @@ export function initHideNames() {
       return true;
     }
 
-    // Never split or replace React-owned text nodes. When Messenger does not
-    // expose the sender as its own element, accept a wider blur on the nearest
-    // native surface so subsequent preview updates keep reconciling normally.
-    mark(el);
+    // Messenger often writes "Name: message" into one text node. Hide just the
+    // name with a highlight range, which leaves React's text alone. Without
+    // the Highlight API, blur the whole preview rather than show the name.
+    if (!highlightPrefix(el, identity.prefix)) mark(el);
+    return true;
+  }
+
+  function highlightPrefix(el: Element, prefix: string) {
+    const highlights = globalThis.CSS?.highlights;
+    if (!highlights || typeof Highlight === "undefined") return false;
+    const nodes: Text[] = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+    const span = prefixSpan(
+      nodes.map((node) => node.data),
+      prefix,
+    );
+    if (!span) return false;
+    const start = nodes[span.start[0]]!;
+    for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
+      node.parentElement?.setAttribute(PREFIX_HOST_ATTR, "");
+    }
+    const range = document.createRange();
+    range.setStart(start, span.start[1]);
+    range.setEnd(nodes[span.end[0]]!, span.end[1]);
+    let highlight = highlights.get(PREFIX_HIGHLIGHT);
+    if (!highlight) {
+      highlight = new Highlight();
+      highlights.set(PREFIX_HIGHLIGHT, highlight);
+    }
+    highlight.add(range);
     return true;
   }
 
@@ -325,6 +366,9 @@ export function initHideNames() {
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
+      // Preview text is rewritten in place; a highlight range would not
+      // follow a new sender's name.
+      characterData: true,
       attributes: true,
       attributeFilter: ["aria-label", "href", "role", "src", "style"],
     });

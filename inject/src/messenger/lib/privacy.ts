@@ -34,6 +34,34 @@ export function previewIdentity(value: string): { prefix: string; colon: boolean
   return { prefix, colon: !!colon };
 }
 
+/** A position in a run of text nodes: [node index, offset within it]. */
+export type TextPoint = [number, number];
+
+/**
+ * Where `prefix` sits in an element's text nodes, when the element's text
+ * starts with it (after leading whitespace). Null otherwise, including when
+ * whitespace differs from the normalized prefix. The end stays inside the
+ * node holding the prefix's last character.
+ */
+export function prefixSpan(
+  texts: string[],
+  prefix: string,
+): { start: TextPoint; end: TextPoint } | null {
+  const joined = texts.join("");
+  const lead = joined.length - joined.trimStart().length;
+  if (!prefix || !joined.startsWith(prefix, lead)) return null;
+  const locate = (index: number, atEnd: boolean): TextPoint => {
+    let offset = index;
+    for (let node = 0; node < texts.length; node += 1) {
+      const length = texts[node]!.length;
+      if (atEnd ? offset <= length : offset < length) return [node, offset];
+      offset -= length;
+    }
+    return [texts.length - 1, texts[texts.length - 1]!.length];
+  };
+  return { start: locate(lead, false), end: locate(lead + prefix.length, true) };
+}
+
 type IdentitySettings = {
   hide_names_avatars?: boolean;
   hide_names?: boolean | null;
