@@ -349,7 +349,7 @@ thread_local! {
 /// ends in "-dark" (as `Adwaita-dark` from a dark desktop does), whatever
 /// `gtk-application-prefer-dark-theme` says, so Theme = Light left Messenger
 /// dark (Ref #406). Use the theme's light variant while Light is forced, and
-/// the desktop's own name otherwise.
+/// otherwise hand the name back to the desktop.
 pub(crate) fn apply_gtk_theme_name(app: &tauri::AppHandle, theme: Option<tauri::Theme>) {
     let _ = app.run_on_main_thread(move || {
         let Some(settings) = gtk::Settings::default() else {
@@ -366,8 +366,11 @@ pub(crate) fn apply_gtk_theme_name(app: &tauri::AppHandle, theme: Option<tauri::
                     }
                     *swapped = desktop;
                 }
-            } else if let Some(desktop) = swapped.take() {
-                settings.set_gtk_theme_name(Some(&desktop));
+            } else if swapped.take().is_some() {
+                // Drop Carrier's override rather than setting the old name
+                // again, which would be a new override: the desktop's value,
+                // and its later changes, apply once more.
+                settings.reset_property("gtk-theme-name");
             }
         });
     });
