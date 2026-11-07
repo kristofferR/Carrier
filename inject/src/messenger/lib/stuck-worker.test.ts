@@ -122,6 +122,9 @@ describe("probeFacebook", () => {
       "https://m.facebook.com/favicon.ico",
     ]);
     expect(requests[0]?.[1].method).toBe("HEAD");
+    expect(requests[0]?.[1].redirect).toBe("manual");
+    // Fetch turns a no-cors request that doesn't follow redirects into a network error.
+    expect(requests[1]?.[1]).toMatchObject({ mode: "no-cors", redirect: "follow" });
     expect(requests.every(([, init]) => init.credentials === "omit")).toBe(true);
 
     const failing = (async () => {

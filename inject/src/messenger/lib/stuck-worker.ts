@@ -20,10 +20,10 @@ export async function probeFacebook(fetch: typeof globalThis.fetch): Promise<boo
   const timer = nativeSetTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   const request = (url: string, init: RequestInit) =>
     fetch(url, {
-      ...init,
       cache: "no-store",
       credentials: "omit",
       redirect: "manual",
+      ...init,
       signal: controller.signal,
     });
   try {
@@ -32,8 +32,10 @@ export async function probeFacebook(fetch: typeof globalThis.fetch): Promise<boo
       let failures = 0;
       const probes = [
         request("/favicon.ico", { method: "HEAD" }),
-        // Cross-origin, so no-cors: an opaque response still proves reachability.
-        request(SECOND_PROBE_URL, { mode: "no-cors" }),
+        // Cross-origin, so no-cors: an opaque response still proves
+        // reachability. Fetch rejects no-cors requests that don't follow
+        // redirects, so this one does.
+        request(SECOND_PROBE_URL, { mode: "no-cors", redirect: "follow" }),
       ];
       for (const probe of probes) {
         probe.then(
