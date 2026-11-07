@@ -1776,24 +1776,41 @@ ${button.innerHTML}`)
   var STUCK_WORKER_MAX_MS = 6e5;
   var PROBE_INTERVAL_MS = 3e4;
   var PROBE_TIMEOUT_MS = 1e4;
+  var SECOND_PROBE_URL = "https://m.facebook.com/favicon.ico";
   var nativeSetTimeout2 = setTimeout.bind(globalThis);
   var nativeClearTimeout2 = clearTimeout.bind(globalThis);
   async function probeFacebook(fetch2) {
     const controller = new AbortController();
     const timer = nativeSetTimeout2(() => controller.abort(), PROBE_TIMEOUT_MS);
+    const request = (url, init) => fetch2(url, {
+      ...init,
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "manual",
+      signal: controller.signal
+    });
     try {
-      await fetch2("/favicon.ico", {
-        method: "HEAD",
-        cache: "no-store",
-        credentials: "omit",
-        redirect: "manual",
-        signal: controller.signal
+      return await new Promise((resolve) => {
+        let failures2 = 0;
+        const probes = [
+          request("/favicon.ico", { method: "HEAD" }),
+          // Cross-origin, so no-cors: an opaque response still proves reachability.
+          request(SECOND_PROBE_URL, { mode: "no-cors" })
+        ];
+        for (const probe of probes) {
+          probe.then(
+            () => resolve(true),
+            () => {
+              if (++failures2 === probes.length) resolve(false);
+            }
+          );
+        }
       });
-      return true;
     } catch (_) {
       return false;
     } finally {
       nativeClearTimeout2(timer);
+      controller.abort();
     }
   }
   var StuckWorkerReload = class {

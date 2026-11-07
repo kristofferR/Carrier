@@ -4,27 +4,51 @@ export const STUCK_WORKER_RELOAD_MS = 120_000;
 export const STUCK_WORKER_MAX_MS = 600_000;
 const PROBE_INTERVAL_MS = 30_000;
 const PROBE_TIMEOUT_MS = 10_000;
+const SECOND_PROBE_URL = "https://m.facebook.com/favicon.ico";
 // Captured at document start, before Facebook wraps the scheduling APIs.
 const nativeSetTimeout = setTimeout.bind(globalThis);
 const nativeClearTimeout = clearTimeout.bind(globalThis);
 
-/** Any HTTP answer from facebook.com proves the network path; only failures and timeouts do not. */
+/**
+ * Any HTTP answer from Facebook proves the network path; only failures and
+ * timeouts do not. After a network change WebKit keeps sending same-host
+ * requests down the dead pooled connection for about 44 seconds, so race a
+ * second host, which has to open a fresh connection.
+ */
 export async function probeFacebook(fetch: typeof globalThis.fetch): Promise<boolean> {
   const controller = new AbortController();
   const timer = nativeSetTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-  try {
-    await fetch("/favicon.ico", {
-      method: "HEAD",
+  const request = (url: string, init: RequestInit) =>
+    fetch(url, {
+      ...init,
       cache: "no-store",
       credentials: "omit",
       redirect: "manual",
       signal: controller.signal,
     });
-    return true;
+  try {
+    // First answer wins, like Promise.any (absent before Safari 14).
+    return await new Promise<boolean>((resolve) => {
+      let failures = 0;
+      const probes = [
+        request("/favicon.ico", { method: "HEAD" }),
+        // Cross-origin, so no-cors: an opaque response still proves reachability.
+        request(SECOND_PROBE_URL, { mode: "no-cors" }),
+      ];
+      for (const probe of probes) {
+        probe.then(
+          () => resolve(true),
+          () => {
+            if (++failures === probes.length) resolve(false);
+          },
+        );
+      }
+    });
   } catch (_) {
     return false;
   } finally {
     nativeClearTimeout(timer);
+    controller.abort();
   }
 }
 

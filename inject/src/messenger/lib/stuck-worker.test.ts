@@ -111,18 +111,44 @@ describe("StuckWorkerReload", () => {
 
 describe("probeFacebook", () => {
   test("any HTTP answer counts as reachable; a network failure does not", async () => {
-    const requests: RequestInit[] = [];
-    const answering = (async (_input: unknown, init?: RequestInit) => {
-      requests.push(init ?? {});
+    const requests: [string, RequestInit][] = [];
+    const answering = (async (input: unknown, init?: RequestInit) => {
+      requests.push([String(input), init ?? {}]);
       return new Response(null, { status: 404 });
     }) as typeof fetch;
     expect(await probeFacebook(answering)).toBe(true);
-    expect(requests[0]?.method).toBe("HEAD");
-    expect(requests[0]?.credentials).toBe("omit");
+    expect(requests.map(([url]) => url)).toEqual([
+      "/favicon.ico",
+      "https://m.facebook.com/favicon.ico",
+    ]);
+    expect(requests[0]?.[1].method).toBe("HEAD");
+    expect(requests.every(([, init]) => init.credentials === "omit")).toBe(true);
 
     const failing = (async () => {
       throw new TypeError("Load failed");
     }) as unknown as typeof fetch;
     expect(await probeFacebook(failing)).toBe(false);
+  });
+
+  test("a fresh connection to the second host wins while the first host hangs", async () => {
+    const stalledSameHost = ((input: unknown, init?: RequestInit) => {
+      if (String(input) !== "/favicon.ico") return Promise.resolve(new Response(null));
+      return new Promise<Response>((_, reject) =>
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted"))),
+      );
+    }) as typeof fetch;
+    expect(await probeFacebook(stalledSameHost)).toBe(true);
+  });
+
+  test("works where Promise.any does not exist (Safari 13)", async () => {
+    const any = Promise.any;
+    // @ts-expect-error simulating an engine without Promise.any
+    delete Promise.any;
+    try {
+      const answering = (async () => new Response(null)) as unknown as typeof fetch;
+      expect(await probeFacebook(answering)).toBe(true);
+    } finally {
+      Promise.any = any;
+    }
   });
 });
