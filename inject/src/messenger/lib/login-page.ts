@@ -34,8 +34,13 @@ export function isCookiePolicyHref(href: string): boolean {
   }
 }
 
+/**
+ * The consent choice row pairs the decline action with a blue primary
+ * ("Allow all cookies"). Rows of plain buttons, like the dialog's "Learn more"
+ * cards, open information pages instead.
+ */
 export function qualifiesCookieActionRow(scores: number[]): boolean {
-  return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
+  return scores.length >= 2 && Math.max(...scores) > 40;
 }
 
 export function lowestScoreIndex(scores: number[]): number | null {

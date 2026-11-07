@@ -53,8 +53,10 @@ describe("cookie policy links", () => {
 });
 
 describe("cookie action rows", () => {
-  test("accepts two-button rows or larger rows with a strong primary action", () => {
-    expect(qualifiesCookieActionRow([0, 0])).toBe(true);
+  test("accepts only rows with a strong primary action", () => {
+    // Two plain "Learn more" buttons side by side.
+    expect(qualifiesCookieActionRow([0, 0])).toBe(false);
+    expect(qualifiesCookieActionRow([0, 90])).toBe(true);
     expect(qualifiesCookieActionRow([5, 60, 10])).toBe(true);
     expect(qualifiesCookieActionRow([5, 10, 15])).toBe(false);
     expect(qualifiesCookieActionRow([80])).toBe(false);

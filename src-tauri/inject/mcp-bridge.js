@@ -536,6 +536,10 @@
         // emit_and_wait wraps a non-object payload (the code string) as _payload.
         var code = p && p._payload !== undefined ? p._payload : p;
         // CSP-safe, sanitized selector probe for Hide Names & Avatars work.
+        if (code === "__carrier_mcp_login_layout_probe__") {
+          reply(loginLayoutProbe());
+          return;
+        }
         if (code === "__carrier_mcp_privacy_probe__") {
           reply(privacyProbe());
           return;
@@ -3137,6 +3141,116 @@
 
     // Keep privacy diagnostics sanitized: no message text, raw thread/profile
     // IDs, image URLs, or alt/aria-label contents.
+    // Layout of Facebook's login-page dialogs (cookie consent and its
+    // sub-dialogs): each dialog's box and the positioning of every ancestor up
+    // to <html>. Classifications and numbers only; no text.
+    function loginLayoutProbe() {
+      var box = function (el) {
+        var r = el.getBoundingClientRect();
+        return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+      };
+      var carrierAttrs = function (el) {
+        return Array.prototype.filter
+          .call(el.attributes || [], function (a) {
+            return a.name.indexOf("data-carrier") === 0;
+          })
+          .map(function (a) {
+            return a.name;
+          });
+      };
+      var dialogs = Array.prototype.map.call(
+        document.querySelectorAll('[role="dialog"]'),
+        function (dialog) {
+          var chain = [];
+          for (var el = dialog; el && el.nodeType === 1; el = el.parentElement) {
+            var cs = getComputedStyle(el);
+            chain.push({
+              tag: el.tagName.toLowerCase(),
+              box: box(el),
+              position: cs.position,
+              top: cs.top,
+              bottom: cs.bottom,
+              transform: cs.transform === "none" ? undefined : cs.transform,
+              display: cs.display,
+              align: cs.alignItems,
+              justify: cs.justifyContent,
+              height: cs.height,
+              minHeight: cs.minHeight,
+              maxHeight: cs.maxHeight,
+              overflowY: cs.overflowY,
+              margin: cs.margin,
+              padding: cs.padding,
+              carrier: carrierAttrs(el),
+            });
+          }
+          var buttons = Array.prototype.map.call(
+            dialog.querySelectorAll('button, [role="button"]'),
+            function (button) {
+              var r = button.getBoundingClientRect();
+              var hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+              var fills = [button].concat(Array.prototype.slice.call(button.querySelectorAll("*")))
+                .map(function (el) {
+                  return getComputedStyle(el).backgroundColor;
+                })
+                .filter(function (c) {
+                  return c && c !== "rgba(0, 0, 0, 0)";
+                });
+              return {
+                box: box(button),
+                hidden: !!button.closest('[aria-hidden="true"]'),
+                disabled: button.getAttribute("aria-disabled"),
+                expanded: button.hasAttribute("aria-expanded"),
+                popup: button.getAttribute("aria-haspopup"),
+                hit: hit ? (button.contains(hit) ? "self" : hit === document.body ? "body" : "other") : "none",
+                fills: fills.slice(0, 4),
+              };
+            },
+          );
+          return {
+            box: box(dialog),
+            images: Array.prototype.map.call(dialog.querySelectorAll("img"), function (img) {
+              return {
+                box: box(img),
+                loading: img.loading,
+                hasSrc: !!img.getAttribute("src"),
+                complete: img.complete,
+                width: img.naturalWidth,
+              };
+            }),
+            modal: dialog.getAttribute("aria-modal"),
+            hiddenAncestor: !!dialog.closest('[aria-hidden="true"]'),
+            buttons: buttons,
+            chain: chain,
+          };
+        },
+      );
+      var timing = performance
+        .getEntriesByType("resource")
+        .filter(function (e) {
+          return e.duration > 1500 || e.startTime > 8000;
+        })
+        .map(function (e) {
+          var u = new URL(e.name);
+          return [u.hostname, (u.pathname.match(/\.[a-z0-9]+$/) || ["?"])[0], e.initiatorType, Math.round(e.startTime), Math.round(e.duration)];
+        })
+        .slice(0, 40);
+      var fonts = [];
+      document.fonts.forEach(function (f) {
+        fonts.push(f.family + ":" + f.weight + ":" + f.status);
+      });
+      return {
+        now: Math.round(performance.now()),
+        timing: timing,
+        fonts: fonts,
+        viewport: [innerWidth, innerHeight],
+        scroll: [Math.round(scrollX), Math.round(scrollY)],
+        documentHeight: document.documentElement.scrollHeight,
+        bodyHeight: document.body ? document.body.scrollHeight : null,
+        html: carrierAttrs(document.documentElement),
+        dialogs: dialogs,
+      };
+    }
+
     function privacyProbe() {
       var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
       var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";

@@ -4231,7 +4231,7 @@ ${button.innerHTML}`)
     }
   }
   function qualifiesCookieActionRow(scores) {
-    return scores.length >= 2 && (Math.max(...scores) > 40 || scores.length === 2);
+    return scores.length >= 2 && Math.max(...scores) > 40;
   }
   function lowestScoreIndex(scores) {
     if (!scores.length) return null;
@@ -4259,13 +4259,28 @@ ${button.innerHTML}`)
     if (s.display === "none" || s.visibility === "hidden") return null;
     return r;
   };
+  var blueScore = (el) => {
+    const c = rgb(getComputedStyle(el).backgroundColor);
+    if (!c || c.a < 0.35) return null;
+    const chroma = c.b - Math.max(c.r, c.g);
+    return { score: chroma < 60 ? 0 : chroma + Math.max(0, c.b - 120), opaque: c.a > 0.9 };
+  };
+  var coversButton = (inner, button) => {
+    const r = inner.getBoundingClientRect();
+    return r.width * r.height >= 0.7 * button.width * button.height;
+  };
   var primaryBlueScore = (el) => {
     let best = 0;
     for (let cur = el; cur && cur !== document.documentElement; cur = cur.parentElement) {
-      const c = rgb(getComputedStyle(cur).backgroundColor);
-      if (!c || c.a < 0.35) continue;
-      best = Math.max(best, c.b - Math.max(c.r, c.g) + Math.max(0, c.b - 120));
-      if (c.a > 0.9) break;
+      const fill = blueScore(cur);
+      if (!fill) continue;
+      best = Math.max(best, fill.score);
+      if (fill.opaque) break;
+    }
+    const box = el.getBoundingClientRect();
+    for (const inner of el.querySelectorAll("*")) {
+      const fill = blueScore(inner);
+      if (fill && coversButton(inner, box)) best = Math.max(best, fill.score);
     }
     return best;
   };
@@ -6722,6 +6737,7 @@ ${button.innerHTML}`)
   var FOOTER_LINKS = "data-carrier-login-footer-links";
   var LANGUAGES = "data-carrier-login-languages";
   var LANGUAGE_LINK = "data-carrier-login-language-link";
+  var LOGO = "data-carrier-login-logo";
   var LOGIN_REDIRECT = "carrier:login-redirect";
   function returnToMessengerAfterLogin() {
     if (!onFacebookHost()) return "idle";
@@ -6767,6 +6783,19 @@ ${button.innerHTML}`)
       if (el.querySelector?.('[role="dialog"], [role="alertdialog"]')) return true;
       if (findOptionalCookieDeclineButton(el)) return true;
       return hasCookieConsentContext(el);
+    };
+    const copyLogo = (html) => {
+      const logo = document.querySelector('[role="banner"] svg');
+      if (!logo) return;
+      const color = getComputedStyle(logo).color || "#0866ff";
+      if (html.getAttribute(LOGO) === color) return;
+      const copy = logo.cloneNode(true);
+      copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      copy.setAttribute("fill", color);
+      copy.removeAttribute("class");
+      const data = encodeURIComponent(new XMLSerializer().serializeToString(copy));
+      html.style.setProperty("--carrier-login-logo", `url("data:image/svg+xml,${data}")`);
+      html.setAttribute(LOGO, color);
     };
     const restoreRequiredLoginUi = () => {
       for (const el of document.querySelectorAll(`[${HIDE}], [${REQUIRED}]`)) {
@@ -6833,12 +6862,13 @@ ${button.innerHTML}`)
       const languageLinks = topLanguageLinks(allLinks);
       const languageSet = new Set(languageLinks);
       if (languageLinks.length >= 2) keepLanguageStrip(col, languageLinks);
+      const inDialog = (el) => !!el.closest('[role="dialog"], [role="alertdialog"]');
       for (const link of allLinks) {
-        if (languageSet.has(link) || link.hasAttribute(LANGUAGE_LINK)) continue;
+        if (languageSet.has(link) || link.hasAttribute(LANGUAGE_LINK) || inDialog(link)) continue;
         (link.closest("li") || link).setAttribute(FOOTER_LINKS, "");
       }
       for (const el of document.body.querySelectorAll("div, span")) {
-        if (el.contains(col) || col.contains(el)) continue;
+        if (el.contains(col) || col.contains(el) || inDialog(el)) continue;
         if (languageLinks.some((link) => el.contains(link))) continue;
         if (/(\bMeta\s*©|\bMeta\s+\d{4}\b|©\s*\d{4})/i.test(el.textContent || "")) {
           el.setAttribute(FOOTER_LINKS, "");
@@ -6867,6 +6897,8 @@ ${button.innerHTML}`)
           document.querySelectorAll(`[${FORM}]`).forEach((el) => el.removeAttribute(FORM));
           document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
           document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
+          html.removeAttribute(LOGO);
+          html.style.removeProperty("--carrier-login-logo");
           clearFooterMarks();
           html.removeAttribute("data-carrier-login-dark");
         }
@@ -6931,6 +6963,7 @@ ${button.innerHTML}`)
       );
       restoreRequiredLoginUi();
       tidyFooter(col);
+      copyLogo(html);
       let node = col;
       while (node?.parentElement && node !== document.body) {
         for (const sib of node.parentElement.children) {

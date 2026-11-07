@@ -25,6 +25,7 @@ const FOOTER_KEEP = "data-carrier-login-footer-keep";
 const FOOTER_LINKS = "data-carrier-login-footer-links";
 const LANGUAGES = "data-carrier-login-languages";
 const LANGUAGE_LINK = "data-carrier-login-language-link";
+const LOGO = "data-carrier-login-logo";
 const LOGIN_REDIRECT = "carrier:login-redirect";
 
 type LoginRecoveryState = "idle" | "pending" | "settled";
@@ -96,6 +97,23 @@ export function initLoginTidy() {
     if (el.querySelector?.('[role="dialog"], [role="alertdialog"]')) return true;
     if (findOptionalCookieDeclineButton(el)) return true;
     return hasCookieConsentContext(el);
+  };
+
+  // Facebook's "f" logo, copied for the CSS above the login column (see
+  // messenger.css). Facebook colors it per theme, so copy it again when that
+  // color changes.
+  const copyLogo = (html: HTMLElement) => {
+    const logo = document.querySelector('[role="banner"] svg');
+    if (!logo) return;
+    const color = getComputedStyle(logo).color || "#0866ff";
+    if (html.getAttribute(LOGO) === color) return;
+    const copy = logo.cloneNode(true) as SVGElement;
+    copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    copy.setAttribute("fill", color);
+    copy.removeAttribute("class");
+    const data = encodeURIComponent(new XMLSerializer().serializeToString(copy));
+    html.style.setProperty("--carrier-login-logo", `url("data:image/svg+xml,${data}")`);
+    html.setAttribute(LOGO, color);
   };
 
   const restoreRequiredLoginUi = () => {
@@ -202,12 +220,14 @@ export function initLoginTidy() {
 
     // Hide every other footer anchor (Register, privacy, Meta family, app
     // links, …) and the Meta copyright line — everything but the languages.
+    // Dialogs (the cookie consent) keep their links: they are part of the text.
+    const inDialog = (el: Element) => !!el.closest('[role="dialog"], [role="alertdialog"]');
     for (const link of allLinks) {
-      if (languageSet.has(link) || link.hasAttribute(LANGUAGE_LINK)) continue;
+      if (languageSet.has(link) || link.hasAttribute(LANGUAGE_LINK) || inDialog(link)) continue;
       (link.closest("li") || link).setAttribute(FOOTER_LINKS, "");
     }
     for (const el of document.body.querySelectorAll("div, span")) {
-      if (el.contains(col) || col.contains(el)) continue;
+      if (el.contains(col) || col.contains(el) || inDialog(el)) continue;
       if (languageLinks.some((link) => el.contains(link))) continue;
       if (/(\bMeta\s*©|\bMeta\s+\d{4}\b|©\s*\d{4})/i.test(el.textContent || "")) {
         el.setAttribute(FOOTER_LINKS, "");
@@ -249,6 +269,8 @@ export function initLoginTidy() {
         document.querySelectorAll(`[${FORM}]`).forEach((el) => el.removeAttribute(FORM));
         document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
         document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
+        html.removeAttribute(LOGO);
+        html.style.removeProperty("--carrier-login-logo");
         clearFooterMarks();
         html.removeAttribute("data-carrier-login-dark");
       }
@@ -344,6 +366,7 @@ export function initLoginTidy() {
     );
     restoreRequiredLoginUi();
     tidyFooter(col);
+    copyLogo(html);
     // Hide every sibling of the login column, up the ancestor chain, and mark
     // the ancestor wrappers so their (often white) backgrounds can be cleared.
     let node: Element | null = col;

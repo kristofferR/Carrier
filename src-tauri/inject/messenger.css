@@ -173,10 +173,21 @@ html[data-carrier-login] body {
 
 html[data-carrier-login] [data-carrier-login-anc] {
   display: block !important;
-  position: static !important;
   margin: 0 !important;
   padding: 0 !important;
   transform: none !important;
+}
+
+/* While a dialog is open, Facebook pins its page (#scrollview, then hidden
+   from assistive tech) to the window, so the dialog layers that follow it
+   start at the top of the window. Unpinned, a dialog that relies on that (the
+   cookie dialog's "Learn more" pages) opened below the login form. */
+html[data-carrier-login] [data-carrier-login-anc]:not([aria-hidden="true"]) {
+  position: static !important;
+}
+
+html[data-carrier-login] [data-carrier-login-anc][aria-hidden="true"] {
+  width: 100% !important;
 }
 
 /* The login column: a normal-flow block, centred and capped to a comfortable
@@ -256,6 +267,18 @@ html[data-carrier-login] [data-carrier-login-languages] > * {
 
 html[data-carrier-login] [data-carrier-login-footer-links] {
   display: none !important;
+}
+
+/* Facebook's "f" logo above the form. Its banner is hidden with the rest of
+   Facebook's chrome (in wide windows it shares a column with the marketing
+   collage), so messenger.js copies the logo into --carrier-login-logo. */
+html[data-carrier-login][data-carrier-login-logo] [data-carrier-login-col]::before {
+  content: "";
+  display: block;
+  width: 60px;
+  height: 60px;
+  margin: 8px auto 32px;
+  background: var(--carrier-login-logo) center / contain no-repeat;
 }
 
 /* Facebook's newer login layout defines its own light palette inside the
