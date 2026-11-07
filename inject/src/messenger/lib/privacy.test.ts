@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isMetaText, previewIdentity } from "./privacy";
+import { hidesAvatars, hidesNames, isMetaText, previewIdentity } from "./privacy";
 
 describe("previewIdentity", () => {
   test("finds the sender prefix in 'Name: message' previews", () => {
@@ -44,5 +44,18 @@ describe("isMetaText", () => {
   test("names are not metadata", () => {
     expect(isMetaText("Kari")).toBe(false);
     expect(isMetaText("Mo")).toBe(false);
+  });
+});
+
+describe("hidesNames / hidesAvatars", () => {
+  test("keep the combined switch until one is set on its own", () => {
+    expect(hidesNames({ hide_names_avatars: true })).toBe(true);
+    expect(hidesAvatars({ hide_names_avatars: true })).toBe(true);
+    const namesOnly = { hide_names_avatars: true, hide_avatars: false };
+    expect(hidesNames(namesOnly)).toBe(true);
+    expect(hidesAvatars(namesOnly)).toBe(false);
+    expect(hidesAvatars({ hide_avatars: true })).toBe(true);
+    expect(hidesNames({ hide_names: null })).toBe(false);
+    expect(hidesNames(undefined)).toBe(false);
   });
 });

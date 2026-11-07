@@ -305,7 +305,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
     let hide_names = check_item(
         "hide_names",
         "Hide Names and Avatars",
-        settings.hide_names_avatars,
+        settings.hides_names() || settings.hides_avatars(),
         Some("CmdOrCtrl+Shift+H"),
     )?;
     let always_on_top = check_item(
@@ -395,7 +395,11 @@ pub(crate) fn sync_setting_checks(app: &tauri::AppHandle, settings: &Settings) {
         return;
     };
 
-    set_check_item(&view, "hide_names", settings.hide_names_avatars);
+    set_check_item(
+        &view,
+        "hide_names",
+        settings.hides_names() || settings.hides_avatars(),
+    );
     set_check_item(&view, "always_on_top", settings.always_on_top);
 
     let Some(MenuItemKind::Submenu(theme)) = view.get("theme") else {
@@ -691,7 +695,7 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
                 open_recent_thread(app, &href);
             }
         }
-        "hide_names" => mutate_settings(app, |s| s.hide_names_avatars = !s.hide_names_avatars),
+        "hide_names" => mutate_settings(app, Settings::toggle_hide_identity),
         "maximize" => {
             if let Some(w) = focused_window(app) {
                 if w.is_maximized().unwrap_or(false) {
@@ -990,12 +994,12 @@ fn recent_href_from_menu_id(menu_id: &str) -> Option<String> {
     validated_thread_path(&format!("/t/{id}/"))
 }
 
-/// The recent-threads list as native menus should show it: empty while Hide
-/// Names & Avatars is on, so contact names never surface in the Dock/tray menu
+/// The recent-threads list as native menus should show it: empty while names
+/// are hidden, so contact names never surface in the Dock/tray menu
 /// of a screen-shared machine.
 pub(crate) fn recent_threads_for_menu(app: &tauri::AppHandle) -> Vec<RecentThread> {
     let state = app.state::<AppState>();
-    if state.settings.lock().unwrap().hide_names_avatars {
+    if state.settings.lock().unwrap().hides_names() {
         return Vec::new();
     }
     state.recent_threads.lock().unwrap().clone()
