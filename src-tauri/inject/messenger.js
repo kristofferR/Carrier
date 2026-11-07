@@ -6486,8 +6486,11 @@ ${button.innerHTML}`)
       reading = true;
       readMessengerDndUntil(account2, window.require).then((until) => {
         if (until === null) {
-          if (!unavailableReported) diag("notify.messenger-dnd", "Do Not Disturb unreadable");
+          if (!unavailableReported) {
+            diag("notify.messenger-dnd-unreadable", "Do Not Disturb unreadable");
+          }
           unavailableReported = true;
+          lastActive = null;
           return;
         }
         unavailableReported = false;

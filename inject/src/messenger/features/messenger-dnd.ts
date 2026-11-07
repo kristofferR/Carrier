@@ -23,8 +23,14 @@ export function initMessengerDnd() {
     readMessengerDndUntil(account, (window as unknown as { require?: unknown }).require)
       .then((until) => {
         if (until === null) {
-          if (!unavailableReported) diag("notify.messenger-dnd", "Do Not Disturb unreadable");
+          // Its own diag key: sharing one with the state lines let the
+          // per-minute limit drop the recovery that follows a slow first read.
+          if (!unavailableReported) {
+            diag("notify.messenger-dnd-unreadable", "Do Not Disturb unreadable");
+          }
           unavailableReported = true;
+          // Report the state again once a read succeeds.
+          lastActive = null;
           return;
         }
         unavailableReported = false;
