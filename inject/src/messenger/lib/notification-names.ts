@@ -199,6 +199,8 @@ export interface NativeSender {
   name: string;
   /** The group conversation's name; empty for a one-to-one chat. */
   group: string;
+  /** The notification's icon is this sender's own picture. */
+  photo: boolean;
 }
 
 /**
@@ -215,6 +217,7 @@ export function communicationSender(
   showNicknames: boolean,
   titleKind: "sender" | "group" | "unknown",
   groupTitle = "",
+  photo = false,
 ): NativeSender | undefined {
   if (!group || !account) return undefined;
   const display = (person: NotificationParticipant) =>
@@ -222,7 +225,10 @@ export function communicationSender(
   if (!group.isGroup) {
     const others = group.participants.filter((person) => person.id && person.id !== account);
     const person = others.length === 1 ? others[0] : undefined;
-    return person?.id ? { id: person.id, name: display(person), group: "" } : undefined;
+    // A one-to-one chat's picture is the other person's.
+    return person?.id
+      ? { id: person.id, name: display(person), group: "", photo: true }
+      : undefined;
   }
   const kind =
     titleKind === "unknown" && group.title
@@ -236,5 +242,5 @@ export function communicationSender(
       : notificationSenderPrefix(body, group)?.person;
   const name = group.title || groupTitle;
   if (!person?.id || person.id === account || !name) return undefined;
-  return { id: person.id, name: display(person), group: name };
+  return { id: person.id, name: display(person), group: name, photo };
 }

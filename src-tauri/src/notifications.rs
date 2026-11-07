@@ -48,6 +48,10 @@ pub(crate) struct NotifySender {
     /// The group conversation's name; empty for a one-to-one chat.
     #[serde(default)]
     group: String,
+    /// The notification's icon is this sender's own picture (not, say, the
+    /// group's), so it may stand for them.
+    #[serde(default)]
+    photo: bool,
 }
 
 impl NotifySender {
@@ -2514,7 +2518,7 @@ pub(crate) fn show_message_notification(
                     |(sender, identifier)| crate::macos::notifications::MacSender {
                         identifier,
                         name: sender.name.trim(),
-                        avatar: avatar.as_deref(),
+                        avatar: avatar.as_deref().filter(|_| sender.photo),
                         group_name: Some(sender.group.trim()).filter(|group| !group.is_empty()),
                     },
                 );
@@ -2998,6 +3002,7 @@ mod tests {
             id: "42".into(),
             name: "Alex".into(),
             group: String::new(),
+            photo: true,
         };
         assert_eq!(
             sender.identifier("100").as_deref(),

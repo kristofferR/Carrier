@@ -4618,19 +4618,19 @@ ${button.innerHTML}`)
       clearTimeout(timer);
     }
   }
-  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "") {
+  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "", photo = false) {
     if (!group || !account2) return void 0;
     const display = (person2) => showNicknames2 && person2.nickname || person2.name;
     if (!group.isGroup) {
       const others = group.participants.filter((person3) => person3.id && person3.id !== account2);
       const person2 = others.length === 1 ? others[0] : void 0;
-      return person2?.id ? { id: person2.id, name: display(person2), group: "" } : void 0;
+      return person2?.id ? { id: person2.id, name: display(person2), group: "", photo: true } : void 0;
     }
     const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
     const person = kind === "sender" ? namedParticipant(title, group) : notificationSenderPrefix(body, group)?.person;
     const name = group.title || groupTitle;
     if (!person?.id || person.id === account2 || !name) return void 0;
-    return { id: person.id, name: display(person), group: name };
+    return { id: person.id, name: display(person), group: name, photo };
   }
 
   // inject/src/messenger/lib/nickname-replies.ts
@@ -9937,7 +9937,9 @@ ${button.innerHTML}`)
             accountId(document.cookie),
             showNicknames(nicknameMode(deliverySettings), group?.isGroup),
             visiblePresentation.subtitle ? "sender" : "group",
-            visiblePresentation.subtitle || visiblePresentation.title
+            visiblePresentation.subtitle || visiblePresentation.title,
+            // In a group the icon is the sender's only when their photo won.
+            Boolean(sender) && icon === sender
           )
         );
       }, FALLBACK_DELAY_MS);
