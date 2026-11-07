@@ -469,6 +469,10 @@ fn build_app_window_with_render_budget(
         // silences AirPods system-wide (#232). Carrier wants the page alive in
         // the background anyway (sync, notifications, badge), so opt out.
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
+        // Tauri's drag-drop handler consumes OS file drops before the page sees
+        // them, so files dragged from Finder/Explorer never reached Messenger's
+        // composer. Carrier has no native drop handling; let the page have them.
+        .disable_drag_drop_handler()
         // Messenger owns Web Audio contexts in child frames, including a
         // cross-origin fbsbx.com frame. Keep this origin-scoped audio script
         // separate so privileged Carrier code remains main-frame-only.
