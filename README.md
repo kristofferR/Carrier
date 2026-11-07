@@ -116,6 +116,7 @@ cryptographically verified updates.
 - [Schedule text messages](docs/scheduled-sending.md) with quick delays or a 24-hour date/time picker
 - Jump directly to conversations and cycle through them from the keyboard
 - Toggle the conversation information sidebar
+- Return to the message box automatically when you switch back to Carrier
 - Search conversations or the active thread without reaching for the mouse
 - Double-click photos and videos for zooming and panning
 - Copy, download, and open message media from richer right-click menus

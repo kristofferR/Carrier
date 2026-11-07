@@ -65,6 +65,8 @@ interface CarrierSettings {
   block_telemetry?: boolean;
   /** Strip Facebook attribution parameters from copied and externally opened links. */
   strip_link_tracking?: boolean;
+  /** Put the cursor in the message box when the window comes back to the front. */
+  focus_composer_on_return?: boolean;
   /** Require Cmd+Enter (macOS) or Ctrl+Enter (elsewhere) to send. */
   send_with_accelerator?: boolean;
   /** Save automatically to Downloads, or open a native save dialog first. */

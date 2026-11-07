@@ -141,6 +141,9 @@ pub(crate) struct Settings {
     /// Never send the "typing…" indicator to others. Seeing theirs is
     /// unaffected. Off by default.
     pub(crate) block_typing_indicator: bool,
+    /// Focus the message box when the window comes back to the front with a
+    /// conversation open and nothing else focused. On by default.
+    pub(crate) focus_composer_on_return: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -261,6 +264,7 @@ impl Default for Settings {
             system_emoji: false,
             stop_media_autoplay: false,
             block_typing_indicator: false,
+            focus_composer_on_return: true,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -1143,6 +1147,10 @@ mod tests {
             s.hides_names() && s.hides_avatars(),
             "nothing hidden: hide both"
         );
+    fn settings_json_missing_focus_composer_on_return_defaults_to_true() {
+        // Existing installs gain the focus behavior without resetting settings.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.focus_composer_on_return);
     }
 
     #[test]

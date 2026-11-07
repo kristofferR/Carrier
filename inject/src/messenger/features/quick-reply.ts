@@ -1,4 +1,5 @@
 import { diag } from "../bridge";
+import { noteExplicitAction } from "../lib/composer-focus";
 import {
   composerContainsReply,
   composerIncludesReply,
@@ -201,6 +202,7 @@ async function preserveDraft(path: string, text: string, id: number): Promise<bo
 
 export function initQuickReply() {
   window.__carrierQuickReply = (path, rawText, id, attempt) => {
+    noteExplicitAction();
     const text = String(rawText);
     if (!validRequest(path, text, id, attempt)) {
       emitReplyResult(id, attempt, false);
@@ -224,6 +226,7 @@ export function initQuickReply() {
   };
 
   window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
+    noteExplicitAction();
     const text = String(rawText);
     if (
       threadPathId(path) === null ||
