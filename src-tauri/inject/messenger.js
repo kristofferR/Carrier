@@ -5806,13 +5806,24 @@ ${button.innerHTML}`)
         }
       });
     }
+    function markMixedProfileLinks(main2) {
+      main2.querySelectorAll(
+        'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
+      ).forEach((link) => {
+        if (!visible(link)) return;
+        const bareText = [...link.childNodes].some(
+          (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()
+        );
+        if (bareText && link.querySelector(VISUAL_SEL)) mark(link);
+      });
+    }
     function markThreadMessages(main2) {
       main2.querySelectorAll('[role="article"]').forEach((article) => {
         article.querySelectorAll("h3, h3 *").forEach((el) => {
           if (visible(el) && textValue(el)) mark(el);
         });
         article.querySelectorAll(
-          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]'
+          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"], a[href^="/"][href$="/"]:not([href*="/messages/"]) [style*="background-image"], a[href*="/profile.php"] [style*="background-image"]'
         ).forEach((el) => {
           if (visible(el)) markAvatar(el);
         });
@@ -5837,6 +5848,7 @@ ${button.innerHTML}`)
         if (main2) {
           markThreadHeader(main2);
           markThreadMessages(main2);
+          markMixedProfileLinks(main2);
         }
       } finally {
         queueMicrotask(() => {

@@ -349,17 +349,33 @@ html[data-carrier-hide-names][data-carrier-hide-avatars]
   filter: blur(6px) !important;
 }
 
+/* Names only. A link with no picture is all name; in a mixed link, blur the
+   text containers that hold no picture. Pictures include background-image
+   avatars. A name written straight into a mixed link has no element to blur,
+   so messenger.js marks such links whole (over-blurring the picture). */
+html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]):not(
+    :has(img, svg, image, [style*="background-image"])
+  ):not([style*="background-image"]),
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :is(span, div, h1, h2, h3, h4):not(:has(img, svg, image)) {
+  :is(span, div, h1, h2, h3, h4):not([style*="background-image"]):not(
+    :has(img, svg, image, [style*="background-image"])
+  ) {
   filter: blur(6px) !important;
 }
 
+/* Avatars only: every picture in a profile link, including background-image
+   avatars on the link itself. */
 html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :is(img, svg, image) {
+  :is(img, svg, image, [style*="background-image"]),
+html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])[style*="background-image"] {
   filter: blur(6px) !important;
 }
 
