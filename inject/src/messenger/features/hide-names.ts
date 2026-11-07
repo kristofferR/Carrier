@@ -204,6 +204,25 @@ export function initHideNames() {
     });
   }
 
+  /**
+   * Profile links whose name is a bare text node next to a picture: no element
+   * holds just the name, so mark the whole link as a name. Names-only then
+   * blurs its picture too, which errs on the side of hiding.
+   */
+  function markMixedProfileLinks(main: Element) {
+    main
+      .querySelectorAll(
+        'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]',
+      )
+      .forEach((link) => {
+        if (!visible(link)) return;
+        const bareText = [...link.childNodes].some(
+          (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim(),
+        );
+        if (bareText && link.querySelector(VISUAL_SEL)) mark(link);
+      });
+  }
+
   function markThreadMessages(main: Element) {
     main.querySelectorAll('[role="article"]').forEach((article) => {
       article.querySelectorAll("h3, h3 *").forEach((el) => {
@@ -212,7 +231,7 @@ export function initHideNames() {
 
       article
         .querySelectorAll(
-          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]',
+          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"], a[href^="/"][href$="/"]:not([href*="/messages/"]) [style*="background-image"], a[href*="/profile.php"] [style*="background-image"]',
         )
         .forEach((el) => {
           if (visible(el)) markAvatar(el);
@@ -241,6 +260,7 @@ export function initHideNames() {
       if (main) {
         markThreadHeader(main);
         markThreadMessages(main);
+        markMixedProfileLinks(main);
       }
     } finally {
       queueMicrotask(() => {
