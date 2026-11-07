@@ -28,7 +28,6 @@
  */
 
 type Json = Record<string, unknown>;
-type Edit = (value: Json) => boolean;
 
 function parseJson(text: string): unknown {
   try {
@@ -38,44 +37,32 @@ function parseJson(text: string): unknown {
   }
 }
 
-/**
- * The JSON object in `text` after `edit`, or null when nothing changed. IDs are
- * 64-bit numbers that JSON.parse would round, so only JSON that a parse and
- * stringify give back byte-for-byte is ever edited.
- */
-export function editJson(text: string, edit: Edit): string | null {
-  const value = parseJson(text);
-  if (!value || typeof value !== "object" || JSON.stringify(value) !== text) return null;
-  return edit(value as Json) ? JSON.stringify(value) : null;
-}
-
-/** `edit` applied to object[key], which may hold the JSON as an object or a string. */
-function editNested(object: Json, key: string, edit: Edit): boolean {
-  const value = object[key];
-  if (value && typeof value === "object") return edit(value as Json);
-  const edited = typeof value === "string" ? editJson(value, edit) : null;
-  if (edited === null) return false;
-  object[key] = edited;
-  return true;
+/** object[key] as an object, parsing it when Messenger nests it as a JSON string. */
+function nested(object: unknown, key: string): Json | null {
+  const value = (object as Json | null)?.[key];
+  const parsed = typeof value === "string" ? parseJson(value) : value;
+  return parsed && typeof parsed === "object" ? (parsed as Json) : null;
 }
 
 const TYPING_REQUEST = 4;
 const TYPING_LABEL = "3";
+// `"is_typing":1` at any nesting depth: the update sits in JSON strings inside
+// the request, so its quotes arrive escaped once or more.
+const IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
 
-/** Turns a "typing" update into "not typing"; leaves every other request alone. */
-function clearTyping(request: Json): boolean {
-  if (request.type !== TYPING_REQUEST) return false;
-  return editNested(
-    request,
-    "payload",
-    (update) =>
-      update.label === TYPING_LABEL &&
-      editNested(update, "payload", (typing) => {
-        if (!typing.is_typing) return false;
-        typing.is_typing = 0;
-        return true;
-      }),
-  );
+/**
+ * The request text with a "typing" update turned into "not typing", or null
+ * for any other request. Parsing only identifies the request; the edit is a
+ * same-length text substitution, so 64-bit IDs that JSON.parse would round,
+ * and Messenger's own escaping, pass through byte-for-byte.
+ */
+export function clearTyping(text: string): string | null {
+  const request = parseJson(text);
+  if ((request as Json | null)?.type !== TYPING_REQUEST) return null;
+  const update = nested(request, "payload");
+  if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
+  const edited = text.replace(IS_TYPING, "$10");
+  return edited === text ? null : edited;
 }
 
 const PART_DATA = 0x0d;
@@ -106,7 +93,7 @@ export function clearTypingInFrame(bytes: Uint8Array): Uint8Array<ArrayBuffer> |
       bytes[pos] === PART_DATA && end > pos + 8
         ? new TextDecoder().decode(bytes.subarray(pos + 8, end))
         : null;
-    const request = json && editJson(json, clearTyping);
+    const request = json && clearTyping(json);
     if (request) {
       const encoded = new TextEncoder().encode(request);
       const length = encoded.length + 2;
