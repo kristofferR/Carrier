@@ -159,7 +159,7 @@ fn is_hex_color(value: &str) -> bool {
 
 /// Read the header comment at the top of a theme file.
 pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, String> {
-    const MISSING: &str = "it doesn't start with a theme header. The file must begin with a comment such as /* Carrier theme  name: My theme */.";
+    const MISSING: &str = "it doesn't start with a theme header. The file must begin with a comment whose first line ends in \"theme\" (such as \"Carrier theme\"), followed by a line such as \"name: My theme\".";
     let body = css.trim_start_matches('\u{feff}').trim_start();
     let comment = body
         .strip_prefix("/*")
@@ -229,7 +229,18 @@ fn is_data_url(value: &str) -> bool {
 
 /// Walk every token, descending into blocks and functions. CSS escapes are
 /// decoded by the tokenizer, so `\75 rl(` is still caught as `url(`.
-fn scan_tokens<'i>(parser: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, String>> {
+/// Deeper nesting than any real theme needs; bounds the recursion below so
+/// a file of `(((…` cannot overflow the stack.
+const MAX_CSS_DEPTH: usize = 64;
+
+fn scan_tokens<'i>(
+    parser: &mut Parser<'i, '_>,
+    depth: usize,
+) -> Result<(), ParseError<'i, String>> {
+    if depth > MAX_CSS_DEPTH {
+        let line = parser.current_source_location().line + 1;
+        return Err(parser.new_custom_error(format!("line {line} is nested too deeply.")));
+    }
     loop {
         let line = parser.current_source_location().line + 1;
         let token = match parser.next_including_whitespace_and_comments() {
@@ -274,11 +285,11 @@ fn scan_tokens<'i>(parser: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, Str
                             )));
                         }
                     }
-                    scan_tokens(parser)
+                    scan_tokens(parser, depth + 1)
                 })?;
             }
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                parser.parse_nested_block(scan_tokens)?;
+                parser.parse_nested_block(|parser| scan_tokens(parser, depth + 1))?;
             }
             _ => {}
         }
@@ -293,7 +304,7 @@ pub(crate) fn check_css(css: &str) -> Result<(), String> {
     }
     let mut input = ParserInput::new(css);
     let mut parser = Parser::new(&mut input);
-    scan_tokens(&mut parser).map_err(|error| match error.kind {
+    scan_tokens(&mut parser, 0).map_err(|error| match error.kind {
         cssparser::ParseErrorKind::Custom(message) => message,
         cssparser::ParseErrorKind::Basic(_) => {
             format!("line {} could not be read as CSS.", error.location.line + 1)
@@ -933,6 +944,20 @@ mod tests {
         assert!(font_css("").is_empty());
         assert!(font_css("Bad\nFont").is_empty());
         assert!(font_css("A \"quoted\" font").contains(r#""A \"quoted\" font""#));
+    }
+
+    #[test]
+    fn deeply_nested_css_is_refused_not_a_stack_overflow() {
+        let error = check_css(&"(".repeat(1_000_000)).unwrap_err();
+        assert!(error.contains("nested too deeply"), "{error}");
+        assert!(
+            check_css(&format!(
+                "a {{ width: {}1px{} }}",
+                "calc(".repeat(8),
+                ")".repeat(8)
+            ))
+            .is_ok()
+        );
     }
 
     #[test]
