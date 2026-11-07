@@ -1058,12 +1058,9 @@
 
       // Pick up changes made elsewhere (e.g. the View menu) when refocused.
       window.addEventListener("focus", refresh);
-      // A newer discovery may have replaced the offered update meanwhile.
-      window.addEventListener("focus", async () => {
-        try {
-          const discovered = await invoke("discovered_update");
-          if (notesVersion && discovered !== notesVersion) await updateController.initialize();
-        } catch (_) {}
+      // A newer discovery may have replaced or cleared the offered update.
+      window.addEventListener("focus", () => {
+        updateController.refresh().catch(() => {});
       });
 
       const updateButton = document.getElementById("check");

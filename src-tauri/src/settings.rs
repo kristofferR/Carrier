@@ -258,6 +258,7 @@ impl Settings {
         }
         if !matches!(self.app_icon_variant.as_str(), "auto" | "light" | "dark") {
             self.app_icon_variant = "auto".into();
+        }
         if !matches!(self.update_check_hours, 1 | 4 | 24) {
             self.update_check_hours = 4;
         }
