@@ -11817,19 +11817,35 @@ ${text}`)) {
     const threadStates = /* @__PURE__ */ new Map();
     let refreshingStates = false;
     let statesFailing = false;
+    let stateEpoch = 0;
+    const MUTE_ACTION_HOLD_MS = 5e3;
+    const muteActions = /* @__PURE__ */ new Map();
+    const heldMute = (id, muted) => {
+      const action2 = muteActions.get(id);
+      if (!action2) return muted;
+      if (Date.now() - action2.at < MUTE_ACTION_HOLD_MS) return action2.muted;
+      muteActions.delete(id);
+      return muted;
+    };
     const refreshThreadStates = (ids) => {
       if (refreshingStates || !ids.length) return;
       refreshingStates = true;
+      const epoch2 = stateEpoch;
       readThreadStates(ids, window.require, Date.now()).then((states) => {
+        if (epoch2 !== stateEpoch) return;
         if (states === null) {
           if (!statesFailing) diag("badge.thread-state", "Messenger database unavailable");
           statesFailing = true;
-          return;
-        }
-        statesFailing = false;
+        } else statesFailing = false;
         let changed = false;
-        for (const [id, state2] of states) {
+        for (const id of ids) {
+          const read = states?.get(id);
+          const state2 = read && { ...read, muted: heldMute(id, read.muted) };
           const old = threadStates.get(id);
+          if (!state2) {
+            if (threadStates.delete(id)) changed = true;
+            continue;
+          }
           if (old?.unread !== state2.unread || old?.muted !== state2.muted) changed = true;
           threadStates.delete(id);
           threadStates.set(id, state2);
@@ -11979,6 +11995,13 @@ ${text}`)) {
       const detail = event.detail;
       if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
       if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
+      stateEpoch++;
+      muteActions.set(detail.id, { muted: detail.muted, at: Date.now() });
+      if (muteActions.size > THREAD_STATE_LIMIT) {
+        muteActions.delete(muteActions.keys().next().value);
+      }
+      const cached = threadStates.get(detail.id);
+      if (cached) threadStates.set(detail.id, { ...cached, muted: detail.muted });
       setTimeout(() => apply(true), 500);
     });
     let pending = false;
