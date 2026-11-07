@@ -22,7 +22,8 @@ const common = {
   // reviewed, and readable stack traces from the field matter more than bytes.
   target: "es2020",
   charset: "utf8",
-  legalComments: "none",
+  // Keep `/*!` license notices of adapted third-party code in the shipped files.
+  legalComments: "inline",
   outdir: "src-tauri/inject",
 } as const;
 

@@ -44,6 +44,7 @@ import { initSyncHealth } from "./features/sync-health";
 import { initSystemEmoji } from "./features/system-emoji";
 import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
+import { initTypingBlock } from "./features/typing-block";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
 import { initZoom } from "./features/zoom";
@@ -64,6 +65,8 @@ function main() {
   initFeature("facebook-workers", initFacebookWorkerOptimization);
   // Must run before any Facebook module definitions execute.
   initFeature("facebook-modules", initFacebookModuleInterception);
+  // Must patch WebSocket/MessagePort before Messenger opens its socket.
+  initFeature("typing-block", initTypingBlock);
   // Must run before Facebook assigns eager sources to its emoji images.
   initFeature("emoji-images", initEmojiImageLoading);
   initFeature("composer-keys", initComposerKeys);

@@ -127,6 +127,9 @@ pub(crate) struct Settings {
     /// Pause videos and animated media that start without a recent user
     /// interaction. Manual playback remains available. Off by default.
     pub(crate) stop_media_autoplay: bool,
+    /// Never send the "typing…" indicator to others. Seeing theirs is
+    /// unaffected. Off by default.
+    pub(crate) block_typing_indicator: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -243,6 +246,7 @@ impl Default for Settings {
             nicknames_group_only: false,
             system_emoji: false,
             stop_media_autoplay: false,
+            block_typing_indicator: false,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -1071,6 +1075,13 @@ mod tests {
         // their settings file.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.strip_link_tracking);
+    }
+
+    #[test]
+    fn settings_json_missing_block_typing_indicator_defaults_to_false() {
+        // Existing installs keep Messenger's normal typing behavior.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.block_typing_indicator);
     }
 
     #[test]
