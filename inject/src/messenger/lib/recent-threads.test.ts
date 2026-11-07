@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { conversationTitle, readRecentThreads } from "./recent-threads";
 
 const VIEWER = "100";
@@ -67,7 +67,7 @@ function harness(
       isOneToOne: (type: unknown) => type === "1:1" || type === "secure",
     },
   };
-  return { modules, load: (name: string) => modules[name] };
+  return { modules, tables, load: (name: string) => modules[name] };
 }
 
 const thread = (key: string, at: number, extra: Partial<Thread> = {}): Thread => ({
@@ -140,6 +140,25 @@ describe("readRecentThreads", () => {
         fallbackName: (id) => (id === "12" ? "From the row" : ""),
       }),
     ).toEqual([{ name: "From the row", href: "/t/12/" }]);
+  });
+
+  test("stops hydrating more conversations after the outer read times out", async () => {
+    const h = harness(Array.from({ length: 10 }, (_, i) => thread(String(i + 1), i)));
+    let release!: () => void;
+    const delayed = new Promise<undefined>((resolve) => {
+      release = () => resolve(undefined);
+    });
+    const get = mock(() => delayed);
+    h.tables.threads.get = get;
+    const fallbackName = mock(() => "");
+
+    expect(await readRecentThreads(h.load, { ...options, limit: 1, fallbackName }, 10)).toBeNull();
+    expect(get).toHaveBeenCalledTimes(1);
+    release();
+    // Allow the in-flight read to finish and expose any continued hydration.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(fallbackName).not.toHaveBeenCalled();
   });
 
   test("is null when Messenger's modules are missing or changed", async () => {

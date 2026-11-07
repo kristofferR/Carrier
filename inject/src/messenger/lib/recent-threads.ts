@@ -71,6 +71,9 @@ export function readRecentThreads(
   timeoutMs = 2000,
 ): Promise<RecentThread[] | null> {
   const { viewer, mode, limit, fallbackName } = options;
+  // The timeout cannot cancel an in-flight database promise. Stop scheduling
+  // further reads when it settles, including after a late database result.
+  let stopped = false;
   return readMessengerDatabase(
     load,
     async ({ db, i64, load }) => {
@@ -91,11 +94,13 @@ export function readRecentThreads(
       const seen = new Set<string>();
       let checked = 0;
       for (let want = limit * 4; ; want *= 4) {
+        if (stopped) return out;
         const rows = await q.toArrayAsync(
           q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(want),
         );
         if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
         for (const row of rows.slice(checked)) {
+          if (stopped) return out;
           if (out.length >= limit) break;
           if (!row || typeof row !== "object") continue;
           const thread = row as Record<string, unknown>;
@@ -112,6 +117,7 @@ export function readRecentThreads(
               : "";
           if (!name) {
             const names = await readConversationNotificationNames(id, load);
+            if (stopped) return out;
             name = names ? conversationTitle(names, viewer, mode).trim() : "";
           }
           name ||= fallbackName?.(id) ?? "";
@@ -125,5 +131,7 @@ export function readRecentThreads(
       return out;
     },
     timeoutMs,
-  );
+  ).finally(() => {
+    stopped = true;
+  });
 }

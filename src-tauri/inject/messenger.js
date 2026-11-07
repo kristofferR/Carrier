@@ -10970,7 +10970,7 @@ ${text}`)) {
 
   // inject/src/messenger/lib/recent-threads.ts
   var MAX_NAME_CHARS = 60;
-  function conversationTitle(names2, viewer, mode) {
+  function conversationTitle2(names2, viewer, mode) {
     const nicknames = showNicknames(mode, names2.isGroup);
     const others = names2.participants.filter((person) => person.id !== viewer);
     if (!names2.isGroup) {
@@ -10983,6 +10983,7 @@ ${text}`)) {
   var MAX_ROWS_READ = 576;
   function readRecentThreads(load, options, timeoutMs = 2e3) {
     const { viewer, mode, limit, fallbackName } = options;
+    let stopped = false;
     return readMessengerDatabase(
       load,
       async ({ db, i64, load: load2 }) => {
@@ -10995,11 +10996,13 @@ ${text}`)) {
         const seen = /* @__PURE__ */ new Set();
         let checked = 0;
         for (let want = limit * 4; ; want *= 4) {
+          if (stopped) return out;
           const rows = await q.toArrayAsync(
             q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(want)
           );
           if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
           for (const row of rows.slice(checked)) {
+            if (stopped) return out;
             if (out.length >= limit) break;
             if (!row || typeof row !== "object") continue;
             const thread2 = row;
@@ -11011,7 +11014,8 @@ ${text}`)) {
             let name = types.isGroup(thread2.threadType) === true && typeof thread2.threadName === "string" ? thread2.threadName.trim() : "";
             if (!name) {
               const names2 = await readConversationNotificationNames(id, load2);
-              name = names2 ? conversationTitle(names2, viewer, mode).trim() : "";
+              if (stopped) return out;
+              name = names2 ? conversationTitle2(names2, viewer, mode).trim() : "";
             }
             name || (name = fallbackName?.(id) ?? "");
             if (!name) continue;
@@ -11024,7 +11028,9 @@ ${text}`)) {
         return out;
       },
       timeoutMs
-    );
+    ).finally(() => {
+      stopped = true;
+    });
   }
 
   // inject/src/messenger/features/recent-threads.ts
