@@ -9,7 +9,6 @@ import {
   conversationTextParts,
   hasCandidateTextChild,
   isUnreadConversationText,
-  rowPreviewMatchText,
 } from "../lib/conversation-row";
 import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
@@ -44,17 +43,14 @@ import {
   UnreadArrivalTracker,
   waitForPageNotificationMatch,
 } from "../lib/notification-fallback";
-import {
-  isPhotoOnlyPreview,
-  notificationPhotoText,
-  notificationThumbnail,
-} from "../lib/notification-images";
+import { notificationPhotoText, notificationThumbnail } from "../lib/notification-images";
 import {
   notificationLinkBody,
   notificationLinkCards,
   notificationLinkImage,
 } from "../lib/notification-links";
 import {
+  type ConversationNotificationNames,
   communicationSender,
   type NativeSender,
   notificationNames,
@@ -185,6 +181,19 @@ export function initNotificationBridge() {
 
   const avatarToDataUrl = (url: string | undefined) => facesToDataUrl([url]);
 
+  // A group's own picture for a macOS communication notification (Ref #366):
+  // only the photo Messenger shows for the group, never a member's face or a
+  // drawn composite. Other platforms don't show it, so skip the conversion.
+  const isMac = /mac/i.test(navigator.platform);
+  const groupPicture = (names: Promise<ConversationNotificationNames | null>) =>
+    isMac
+      ? names.then((group) =>
+          group?.isGroup && group.picture ? avatarToDataUrl(group.picture) : "",
+        )
+      : Promise.resolve("");
+  const withGroupPicture = (sender: NativeSender | undefined, picture: string) =>
+    sender?.group && picture ? { ...sender, group_picture: picture } : sender;
+
   // The trackers die with every page reload, and recovery reloads an unfocused
   // window. Keep the notification stores in reload-safe storage so a native
   // result delivered to the new document can be attached to the emit that the
@@ -250,8 +259,8 @@ export function initNotificationBridge() {
     onDelivery?: (delivery: NativeNotificationDelivery) => void,
     subtitle = "",
     image = "",
-    // The message's raw text, before link or photo rewording: what 👍 matches.
-    matchBody = "",
+    // Messenger's id for the message, when known exactly: what React reacts to.
+    messageId = "",
     // The row fallback's claim on native's notification ledger.
     row?: { thread: string; fingerprint: string; body_hash: string; read_at: number },
     // Who sent it, for a native communication notification (macOS, Ref #366).
@@ -278,7 +287,7 @@ export function initNotificationBridge() {
         thread_path: threadPath || "",
         // Like/Mute match English control labels; native offers them only then.
         english_ui: /^en\b/i.test(document.documentElement.lang),
-        match_body: matchBody,
+        message_id: messageId,
         account: accountId(document.cookie) || "",
         row,
         sender,
@@ -601,7 +610,8 @@ export function initNotificationBridge() {
         kindWait,
         thumbnail,
         names,
-      ]).then(([icon, , image, group]) => {
+        groupPicture(names),
+      ]).then(([icon, , image, group, picture]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
         const deliverySettings = window.__CARRIER_SETTINGS__ || {};
@@ -700,14 +710,17 @@ export function initNotificationBridge() {
         );
         const sender = hidePreview
           ? undefined
-          : communicationSender(
-              originalTitle,
-              originalBody,
-              group,
-              accountId(document.cookie),
-              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-              group?.isGroup && displayTitle ? "group" : "unknown",
-              displayTitle,
+          : withGroupPicture(
+              communicationSender(
+                originalTitle,
+                originalBody,
+                group,
+                accountId(document.cookie),
+                showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+                group?.isGroup && displayTitle ? "group" : "unknown",
+                displayTitle,
+              ),
+              picture,
             );
         emitNotification(
           id,
@@ -735,10 +748,8 @@ export function initNotificationBridge() {
             : undefined,
           "",
           hidePreview ? "" : image,
-          // A photo-only summary ("Sent a photo", or "Kim: Sent a photo" in a
-          // group) has no text for 👍 to match, whether or not its thumbnail
-          // loaded.
-          hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody,
+          // Messenger tags its notification with the message's id.
+          taggedThread && typeof opts.tag === "string" ? opts.tag : "",
           undefined,
           sender,
         );
@@ -1243,7 +1254,7 @@ export function initNotificationBridge() {
       undefined,
       "",
       "",
-      hidePreview ? "" : rowPreviewMatchText(fallback.body),
+      "",
       {
         thread: fallback.key,
         fingerprint: fallback.fingerprint,
@@ -1365,9 +1376,9 @@ export function initNotificationBridge() {
         return;
       }
       const hiddenBeforeImages = settings.hide_notification_preview === true;
-      const [sender, thread, image, group] = hiddenBeforeImages
-        ? (["", "", "", null] as const)
-        : await Promise.all([senderAvatar, threadAvatar, thumbnail, names]);
+      const [sender, thread, image, group, picture] = hiddenBeforeImages
+        ? (["", "", "", null, ""] as const)
+        : await Promise.all([senderAvatar, threadAvatar, thumbnail, names, groupPicture(names)]);
       const presentation = notificationPresentation(
         nativeThreadTitles.displayed(
           conversation.key,
@@ -1453,23 +1464,26 @@ export function initNotificationBridge() {
         undefined,
         hidePreview ? "" : visiblePresentation.subtitle,
         hidePreview ? "" : image,
-        hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
+        "",
         { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
         hidePreview
           ? undefined
-          : communicationSender(
-              // Identity comes from the row's original "Name: message"
-              // preview through the full-prefix matcher, which refuses
-              // ambiguous prefixes; shortened display text must not decide.
-              conversation.title,
-              conversation.body,
-              group,
-              accountId(document.cookie),
-              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-              "group",
-              visiblePresentation.subtitle || visiblePresentation.title,
-              // In a group the icon is the sender's only when their photo won.
-              Boolean(sender) && icon === sender,
+          : withGroupPicture(
+              communicationSender(
+                // Identity comes from the row's original "Name: message"
+                // preview through the full-prefix matcher, which refuses
+                // ambiguous prefixes; shortened display text must not decide.
+                conversation.title,
+                conversation.body,
+                group,
+                accountId(document.cookie),
+                showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+                "group",
+                visiblePresentation.subtitle || visiblePresentation.title,
+                // In a group the icon is the sender's only when their photo won.
+                Boolean(sender) && icon === sender,
+              ),
+              picture,
             ),
       );
     }, FALLBACK_DELAY_MS);

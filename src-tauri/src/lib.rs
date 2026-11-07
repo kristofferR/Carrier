@@ -1962,12 +1962,17 @@ pub fn run() {
                     #[derive(serde::Deserialize)]
                     struct DebugAction {
                         action: String,
+                        /// Act on the newest shown notification, with the
+                        /// target and route it recorded, as its button would.
+                        #[serde(default)]
+                        latest: bool,
+                        #[serde(default)]
                         thread_path: String,
+                        #[serde(default)]
                         page_id: u64,
                         #[serde(default)]
-                        body: String,
+                        message: String,
                         #[serde(default)]
-                        at: u64,
                         account: String,
                     }
                     let Ok(request) = serde_json::from_str::<DebugAction>(event.payload()) else {
@@ -1978,12 +1983,25 @@ pub fn run() {
                         return;
                     };
                     log::info!("debug notification action requested");
+                    if request.latest {
+                        match notifications::latest_action_target_id() {
+                            Some(id) => notifications::on_notification_action(
+                                debug_action_handle.clone(),
+                                id,
+                                None,
+                                None,
+                                action,
+                                None,
+                            ),
+                            None => log::info!("no notification to act on"),
+                        }
+                        return;
+                    }
                     notifications::remember_action_target(
                         1,
                         notifications::ActionTarget {
-                            body: request.body,
-                            at: request.at,
                             account: request.account,
+                            message: request.message,
                         },
                     );
                     notifications::on_notification_action(

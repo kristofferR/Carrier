@@ -692,7 +692,11 @@ mod tests {
             hex_id: hex_id(0x2a),
             sound: true,
             reply_eligible,
-            quick_actions: &[NotificationAction::Like, NotificationAction::Mute],
+            quick_actions: &[
+                NotificationAction::React,
+                NotificationAction::MarkRead,
+                NotificationAction::Mute,
+            ],
             is_sync_alert,
         }
     }
@@ -729,20 +733,17 @@ mod tests {
         assert!(xml.contains("action=reply&amp;id=000000000000002a"));
         assert!(xml.contains("hint-inputId=\"reply\" activationType=\"background\""));
         assert!(xml.contains("content=\"Open\""));
-        assert!(xml.contains("arguments=\"action=like&amp;id=000000000000002a\""));
+        assert!(xml.contains("arguments=\"action=react&amp;id=000000000000002a\""));
+        assert!(xml.contains("arguments=\"action=read&amp;id=000000000000002a\""));
         assert!(xml.contains("arguments=\"action=mute&amp;id=000000000000002a\""));
+        // Windows shows at most five buttons: Reply, the three, and Open.
+        assert_eq!(xml.matches("<action ").count(), 5);
 
         let mut reply_only = spec(true, false);
         reply_only.quick_actions = &[];
         let xml = build_toast_xml(&reply_only);
         assert!(xml.contains("action=reply&amp;id="));
-        assert!(!xml.contains("action=like") && !xml.contains("action=mute"));
-
-        // A photo or sticker has no text for 👍 to match.
-        let mut mute_only = spec(true, false);
-        mute_only.quick_actions = &[NotificationAction::Mute];
-        let xml = build_toast_xml(&mute_only);
-        assert!(!xml.contains("action=like") && xml.contains("action=mute"));
+        assert!(!xml.contains("action=react") && !xml.contains("action=mute"));
     }
 
     #[test]
