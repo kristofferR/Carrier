@@ -119,6 +119,8 @@ zbus = "5"
 block2 = "0.6.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard", "NSWorkspace"] }
+# Communication notifications: the sender's face and group name (Ref #366).
+objc2-intents = { version = "0.3.2", default-features = false, features = ["std", "INSendMessageIntent", "INIntent", "INPerson", "INPersonHandle", "INImage", "INInteraction", "INSpeakableString", "INOutgoingMessageType", "INIntentResponse", "INSendMessageAttachment", "block2"] }
 objc2-foundation = { version = "0.3", features = ["NSBundle", "NSData", "NSString", "NSValue", "NSObject", "NSDictionary", "NSArray", "NSSet", "NSURL", "NSError"] }
 # Modern notifications on macOS 26/27: the legacy NSUserNotification path
 # (mac-notification-sys / notify-rust) is deprecated and no longer presents

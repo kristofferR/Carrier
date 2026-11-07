@@ -25,6 +25,11 @@ const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MacNotificationOptions<'a> {
     pub(crate) subtitle: &'a str,
+    /// Who sent the message, for a communication notification (Ref #366).
+    pub(crate) sender: Option<MacSender<'a>>,
+    /// Attached when there is no `image` and no communication notification
+    /// shows the sender's face (the avatar).
+    pub(crate) fallback_image: Option<&'a Path>,
     pub(crate) thread_path: Option<&'a str>,
     pub(crate) group_by_conversation: bool,
     pub(crate) reply_eligible: bool,
@@ -390,9 +395,13 @@ pub(crate) fn deliver_notification_macos(
         options.reply_eligible,
     );
 
-    // Prefer a shared-media thumbnail, falling back to the sender's avatar.
-    // Best-effort: if the OS rejects the file, deliver the text without it.
-    if let Some(path) = image.and_then(|p| p.to_str()) {
+    // A shared-media thumbnail, or the sender's avatar when no communication
+    // notification shows their face. Best-effort: if the OS rejects the file,
+    // deliver the text without it.
+    let attach = |path: &Path| {
+        let Some(path) = path.to_str() else {
+            return;
+        };
         let url = NSURL::fileURLWithPath(&NSString::from_str(path));
         let ident = NSString::from_str("image");
         // SAFETY: no attachment options are passed (`None`), so there's no
@@ -403,7 +412,34 @@ pub(crate) fn deliver_notification_macos(
         if let Ok(attachment) = attachment {
             content.setAttachments(&NSArray::arrayWithObject(&*attachment));
         }
+    };
+    if let Some(path) = image {
+        attach(path);
     }
+
+    // Present it as a message from its sender when possible: macOS shows
+    // their face (and the group's name) in place of Carrier's icon. Without
+    // the communication-notifications entitlement this fails and the plain
+    // content is delivered, with the avatar attached as before.
+    let communication = options
+        .sender
+        .as_ref()
+        .zip(thread_path.as_deref())
+        .and_then(|(sender, conversation)| {
+            communication_content(&content, sender, conversation, body)
+        });
+    let content: objc2::rc::Retained<objc2_user_notifications::UNNotificationContent> =
+        match communication {
+            Some(updated) => updated,
+            None => {
+                if image.is_none()
+                    && let Some(path) = options.fallback_image
+                {
+                    attach(path);
+                }
+                content.into_super()
+            }
+        };
 
     // The trusted native id stays unique when the page reloads, so an older
     // Notification Center request cannot coalesce with a new page counter.
@@ -568,4 +604,115 @@ pub(crate) fn notification_blocker() -> Option<String> {
         .getNotificationSettingsWithCompletionHandler(&handler);
     let (status, alert) = rx.recv_timeout(std::time::Duration::from_secs(3)).ok()?;
     crate::notifications::macos_blocker_message(status, alert)
+}
+
+/// The sender of a message notification (Ref #366).
+#[derive(Clone, Copy)]
+pub(crate) struct MacSender<'a> {
+    pub(crate) name: &'a str,
+    /// The sender's (or, without one, the conversation's) picture.
+    pub(crate) avatar: Option<&'a Path>,
+    /// The group conversation's name; None for a one-to-one chat.
+    pub(crate) group_name: Option<&'a str>,
+}
+
+/// The content as a message from `sender`, via an `INSendMessageIntent`.
+/// None when macOS refuses it, e.g. a build without the
+/// communication-notifications entitlement or its provisioning profile.
+///
+/// Adapted from fMess (https://github.com/toanbku/fmess, src-tauri/src/notify.rs),
+/// MIT License, Copyright (c) 2026 fMess contributors.
+fn communication_content(
+    content: &objc2_user_notifications::UNNotificationContent,
+    sender: &MacSender<'_>,
+    conversation: &str,
+    body: &str,
+) -> Option<objc2::rc::Retained<objc2_user_notifications::UNNotificationContent>> {
+    use objc2::rc::Retained;
+    use objc2::{AnyThread, msg_send};
+    use objc2_foundation::{NSArray, NSData, NSError, NSString};
+    use objc2_intents::{
+        INImage, INInteraction, INInteractionDirection, INOutgoingMessageType, INPerson,
+        INPersonHandle, INPersonHandleType, INSendMessageIntent, INSpeakableString,
+    };
+    use objc2_user_notifications::UNNotificationContent;
+
+    fn person(name: &str, picture: Option<&[u8]>, id: &str) -> Retained<INPerson> {
+        let name = NSString::from_str(name);
+        let id = NSString::from_str(id);
+        // SAFETY: plain value constructors; every argument is a valid object
+        // or None where the API allows it.
+        unsafe {
+            let handle = INPersonHandle::initWithValue_type(
+                INPersonHandle::alloc(),
+                Some(&id),
+                INPersonHandleType::Unknown,
+            );
+            let image =
+                picture.map(|bytes| INImage::imageWithImageData(&NSData::with_bytes(bytes)));
+            INPerson::initWithPersonHandle_nameComponents_displayName_image_contactIdentifier_customIdentifier(
+                INPerson::alloc(),
+                &handle,
+                None,
+                Some(&name),
+                image.as_deref(),
+                None,
+                Some(&id),
+            )
+        }
+    }
+
+    let picture = sender.avatar.and_then(|path| std::fs::read(path).ok());
+    let from = person(
+        sender.name,
+        picture.as_deref(),
+        &format!("sender:{}", sender.name),
+    );
+    let conversation = NSString::from_str(conversation);
+    // SAFETY: a plain value constructor with a valid string.
+    let group_name = sender.group_name.map(|name| unsafe {
+        INSpeakableString::initWithSpokenPhrase(
+            INSpeakableString::alloc(),
+            &NSString::from_str(name),
+        )
+    });
+    // More than one recipient makes it a group conversation.
+    let recipients = sender
+        .group_name
+        .is_some()
+        .then(|| NSArray::from_retained_slice(&[person("Me", None, "me")]));
+    // SAFETY: the intent and interaction are built from valid objects; the
+    // donation completion is optional. INSendMessageIntent conforms to
+    // UNNotificationContentProviding, which the bindings do not declare, so the
+    // update is sent directly; it returns new content or an NSError.
+    unsafe {
+        let intent = INSendMessageIntent::initWithRecipients_outgoingMessageType_content_speakableGroupName_conversationIdentifier_serviceName_sender_attachments(
+            INSendMessageIntent::alloc(),
+            recipients.as_deref(),
+            INOutgoingMessageType::OutgoingMessageText,
+            Some(&NSString::from_str(body)),
+            group_name.as_deref(),
+            Some(&conversation),
+            None,
+            Some(&from),
+            None,
+        );
+        let interaction =
+            INInteraction::initWithIntent_response(INInteraction::alloc(), &intent, None);
+        interaction.setDirection(INInteractionDirection::Incoming);
+        interaction.setGroupIdentifier(Some(&conversation));
+        interaction.donateInteractionWithCompletion(None);
+        let updated: Result<Retained<UNNotificationContent>, Retained<NSError>> =
+            msg_send![content, contentByUpdatingWithProvider: &*intent, error: _];
+        match updated {
+            Ok(updated) => Some(updated),
+            Err(error) => {
+                log::info!(
+                    "communication notification unavailable, using the plain one: {}",
+                    error.localizedDescription()
+                );
+                None
+            }
+        }
+    }
 }

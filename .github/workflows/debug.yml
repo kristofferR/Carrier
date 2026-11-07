@@ -135,6 +135,19 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Communication notifications (Ref #366) need Carrier's Developer ID
+      # provisioning profile in the bundle; tauri.conf.release.json embeds it.
+      - name: Install the provisioning profile
+        env:
+          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_PROVISIONING_PROFILE" ]; then
+            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Carrier's Developer ID provisioning profile)."
+            exit 1
+          fi
+          printf '%s' "$APPLE_PROVISIONING_PROFILE" | /usr/bin/base64 -D > src-tauri/embedded.provisionprofile
+
       # The share-extension hook runs before Tauri imports APPLE_CERTIFICATE
       # for outer-app signing, so make the identity available to codesign now.
       - name: Import the Developer ID certificate
