@@ -1082,6 +1082,21 @@ describe("PageNotificationQueue", () => {
     );
   });
 
+  test("a tagged signal pairs only with rows from its own conversation", () => {
+    const queue = new PageNotificationQueue();
+    const signal = queue.add({ at: 1_000, title: "Jane", body: "Hi", thread: "7" });
+    // Same text in another conversation: never this signal's row.
+    expect(queue.consumeMatching({ key: "8", title: "Jane", body: "Hi" }, 1_100, 2_000)).toBeNull();
+    // Identical text elsewhere does not make its own row ambiguous.
+    const candidates = [
+      { key: "7", title: "Jane", body: "Hi" },
+      { key: "8", title: "Jane", body: "Hi" },
+    ];
+    expect(
+      queue.consumeMatching({ key: "7", title: "Jane", body: "Hi" }, 1_200, 2_000, candidates),
+    ).toBe(signal);
+  });
+
   test("expires stale signals without consuming unrelated ones", () => {
     const queue = new PageNotificationQueue();
     queue.add({ at: 1_000, title: "Jane", body: "First" });

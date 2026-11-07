@@ -4818,34 +4818,43 @@ ${button.innerHTML}`)
       return Reflect.apply(rewritten ?? factory, this, args);
     }, factory);
   }
-
-  // inject/src/messenger/features/page-notifications.ts
   var rewriteSeq = 0;
-  function loadRewritten(source, ready2) {
+  function loadRewrittenScript(source, ready2, doc, global, report) {
     const key = `__carrierRewritten${++rewriteSeq}`;
-    const page = window;
     const url = URL.createObjectURL(
       new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
     );
-    const script = document.createElement("script");
+    const script = doc.createElement("script");
+    script.src = url;
     const done = () => {
       URL.revokeObjectURL(url);
       script.remove();
     };
     script.onload = () => {
-      const rewritten = page[key];
-      delete page[key];
+      const rewritten = global[key];
+      delete global[key];
       done();
       if (typeof rewritten === "function") {
         ready2(rewritten);
-        diag("notify.page-enabled", "Messenger's own notifications are enabled");
-      } else diag("notify.page-rewrite", "rewritten notification module did not load");
+        report("loaded");
+      } else report("invalid");
     };
     script.onerror = () => {
       done();
-      diag("notify.page-rewrite", "the page refused the rewritten notification module");
+      report("refused");
     };
-    (document.head || document.documentElement).append(script);
+    (doc.head ?? doc.documentElement).append(script);
+  }
+
+  // inject/src/messenger/features/page-notifications.ts
+  function loadRewritten(source, ready2) {
+    loadRewrittenScript(source, ready2, document, globalThis, (outcome) => {
+      if (outcome === "loaded")
+        diag("notify.page-enabled", "Messenger's own notifications are enabled");
+      else if (outcome === "refused") {
+        diag("notify.page-rewrite", "the page refused the rewritten notification module");
+      } else diag("notify.page-rewrite", "rewritten notification module did not load");
+    });
   }
   function interceptNotificationModules(define) {
     const load = () => window.require;
@@ -7391,6 +7400,8 @@ ${button.innerHTML}`)
       for (let index2 = this.signals.length - 1; index2 >= 0; index2--) {
         const signal2 = this.signals[index2];
         const age = rowChangeAt - signal2.at;
+        if (signal2.thread !== void 0 && row.key !== void 0 && row.key !== signal2.thread)
+          continue;
         if (age >= 0 && notificationTextMatches(signal2.title, signal2.body, row.title, row.body)) {
           matches.push(index2);
         }
@@ -7404,6 +7415,7 @@ ${button.innerHTML}`)
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
+          if (signal.thread !== void 0 && candidate.key !== signal.thread) continue;
           if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
             candidateKeys.add(candidate.key);
           }
@@ -7429,7 +7441,7 @@ ${button.innerHTML}`)
           this.signals.splice(index, 1);
           continue;
         }
-        if (age < 0 || signal.draftTitleAmbiguous || !notificationTextMatches(signal.title, "", row.title, ""))
+        if (age < 0 || signal.draftTitleAmbiguous || signal.thread !== void 0 && signal.thread !== row.key || !notificationTextMatches(signal.title, "", row.title, ""))
           continue;
         const unique = uniqueNotificationTitleMatch(signal.title, candidates);
         if (unique?.key !== row.key) {
@@ -7506,15 +7518,16 @@ ${button.innerHTML}`)
       this.rows.delete(key);
       return row;
     }
-    consumeRowForPage(title, body, at, matchWindowMs, candidateRows) {
+    consumeRowForPage(title, body, at, matchWindowMs, candidateRows, thread2) {
       const matches = [...this.rows.values()].filter((row) => {
         const age = at - row.at;
-        return age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
+        return (thread2 === void 0 || row.key === thread2) && age >= 0 && age <= matchWindowMs && notificationTextMatches(title, body, row.title, row.body);
       });
       if (matches.length !== 1) return null;
       if (candidateRows) {
         const candidateKeys = /* @__PURE__ */ new Set();
         for (const candidate of candidateRows) {
+          if (thread2 !== void 0 && candidate.key !== thread2) continue;
           if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
             candidateKeys.add(candidate.key);
           }
@@ -8198,13 +8211,14 @@ ${button.innerHTML}`)
         window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
       });
     };
-    const markPageNotification = (title, body) => {
+    const markPageNotification = (title, body, thread2) => {
       const match = notificationCorrelations.consumeRowForPage(
         title,
         body,
         Date.now(),
         PAGE_NOTIFICATION_MATCH_MS,
-        currentPageRouteCandidates()
+        currentPageRouteCandidates(),
+        thread2
       );
       if (match) {
         clearTimeout(match.timer);
@@ -8231,7 +8245,14 @@ ${button.innerHTML}`)
           dedupeKey: match.dedupeKey
         };
       }
-      return { signal: notificationCorrelations.addPage({ at: Date.now(), title, body }) };
+      return {
+        signal: notificationCorrelations.addPage({
+          at: Date.now(),
+          title,
+          body,
+          ...thread2 ? { thread: thread2, threadPath: `/t/${thread2}/` } : {}
+        })
+      };
     };
     function CarrierNotification(title, options = {}) {
       const opts = options || {};
@@ -8240,12 +8261,13 @@ ${button.innerHTML}`)
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
-      const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
       const taggedThread = pageMessages.threadFor(opts.tag);
-      if (taggedThread && pageMatch.signal && !pageMatch.signal.threadPath) {
-        pageMatch.signal.threadPath = `/t/${taggedThread}/`;
-        diag("notify.identity", "page notification carried its exact conversation");
-      }
+      if (taggedThread) diag("notify.identity", "page notification carried its exact conversation");
+      const pageMatch = markPageNotification(
+        String(title || "Messenger"),
+        String(opts.body || ""),
+        taggedThread
+      );
       const retainSuppressedDraft = (id) => {
         const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
         if (!pageMatch.signal?.matchedDraft || !threadId) return;
@@ -8270,8 +8292,8 @@ ${button.innerHTML}`)
           pageMatch.signal.nativeId = id;
           pendingPageNotifications.add(originalTitle, originalBody, id);
         }
-        const matchWait = pageMatch.signal?.matchPromise && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
-        const identityMatchWait = pageMatch.signal && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
+        const matchWait = pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
+        const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
         const names2 = Promise.all([matchWait, identityMatchWait]).then(
           () => hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : conversationNames(
             threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || ""
@@ -8643,7 +8665,7 @@ ${button.innerHTML}`)
       }
       pageSignal.threadMuted = mutedThreads.isMuted(conversation.key);
       if (!pageSignal.emitted) pageSignal.dedupeKey = dedupeKey;
-      if (!pageSignal.emitted) pageSignal.threadPath = conversation.threadPath;
+      if (!pageSignal.emitted && !pageSignal.thread) pageSignal.threadPath = conversation.threadPath;
       if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
@@ -9053,7 +9075,7 @@ ${button.innerHTML}`)
               continue;
             }
             signal.matchedDraft = true;
-            signal.threadPath = conversation.threadPath;
+            if (!signal.thread) signal.threadPath = conversation.threadPath;
             signal.threadMuted = conversation.muted;
             if (signal.nativeId !== void 0) {
               pageNotificationReceipts.retainForDraft(signal.nativeId, conversation.key);

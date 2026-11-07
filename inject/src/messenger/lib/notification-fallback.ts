@@ -93,6 +93,12 @@ export interface PageNotificationSignal extends NotificationText {
   nativeId?: number;
   /** Route learned while the async native notification emit is still pending. */
   threadPath?: string;
+  /**
+   * The conversation Messenger itself named for this notification (its tag
+   * resolved to the message's thread). Authoritative: rows from any other
+   * conversation never pair with it, however alike their text.
+   */
+  thread?: string;
   /** A draft supplied only the route; the real preview still needs a receipt. */
   matchedDraft?: boolean;
   /** Global mute handled this page notification before a row identified its thread. */
@@ -1184,6 +1190,8 @@ export class PageNotificationQueue {
     for (let index = this.signals.length - 1; index >= 0; index--) {
       const signal = this.signals[index]!;
       const age = rowChangeAt - signal.at;
+      if (signal.thread !== undefined && row.key !== undefined && row.key !== signal.thread)
+        continue;
       if (age >= 0 && notificationTextMatches(signal.title, signal.body, row.title, row.body)) {
         matches.push(index);
       }
@@ -1201,6 +1209,7 @@ export class PageNotificationQueue {
     if (candidateRows) {
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
+        if (signal.thread !== undefined && candidate.key !== signal.thread) continue;
         if (notificationTextMatches(signal.title, signal.body, candidate.title, candidate.body)) {
           candidateKeys.add(candidate.key);
         }
@@ -1235,6 +1244,7 @@ export class PageNotificationQueue {
       if (
         age < 0 ||
         signal.draftTitleAmbiguous ||
+        (signal.thread !== undefined && signal.thread !== row.key) ||
         !notificationTextMatches(signal.title, "", row.title, "")
       )
         continue;
@@ -1360,10 +1370,12 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     at: number,
     matchWindowMs: number,
     candidateRows?: Iterable<NotificationText & { key: string }>,
+    thread?: string,
   ): Row | null {
     const matches = [...this.rows.values()].filter((row) => {
       const age = at - row.at;
       return (
+        (thread === undefined || row.key === thread) &&
         age >= 0 &&
         age <= matchWindowMs &&
         notificationTextMatches(title, body, row.title, row.body)
@@ -1373,6 +1385,7 @@ export class NotificationCorrelationQueue<Row extends CorrelatedRowNotification>
     if (candidateRows) {
       const candidateKeys = new Set<string>();
       for (const candidate of candidateRows) {
+        if (thread !== undefined && candidate.key !== thread) continue;
         if (notificationTextMatches(title, body, candidate.title, candidate.body)) {
           candidateKeys.add(candidate.key);
         }

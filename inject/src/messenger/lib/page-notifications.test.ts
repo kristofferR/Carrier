@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  loadRewrittenScript,
   messengerId,
   PageMessageIndex,
   pageMessages,
@@ -115,5 +116,61 @@ describe("wrapChatPopperFactory", () => {
     );
     expect(unmatched).toBe(true);
     expect(wrapped()).toBe("original");
+  });
+});
+
+describe("loadRewrittenScript", () => {
+  const host = () => {
+    const appended: { src: string; onload: (() => void) | null; onerror: (() => void) | null }[] =
+      [];
+    const doc = {
+      createElement: () => ({ src: "", onload: null, onerror: null, remove: () => {} }),
+      head: { append: (node: unknown) => appended.push(node as (typeof appended)[number]) },
+      documentElement: { append: () => {} },
+    };
+    return { appended, doc };
+  };
+
+  test("loads the rewritten source from a blob: URL and hands over the function", async () => {
+    const { appended, doc } = host();
+    const global: Record<string, unknown> = {};
+    const outcomes: string[] = [];
+    let loaded: unknown;
+    loadRewrittenScript(
+      "function(){return 1}",
+      (fn) => {
+        loaded = fn;
+      },
+      doc,
+      global,
+      (outcome) => outcomes.push(outcome),
+    );
+    const script = appended[0]!;
+    expect(script.src.startsWith("blob:")).toBe(true);
+    // The blob assigns the function to a one-off global the onload reads.
+    const text = await (await fetch(script.src)).text();
+    const key = /window\[("[^"]+")\]/.exec(text)?.[1];
+    expect(key).toBeDefined();
+    global[JSON.parse(key!)] = () => 1;
+    script.onload?.();
+    expect(typeof loaded).toBe("function");
+    expect(outcomes).toEqual(["loaded"]);
+    expect(Object.keys(global)).toEqual([]);
+  });
+
+  test("reports a refused script and keeps the original", () => {
+    const { appended, doc } = host();
+    const outcomes: string[] = [];
+    loadRewrittenScript(
+      "function(){}",
+      () => {
+        throw new Error("must not load");
+      },
+      doc,
+      {},
+      (outcome) => outcomes.push(outcome),
+    );
+    appended[0]!.onerror?.();
+    expect(outcomes).toEqual(["refused"]);
   });
 });

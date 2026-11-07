@@ -168,3 +168,54 @@ export function wrapChatPopperFactory(
     return Reflect.apply(rewritten ?? factory, this, args);
   }, factory);
 }
+
+let rewriteSeq = 0;
+
+interface ScriptHost {
+  createElement(tag: "script"): {
+    src: string;
+    onload: (() => void) | null;
+    onerror: (() => void) | null;
+    remove(): void;
+  };
+  head: { append(node: unknown): void } | null;
+  documentElement: { append(node: unknown): void };
+}
+
+/**
+ * Evaluate `source` (a function expression) as a blob: script and hand the
+ * resulting function to `ready`. The page forbids eval but allows blob:
+ * scripts; if it refuses this one too, the caller's original code stays.
+ */
+export function loadRewrittenScript(
+  source: string,
+  ready: (rewritten: Factory) => void,
+  doc: ScriptHost,
+  global: Record<string, unknown>,
+  report: (outcome: "loaded" | "refused" | "invalid") => void,
+): void {
+  const key = `__carrierRewritten${++rewriteSeq}`;
+  const url = URL.createObjectURL(
+    new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" }),
+  );
+  const script = doc.createElement("script");
+  script.src = url;
+  const done = () => {
+    URL.revokeObjectURL(url);
+    script.remove();
+  };
+  script.onload = () => {
+    const rewritten = global[key];
+    delete global[key];
+    done();
+    if (typeof rewritten === "function") {
+      ready(rewritten as Factory);
+      report("loaded");
+    } else report("invalid");
+  };
+  script.onerror = () => {
+    done();
+    report("refused");
+  };
+  (doc.head ?? doc.documentElement).append(script);
+}
