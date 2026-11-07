@@ -76,10 +76,35 @@ export function initComposerFocus() {
       if (!target) return;
       const startedAt = performance.now();
       let readyAt: number | null = null;
+      // Messenger can update the route before it replaces the pane, so the
+      // conversation being left must not count as the one opened (the same
+      // check as thread-nav's openThreadForAction).
+      const log = () => document.querySelector('[role="main"] [role="log"]');
+      const staleLog = threadIdFromHref(location.pathname) === target ? null : log();
+      // The user moving focus themselves (a click, Tab, arrow keys) ends the
+      // watch; typing does not, since that is what the focus is for.
+      let cancelled = false;
+      const cancel = (e: Event) => {
+        if (e instanceof KeyboardEvent && !/^(Tab|Arrow|Escape|Page|Home|End)/.test(e.key)) return;
+        cancelled = true;
+      };
+      const stop = () => {
+        cancelled = true;
+        removeEventListener("pointerdown", cancel, true);
+        removeEventListener("keydown", cancel, true);
+      };
+      addEventListener("pointerdown", cancel, true);
+      addEventListener("keydown", cancel, true);
       const check = () => {
         const now = performance.now();
-        if (now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return;
-        if (threadIdFromHref(location.pathname) !== target || !focusComposerReady()) {
+        if (cancelled || now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return stop();
+        const current = log();
+        if (
+          threadIdFromHref(location.pathname) !== target ||
+          !current ||
+          current === staleLog ||
+          !focusComposerReady()
+        ) {
           requestAnimationFrame(check);
           return;
         }
@@ -98,10 +123,11 @@ export function initComposerFocus() {
         } else if (shouldFocusComposerOnReturn({ ...state, focus })) {
           focusComposer();
         } else if (focus === "elsewhere") {
-          return;
+          return stop();
         }
         // Keep watch briefly: Messenger's heading focus can land after ours.
         if (now - readyAt < SETTLE_AFTER_OPEN_MS) requestAnimationFrame(check);
+        else stop();
       };
       requestAnimationFrame(check);
     },

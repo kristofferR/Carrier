@@ -2694,10 +2694,25 @@ ${button.innerHTML}`)
         if (!target) return;
         const startedAt = performance.now();
         let readyAt = null;
+        const log = () => document.querySelector('[role="main"] [role="log"]');
+        const staleLog = threadIdFromHref(location.pathname) === target ? null : log();
+        let cancelled = false;
+        const cancel = (e) => {
+          if (e instanceof KeyboardEvent && !/^(Tab|Arrow|Escape|Page|Home|End)/.test(e.key)) return;
+          cancelled = true;
+        };
+        const stop = () => {
+          cancelled = true;
+          removeEventListener("pointerdown", cancel, true);
+          removeEventListener("keydown", cancel, true);
+        };
+        addEventListener("pointerdown", cancel, true);
+        addEventListener("keydown", cancel, true);
         const check = () => {
           const now = performance.now();
-          if (now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return;
-          if (threadIdFromHref(location.pathname) !== target || !focusComposerReady()) {
+          if (cancelled || now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return stop();
+          const current = log();
+          if (threadIdFromHref(location.pathname) !== target || !current || current === staleLog || !focusComposerReady()) {
             requestAnimationFrame(check);
             return;
           }
@@ -2710,9 +2725,10 @@ ${button.innerHTML}`)
           } else if (shouldFocusComposerOnReturn({ ...state2, focus })) {
             focusComposer();
           } else if (focus === "elsewhere") {
-            return;
+            return stop();
           }
           if (now - readyAt < SETTLE_AFTER_OPEN_MS) requestAnimationFrame(check);
+          else stop();
         };
         requestAnimationFrame(check);
       },
