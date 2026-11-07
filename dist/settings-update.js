@@ -89,6 +89,33 @@ var CarrierSettingsUpdate = (() => {
         this.version = discovered;
         return this.publish(availableState(discovered, this.installMode));
       }
+      this.version = "";
+      return this.publish({
+        phase: "idle",
+        buttonLabel: "Check for updates",
+        status: "",
+        busy: false
+      });
+    }
+    operationActive() {
+      return this.phase === "checking" || this.phase === "installing" || this.phase === "opening-manual";
+    }
+    /**
+     * Re-read the retained discovery (Settings regaining focus): show a newer
+     * offer, or go back to "Check for updates" when it was cleared. Never
+     * interrupts a check or install, including one that starts during the read.
+     * Returns null when nothing changed.
+     */
+    async refresh() {
+      if (!this.installMode || this.installMode.kind === "debug" || this.operationActive()) {
+        return null;
+      }
+      const discovered = await this.invoke("discovered_update");
+      if (this.operationActive()) return null;
+      const version = typeof discovered === "string" ? discovered : "";
+      if (version === this.version) return null;
+      this.version = version;
+      if (version) return this.publish(availableState(version, this.installMode));
       return this.publish({
         phase: "idle",
         buttonLabel: "Check for updates",

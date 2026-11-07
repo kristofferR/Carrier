@@ -30,6 +30,64 @@ describe("UpdateConsentController", () => {
     expect(states.some((state) => state.phase === "installing")).toBe(true);
   });
 
+  test("refresh follows a replaced or cleared offer without ever installing", async () => {
+    let discovered: string | null = "1.4.0";
+    const calls: string[] = [];
+    const controller = new UpdateConsentController(async (command) => {
+      calls.push(command);
+      if (command === "update_install_mode") return { kind: "built-in" };
+      if (command === "discovered_update") return discovered;
+      if (command === "check_for_updates") return "up-to-date";
+      throw new Error(`unexpected command: ${command}`);
+    });
+    await controller.initialize();
+
+    discovered = "1.5.0";
+    expect((await controller.refresh())?.buttonLabel).toBe("Install Carrier 1.5.0");
+    expect(await controller.refresh()).toBeNull();
+
+    discovered = null;
+    expect((await controller.refresh())?.buttonLabel).toBe("Check for updates");
+    // The cleared offer must not survive: the action checks, it does not install.
+    await controller.activate();
+    expect(calls).not.toContain("install_update");
+    expect(calls).toContain("check_for_updates");
+  });
+
+  test("refresh never interrupts an install that starts while it reads", async () => {
+    let finishInstall: (value: string) => void = () => {};
+    let readDiscovery: (value: string) => void = () => {};
+    let reads = 0;
+    const states: UpdateUiState[] = [];
+    const controller = new UpdateConsentController(
+      (command) => {
+        if (command === "update_install_mode") return Promise.resolve({ kind: "built-in" });
+        if (command === "discovered_update") {
+          reads++;
+          if (reads === 1) return Promise.resolve("1.4.0");
+          return new Promise((resolve) => {
+            readDiscovery = resolve;
+          });
+        }
+        if (command === "install_update") {
+          return new Promise((resolve) => {
+            finishInstall = resolve;
+          });
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+      (state) => states.push(state),
+    );
+    await controller.initialize();
+    const refreshing = controller.refresh();
+    const installing = controller.activate();
+    readDiscovery("1.5.0");
+    expect(await refreshing).toBeNull();
+    expect(states.at(-1)?.phase).toBe("installing");
+    finishInstall("up-to-date");
+    await installing;
+  });
+
   test("manual check reveals a separate install action", async () => {
     const calls: string[] = [];
     const controller = new UpdateConsentController(async (command) => {

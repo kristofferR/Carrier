@@ -130,9 +130,12 @@ pub(crate) struct Settings {
     /// pause survives restarts and one that ended while Carrier was closed is
     /// already over.
     pub(crate) notifications_paused_until: Option<i64>,
-    /// Discover signed Carrier updates on startup and every four hours. This
-    /// never downloads or installs without explicit confirmation in Settings.
+    /// Discover signed Carrier updates on startup and then every
+    /// `update_check_hours`. This never downloads or installs without explicit
+    /// confirmation in Settings.
     pub(crate) automatic_update_checks: bool,
+    /// Hours between automatic update checks: 1, 4 (default) or 24.
+    pub(crate) update_check_hours: u32,
     /// Play the OS notification sound for new-message notifications.
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
@@ -256,6 +259,9 @@ impl Settings {
         if !matches!(self.app_icon_variant.as_str(), "auto" | "light" | "dark") {
             self.app_icon_variant = "auto".into();
         }
+        if !matches!(self.update_check_hours, 1 | 4 | 24) {
+            self.update_check_hours = 4;
+        }
         // Snap owns updates. Sandboxed autostart needs platform integration
         // rather than writing a host desktop file.
         if snap {
@@ -306,6 +312,7 @@ impl Default for Settings {
             mute_notifications: false,
             notifications_paused_until: None,
             automatic_update_checks: true,
+            update_check_hours: 4,
             notification_sound: true,
             hide_notification_preview: false,
             notify_group_chats: true,
@@ -1238,6 +1245,16 @@ mod tests {
         // Existing installs keep notifying for group chats.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.notify_group_chats);
+    }
+
+    #[test]
+    fn update_check_hours_default_and_sanitize_to_offered_choices() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.update_check_hours, 4);
+        let s: Settings = serde_json::from_str(r#"{"update_check_hours":24}"#).unwrap();
+        assert_eq!(s.sanitized().update_check_hours, 24);
+        let s: Settings = serde_json::from_str(r#"{"update_check_hours":0}"#).unwrap();
+        assert_eq!(s.sanitized().update_check_hours, 4);
     }
 
     #[test]

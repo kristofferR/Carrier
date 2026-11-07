@@ -15,7 +15,6 @@ use crate::settings::{
 use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
-const AUTOMATIC_UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 #[cfg(any(target_os = "linux", test))]
 const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
 #[cfg(any(target_os = "linux", test))]
@@ -352,13 +351,20 @@ fn store_settings(
     state: &State<AppState>,
     new: Settings,
 ) -> Result<Settings, String> {
-    let (prev_theme, prev_autostart, prev_global_hotkey, prev_automatic_update_checks) = {
+    let (
+        prev_theme,
+        prev_autostart,
+        prev_global_hotkey,
+        prev_automatic_update_checks,
+        prev_update_check_hours,
+    ) = {
         let prev = state.settings.lock().unwrap();
         (
             prev.theme.clone(),
             prev.autostart,
             prev.global_hotkey,
             prev.automatic_update_checks,
+            prev.update_check_hours,
         )
     };
     let mut effective = new.clone().sanitized();
@@ -402,7 +408,11 @@ fn store_settings(
     }
     *state.settings.lock().unwrap() = effective.clone();
     apply_settings(app, &effective);
-    if effective.automatic_update_checks && !prev_automatic_update_checks {
+    // Enabling checks, or changing how often, restarts the schedule now.
+    if effective.automatic_update_checks
+        && (!prev_automatic_update_checks
+            || effective.update_check_hours != prev_update_check_hours)
+    {
         state.update_check_wake.notify_one();
     }
     // macOS needs a window rebuild to re-theme the title bar; other platforms
@@ -528,6 +538,23 @@ pub(crate) async fn open_manual_update() -> Result<(), String> {
     }
 }
 
+/// Release notes of the retained discovery, as plain text for Settings, only
+/// when it is still the version Settings is offering.
+#[tauri::command]
+pub(crate) fn update_release_notes(state: State<AppState>, version: String) -> Option<String> {
+    const NOTES_LIMIT: usize = 4_000;
+    let remembered = state.update_available.lock().unwrap();
+    let update = remembered.as_ref()?;
+    if update.version != version {
+        return None;
+    }
+    let notes = update.body.as_deref()?.trim();
+    if notes.is_empty() {
+        return None;
+    }
+    Some(notes.chars().take(NOTES_LIMIT).collect())
+}
+
 /// Return the last version found by automatic/manual discovery without another
 /// network request. The trusted Settings page uses it to label its update
 /// button as soon as it opens.
@@ -604,28 +631,30 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
     }
 }
 
-/// Check once when the app is ready, then every four hours while enabled.
-/// Enabling the preference wakes the task immediately rather than waiting for
-/// the next periodic tick.
+/// Check once when the app is ready, then every `update_check_hours` while
+/// enabled. Enabling the preference or changing the interval wakes the task
+/// immediately rather than waiting for the next periodic tick.
 pub(crate) fn spawn_automatic_update_checks(app: tauri::AppHandle) {
     if cfg!(debug_assertions) {
         return;
     }
     tauri::async_runtime::spawn(async move {
         loop {
-            let enabled = app
-                .state::<AppState>()
-                .settings
-                .lock()
-                .unwrap()
-                .automatic_update_checks;
+            let (enabled, hours) = {
+                let state = app.state::<AppState>();
+                let settings = state.settings.lock().unwrap();
+                (
+                    settings.automatic_update_checks,
+                    settings.update_check_hours,
+                )
+            };
             if enabled {
                 run_automatic_update_check(&app).await;
             }
 
             let state = app.state::<AppState>();
             let _ = tokio::time::timeout(
-                AUTOMATIC_UPDATE_INTERVAL,
+                std::time::Duration::from_secs(u64::from(hours.max(1)) * 60 * 60),
                 state.update_check_wake.notified(),
             )
             .await;
