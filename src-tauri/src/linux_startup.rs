@@ -8,17 +8,13 @@ fn should_default_to_http1(force_http1: Option<OsString>, allow_http2: Option<Os
 
 /// NVIDIA's proprietary driver gained Wayland explicit sync in 555; before
 /// that, WebKit's DMA-BUF renderer could paint blank, black or garbled frames.
-/// `version` is `/sys/module/nvidia/version`, absent when the driver is not
-/// loaded. An unreadable version counts as old.
+/// `version` is `/sys/module/nvidia/version`, which only NVIDIA's proprietary
+/// driver creates. Only a version that reads as older than 555 counts: other
+/// GPU vendors, nouveau, and a version that cannot be read keep DMA-BUF on.
 fn nvidia_driver_predates_explicit_sync(version: Option<&str>) -> bool {
-    version.is_some_and(|version| {
-        version
-            .trim()
-            .split('.')
-            .next()
-            .and_then(|major| major.parse::<u32>().ok())
-            .is_none_or(|major| major < 555)
-    })
+    version
+        .and_then(|version| version.trim().split('.').next()?.parse::<u32>().ok())
+        .is_some_and(|major| major < 555)
 }
 
 /// Keep decisions independent of the process environment so tests can cover
@@ -193,14 +189,16 @@ mod tests {
 
     #[test]
     fn nvidia_drivers_before_explicit_sync_keep_the_dmabuf_fallback_on_wayland() {
-        for old in ["550.144.03", "470.256.02\n", "", "garbage"] {
+        for old in ["550.144.03", "470.256.02\n"] {
             assert_eq!(
                 defaults_with_nvidia(&[WAYLAND], Some(old)),
                 [("GDK_BACKEND", "wayland"), DMABUF],
                 "{old:?}"
             );
         }
-        for current in ["555.42.02", "615.78.08\n"] {
+        // Current drivers, and anything that is not a readable old NVIDIA
+        // version (no NVIDIA module: Intel, AMD, nouveau), keep DMA-BUF on.
+        for current in ["555.42.02", "615.78.08\n", "", "garbage"] {
             assert_eq!(
                 defaults_with_nvidia(&[WAYLAND], Some(current)),
                 [("GDK_BACKEND", "wayland")],
