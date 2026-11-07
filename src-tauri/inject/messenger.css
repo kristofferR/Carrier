@@ -351,32 +351,32 @@ html[data-carrier-hide-names][data-carrier-hide-avatars]
 
 /* Names only. A link with no picture is all name; in a mixed link, blur
    every element that neither is nor holds a picture, whatever its tag.
-   Inline backgrounds count as pictures here (messenger.js also detects
-   class-defined ones). A name written straight into a mixed link has no
+   Inline backgrounds that load an image count as pictures here, matching
+   messenger.js, which also detects class-defined ones. A name written straight into a mixed link has no
    element of its own, so messenger.js marks such links whole. */
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]):not(
-    :has(img, svg, image, [style*="background"])
-  ):not([style*="background"]),
+    :has(img, svg, image, [style*="url("])
+  ):not([style*="url("]),
 html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :not(img, svg, svg *, image, [style*="background"]):not(
-    :has(img, svg, image, [style*="background"])
+  :not(img, svg, svg *, image, [style*="url("]):not(
+    :has(img, svg, image, [style*="url("])
   ) {
   filter: blur(6px) !important;
 }
 
-/* Avatars only: every picture in a profile link, including background
-   avatars on the link itself. */
+/* Avatars only: every picture in a profile link, including image
+   backgrounds on the link itself. */
 html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
-  :is(img, svg, image, [style*="background"]),
+  :is(img, svg, image, [style*="url("]),
 html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
   :is(main, [role="main"])
-  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])[style*="background"] {
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])[style*="url("] {
   filter: blur(6px) !important;
 }
 
