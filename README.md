@@ -94,9 +94,10 @@ cryptographically verified updates.
 ### Desktop integration
 
 - Native notifications with sender avatars and optional hidden previews
-- Notification sound and mute controls
+- Notification sound and mute controls, and Messenger's own Do Not Disturb is honored
 - Unread count on the Dock or taskbar icon
 - Tray support, start to tray, start on login, and hide on close
+- Pause notifications for an hour or until morning from the tray or Dock menu; they also wait while a call window is open
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
 - Menu-bar-only mode on macOS
 - Always on top and experimental multi-window support
