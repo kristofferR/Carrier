@@ -62,7 +62,8 @@ export function initHideNames() {
     if (!el?.setAttribute) return;
     want(el, IDENTITY_ATTR);
     for (const node of [el, ...el.querySelectorAll("*")]) {
-      if (isPicture(node)) markAvatar(node);
+      // Emoji in a name are pictures too, but not faces.
+      if (isPicture(node) && node.getBoundingClientRect().width >= 20) markAvatar(node);
     }
   }
 
@@ -277,14 +278,29 @@ export function initHideNames() {
       const r = el.getBoundingClientRect();
       return r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart;
     };
+    // Messages scrolled up under the header share its strip of the pane. The
+    // message list is the nearest scrolling ancestor of a message; the header
+    // sits outside it (though possibly inside an outer scroller).
+    let list: Element | null = null;
+    for (let a = main.querySelector('[role="article"]')?.parentElement; a && a !== main; ) {
+      const overflow = getComputedStyle(a).overflowY;
+      if (overflow === "auto" || overflow === "scroll") {
+        list = a;
+        break;
+      }
+      a = a.parentElement;
+    }
+    const scrolledContent = (el: Element) =>
+      Boolean(el.closest('[role="article"]')) || Boolean(list?.contains(el));
     main.querySelectorAll(TEXT_SURFACE_SEL).forEach((el) => {
       if (!inHeader(el) || !visible(el) || el.closest('[contenteditable="true"]')) return;
       if (!textValue(el) || [...el.children].some((child) => textValue(child))) return;
+      if (scrolledContent(el)) return;
       mark(el);
     });
 
     main.querySelectorAll(VISUAL_SEL).forEach((el) => {
-      if (!inHeader(el) || !visible(el)) return;
+      if (!inHeader(el) || !visible(el) || scrolledContent(el)) return;
       const r = el.getBoundingClientRect();
       if (r.width >= 20 && r.height >= 20) markAvatar(el);
     });
@@ -339,7 +355,16 @@ export function initHideNames() {
           'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"], a[href^="/"][href$="/"]:not([href*="/messages/"]) [style*="background-image"], a[href*="/profile.php"] [style*="background-image"]',
         )
         .forEach((el) => {
-          if (visible(el)) markAvatar(el);
+          if (!visible(el)) return;
+          // Messenger serves faces, shared photos and reaction emoji with the
+          // same referrer policy. Faces are small squares; photos are larger
+          // and reaction emoji smaller.
+          if (el.matches('img[referrerpolicy="origin-when-cross-origin"]')) {
+            const r = el.getBoundingClientRect();
+            const square = Math.abs(r.width - r.height) <= 2;
+            if (!square || r.width < 20 || r.width > 64) return;
+          }
+          markAvatar(el);
         });
     });
 
