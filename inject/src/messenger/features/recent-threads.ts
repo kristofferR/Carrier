@@ -105,8 +105,9 @@ export function initRecentThreads() {
     // nothing to show, and nothing stale either.
     const viewer = accountId(document.cookie);
     let threads = !viewer || hidden() ? [] : ((await readDatabase(viewer)) ?? scan());
-    // Hide Names may have been switched on during the read.
-    const clear = !viewer || hidden();
+    // Hide Names may have been switched on, or the account logged out or
+    // changed, during the read.
+    const clear = !viewer || hidden() || accountId(document.cookie) !== viewer;
     if (clear) threads = [];
     if (threads === null) return;
     // An empty list usually means the chat list hasn't loaded (mid-reload),

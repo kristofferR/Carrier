@@ -10980,6 +10980,7 @@ ${text}`)) {
     if (names2.title.trim()) return names2.title;
     return others.map((person) => nicknames && person.nickname || participantFirstName(person)).filter(Boolean).join(", ");
   }
+  var MAX_ROWS_READ = 576;
   function readRecentThreads(load, options, timeoutMs = 2e3) {
     const { viewer, mode, limit, fallbackName } = options;
     return readMessengerDatabase(
@@ -10990,30 +10991,35 @@ ${text}`)) {
         if (typeof q?.toArrayAsync !== "function" || typeof types?.isMessengerOrE2EEInbox !== "function" || typeof types.isArmadilloSecure !== "function" || typeof types.isGroup !== "function" || typeof i64.to_string !== "function") {
           throw new Error("Messenger thread APIs changed");
         }
-        const rows = await q.toArrayAsync(
-          q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(limit * 4)
-        );
-        if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
         const out = [];
         const seen = /* @__PURE__ */ new Set();
-        for (const row of rows) {
-          if (out.length >= limit) break;
-          if (!row || typeof row !== "object") continue;
-          const thread2 = row;
-          if (types.isMessengerOrE2EEInbox(thread2.folderName) !== true) continue;
-          if (thread2.isHidden === true && types.isArmadilloSecure(thread2.threadType) !== true)
-            continue;
-          const id = i64.to_string(thread2.threadKey);
-          if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
-          let name = types.isGroup(thread2.threadType) === true && typeof thread2.threadName === "string" ? thread2.threadName.trim() : "";
-          if (!name) {
-            const names2 = await readConversationNotificationNames(id, load2);
-            name = names2 ? conversationTitle(names2, viewer, mode).trim() : "";
+        let checked = 0;
+        for (let want = limit * 4; ; want *= 4) {
+          const rows = await q.toArrayAsync(
+            q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(want)
+          );
+          if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
+          for (const row of rows.slice(checked)) {
+            if (out.length >= limit) break;
+            if (!row || typeof row !== "object") continue;
+            const thread2 = row;
+            if (types.isMessengerOrE2EEInbox(thread2.folderName) !== true) continue;
+            if (thread2.isHidden === true && types.isArmadilloSecure(thread2.threadType) !== true)
+              continue;
+            const id = i64.to_string(thread2.threadKey);
+            if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
+            let name = types.isGroup(thread2.threadType) === true && typeof thread2.threadName === "string" ? thread2.threadName.trim() : "";
+            if (!name) {
+              const names2 = await readConversationNotificationNames(id, load2);
+              name = names2 ? conversationTitle(names2, viewer, mode).trim() : "";
+            }
+            name || (name = fallbackName?.(id) ?? "");
+            if (!name) continue;
+            seen.add(id);
+            out.push({ name: name.slice(0, MAX_NAME_CHARS), href: `/t/${id}/` });
           }
-          name || (name = fallbackName?.(id) ?? "");
-          if (!name) continue;
-          seen.add(id);
-          out.push({ name: name.slice(0, MAX_NAME_CHARS), href: `/t/${id}/` });
+          checked = rows.length;
+          if (out.length >= limit || rows.length < want || want >= MAX_ROWS_READ) break;
         }
         return out;
       },
@@ -11098,7 +11104,7 @@ ${text}`)) {
     const send = async () => {
       const viewer = accountId(document.cookie);
       let threads = !viewer || hidden() ? [] : await readDatabase(viewer) ?? scan();
-      const clear = !viewer || hidden();
+      const clear = !viewer || hidden() || accountId(document.cookie) !== viewer;
       if (clear) threads = [];
       if (threads === null) return;
       if (!clear && threads.length === 0) {

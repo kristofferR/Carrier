@@ -122,6 +122,16 @@ describe("readRecentThreads", () => {
     ]);
   });
 
+  test("reads further back when the newest rows are requests or archived", async () => {
+    const requests = Array.from({ length: 40 }, (_, i) =>
+      thread(`9${i}`, 100 + i, { folderName: i % 2 ? "pending" : "archived" }),
+    );
+    const h = harness([...requests, thread("11", 1)], dm("11", "2"), contacts);
+    expect(await readRecentThreads(h.load, { ...options, limit: 2 })).toEqual([
+      { name: "Ada Lovelace", href: "/t/11/" },
+    ]);
+  });
+
   test("uses the fallback name, or leaves the chat out, when the database has none", async () => {
     const h = harness([thread("11", 2), thread("12", 1)]);
     expect(

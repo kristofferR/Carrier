@@ -57,6 +57,9 @@ export function conversationTitle(
  * conversation whose name the database cannot give takes `fallbackName`, or is
  * left out. Null when the database or its APIs are unavailable.
  */
+/** How far back to look for enough inbox conversations. */
+const MAX_ROWS_READ = 576;
+
 export function readRecentThreads(
   load: unknown,
   options: {
@@ -83,35 +86,41 @@ export function readRecentThreads(
         throw new Error("Messenger thread APIs changed");
       }
       // Over-read: some of the newest rows are hidden, archived or requests.
-      const rows = await q.toArrayAsync(
-        q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(limit * 4),
-      );
-      if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
+      // Read further back while too few qualify, up to a fixed depth.
       const out: RecentThread[] = [];
       const seen = new Set<string>();
-      for (const row of rows) {
-        if (out.length >= limit) break;
-        if (!row || typeof row !== "object") continue;
-        const thread = row as Record<string, unknown>;
-        if (types.isMessengerOrE2EEInbox(thread.folderName) !== true) continue;
-        // Encrypted chats' rows are all marked hidden (the chat list shows them
-        // through other tables), so isHidden only rules out plain ones.
-        if (thread.isHidden === true && types.isArmadilloSecure(thread.threadType) !== true)
-          continue;
-        const id = i64.to_string(thread.threadKey);
-        if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
-        let name =
-          types.isGroup(thread.threadType) === true && typeof thread.threadName === "string"
-            ? thread.threadName.trim()
-            : "";
-        if (!name) {
-          const names = await readConversationNotificationNames(id, load);
-          name = names ? conversationTitle(names, viewer, mode).trim() : "";
+      let checked = 0;
+      for (let want = limit * 4; ; want *= 4) {
+        const rows = await q.toArrayAsync(
+          q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(want),
+        );
+        if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
+        for (const row of rows.slice(checked)) {
+          if (out.length >= limit) break;
+          if (!row || typeof row !== "object") continue;
+          const thread = row as Record<string, unknown>;
+          if (types.isMessengerOrE2EEInbox(thread.folderName) !== true) continue;
+          // Encrypted chats' rows are all marked hidden (the chat list shows
+          // them through other tables), so isHidden only rules out plain ones.
+          if (thread.isHidden === true && types.isArmadilloSecure(thread.threadType) !== true)
+            continue;
+          const id = i64.to_string(thread.threadKey);
+          if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
+          let name =
+            types.isGroup(thread.threadType) === true && typeof thread.threadName === "string"
+              ? thread.threadName.trim()
+              : "";
+          if (!name) {
+            const names = await readConversationNotificationNames(id, load);
+            name = names ? conversationTitle(names, viewer, mode).trim() : "";
+          }
+          name ||= fallbackName?.(id) ?? "";
+          if (!name) continue;
+          seen.add(id);
+          out.push({ name: name.slice(0, MAX_NAME_CHARS), href: `/t/${id}/` });
         }
-        name ||= fallbackName?.(id) ?? "";
-        if (!name) continue;
-        seen.add(id);
-        out.push({ name: name.slice(0, MAX_NAME_CHARS), href: `/t/${id}/` });
+        checked = rows.length;
+        if (out.length >= limit || rows.length < want || want >= MAX_ROWS_READ) break;
       }
       return out;
     },
