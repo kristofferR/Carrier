@@ -2632,6 +2632,35 @@ ${button.innerHTML}`)
     }, 5e3);
   }
 
+  // inject/src/messenger/lib/composer-focus.ts
+  function shouldFocusComposerOnReturn(state2) {
+    return state2.enabled && state2.threadOpen && !state2.dialogOpen && state2.focus !== "elsewhere";
+  }
+
+  // inject/src/messenger/features/composer-focus.ts
+  function currentFocus() {
+    const active = document.activeElement;
+    if (!active || active === document.body || active === document.documentElement) {
+      return "nothing";
+    }
+    const link = active.closest("a");
+    return link && chatRows().includes(link) ? "chat-list" : "elsewhere";
+  }
+  function initComposerFocus() {
+    window.addEventListener("focus", (event) => {
+      if (event.target !== window) return;
+      setTimeout(() => {
+        const state2 = {
+          enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
+          threadOpen: !!threadIdFromHref(location.pathname),
+          dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(isShown),
+          focus: currentFocus()
+        };
+        if (shouldFocusComposerOnReturn(state2)) focusComposer();
+      }, 0);
+    });
+  }
+
   // inject/src/messenger/lib/composer-keys.ts
   function shouldKeepEnterInComposer(state2) {
     if (state2.key !== "Enter") return false;
@@ -12395,6 +12424,7 @@ ${text}`)) {
     initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);
     initFeature("image-paste", initImagePaste);
+    initFeature("composer-focus", initComposerFocus);
     initFeature("shortcuts", initShortcuts);
     initFeature("zoom", initZoom);
     initFeature("selector-health", initSelectorHealth);

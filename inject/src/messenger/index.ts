@@ -12,6 +12,7 @@
  */
 import { diag } from "./bridge";
 import { initAutoRefresh } from "./features/auto-refresh";
+import { initComposerFocus } from "./features/composer-focus";
 import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
 import { initCookieAutoDecline } from "./features/cookie-consent";
@@ -69,6 +70,7 @@ function main() {
   initFeature("emoji-images", initEmojiImageLoading);
   initFeature("composer-keys", initComposerKeys);
   initFeature("image-paste", initImagePaste);
+  initFeature("composer-focus", initComposerFocus);
   initFeature("shortcuts", initShortcuts);
   initFeature("zoom", initZoom);
   initFeature("selector-health", initSelectorHealth);

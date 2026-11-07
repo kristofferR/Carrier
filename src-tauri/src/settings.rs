@@ -128,6 +128,9 @@ pub(crate) struct Settings {
     /// Pause videos and animated media that start without a recent user
     /// interaction. Manual playback remains available. Off by default.
     pub(crate) stop_media_autoplay: bool,
+    /// Focus the message box when the window comes back to the front with a
+    /// conversation open and nothing else focused. On by default.
+    pub(crate) focus_composer_on_return: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
@@ -244,6 +247,7 @@ impl Default for Settings {
             nicknames_group_only: false,
             system_emoji: false,
             stop_media_autoplay: false,
+            focus_composer_on_return: true,
             zoom: 100,
             global_hotkey: false,
             block_telemetry: true,
@@ -1072,6 +1076,13 @@ mod tests {
         // their settings file.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.strip_link_tracking);
+    }
+
+    #[test]
+    fn settings_json_missing_focus_composer_on_return_defaults_to_true() {
+        // Existing installs gain the focus behavior without resetting settings.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.focus_composer_on_return);
     }
 
     #[test]
