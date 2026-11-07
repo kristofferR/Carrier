@@ -604,6 +604,28 @@ describe("NotifiedSignatureStore", () => {
   });
 });
 
+describe("PendingPageNotificationStore", () => {
+  test("a tagged pending notification is recovered or retired only by its own conversation", () => {
+    const storage = memoryStorage();
+    const pending = new PendingPageNotificationStore(storage, undefined, undefined, 1_000);
+    pending.add("Jane", "Hi", 5, 1_000, "7");
+    const reloaded = new PendingPageNotificationStore(storage, undefined, undefined, 2_000);
+    reloaded.discardReadMatches([{ key: "8", title: "Jane", body: "Hi" }], 2_000);
+    expect(
+      reloaded.consumeUniquelyMatching([{ key: "8", title: "Jane", body: "Hi" }], 2_000).size,
+    ).toBe(0);
+    expect([
+      ...reloaded.consumeUniquelyMatching(
+        [
+          { key: "7", title: "Jane", body: "Hi" },
+          { key: "8", title: "Jane", body: "Hi" },
+        ],
+        2_000,
+      ),
+    ]).toEqual(["7"]);
+  });
+});
+
 describe("PageNotificationReceiptStore", () => {
   test("classifies a known draft before trimming ordinary receipts", () => {
     const storage = memoryStorage();

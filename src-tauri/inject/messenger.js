@@ -7065,7 +7065,7 @@ ${button.innerHTML}`)
           for (const receipt of parsed) {
             if (!receipt || typeof receipt !== "object") continue;
             const candidate = receipt;
-            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.id === "number" && Number.isSafeInteger(candidate.id) && candidate.id > 0 && validOpaqueNotificationIdentity(candidate.identity) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
+            if (typeof candidate.at === "number" && Number.isFinite(candidate.at) && typeof candidate.id === "number" && Number.isSafeInteger(candidate.id) && candidate.id > 0 && validOpaqueNotificationIdentity(candidate.identity) && (candidate.thread === void 0 || typeof candidate.thread === "string" && HASH_RE.test(candidate.thread)) && now - candidate.at >= 0 && now - candidate.at <= this.ttlMs) {
               this.receipts.push(candidate);
             }
           }
@@ -7094,9 +7094,14 @@ ${button.innerHTML}`)
       }
       if (changed) this.persist();
     }
-    add(title, body, id, at = Date.now()) {
+    add(title, body, id, at = Date.now(), thread2) {
       this.prune(at);
-      this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+      this.receipts.push({
+        at,
+        id,
+        identity: opaqueNotificationIdentity(title, body),
+        ...thread2 && { thread: hashText(thread2) }
+      });
       if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
       this.persist();
     }
@@ -7122,6 +7127,7 @@ ${button.innerHTML}`)
         let match = null;
         let ambiguous = false;
         for (const [key, identity] of identities) {
+          if (receipt.thread && receipt.thread !== hashText(key)) continue;
           if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
           if (match !== null && match !== key) {
             ambiguous = true;
@@ -7142,12 +7148,16 @@ ${button.innerHTML}`)
     discardReadMatches(readRows, now = Date.now()) {
       this.prune(now);
       if (!this.receipts.length) return;
-      const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+      const read = [...readRows].map((row) => ({
+        key: row.key ? hashText(row.key) : null,
+        identity: opaqueNotificationIdentity(row.title, row.body)
+      }));
       if (!read.length) return;
       let changed = false;
       for (let index = this.receipts.length - 1; index >= 0; index--) {
+        const receipt = this.receipts[index];
         if (!read.some(
-          (identity) => opaqueNotificationMatches(this.receipts[index].identity, identity)
+          ({ key, identity }) => (!receipt.thread || receipt.thread === key) && opaqueNotificationMatches(receipt.identity, identity)
         )) {
           continue;
         }
@@ -8296,7 +8306,13 @@ ${button.innerHTML}`)
         const id = ++notifySeq;
         if (pageMatch.signal) {
           pageMatch.signal.nativeId = id;
-          pendingPageNotifications.add(originalTitle, originalBody, id);
+          pendingPageNotifications.add(
+            originalTitle,
+            originalBody,
+            id,
+            Date.now(),
+            pageMatch.signal.thread
+          );
         }
         const matchWait = pageMatch.signal?.matchPromise && !taggedThread && ignoresMutedConversations(s) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
         const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();

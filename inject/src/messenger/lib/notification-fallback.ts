@@ -730,6 +730,8 @@ interface PendingPageNotificationReceipt {
   at: number;
   id: number;
   identity: OpaqueNotificationIdentity;
+  /** Hash of the conversation Messenger tagged: only its rows may claim this receipt. */
+  thread?: string;
 }
 
 /**
@@ -759,6 +761,8 @@ export class PendingPageNotificationStore {
             Number.isSafeInteger(candidate.id) &&
             candidate.id > 0 &&
             validOpaqueNotificationIdentity(candidate.identity) &&
+            (candidate.thread === undefined ||
+              (typeof candidate.thread === "string" && HASH_RE.test(candidate.thread))) &&
             now - candidate.at >= 0 &&
             now - candidate.at <= this.ttlMs
           ) {
@@ -791,9 +795,14 @@ export class PendingPageNotificationStore {
     if (changed) this.persist();
   }
 
-  add(title: string, body: string, id: number, at = Date.now()): void {
+  add(title: string, body: string, id: number, at = Date.now(), thread?: string): void {
     this.prune(at);
-    this.receipts.push({ at, id, identity: opaqueNotificationIdentity(title, body) });
+    this.receipts.push({
+      at,
+      id,
+      identity: opaqueNotificationIdentity(title, body),
+      ...(thread && { thread: hashText(thread) }),
+    });
     if (this.receipts.length > PAGE_RECEIPT_LIMIT) this.receipts.shift();
     this.persist();
   }
@@ -824,6 +833,7 @@ export class PendingPageNotificationStore {
       let match: string | null = null;
       let ambiguous = false;
       for (const [key, identity] of identities) {
+        if (receipt.thread && receipt.thread !== hashText(key)) continue;
         if (!opaqueNotificationMatches(receipt.identity, identity)) continue;
         if (match !== null && match !== key) {
           ambiguous = true;
@@ -842,16 +852,25 @@ export class PendingPageNotificationStore {
     return recovered;
   }
 
-  discardReadMatches(readRows: Iterable<NotificationText>, now = Date.now()): void {
+  discardReadMatches(
+    readRows: Iterable<NotificationText & { key?: string }>,
+    now = Date.now(),
+  ): void {
     this.prune(now);
     if (!this.receipts.length) return;
-    const read = [...readRows].map((row) => opaqueNotificationIdentity(row.title, row.body));
+    const read = [...readRows].map((row) => ({
+      key: row.key ? hashText(row.key) : null,
+      identity: opaqueNotificationIdentity(row.title, row.body),
+    }));
     if (!read.length) return;
     let changed = false;
     for (let index = this.receipts.length - 1; index >= 0; index--) {
+      const receipt = this.receipts[index]!;
       if (
-        !read.some((identity) =>
-          opaqueNotificationMatches(this.receipts[index]!.identity, identity),
+        !read.some(
+          ({ key, identity }) =>
+            (!receipt.thread || receipt.thread === key) &&
+            opaqueNotificationMatches(receipt.identity, identity),
         )
       ) {
         continue;

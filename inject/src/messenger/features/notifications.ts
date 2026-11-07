@@ -519,7 +519,13 @@ export function initNotificationBridge() {
       const id = ++notifySeq;
       if (pageMatch.signal) {
         pageMatch.signal.nativeId = id;
-        pendingPageNotifications.add(originalTitle, originalBody, id);
+        pendingPageNotifications.add(
+          originalTitle,
+          originalBody,
+          id,
+          Date.now(),
+          pageMatch.signal.thread,
+        );
       }
       // A tagged conversation needs no row to establish identity or mute.
       const matchWait =
