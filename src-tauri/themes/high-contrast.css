@@ -10,7 +10,7 @@
   --carrier-wash: #ffffff;
   --carrier-page: #ffffff;
   --carrier-chat: #ffffff;
-  --carrier-field: #ffffff;
+  --carrier-field: #f0f0f0;
   --carrier-hover: rgba(0, 0, 0, 0.1);
   --carrier-line: #000000;
   --carrier-text: #000000;
@@ -30,7 +30,7 @@
     --carrier-wash: #000000;
     --carrier-page: #000000;
     --carrier-chat: #000000;
-    --carrier-field: #000000;
+    --carrier-field: #1f1f1f;
     --carrier-hover: rgba(255, 255, 255, 0.14);
     --carrier-line: #ffffff;
     --carrier-text: #ffffff;
@@ -45,4 +45,13 @@
     --carrier-in-text: #ffffff;
     --carrier-selection: rgba(143, 203, 255, 0.4);
   }
+}
+
+/* Fields would otherwise blend into the page: outline the search field and
+   the message box. */
+:is([role="navigation"], [role="main"]) :is(input[type="search"], [role="combobox"] input, input[role="combobox"]),
+[role="main"] [contenteditable="true"][role="textbox"] {
+  outline: 1px solid var(--carrier-line) !important;
+  outline-offset: 3px;
+  border-radius: 18px;
 }
