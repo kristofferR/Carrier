@@ -254,7 +254,10 @@ fn validate_message(message: &Message) -> bool {
         && optional_digits(&message.sender_id)
         && optional_within(&message.sender_name, NAME_MAX)
         && timestamp_ok(message.timestamp_ms)
-        && message.utc_offset_minutes.abs() <= OFFSET_MAX_MINUTES
+        && (-OFFSET_MAX_MINUTES..=OFFSET_MAX_MINUTES).contains(&message.utc_offset_minutes)
+        // The local date must exist: near the end of the timestamp range an
+        // offset can push it past what a date can hold.
+        && Moment::new(message.timestamp_ms, message.utc_offset_minutes).is_some()
         && optional_within(&message.text, TEXT_MAX)
         // Unreadable means there is no text, never ciphertext passed off as text.
         && !(message.unreadable && message.text.is_some())
@@ -318,7 +321,7 @@ impl Moment {
         let offset = UtcOffset::from_whole_seconds(offset_minutes.checked_mul(60)?).ok()?;
         let date = OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp_ms) * 1_000_000)
             .ok()?
-            .to_offset(offset);
+            .checked_to_offset(offset)?;
         Some(Self { date })
     }
 
@@ -968,6 +971,7 @@ mod tests {
             ("senderId", json!("2<b>")),
             ("timestampMs", json!(-1)),
             ("utcOffsetMinutes", json!(5000)),
+            ("utcOffsetMinutes", json!(i32::MIN)),
             ("id", json!("")),
         ] {
             let mut bad = message("mid.1", T0);
@@ -977,6 +981,11 @@ mod tests {
                 "{field} should be rejected"
             );
         }
+
+        // A local date past what a date can hold is rejected, not a panic.
+        let mut overflow = message("mid.1", TIMESTAMP_MAX);
+        overflow["utcOffsetMinutes"] = json!(60);
+        assert!(validate(&parse(page(vec![overflow]))).is_err());
 
         let mut ciphertext = message("mid.1", T0);
         ciphertext["unreadable"] = json!(true);
