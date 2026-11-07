@@ -2449,9 +2449,9 @@ pub(crate) fn show_message_notification(
     }
     let (icon, preview) = msg.visible_images(hide_preview);
     let preview = avatar_to_temp_png(preview);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
     let image = preview.or_else(|| avatar_to_temp_png(icon));
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let avatar = avatar_to_temp_png(icon);
 
     // Ask the desktop for attention when a message arrives and no Messenger
@@ -2468,14 +2468,24 @@ pub(crate) fn show_message_notification(
         // own handle, so `app` isn't needed here. The avatar temp file is read
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
+        // A message's sender becomes a communication notification (their
+        // face replaces Carrier's icon), except with hidden previews.
+        let sender =
+            (!hide_preview && !title.is_empty()).then(|| crate::macos::notifications::MacSender {
+                name: &title,
+                avatar: avatar.as_deref(),
+                group_name: (!subtitle.is_empty()).then_some(subtitle.as_str()),
+            });
         deliver_notification_macos(
             &title,
             &body,
             native_id,
-            image.as_deref(),
+            preview.as_deref(),
             sound,
             MacNotificationOptions {
                 subtitle: &subtitle,
+                sender,
+                fallback_image: avatar.as_deref(),
                 thread_path: thread_path.as_deref(),
                 group_by_conversation,
                 reply_eligible: macos_reply_eligible(

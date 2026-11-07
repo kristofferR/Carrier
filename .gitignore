@@ -27,3 +27,5 @@ docs/FULL_INJECT.js
 /prime/
 /snap/.snapcraft/
 /*.snap
+# Carrier's Developer ID provisioning profile, written by CI from a secret.
+/src-tauri/embedded.provisionprofile
