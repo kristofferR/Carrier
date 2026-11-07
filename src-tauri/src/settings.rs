@@ -119,8 +119,6 @@ pub(crate) struct Settings {
     /// pause survives restarts and one that ended while Carrier was closed is
     /// already over.
     pub(crate) notifications_paused_until: Option<i64>,
-    /// Discover signed Carrier updates on startup and every four hours. This
-    /// never downloads or installs without explicit confirmation in Settings.
     /// Discover signed Carrier updates on startup and then every
     /// `update_check_hours`. This never downloads or installs without explicit
     /// confirmation in Settings.
