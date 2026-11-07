@@ -1424,3 +1424,11 @@ mod tests {
         ));
     }
 }
+
+/// Settings → Notifications → Send Test Notification (Ref #259).
+#[tauri::command]
+pub(crate) async fn send_test_notification(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::notifications::send_test_notification(&app))
+        .await
+        .map_err(|error| error.to_string())?
+}
