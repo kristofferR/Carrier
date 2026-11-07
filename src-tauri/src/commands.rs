@@ -538,12 +538,17 @@ pub(crate) async fn open_manual_update() -> Result<(), String> {
     }
 }
 
-/// The discovered update's release notes, as plain text for Settings.
+/// Release notes of the retained discovery, as plain text for Settings, only
+/// when it is still the version Settings is offering.
 #[tauri::command]
-pub(crate) fn update_release_notes(state: State<AppState>) -> Option<String> {
+pub(crate) fn update_release_notes(state: State<AppState>, version: String) -> Option<String> {
     const NOTES_LIMIT: usize = 4_000;
     let remembered = state.update_available.lock().unwrap();
-    let notes = remembered.as_ref()?.body.as_deref()?.trim();
+    let update = remembered.as_ref()?;
+    if update.version != version {
+        return None;
+    }
+    let notes = update.body.as_deref()?.trim();
     if notes.is_empty() {
         return None;
     }
