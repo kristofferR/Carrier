@@ -264,6 +264,13 @@ pub(crate) fn forget_action_target(native_id: u64) {
     let _ = native_id;
 }
 
+/// The newest notification with a recorded target, for the debug-build hook
+/// that presses its buttons.
+#[cfg(all(feature = "mcp", debug_assertions))]
+pub(crate) fn latest_action_target_id() -> Option<u64> {
+    ACTION_TARGETS.lock().unwrap().back().map(|(id, _)| *id)
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn action_target(native_id: u64) -> Option<ActionTarget> {
     ACTION_TARGETS
