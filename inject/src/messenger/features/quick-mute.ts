@@ -4,8 +4,10 @@
 // Messenger variant offers "Mute notifications" directly; another nests Mute
 // inside "Chat notifications". Success is read from an Unmute label, the
 // confirmed dialog closing, or Carrier's own muted-thread tracking.
+
 import { diag } from "../bridge";
 import { actionTargetFor } from "../lib/action-target";
+import { noteExplicitAction } from "../lib/composer-focus";
 import { conversationMuteFromLabel, mutedThreads, muteStateAfterExplicitAction } from "../lib/mute";
 import {
   decideQuickMute,
@@ -266,6 +268,7 @@ export function initQuickMute() {
     muteExpiries.delete(id);
   });
   window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
+    noteExplicitAction();
     const report = (ok: boolean) =>
       carrierReplyResult(id, attempt, ok).catch(() =>
         diag("quick-mute.ack", "mute acknowledgement emit failed"),

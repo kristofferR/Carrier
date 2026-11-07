@@ -1,7 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { shouldFocusComposerOnReturn } from "./composer-focus";
+import {
+  EXPLICIT_ACTION_HOLD_MS,
+  explicitActionRecent,
+  noteExplicitAction,
+  shouldFocusComposerOnReturn,
+} from "./composer-focus";
 
 const base = { enabled: true, threadOpen: true, dialogOpen: false, focus: "nothing" as const };
+
+describe("explicitActionRecent", () => {
+  test("holds for a short while after a native action", () => {
+    noteExplicitAction(1_000);
+    expect(explicitActionRecent(1_000 + EXPLICIT_ACTION_HOLD_MS - 1)).toBe(true);
+    expect(explicitActionRecent(1_000 + EXPLICIT_ACTION_HOLD_MS)).toBe(false);
+  });
+});
 
 describe("shouldFocusComposerOnReturn", () => {
   test("focuses the composer when nothing, or only a chat row, holds focus", () => {

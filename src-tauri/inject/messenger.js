@@ -2633,11 +2633,20 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/composer-focus.ts
+  var EXPLICIT_ACTION_HOLD_MS = 2e3;
+  var explicitActionAt = Number.NEGATIVE_INFINITY;
+  function noteExplicitAction(now = performance.now()) {
+    explicitActionAt = now;
+  }
+  function explicitActionRecent(now = performance.now()) {
+    return now - explicitActionAt < EXPLICIT_ACTION_HOLD_MS;
+  }
   function shouldFocusComposerOnReturn(state2) {
     return state2.enabled && state2.threadOpen && !state2.dialogOpen && state2.focus !== "elsewhere";
   }
 
   // inject/src/messenger/features/composer-focus.ts
+  var SETTLE_MS = 250;
   function currentFocus() {
     const active = document.activeElement;
     if (!active || active === document.body || active === document.documentElement) {
@@ -2649,7 +2658,9 @@ ${button.innerHTML}`)
   function initComposerFocus() {
     window.addEventListener("focus", (event) => {
       if (event.target !== window) return;
+      const path = location.pathname;
       setTimeout(() => {
+        if (explicitActionRecent() || location.pathname !== path) return;
         const state2 = {
           enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
           threadOpen: !!threadIdFromHref(location.pathname),
@@ -2657,7 +2668,7 @@ ${button.innerHTML}`)
           focus: currentFocus()
         };
         if (shouldFocusComposerOnReturn(state2)) focusComposer();
-      }, 0);
+      }, SETTLE_MS);
     });
   }
 
@@ -7955,6 +7966,7 @@ ${button.innerHTML}`)
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
     window.__carrierNotifyClick = (id) => {
+      noteExplicitAction();
       const handler = notifyHandlers.get(id);
       notifyHandlers.delete(id);
       try {
@@ -9391,6 +9403,7 @@ ${button.innerHTML}`)
       }
     }, 0);
     window.__carrierOpenThread = (href) => {
+      noteExplicitAction();
       const id = threadPathId(href);
       if (!id) return false;
       cancelThreadRestore();
@@ -9556,6 +9569,7 @@ ${button.innerHTML}`)
   }
   function initQuickLike() {
     window.__carrierQuickLike = (path, target, id, attempt, budgetMs) => {
+      noteExplicitAction();
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-like.ack", "like acknowledgement emit failed")
       );
@@ -9775,6 +9789,7 @@ ${button.innerHTML}`)
       muteExpiries.delete(id);
     });
     window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
+      noteExplicitAction();
       const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
       );
@@ -9955,6 +9970,7 @@ ${text}`)) {
   }
   function initQuickReply() {
     window.__carrierQuickReply = (path, rawText, id, attempt) => {
+      noteExplicitAction();
       const text = String(rawText);
       if (!validRequest(path, text, id, attempt)) {
         emitReplyResult(id, attempt, false);
@@ -9975,6 +9991,7 @@ ${text}`)) {
       });
     };
     window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
+      noteExplicitAction();
       const text = String(rawText);
       if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
         emitReplyResult(id, attempt, false);
@@ -11191,6 +11208,7 @@ ${text}`)) {
       Object.entries(actions).map(([name, action2]) => [
         name,
         () => {
+          noteExplicitAction();
           stopThreadRestore();
           return action2();
         }

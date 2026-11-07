@@ -1,3 +1,22 @@
+/** How long an explicit native action owns focus and navigation. */
+export const EXPLICIT_ACTION_HOLD_MS = 2_000;
+
+let explicitActionAt = Number.NEGATIVE_INFINITY;
+
+/**
+ * Native actions (notification click, quick reply, Dock or tray conversation,
+ * shortcuts) reveal the window and then navigate or focus on their own. Call
+ * this before they do, so the return-focus below never lands in the
+ * conversation being left.
+ */
+export function noteExplicitAction(now = performance.now()): void {
+  explicitActionAt = now;
+}
+
+export function explicitActionRecent(now = performance.now()): boolean {
+  return now - explicitActionAt < EXPLICIT_ACTION_HOLD_MS;
+}
+
 /** Where keyboard focus sits as the window comes back to the front. */
 export type ReturnFocus = "nothing" | "chat-list" | "elsewhere";
 

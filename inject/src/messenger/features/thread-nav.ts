@@ -1,5 +1,7 @@
 /* ------------------- Open thread & conversation info ------------------ */
+
 import { diag, invoke, toast } from "../bridge";
+import { noteExplicitAction } from "../lib/composer-focus";
 import { threadRestoreStep } from "../lib/thread-restore";
 import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
@@ -119,6 +121,7 @@ export function initThreadNav() {
   // reload; fall back to a hard navigation when the row isn't in the list
   // (scrolled out of Facebook's virtualized list, or a fresh window).
   window.__carrierOpenThread = (href) => {
+    noteExplicitAction();
     const id = threadPathId(href);
     if (!id) return false;
     cancelThreadRestore();

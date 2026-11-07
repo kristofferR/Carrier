@@ -1,8 +1,18 @@
 /* ------------------- Focus the message box on return ------------------- */
 // Switching back to Carrier (Cmd/Alt+Tab, Dock, tray, global hotkey) with a
 // conversation open puts the cursor in the message box, unless something
-// else the user chose already has focus (Ref #359).
-import { type ReturnFocus, shouldFocusComposerOnReturn } from "../lib/composer-focus";
+// else the user chose already has focus (Ref #359). A native action that
+// reveals the window to open a conversation owns focus instead.
+
+// Long enough for a native action evaluated right after the window shows to
+// stamp itself, and for the engine to restore the previously focused element.
+const SETTLE_MS = 250;
+
+import {
+  explicitActionRecent,
+  type ReturnFocus,
+  shouldFocusComposerOnReturn,
+} from "../lib/composer-focus";
 import { threadIdFromHref } from "../lib/threads";
 import { chatRows, focusComposer, isShown } from "./conversation-actions";
 
@@ -18,8 +28,10 @@ function currentFocus(): ReturnFocus {
 export function initComposerFocus() {
   window.addEventListener("focus", (event) => {
     if (event.target !== window) return;
-    // Let the engine restore the previously focused element first.
+    const path = location.pathname;
     setTimeout(() => {
+      // A conversation switch in flight: its pane is not the one to type in.
+      if (explicitActionRecent() || location.pathname !== path) return;
       const state = {
         enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
         threadOpen: !!threadIdFromHref(location.pathname),
@@ -27,6 +39,6 @@ export function initComposerFocus() {
         focus: currentFocus(),
       };
       if (shouldFocusComposerOnReturn(state)) focusComposer();
-    }, 0);
+    }, SETTLE_MS);
   });
 }

@@ -1,5 +1,6 @@
 /* --------------------------- Keyboard shortcuts ----------------------- */
 // Triggered with the platform accelerator (Cmd on macOS, Ctrl elsewhere).
+import { noteExplicitAction } from "../lib/composer-focus";
 import {
   attachFiles,
   chatRows,
@@ -108,6 +109,7 @@ export function initShortcutRegistry() {
     Object.entries(actions).map(([name, action]) => [
       name,
       () => {
+        noteExplicitAction();
         stopThreadRestore();
         return action();
       },

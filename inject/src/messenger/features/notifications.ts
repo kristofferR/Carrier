@@ -1,7 +1,9 @@
 /* --------------------- Native message notifications ------------------- */
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
+
 import { diag, invoke } from "../bridge";
+import { noteExplicitAction } from "../lib/composer-focus";
 import {
   conversationNodeText,
   conversationTextParts,
@@ -212,6 +214,7 @@ export function initNotificationBridge() {
   const notifyHandlers = new Map<number, () => void>();
   const deliveryHandlers = new Map<number, (delivery: NativeNotificationDelivery) => void>();
   window.__carrierNotifyClick = (id: number) => {
+    noteExplicitAction();
     const handler = notifyHandlers.get(id);
     notifyHandlers.delete(id);
     try {
