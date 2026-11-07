@@ -304,6 +304,49 @@ pub(crate) fn deliver_notification_windows(app: &tauri::AppHandle, opts: Windows
     }
 }
 
+/// Present a toast and report Windows' error, for the Settings test (Ref #259).
+#[cfg(target_os = "windows")]
+pub(crate) fn try_deliver_notification_windows(
+    app: &tauri::AppHandle,
+    opts: WindowsToastOptions,
+) -> Result<(), String> {
+    show_toast(app, &opts).map_err(|error| format!("Windows refused the notification: {error}"))
+}
+
+/// Why Windows would not show Carrier's toasts, from its notification
+/// settings (Ref #259). None when they are allowed or unreadable.
+#[cfg(target_os = "windows")]
+pub(crate) fn notification_blocker(app: &tauri::AppHandle) -> Option<String> {
+    if legacy_notifications_disabled(app) {
+        return windows_blocker_message(NotificationSetting::DisabledForApplication);
+    }
+    let notifier =
+        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast_app_id(app)))
+            .ok()?;
+    windows_blocker_message(notifier.Setting().ok()?)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_blocker_message(setting: NotificationSetting) -> Option<String> {
+    let message = match setting {
+        NotificationSetting::Enabled => return None,
+        NotificationSetting::DisabledForApplication => {
+            "Notifications are turned off for Carrier. Turn them on in Windows Settings → System → Notifications."
+        }
+        NotificationSetting::DisabledForUser => {
+            "Notifications are turned off for this Windows account. Turn them on in Windows Settings → System → Notifications."
+        }
+        NotificationSetting::DisabledByGroupPolicy => {
+            "Notifications are turned off by your organization's policy."
+        }
+        NotificationSetting::DisabledByManifest => {
+            "This Carrier installation cannot show notifications. Reinstalling Carrier should fix it."
+        }
+        _ => "Windows reports that notifications are turned off for Carrier.",
+    };
+    Some(message.into())
+}
+
 #[cfg(target_os = "windows")]
 fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<()> {
     // Carrier used the main app AUMID before the dedicated notification

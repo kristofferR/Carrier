@@ -2777,6 +2777,70 @@ pub(crate) fn show_app_notice(app: &tauri::AppHandle, title: String, body: Strin
 }
 
 fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: String) {
+    if let Err(error) = deliver_plain_notice(app, id, title, body, false) {
+        log::warn!("failed to present a Carrier notice: {error}");
+    }
+}
+
+/// Text for macOS's notification settings (raw `UNAuthorizationStatus` and
+/// `UNNotificationSetting` values), or None when banners are allowed.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_blocker_message(status: isize, alert: isize) -> Option<String> {
+    const DENIED: isize = 1;
+    const NOT_DETERMINED: isize = 0;
+    const ALERT_DISABLED: isize = 1;
+    let message = match (status, alert) {
+        (DENIED, _) => {
+            "Notifications are turned off for Carrier. Turn them on in System Settings → Notifications → Carrier."
+        }
+        (NOT_DETERMINED, _) => {
+            "Carrier has not been allowed to notify yet. Restart Carrier and allow notifications when macOS asks."
+        }
+        (_, ALERT_DISABLED) => {
+            "Carrier may notify, but its alerts are off. Choose Banners or Alerts in System Settings → Notifications → Carrier."
+        }
+        _ => return None,
+    };
+    Some(message.into())
+}
+
+/// Settings → Send Test Notification (Ref #259): explain an OS-level block
+/// first, otherwise deliver a plain notice through the real native path,
+/// ignoring Carrier's own mute and pause.
+pub(crate) fn send_test_notification(app: &tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    if let Some(reason) = crate::macos::notifications::notification_blocker() {
+        return Err(reason);
+    }
+    #[cfg(target_os = "windows")]
+    if let Some(reason) = crate::windows::toast::notification_blocker(app) {
+        return Err(reason);
+    }
+    let sound = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .notification_sound;
+    deliver_plain_notice(
+        app,
+        next_native_notification_id(),
+        "Test notification".into(),
+        "Notifications from Carrier are working.".into(),
+        sound,
+    )?;
+    Ok("Sent. If nothing appeared, check Focus or Do Not Disturb and your system's notification settings.".into())
+}
+
+/// A plain notice through the native path for this platform. Errors are
+/// those the platform reports synchronously; macOS and Linux log theirs.
+fn deliver_plain_notice(
+    app: &tauri::AppHandle,
+    id: u64,
+    title: String,
+    body: String,
+    sound: bool,
+) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let _ = app;
@@ -2785,26 +2849,26 @@ fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: Stri
             &body,
             id,
             None,
-            false,
+            sound,
             MacNotificationOptions::default(),
         );
     }
     #[cfg(target_os = "windows")]
-    crate::windows::toast::deliver_notification_windows(
+    crate::windows::toast::try_deliver_notification_windows(
         app,
         crate::windows::toast::WindowsToastOptions {
             title,
             body,
             avatar: None,
             image: None,
-            sound: false,
+            sound,
             native_id: id,
             page_id: None,
             thread_path: None,
             reply_eligible: false,
             is_sync_alert: true,
         },
-    );
+    )?;
     #[cfg(target_os = "linux")]
     {
         let app = app.clone();
@@ -2813,7 +2877,7 @@ fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: Stri
                 &title,
                 &body,
                 None,
-                false,
+                sound,
                 false,
                 &[],
                 move |(response, token)| {
@@ -2827,11 +2891,37 @@ fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: Stri
             )
         });
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_blocker_explains_denied_undecided_and_silent_alerts() {
+        assert!(
+            macos_blocker_message(1, 2)
+                .unwrap()
+                .contains("turned off for Carrier")
+        );
+        assert!(
+            macos_blocker_message(0, 0)
+                .unwrap()
+                .contains("allow notifications")
+        );
+        assert!(
+            macos_blocker_message(2, 1)
+                .unwrap()
+                .contains("alerts are off")
+        );
+        assert_eq!(macos_blocker_message(2, 2), None);
+        assert_eq!(
+            macos_blocker_message(3, 2),
+            None,
+            "provisional delivery still shows"
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

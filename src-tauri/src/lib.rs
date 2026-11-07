@@ -1171,7 +1171,8 @@ pub fn run() {
             commands::connect_messenger,
             commands::open_messenger_anyway,
             commands::open_log_folder,
-            commands::open_custom_css
+            commands::open_custom_css,
+            commands::send_test_notification
         ])
         .setup(move |app| {
             // Event listening is needed only by the development MCP responder.

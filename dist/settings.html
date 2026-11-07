@@ -165,7 +165,7 @@
           fields: ["mute_notifications", "notification_sound", "hide_notification_preview",
                    ...(IS_MAC ? ["group_notifications_by_conversation"] : []),
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
-                   "unread_badge", "ignore_muted_conversations", "badge_mode"] },
+                   "unread_badge", "ignore_muted_conversations", "badge_mode", "test_notification"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "hold_failures", "send_with_accelerator", "block_telemetry", "strip_link_tracking", "multi_instance", "custom_css", "open_logs"] },
       ];
@@ -469,6 +469,33 @@
 
       // Carrier logs warnings and page-integration failures to a file; this
       // opens its folder so the log is easy to attach to a bug report.
+      function testNotificationRow() {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.style.cursor = "default";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "action";
+        btn.textContent = "Send Test Notification";
+        const text = document.createElement("div");
+        text.innerHTML =
+          '<div class="label">Test notifications</div><div class="hint" role="status">Check that your system shows Carrier\'s notifications. Carrier\'s own mute and pause are ignored.</div>';
+        const hint = text.querySelector(".hint");
+        btn.onclick = async () => {
+          btn.disabled = true;
+          hint.textContent = "Sending…";
+          try {
+            hint.textContent = await invoke("send_test_notification");
+          } catch (e) {
+            hint.textContent = String(e && e.message ? e.message : e);
+          } finally {
+            btn.disabled = false;
+          }
+        };
+        row.append(btn, text);
+        return row;
+      }
+
       function openLogsRow() {
         const row = document.createElement("div");
         row.className = "row";
@@ -527,6 +554,7 @@
         tray_icon_style: trayIconStyleRow,
         custom_css: customCssRow,
         open_logs: openLogsRow,
+        test_notification: testNotificationRow,
         nickname_scope: nicknameRows,
       };
 
