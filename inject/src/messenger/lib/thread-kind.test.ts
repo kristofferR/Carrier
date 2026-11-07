@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readThreadIsGroup, suppressAsGroupChat } from "./thread-kind";
+import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "./thread-kind";
 
 function harness(threadType: unknown) {
   const modules: Record<string, unknown> = {
@@ -36,13 +36,30 @@ describe("readThreadIsGroup", () => {
   });
 });
 
-describe("suppressAsGroupChat", () => {
-  const group = async () => true;
-  test("holds back only known group chats, and only when switched off", async () => {
-    expect(await suppressAsGroupChat(false, "1", group)).toBe(true);
-    expect(await suppressAsGroupChat(true, "1", group)).toBe(false);
-    expect(await suppressAsGroupChat(undefined, "1", group)).toBe(false);
-    expect(await suppressAsGroupChat(false, null, group)).toBe(false);
-    expect(await suppressAsGroupChat(false, "1", async () => null)).toBe(false);
+describe("ThreadKindCache", () => {
+  test("reads each conversation once and keeps only definite answers", async () => {
+    let reads = 0;
+    const cache = new ThreadKindCache(async (id) => {
+      reads++;
+      return id === "1" ? true : id === "2" ? false : null;
+    });
+    expect(cache.isGroup("1")).toBeUndefined();
+    await Promise.all([cache.ensure("1"), cache.ensure("1")]);
+    expect(reads).toBe(1);
+    expect(cache.isGroup("1")).toBe(true);
+    await cache.ensure("2");
+    expect(cache.isGroup("2")).toBe(false);
+    await cache.ensure("3");
+    expect(cache.isGroup("3")).toBeUndefined();
+  });
+});
+
+describe("suppressGroupChat", () => {
+  test("holds back only known group chats, and only when switched off", () => {
+    expect(suppressGroupChat({ notify_group_chats: false }, true)).toBe(true);
+    expect(suppressGroupChat({ notify_group_chats: false }, false)).toBe(false);
+    expect(suppressGroupChat({ notify_group_chats: false }, undefined)).toBe(false);
+    expect(suppressGroupChat({ notify_group_chats: true }, true)).toBe(false);
+    expect(suppressGroupChat({}, true)).toBe(false);
   });
 });
