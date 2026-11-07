@@ -1389,6 +1389,8 @@ export function initNotificationBridge() {
               showNicknames(nicknameMode(deliverySettings), group?.isGroup),
               visiblePresentation.subtitle ? "sender" : "group",
               visiblePresentation.subtitle || visiblePresentation.title,
+              // In a group the icon is the sender's only when their photo won.
+              Boolean(sender) && icon === sender,
             ),
       );
     }, FALLBACK_DELAY_MS);
