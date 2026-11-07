@@ -638,6 +638,7 @@ export function initNotificationBridge() {
             id,
             Date.now(),
             draftThread ? { threadKey: draftThread } : undefined,
+            pageMatch.signal.thread,
           );
           if (draftThread) {
             cancelFallbackForDraftReceipt(draftThread, originalBody);

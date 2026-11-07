@@ -624,6 +624,8 @@ interface PageNotificationReceipt {
   nativeDelivery?: NativeNotificationDelivery;
   draftThread?: string;
   suppressedDraft?: boolean;
+  /** Hash of the conversation Messenger tagged: only its rows may claim this receipt. */
+  thread?: string;
 }
 
 type PageNotificationReceiptMatch = Pick<
@@ -910,6 +912,8 @@ export class PageNotificationReceiptStore {
               candidate.nativeDelivery === "suppressed") &&
             (candidate.draftThread === undefined ||
               (typeof candidate.draftThread === "string" && HASH_RE.test(candidate.draftThread))) &&
+            (candidate.thread === undefined ||
+              (typeof candidate.thread === "string" && HASH_RE.test(candidate.thread))) &&
             (candidate.suppressedDraft === undefined ||
               (candidate.suppressedDraft === true && candidate.draftThread !== undefined)) &&
             now - candidate.at >= 0 &&
@@ -950,6 +954,7 @@ export class PageNotificationReceiptStore {
     nativeId: number,
     at = Date.now(),
     draft?: { threadKey: string; suppressed?: boolean },
+    thread?: string,
   ): void {
     this.prune(at);
     this.receipts.push({
@@ -957,6 +962,7 @@ export class PageNotificationReceiptStore {
       nativeId,
       identity: opaqueNotificationIdentity(title, body),
       ...(draft && { draftThread: hashText(draft.threadKey), suppressedDraft: draft.suppressed }),
+      ...(thread && { thread: hashText(thread) }),
     });
     this.trimReceipts();
     this.persist();
@@ -1031,6 +1037,7 @@ export class PageNotificationReceiptStore {
     for (let index = this.receipts.length - 1; index >= 0; index--) {
       const receipt = this.receipts[index]!;
       if (receipt.draftThread && receipt.draftThread !== hashText(row.key || "")) continue;
+      if (receipt.thread && receipt.thread !== hashText(row.key || "")) continue;
       if (
         !(receipt.draftThread
           ? opaqueNotificationBodyMatches(receipt.identity, identity)
@@ -1078,6 +1085,7 @@ export class PageNotificationReceiptStore {
       let defer = false;
       for (const [key, candidates] of identities) {
         if (receipt.draftThread && receipt.draftThread !== hashText(key)) continue;
+        if (receipt.thread && receipt.thread !== hashText(key)) continue;
         if (
           !candidates.some((identity) =>
             receipt.draftThread
@@ -1139,6 +1147,7 @@ export class PageNotificationReceiptStore {
         !read.some(
           ({ key, identity }) =>
             (!receipt.draftThread || receipt.draftThread === key) &&
+            (!receipt.thread || receipt.thread === key) &&
             (receipt.draftThread
               ? opaqueNotificationBodyMatches(receipt.identity, identity)
               : opaqueNotificationMatches(receipt.identity, identity)),
@@ -1248,7 +1257,13 @@ export class PageNotificationQueue {
         !notificationTextMatches(signal.title, "", row.title, "")
       )
         continue;
-      const unique = uniqueNotificationTitleMatch(signal.title, candidates);
+      // A tagged signal's title only has to be unique within its own thread.
+      const unique = uniqueNotificationTitleMatch(
+        signal.title,
+        signal.thread === undefined
+          ? candidates
+          : candidates.filter((candidate) => candidate.key === signal.thread),
+      );
       if (unique?.key !== row.key) {
         if (!unique) {
           // Global mute needs this signal when the real preview eventually
