@@ -1,0 +1,21 @@
+/* Carrier theme
+   name: OLED Black
+   author: Carrier
+   mode: dark
+   preview: #000000 #000000 #000000 #0866ff #1c1c1e
+*/
+
+/* Pure black surfaces for OLED screens. Messenger's own chat colors stay. */
+:root {
+  --carrier-wash: #000000;
+  --carrier-page: #000000;
+  --carrier-chat: #000000;
+  --carrier-field: #151517;
+  --carrier-hover: rgba(255, 255, 255, 0.06);
+  --carrier-line: rgba(255, 255, 255, 0.09);
+  --carrier-text: #f5f5f7;
+  --carrier-text-2: #8e8e93;
+  --carrier-icon: #e5e5ea;
+  --carrier-in: #1c1c1e;
+  --carrier-in-text: #f2f2f4;
+}

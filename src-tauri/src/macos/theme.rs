@@ -144,6 +144,7 @@ objc2::define_class!(
             let is_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
             if is_system && now_dark != was_dark {
                 recreate_themed_windows(app);
+                crate::app_icon::apply_app_icon_from_state(app);
             }
         }
     }

@@ -21,7 +21,7 @@ import { initDownloadAnchors } from "./features/download-anchors";
 import { initEmojiImageLoading } from "./features/emoji-images";
 import { initFacebookModuleInterception } from "./features/facebook-modules";
 import { initFacebookWorkerOptimization } from "./features/facebook-workers";
-import { initForceTheme } from "./features/force-theme";
+import { initForceTheme, initThemeMarkers } from "./features/force-theme";
 import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
 import { initImagePaste } from "./features/image-paste";
@@ -95,6 +95,7 @@ function main() {
   initFeature("sync-health", initSyncHealth);
   initFeature("auto-refresh", initAutoRefresh);
   initFeature("force-theme", initForceTheme);
+  initFeature("theme-markers", initThemeMarkers);
   initFeature("unread-badge", initUnreadBadge);
   initFeature("recent-threads", initRecentThreads);
   initFeature("thread-nav", initThreadNav);

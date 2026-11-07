@@ -5586,6 +5586,19 @@ ${button.innerHTML}`)
     window.addEventListener("carrier:settings", apply);
     new MutationObserver(apply).observe(html, { attributes: true, attributeFilter: ["class"] });
   }
+  var DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
+  function initThemeMarkers() {
+    const html = document.documentElement;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      for (const marker of DARK_MARKERS) {
+        if (query.matches) html.setAttribute(marker, "");
+        else html.removeAttribute(marker);
+      }
+    };
+    apply();
+    query.addEventListener("change", apply);
+  }
 
   // inject/src/messenger/features/fullscreen.ts
   function initFullscreenPolyfill() {
@@ -13656,6 +13669,7 @@ ${text}`)) {
     initFeature("sync-health", initSyncHealth);
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);
+    initFeature("theme-markers", initThemeMarkers);
     initFeature("unread-badge", initUnreadBadge);
     initFeature("recent-threads", initRecentThreads);
     initFeature("thread-nav", initThreadNav);

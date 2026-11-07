@@ -47,6 +47,78 @@
       .hint { color: #65676b; font-size: 12px; margin-top: 2px; }
       .nickname-options { border: 1px solid #ececee; border-radius: 8px; background: #fafafa; }
       .nickname-heading { padding: 12px 12px 0; }
+      /* Appearance: theme gallery, accent, font, app icon. */
+      .section-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 14px 12px 8px;
+      }
+      .section-title { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #65676b; }
+      .section-control { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+      .seg { display: inline-flex; background: #e4e6eb; border-radius: 8px; padding: 2px; }
+      .seg button {
+        border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 500;
+        color: #65676b; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+      }
+      .seg button[aria-checked="true"] { background: #ffffff; color: #1c1e21; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+      .theme-grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px; padding: 2px 12px;
+      }
+      .theme-card {
+        display: flex; flex-direction: column; gap: 4px; min-width: 0;
+        border: 0; background: transparent; padding: 0; font: inherit; color: inherit;
+        text-align: left; cursor: pointer;
+      }
+      .theme-card .preview {
+        position: relative; display: flex; aspect-ratio: 16 / 10; border-radius: 9px; overflow: hidden;
+        outline: 1px solid rgba(0,0,0,.12); outline-offset: -1px;
+      }
+      .theme-card[aria-checked="true"] .preview { outline: 2.5px solid #0866ff; outline-offset: 2px; }
+      .theme-card.unavailable .preview { opacity: .45; }
+      .preview .list { width: 34%; padding: 9% 5% 0; display: flex; flex-direction: column; gap: 9%; }
+      .preview .list i { display: block; height: 7%; min-height: 4px; border-radius: 3px; opacity: .22; }
+      .preview .chat { flex: 1; margin: 4%; border-radius: 5px; display: flex; flex-direction: column; justify-content: flex-end; gap: 5%; padding: 6%; }
+      .preview .bubble { height: 12%; min-height: 6px; border-radius: 99px; }
+      .preview .bubble.in { width: 55%; }
+      .preview .bubble.out { width: 45%; align-self: flex-end; }
+      .preview .pill {
+        position: absolute; left: 6px; bottom: 6px; font-size: 10.5px; font-weight: 600;
+        background: rgba(0,0,0,.7); color: #e4e6eb; border-radius: 99px; padding: 1px 7px;
+      }
+      .preview .check {
+        position: absolute; right: 6px; top: 6px; width: 20px; height: 20px; border-radius: 50%;
+        background: #0866ff; display: grid; place-items: center; box-shadow: 0 1px 4px rgba(0,0,0,.4);
+      }
+      .theme-card .name { font-size: 13px; font-weight: 600; margin-top: 4px; }
+      .theme-card .by { font-size: 11.5px; color: #65676b; font-weight: 400; }
+      .theme-add .preview {
+        outline: 1.5px dashed #bcc0c4; flex-direction: column; align-items: center; justify-content: center;
+        gap: 4px; color: #65676b; font-size: 12.5px;
+      }
+      .theme-links { display: flex; flex-direction: column; justify-content: center; gap: 8px; font-size: 13px; padding-bottom: 20px; }
+      .link-button { border: 0; background: transparent; padding: 0; font: inherit; color: #0866ff; cursor: pointer; text-align: left; }
+      .notice { margin: 10px 12px 0; padding: 9px 12px; border-radius: 8px; font-size: 13px; display: flex; gap: 10px; align-items: flex-start; }
+      .notice.error { background: #fdecea; border: 1px solid #f5c2bd; }
+      .notice.ok { background: #e8f5ec; border: 1px solid #b7e0c3; }
+      .notice span { flex: 1; }
+      .look-cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; padding: 14px 12px 0; }
+      .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; }
+      .swatch {
+        width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); display: grid; place-items: center;
+      }
+      .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1c1e21; }
+      .swatch.theme-accent { background: conic-gradient(from 225deg, #2b2d31 0 50%, #d9dadd 50% 100%); }
+      .swatch.custom { background: conic-gradient(#e5484d, #f27a1a, #f5c400, #2ea44f, #0f9d9a, #0866ff, #8a3ffc, #e0427a, #e5484d); }
+      .look-cols select { margin-top: 10px; max-width: 100%; }
+      .icon-choices { display: flex; gap: 8px; padding: 2px 12px; }
+      .icon-choice {
+        display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 10px;
+        border: 1.5px solid #dadde1; background: transparent; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+      }
+      .icon-choice img { width: 30px; height: 30px; }
+      .icon-choice[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
+      .section-hint { color: #65676b; font-size: 12px; padding: 6px 12px 0; }
       footer {
         padding: 12px 20px; border-top: 1px solid #e4e6eb;
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -68,6 +140,19 @@
         .tab { color: #b0b3b8; }
         .tab:hover { background: #3a3b3c; color: #e4e6eb; }
         .tab.active { background: #263a59; color: #5b9bff; }
+        .section-title, .theme-card .by, .section-hint { color: #b0b3b8; }
+        .seg { background: #3a3b3c; }
+        .seg button { color: #b0b3b8; }
+        .seg button[aria-checked="true"] { background: #5a5c60; color: #ffffff; box-shadow: none; }
+        .theme-card .preview { outline-color: rgba(255,255,255,.12); }
+        .theme-card[aria-checked="true"] .preview { outline-color: #5b9bff; }
+        .theme-add .preview { outline-color: #5a5c60; color: #b0b3b8; }
+        .link-button { color: #5b9bff; }
+        .notice.error { background: #3a2422; border-color: #6b3530; }
+        .notice.ok { background: #1e3326; border-color: #2f5a3d; }
+        .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #242526, 0 0 0 4px #e4e6eb; }
+        .icon-choice { border-color: #3a3b3c; }
+        .icon-choice[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
       }
     </style>
   </head>
@@ -158,7 +243,7 @@
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "focus_composer_on_return", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "stop_media_autoplay", "nickname_scope"] },
+          fields: ["theme_section", "app_icon", "display_heading", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "stop_media_autoplay", "nickname_scope"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
@@ -255,13 +340,340 @@
         return row;
       }
 
-      function themeRow() {
-        return selectRow(
-          "theme", "system",
+      // ----- Appearance: theme gallery, accent color, font, app icon -----
+
+      let themes = null; // [{ id, name, author, mode, preview, builtIn }]
+      let fonts = null; // installed font families
+      let themeNotice = null; // { kind: "error" | "ok", text }
+
+      // Messenger's own colors for Default, and the dark previews of the
+      // built-in themes (theme headers carry one preview).
+      const DEFAULT_PREVIEW = {
+        light: ["#f0f2f5", "#ffffff", "#ffffff", "#0866ff", "#f0f0f0"],
+        dark: ["#1c1c1d", "#242526", "#242526", "#0866ff", "#303030"],
+      };
+      const DARK_PREVIEWS = {
+        graphite: ["#141517", "#1d1e20", "#212224", "#d9dadd", "#2f3134"],
+        warm: ["#16120f", "#1f1a16", "#241e19", "#d9774c", "#352c25"],
+        "high-contrast": ["#000000", "#000000", "#000000", "#8fcbff", "#2a2a2a"],
+      };
+      const ACCENTS = [
+        ["#0866ff", "Blue"], ["#8a3ffc", "Purple"], ["#e0427a", "Pink"], ["#e5484d", "Red"],
+        ["#f27a1a", "Orange"], ["#2ea44f", "Green"], ["#0f9d9a", "Teal"],
+      ];
+
+      async function loadThemes() {
+        try {
+          themes = await invoke("list_themes");
+        } catch (e) {
+          themes = [];
+          console.error(e);
+        }
+      }
+
+      function pageIsDark() {
+        if (settings.theme === "dark") return true;
+        if (settings.theme === "light") return false;
+        return window.matchMedia("(prefers-color-scheme: dark)").matches;
+      }
+
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+
+      function segmented(label, options, current, onPick) {
+        const seg = el("div", "seg");
+        seg.setAttribute("role", "radiogroup");
+        seg.setAttribute("aria-label", label);
+        for (const [value, text] of options) {
+          const b = el("button", "", text);
+          b.type = "button";
+          b.setAttribute("role", "radio");
+          b.setAttribute("aria-checked", String(value === current));
+          b.onclick = () => value !== current && onPick(value);
+          seg.append(b);
+        }
+        return seg;
+      }
+
+      function sectionHead(title, control) {
+        const head = el("div", "section-head");
+        head.append(el("div", "section-title", title));
+        if (control) head.append(control);
+        return head;
+      }
+
+      function labelled(label, control) {
+        const wrap = el("div", "section-control");
+        wrap.append(el("span", "", label), control);
+        return wrap;
+      }
+
+      function checkMark() {
+        const check = el("span", "check");
+        check.innerHTML = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        return check;
+      }
+
+      function isDarkColor(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        const luma = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+        return luma < 128;
+      }
+
+      // A drawn preview from five colors: window, list, chat, yours, theirs.
+      function previewFor(colors) {
+        const [wash, list, chat, out, incoming] = colors;
+        const box = el("span", "preview");
+        box.style.background = wash;
+        const side = el("span", "list");
+        side.style.background = list;
+        const ink = isDarkColor(list) ? "#ffffff" : "#000000";
+        for (let i = 0; i < 4; i += 1) {
+          const line = el("i");
+          line.style.background = ink;
+          line.style.width = `${[80, 60, 70, 50][i]}%`;
+          side.append(line);
+        }
+        const pane = el("span", "chat");
+        pane.style.background = chat;
+        for (const [kind, color] of [["in", incoming], ["out", out], ["in", incoming]]) {
+          const bubble = el("span", `bubble ${kind}`);
+          bubble.style.background = color;
+          pane.append(bubble);
+        }
+        box.append(side, pane);
+        return box;
+      }
+
+      function cardColors(theme, dark) {
+        let colors;
+        if (theme.id === "default") colors = DEFAULT_PREVIEW[dark ? "dark" : "light"];
+        else if (dark && DARK_PREVIEWS[theme.id]) colors = DARK_PREVIEWS[theme.id];
+        else colors = theme.preview || DEFAULT_PREVIEW[dark ? "dark" : "light"];
+        colors = colors.slice();
+        if (settings.accent_color) colors[3] = settings.accent_color;
+        return colors;
+      }
+
+      function themeCard(theme, dark) {
+        const card = el("button", "theme-card");
+        card.type = "button";
+        card.setAttribute("role", "radio");
+        const selected = (settings.color_theme || "default") === theme.id;
+        card.setAttribute("aria-checked", String(selected));
+        const unavailable = theme.mode && theme.mode !== (dark ? "dark" : "light");
+        if (unavailable) card.classList.add("unavailable");
+        const preview = previewFor(cardColors(theme, dark));
+        if (theme.mode) preview.append(el("span", "pill", theme.mode === "dark" ? "Dark only" : "Light only"));
+        if (selected) preview.append(checkMark());
+        const name = el("span", "name", theme.name);
+        if (!theme.builtIn) {
+          name.append(" ");
+          const by = el("span", "by", theme.author ? `by ${theme.author}` : "Added by you");
+          name.append(by);
+        }
+        card.append(preview, name);
+        card.title = unavailable
+          ? `${theme.name} applies only while Messenger is ${theme.mode}.`
+          : theme.name;
+        card.onclick = () => persist("color_theme", theme.id);
+        return card;
+      }
+
+      async function addTheme() {
+        try {
+          const id = await invoke("add_theme");
+          if (!id) return;
+          await loadThemes();
+          const added = themes.find((t) => t.id === id);
+          themeNotice = { kind: "ok", text: `Added ${added ? added.name : "the theme"}. Edit its file in the themes folder and reload (Cmd/Ctrl+R) to see changes.` };
+          await persist("color_theme", id);
+        } catch (e) {
+          themeNotice = { kind: "error", text: String(e && e.message ? e.message : e) };
+          render();
+        }
+      }
+
+      async function removeTheme(theme) {
+        try {
+          await invoke("remove_theme", { id: theme.id });
+          await loadThemes();
+          themeNotice = { kind: "ok", text: `Removed ${theme.name}.` };
+          if ((settings.color_theme || "default") === theme.id) await persist("color_theme", "default");
+          else render();
+        } catch (e) {
+          themeNotice = { kind: "error", text: String(e && e.message ? e.message : e) };
+          render();
+        }
+      }
+
+      function themeSection() {
+        const wrap = el("div");
+        if (!themes) {
+          loadThemes().then(render);
+          return wrap;
+        }
+        const dark = pageIsDark();
+        wrap.append(sectionHead("Theme", labelled("Light or dark", segmented(
+          "Light or dark",
           [["system", "System"], ["light", "Light"], ["dark", "Dark"]],
-          "Theme", "Force the Messenger theme, or follow your system.",
-          false,
-        );
+          settings.theme || "system",
+          (value) => persist("theme", value),
+        ))));
+
+        const grid = el("div", "theme-grid");
+        grid.setAttribute("role", "radiogroup");
+        grid.setAttribute("aria-label", "Theme");
+        for (const theme of themes) grid.append(themeCard(theme, dark));
+
+        const add = el("button", "theme-card theme-add");
+        add.type = "button";
+        const addPreview = el("span", "preview");
+        addPreview.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+        addPreview.append(el("span", "", "Add theme…"));
+        add.append(addPreview, el("span", "by", "A .css theme file"));
+        add.onclick = addTheme;
+        grid.append(add);
+
+        const links = el("div", "theme-links");
+        const folder = el("button", "link-button", "Open themes folder");
+        folder.type = "button";
+        folder.onclick = () => invoke("open_themes_folder").catch((e) => setStatus(String(e)));
+        links.append(folder);
+        const selected = themes.find((t) => t.id === (settings.color_theme || "default"));
+        if (selected && !selected.builtIn) {
+          const remove = el("button", "link-button", `Remove ${selected.name}`);
+          remove.type = "button";
+          remove.onclick = () => removeTheme(selected);
+          links.append(remove);
+        }
+        links.append(el("span", "hint", "custom.css still applies last (Advanced)."));
+        grid.append(links);
+        wrap.append(grid);
+
+        if (themeNotice) {
+          const notice = el("div", `notice ${themeNotice.kind}`);
+          notice.setAttribute("role", themeNotice.kind === "error" ? "alert" : "status");
+          notice.append(el("span", "", themeNotice.text));
+          const dismiss = el("button", "link-button", "Dismiss");
+          dismiss.type = "button";
+          dismiss.onclick = () => {
+            themeNotice = null;
+            render();
+          };
+          notice.append(dismiss);
+          wrap.append(notice);
+        }
+
+        const cols = el("div", "look-cols");
+        cols.append(accentPicker(), fontPicker());
+        wrap.append(cols);
+        return wrap;
+      }
+
+      function accentPicker() {
+        const box = el("div");
+        box.append(el("div", "label", "Accent color"));
+        box.append(el("div", "hint", "Your messages, links, buttons and unread dots."));
+        const row = el("div", "swatches");
+        row.setAttribute("role", "radiogroup");
+        row.setAttribute("aria-label", "Accent color");
+        const current = (settings.accent_color || "").toLowerCase();
+        const swatch = (className, color, name, value) => {
+          const b = el("button", `swatch ${className}`);
+          b.type = "button";
+          b.setAttribute("role", "radio");
+          b.setAttribute("aria-label", name);
+          b.title = name;
+          if (color) b.style.background = color;
+          b.setAttribute("aria-checked", String(value === current));
+          b.onclick = () => persist("accent_color", value);
+          return b;
+        };
+        row.append(swatch("theme-accent", "", "Theme's own accent", ""));
+        for (const [color, name] of ACCENTS) row.append(swatch("", color, name, color));
+        const isCustom = current && !ACCENTS.some(([color]) => color === current);
+        const custom = swatch("custom", isCustom ? current : "", "Custom color", isCustom ? current : "custom");
+        const input = document.createElement("input");
+        input.type = "color";
+        input.value = current || "#0866ff";
+        input.hidden = true;
+        input.onchange = () => persist("accent_color", input.value.toLowerCase());
+        custom.onclick = () => input.click();
+        row.append(custom, input);
+        box.append(row);
+        return box;
+      }
+
+      function fontPicker() {
+        const box = el("div");
+        box.append(el("div", "label", "Message font"));
+        box.append(el("div", "hint", "Messages and the conversation list."));
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Message font");
+        const current = settings.message_font || "";
+        const options = [["", "Default (Facebook's font)"]];
+        for (const family of fonts || []) options.push([family, family]);
+        if (current && !(fonts || []).includes(current)) options.push([current, current]);
+        for (const [value, text] of options) {
+          const o = document.createElement("option");
+          o.value = value;
+          o.textContent = text;
+          o.selected = value === current;
+          select.append(o);
+        }
+        if (!fonts) {
+          fonts = [];
+          invoke("list_fonts")
+            .then((list) => {
+              fonts = list;
+              render();
+            })
+            .catch((e) => console.error(e));
+        }
+        select.onchange = () => persist("message_font", select.value);
+        box.append(select);
+        return box;
+      }
+
+      function appIconSection() {
+        const wrap = el("div");
+        const variant = settings.app_icon_variant || "auto";
+        wrap.append(sectionHead("App icon", labelled("Light or dark icon", segmented(
+          "Light or dark icon",
+          [["auto", "Match theme"], ["light", "Light"], ["dark", "Dark"]],
+          variant,
+          (value) => persist("app_icon_variant", value),
+        ))));
+        const dark = variant === "dark" || (variant === "auto" && pageIsDark());
+        const row = el("div", "icon-choices");
+        row.setAttribute("role", "radiogroup");
+        row.setAttribute("aria-label", "App icon");
+        for (const [style, name] of [["color", "Color"], ["monochrome", "Monochrome"]]) {
+          const b = el("button", "icon-choice");
+          b.type = "button";
+          b.setAttribute("role", "radio");
+          b.setAttribute("aria-checked", String((settings.app_icon_style || "color") === style));
+          const img = document.createElement("img");
+          img.src = `app-icons/${style === "color" ? "color" : "mono"}-${dark ? "dark" : "light"}.png`;
+          img.alt = "";
+          b.append(img, el("span", "", name));
+          b.onclick = () => persist("app_icon_style", style);
+          row.append(b);
+        }
+        wrap.append(row);
+        wrap.append(el("div", "section-hint", IS_LINUX
+          ? "Changes the window icon. Your app launcher keeps the installed icon."
+          : "The unread badge shows on every icon."));
+        return wrap;
+      }
+
+      function displayHeading() {
+        return sectionHead("Display");
       }
 
       // Page zoom — the same 10% steps as the Cmd/Ctrl+−/=/0 keyboard zoom
@@ -578,7 +990,9 @@
       // Pseudo-fields are <select> rows;
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
-        theme: themeRow,
+        theme_section: themeSection,
+        app_icon: appIconSection,
+        display_heading: displayHeading,
         zoom: zoomRow,
         title_bar: titleBarRow,
         badge_mode: badgeModeRow,
