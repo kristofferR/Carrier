@@ -14,6 +14,7 @@ import { EMOJI_SOURCE_RE } from "../lib/emoji";
 import {
   ignoresMutedConversations,
   mutedThreads,
+  notificationsGloballyMuted,
   observeConversationMute,
   observeOpenThreadMute,
   suppressMutedDelivery,
@@ -504,7 +505,7 @@ export function initNotificationBridge() {
     // Carrier is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
     // still runs when muted so the window keeps catching up.)
-    if (!s.mute_notifications) {
+    if (!notificationsGloballyMuted(s)) {
       // Facebook assigns `this.onclick` right after construction; the callback
       // below captures this instance so a native click can call it later.
       // Hide preview: replace the sender name and message text with a generic
@@ -576,7 +577,7 @@ export function initNotificationBridge() {
         // A delivery-boundary global mute is final for this logical page
         // notification. Do not let its cross-reload receipt revive it after
         // notifications are enabled again.
-        if (deliverySettings.mute_notifications === true) {
+        if (notificationsGloballyMuted(deliverySettings)) {
           pendingPageNotifications.remove(id);
         }
         if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {

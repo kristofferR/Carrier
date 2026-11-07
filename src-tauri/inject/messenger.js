@@ -6612,8 +6612,11 @@ ${button.innerHTML}`)
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
   }
+  function notificationsGloballyMuted(settings) {
+    return settings?.mute_notifications === true || messengerDndActive();
+  }
   function suppressNotificationDelivery(muted, settings) {
-    return settings?.mute_notifications === true || messengerDndActive() || suppressMutedDelivery(muted, settings);
+    return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
   }
   function conversationMuteFromLabel(value) {
     const text = (value || "").replace(/\s+/g, " ").trim();
@@ -8499,7 +8502,7 @@ ${button.innerHTML}`)
         );
         cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
       };
-      if (!s.mute_notifications) {
+      if (!notificationsGloballyMuted(s)) {
         const hidePreviewAtConstruction = s.hide_notification_preview === true;
         const originalTitle = String(title || "Messenger");
         const originalBody = String(opts.body || "");
@@ -8542,7 +8545,7 @@ ${button.innerHTML}`)
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
-          if (deliverySettings.mute_notifications === true) {
+          if (notificationsGloballyMuted(deliverySettings)) {
             pendingPageNotifications.remove(id);
           }
           if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
