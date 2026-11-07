@@ -8,7 +8,7 @@ const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent
 const composerSelector =
   '[contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"], textarea';
 
-function isComposerTarget(target: EventTarget | null): boolean {
+export function isComposerTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   const editor = target.closest(composerSelector);
   return !!editor?.closest('[role="main"]');

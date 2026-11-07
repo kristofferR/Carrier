@@ -22,6 +22,7 @@ import { initFacebookWorkerOptimization } from "./features/facebook-workers";
 import { initForceTheme } from "./features/force-theme";
 import { initFullscreenPolyfill } from "./features/fullscreen";
 import { initHideNames } from "./features/hide-names";
+import { initImagePaste } from "./features/image-paste";
 import { initLinkHandling } from "./features/link-handling";
 import { initLinuxCallNotice } from "./features/linux-call-notice";
 import { initLoginTidy } from "./features/login-tidy";
@@ -67,6 +68,7 @@ function main() {
   // Must run before Facebook assigns eager sources to its emoji images.
   initFeature("emoji-images", initEmojiImageLoading);
   initFeature("composer-keys", initComposerKeys);
+  initFeature("image-paste", initImagePaste);
   initFeature("shortcuts", initShortcuts);
   initFeature("zoom", initZoom);
   initFeature("selector-health", initSelectorHealth);
