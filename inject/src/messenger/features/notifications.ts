@@ -392,7 +392,10 @@ export function initNotificationBridge() {
   const waitForPageMatchWhileFiltering = (signal: PageNotificationSignal) => {
     const cancel = new AbortController();
     const cancelWhenFilteringIsDisabled = () => {
-      if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__)) cancel.abort();
+      // Identity is needed while either filter (muted or group chats) is on.
+      if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__) && !groupFiltering()) {
+        cancel.abort();
+      }
     };
     window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
     cancelWhenFilteringIsDisabled();
@@ -1328,6 +1331,8 @@ export function initNotificationBridge() {
     );
     const timer = setTimeout(async () => {
       await learnThreadKind(conversation.key);
+      // A newer preview may own this conversation now; it decides, not us.
+      if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (
         suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) ||
@@ -1513,13 +1518,15 @@ export function initNotificationBridge() {
       );
       for (const conversation of conversations) void learnThreadKind(conversation.key);
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      // Known suppressed group chats count like muted ones: never notified, and
+      // their unread-count increases are never attributed to another chat.
+      const silenced = (conversation: { key: string; muted: boolean }) =>
+        (ignoreMuted && conversation.muted) || groupSuppressed(conversation.key);
       const notifyKeys = new Set(
-        conversations
-          .filter((conversation) => !(ignoreMuted && conversation.muted))
-          .map(({ key }) => key),
+        conversations.filter((conversation) => !silenced(conversation)).map(({ key }) => key),
       );
       const mutedUnreadKeys = new Set(
-        ignoreMuted ? conversations.filter(({ muted }) => muted).map(({ key }) => key) : undefined,
+        conversations.filter((conversation) => silenced(conversation)).map(({ key }) => key),
       );
       const detectedAt = Date.now();
       const mutationGrace = lastScanAt

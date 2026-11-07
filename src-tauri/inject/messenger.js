@@ -9196,7 +9196,9 @@ ${button.innerHTML}`)
     const waitForPageMatchWhileFiltering = (signal) => {
       const cancel = new AbortController();
       const cancelWhenFilteringIsDisabled = () => {
-        if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__)) cancel.abort();
+        if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__) && !groupFiltering()) {
+          cancel.abort();
+        }
       };
       window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
       cancelWhenFilteringIsDisabled();
@@ -9806,6 +9808,7 @@ ${button.innerHTML}`)
       );
       const timer = setTimeout(async () => {
         await learnThreadKind(conversation.key);
+        if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
         const settings = window.__CARRIER_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
@@ -9943,11 +9946,12 @@ ${button.innerHTML}`)
         );
         for (const conversation of conversations) void learnThreadKind(conversation.key);
         const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+        const silenced = (conversation) => ignoreMuted && conversation.muted || groupSuppressed(conversation.key);
         const notifyKeys = new Set(
-          conversations.filter((conversation) => !(ignoreMuted && conversation.muted)).map(({ key }) => key)
+          conversations.filter((conversation) => !silenced(conversation)).map(({ key }) => key)
         );
         const mutedUnreadKeys = new Set(
-          ignoreMuted ? conversations.filter(({ muted }) => muted).map(({ key }) => key) : void 0
+          conversations.filter((conversation) => silenced(conversation)).map(({ key }) => key)
         );
         const detectedAt = Date.now();
         const mutationGrace = lastScanAt ? Math.min(MAX_MUTATION_GRACE_MS, Math.max(0, detectedAt - lastScanAt)) : 0;
