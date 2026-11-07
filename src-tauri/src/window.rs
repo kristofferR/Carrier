@@ -1662,7 +1662,7 @@ fn init_script(
     var stored = JSON.parse(localStorage.getItem('__carrier_settings') || 'null');
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) {{
       var merged = Object.assign({{}}, baked, stored);
-      if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations') {{
+      if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations' && merged.badge_mode !== 'dot') {{
         merged.badge_mode = baked.badge_mode;
       }}
       if (merged.tray_icon_style !== 'color' && merged.tray_icon_style !== 'symbolic') {{

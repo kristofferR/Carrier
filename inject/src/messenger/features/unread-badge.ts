@@ -207,8 +207,21 @@ export function initUnreadBadge() {
     // NB: the command's argument is `value` (the Tauri `setter!` macro names
     // it that), not `count` — passing `count` silently clears the badge.
     // Use a single setter on macOS so an unread update cannot race ERR away.
+    // Dot mode shows that something is unread, never how much. Off macOS the
+    // native side draws the dot itself (tray, taskbar overlay).
+    const dot = window.__CARRIER_SETTINGS__?.badge_mode === "dot";
     const command = isMac ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
-    const value = isMac ? (dockError ? "ERR" : n > 0 ? String(n) : null) : n > 0 ? n : null;
+    const value = isMac
+      ? dockError
+        ? "ERR"
+        : n > 0
+          ? dot
+            ? "•"
+            : String(n)
+          : null
+      : n > 0 && !dot
+        ? n
+        : null;
     invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
     invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(() =>
       diag("badge.emit", "carrier:unread emit failed"),

@@ -70,8 +70,7 @@ impl PlatformTrayIcon {
         self.handle.update(|_| ()).ok_or_else(tray_service_closed)
     }
 
-    pub(crate) fn set_unread(&self, count: i64) -> tauri::Result<()> {
-        let bucket = UnreadBucket::from_count(count);
+    pub(crate) fn set_unread(&self, bucket: UnreadBucket) -> tauri::Result<()> {
         self.handle
             .update(move |tray| {
                 if tray.unread == bucket {
@@ -549,7 +548,11 @@ fn show_tray_menu(app: &tauri::AppHandle) {
 #[cfg(target_os = "macos")]
 pub(crate) fn tray_unread_title(s: &Settings, unread: i64) -> Option<String> {
     if s.unread_badge && unread > 0 {
-        Some(unread.to_string())
+        Some(if s.badge_mode == "dot" {
+            "•".to_string()
+        } else {
+            unread.to_string()
+        })
     } else {
         // tray-icon's macOS backend ignores None, so clear with an empty title.
         Some(String::new())
