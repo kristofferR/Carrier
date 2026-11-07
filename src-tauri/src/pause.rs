@@ -136,35 +136,44 @@ pub(crate) fn handle_pause_menu_event(app: &tauri::AppHandle, id: &str) -> bool 
     };
     let until = choice.map(|choice| pause_end(choice, &Local::now()).timestamp_millis());
     let mute = id == PAUSE_OFF_ID;
+    // Applying the saved settings starts the expiry watch (see apply_settings).
     crate::menu::mutate_settings(app, move |s| {
         s.notifications_paused_until = until;
         s.mute_notifications = mute;
     });
-    if let Some(until) = until {
-        schedule_pause_expiry(app, until);
-    }
     true
 }
 
 /// Refresh the menus when a pause ends, so they stop saying "Paused until".
 /// Delivery needs no timer: the gates compare the end time with the clock.
+/// The wait is checked against the wall clock in short steps, because a
+/// sleeping computer or a clock change would throw off one long timer.
 pub(crate) fn schedule_pause_expiry(app: &tauri::AppHandle, until: i64) {
-    let wait = until - now_ms();
-    if wait <= 0 {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    const STEP_MS: i64 = 30_000;
+    // Settings are applied often; watch each pause once.
+    static WATCHED: AtomicI64 = AtomicI64::new(i64::MIN);
+    if WATCHED.swap(until, Ordering::SeqCst) == until {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(wait as u64 + 500)).await;
-        // A newer pause or resume owns the menus now.
-        let current = app
-            .state::<AppState>()
-            .settings
-            .lock()
-            .unwrap()
-            .notifications_paused_until;
-        if current != Some(until) {
-            return;
+        loop {
+            // A newer pause or resume owns the menus (and its own timer) now.
+            let current = app
+                .state::<AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .notifications_paused_until;
+            if current != Some(until) {
+                return;
+            }
+            let wait = until - now_ms();
+            if wait <= 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(wait.min(STEP_MS) as u64)).await;
         }
         let main = app.clone();
         let _ = app.run_on_main_thread(move || crate::menu::rebuild_recent_menus(&main));

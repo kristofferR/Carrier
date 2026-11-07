@@ -2270,11 +2270,15 @@ fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: 
 /// notification because KDE targets inline-reply signals to the connection
 /// that created it.
 /// A Messenger call window is open. Message notifications wait while it is,
-/// so a call is not interrupted by banners (Ref #348).
+/// so a call is not interrupted by banners (Ref #348). Other popups, such as
+/// a login window, do not count.
 fn in_call(app: &tauri::AppHandle) -> bool {
-    app.webview_windows()
-        .keys()
-        .any(|label| label.starts_with(crate::window::POPUP_LABEL_PREFIX))
+    app.webview_windows().iter().any(|(label, window)| {
+        label.starts_with(crate::window::POPUP_LABEL_PREFIX)
+            && window
+                .url()
+                .is_ok_and(|url| crate::url_rules::is_call_url(&url))
+    })
 }
 
 pub(crate) fn show_message_notification(

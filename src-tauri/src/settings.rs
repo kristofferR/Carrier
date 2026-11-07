@@ -823,6 +823,11 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         }
     }
 
+    // A pause's menus must stop saying "Paused until" once it ends.
+    if let Some(until) = s.notifications_paused_until {
+        crate::pause::schedule_pause_expiry(app, until);
+    }
+
     // Keep the recent-conversations menus in step with the settings — most
     // importantly, flipping Hide Names & Avatars on must clear them at once.
     let handle = app.clone();
