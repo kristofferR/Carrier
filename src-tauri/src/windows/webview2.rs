@@ -54,9 +54,17 @@ fn registry_version(
     Some(String::from_utf16_lossy(&buffer[..chars.min(buffer.len())]))
 }
 
-/// Whether the WebView2 runtime is installed for the machine or this user.
+/// Whether WebView2 can load: the Evergreen runtime is registered, or the
+/// loader finds another channel (Edge Beta, Dev or Canary), which it falls
+/// back to when no runtime is installed.
 #[cfg(target_os = "windows")]
-pub(crate) fn runtime_installed() -> bool {
+pub(crate) fn runtime_available() -> bool {
+    runtime_installed() || tauri::webview_version().is_ok()
+}
+
+/// Whether the Evergreen runtime is registered for the machine or this user.
+#[cfg(target_os = "windows")]
+fn runtime_installed() -> bool {
     use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
     [
         (
