@@ -30,3 +30,24 @@ export function initForceTheme() {
   // Re-assert if Facebook flips its own class back.
   new MutationObserver(apply).observe(html, { attributes: true, attributeFilter: ["class"] });
 }
+
+/* --------------------------- Theme markers ----------------------------- */
+// Mark <html> while Messenger renders dark, so theme files (Settings → Theme)
+// can key their dark colors on it. Messenger follows the webview's color
+// scheme, which Carrier sets from the light/dark choice, so the media query is
+// the source of truth. The second name keeps themes written for other
+// Messenger apps working unchanged.
+const DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
+
+export function initThemeMarkers() {
+  const html = document.documentElement;
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  const apply = () => {
+    for (const marker of DARK_MARKERS) {
+      if (query.matches) html.setAttribute(marker, "");
+      else html.removeAttribute(marker);
+    }
+  };
+  apply();
+  query.addEventListener("change", apply);
+}

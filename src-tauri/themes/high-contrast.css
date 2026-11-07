@@ -1,0 +1,48 @@
+/* Carrier theme
+   name: High Contrast
+   author: Carrier
+   preview: #ffffff #ffffff #ffffff #0039a6 #e6e6e6
+*/
+
+/* Stronger text, borders and message colors, light and dark. Carrier also
+   uses this theme whenever the system asks for more contrast. */
+:root {
+  --carrier-wash: #ffffff;
+  --carrier-page: #ffffff;
+  --carrier-chat: #ffffff;
+  --carrier-field: #ffffff;
+  --carrier-hover: rgba(0, 0, 0, 0.1);
+  --carrier-line: #000000;
+  --carrier-text: #000000;
+  --carrier-text-2: #262626;
+  --carrier-icon: #000000;
+  --carrier-brand: #0039a6;
+  --carrier-brand-soft: #d4e2ff;
+  --carrier-brand-soft-text: #001f5c;
+  --carrier-out: #0039a6;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #e6e6e6;
+  --carrier-in-text: #000000;
+  --carrier-selection: rgba(0, 57, 166, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #000000;
+    --carrier-page: #000000;
+    --carrier-chat: #000000;
+    --carrier-field: #000000;
+    --carrier-hover: rgba(255, 255, 255, 0.14);
+    --carrier-line: #ffffff;
+    --carrier-text: #ffffff;
+    --carrier-text-2: #e6e6e6;
+    --carrier-icon: #ffffff;
+    --carrier-brand: #8fcbff;
+    --carrier-brand-soft: #1d3a6b;
+    --carrier-brand-soft-text: #ffffff;
+    --carrier-out: #8fcbff;
+    --carrier-out-text: #000000;
+    --carrier-in: #2a2a2a;
+    --carrier-in-text: #ffffff;
+    --carrier-selection: rgba(143, 203, 255, 0.4);
+  }
+}

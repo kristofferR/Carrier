@@ -46,6 +46,7 @@ mod render_recovery;
 mod renderer_memory;
 mod scheduled_send;
 mod settings;
+mod themes;
 mod tray;
 #[cfg(any(target_os = "linux", target_os = "windows", test))]
 mod tray_badge;
@@ -1131,6 +1132,8 @@ pub fn run() {
             unread_count: AtomicI64::new(0),
             #[cfg(target_os = "linux")]
             linux_panel_dark: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(target_os = "linux")]
+            linux_high_contrast: std::sync::atomic::AtomicBool::new(false),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
             zoom_generation: AtomicUsize::new(0),
@@ -1176,7 +1179,12 @@ pub fn run() {
             commands::open_messenger_anyway,
             commands::open_log_folder,
             commands::open_custom_css,
-            commands::send_test_notification
+            commands::send_test_notification,
+            themes::list_themes,
+            themes::add_theme,
+            themes::remove_theme,
+            themes::open_themes_folder,
+            themes::list_fonts
         ])
         .setup(move |app| {
             // Event listening is needed only by the development MCP responder.

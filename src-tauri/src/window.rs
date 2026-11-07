@@ -512,6 +512,16 @@ fn build_app_window_with_render_budget(
                         Some(window.clone()),
                     );
                 }
+                if is_messenger_web_url(payload.url()) {
+                    let settings = window
+                        .app_handle()
+                        .state::<AppState>()
+                        .settings
+                        .lock()
+                        .unwrap()
+                        .clone();
+                    crate::themes::apply_appearance(&window, &settings);
+                }
                 apply_custom_css(&window, payload.url());
             }
         })
@@ -1263,8 +1273,8 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     let builder =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
             .title(format!("{APP_TITLE} Settings"))
-            .inner_size(680.0, 720.0)
-            .min_inner_size(560.0, 620.0)
+            .inner_size(900.0, 720.0)
+            .min_inner_size(720.0, 620.0)
             .resizable(true)
             .maximizable(false)
             .minimizable(false)

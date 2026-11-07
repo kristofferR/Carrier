@@ -1,0 +1,47 @@
+/* Carrier theme
+   name: Warm
+   author: Carrier
+   preview: #ece4d6 #faf6ef #fffdf9 #c4623a #f1e9dc
+*/
+
+/* Paper tones with a terracotta accent, light and dark. */
+:root {
+  --carrier-wash: #ece4d6;
+  --carrier-page: #faf6ef;
+  --carrier-chat: #fffdf9;
+  --carrier-field: #f1eadf;
+  --carrier-hover: rgba(60, 40, 20, 0.06);
+  --carrier-line: rgba(60, 40, 20, 0.12);
+  --carrier-text: #2a2119;
+  --carrier-text-2: #7d6e5f;
+  --carrier-icon: #4a3b2e;
+  --carrier-brand: #c4623a;
+  --carrier-brand-soft: #f3e2d1;
+  --carrier-brand-soft-text: #8a3f20;
+  --carrier-out: #c4623a;
+  --carrier-out-text: #ffffff;
+  --carrier-in: #f1e9dc;
+  --carrier-in-text: #2a2119;
+  --carrier-selection: rgba(196, 98, 58, 0.22);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --carrier-wash: #16120f;
+    --carrier-page: #1f1a16;
+    --carrier-chat: #241e19;
+    --carrier-field: #2e2721;
+    --carrier-hover: rgba(255, 230, 200, 0.06);
+    --carrier-line: rgba(255, 230, 200, 0.09);
+    --carrier-text: #f1e7dc;
+    --carrier-text-2: #ab9b8b;
+    --carrier-icon: #e3d4c4;
+    --carrier-brand: #e38a5d;
+    --carrier-brand-soft: #382e26;
+    --carrier-brand-soft-text: #f3c3a6;
+    --carrier-out: #d9774c;
+    --carrier-out-text: #ffffff;
+    --carrier-in: #352c25;
+    --carrier-in-text: #f1e7dc;
+    --carrier-selection: rgba(227, 138, 93, 0.3);
+  }
+}
