@@ -12,6 +12,7 @@ const AVATAR_ATTR = "data-carrier-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
+const BACKGROUND_SEL = '[style*="background-image"]';
 
 export function initHideNames() {
   const html = document.documentElement;
@@ -34,9 +35,13 @@ export function initHideNames() {
     return cs.display !== "none" && cs.visibility !== "hidden";
   }
 
-  /** A name or other identifying text. */
+  /** A name or other identifying text. Pictures inside it are avatars too, so
+   * Hide Avatars alone still covers a face nested in a heading or attribution. */
   function mark(el: Element | null | undefined) {
-    if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
+    if (!el?.setAttribute) return;
+    el.setAttribute(IDENTITY_ATTR, "");
+    if (el.matches(BACKGROUND_SEL)) markAvatar(el);
+    el.querySelectorAll(VISUAL_SEL).forEach(markAvatar);
   }
 
   /** An avatar, group picture or read-receipt face. */
@@ -204,10 +209,19 @@ export function initHideNames() {
     });
   }
 
+  /** A bare (non-whitespace) text node directly inside this element. */
+  function hasBareText(el: Element) {
+    return [...el.childNodes].some(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim(),
+    );
+  }
+
   /**
-   * Profile links whose name is a bare text node next to a picture: no element
-   * holds just the name, so mark the whole link as a name. Names-only then
-   * blurs its picture too, which errs on the side of hiding.
+   * Profile links whose name shares an element with a picture (bare text in
+   * the link or in a picture-bearing descendant, or text on a link drawn as a
+   * background image) have no element holding just the name, so mark the
+   * whole link as a name. Names-only then blurs its picture too, erring on the
+   * side of hiding; links whose name sits in its own element stay precise.
    */
   function markMixedProfileLinks(main: Element) {
     main
@@ -215,11 +229,17 @@ export function initHideNames() {
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]',
       )
       .forEach((link) => {
-        if (!visible(link)) return;
-        const bareText = [...link.childNodes].some(
-          (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim(),
-        );
-        if (bareText && link.querySelector(VISUAL_SEL)) mark(link);
+        if (!visible(link) || !textValue(link)) return;
+        const selfPicture = link.matches(BACKGROUND_SEL);
+        if (!selfPicture && !link.querySelector(VISUAL_SEL)) return;
+        const textBesidePicture =
+          selfPicture ||
+          hasBareText(link) ||
+          [...link.querySelectorAll("*")].some(
+            (el) =>
+              hasBareText(el) && (el.matches(BACKGROUND_SEL) || !!el.querySelector(VISUAL_SEL)),
+          );
+        if (textBesidePicture) mark(link);
       });
   }
 
