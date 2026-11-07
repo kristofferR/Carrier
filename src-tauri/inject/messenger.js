@@ -4968,9 +4968,6 @@ ${button.innerHTML}`)
       if (el.matches("img, svg, image")) return true;
       return /url\(/.test(getComputedStyle(el).backgroundImage || "");
     }
-    function pictureWithin(el) {
-      return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
-    }
     function mark(el) {
       if (!el?.setAttribute) return;
       el.setAttribute(IDENTITY_ATTR, "");
@@ -5114,11 +5111,11 @@ ${button.innerHTML}`)
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
       ).forEach((link) => {
         if (!visible(link)) return;
-        for (const node of [link, ...link.querySelectorAll("*")]) {
-          if (isPicture(node)) markAvatar(node);
-        }
-        if (!textValue(link) || !pictureWithin(link)) return;
-        const textBesidePicture = isPicture(link) || hasBareText(link) || [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
+        const nodes = [link, ...link.querySelectorAll("*")];
+        const pictures = nodes.filter(isPicture);
+        pictures.forEach(markAvatar);
+        if (!textValue(link) || !pictures.length) return;
+        const textBesidePicture = pictures[0] === link || hasBareText(link) || nodes.some((el) => hasBareText(el) && pictures.some((pic) => el.contains(pic)));
         if (textBesidePicture) mark(link);
       });
     }

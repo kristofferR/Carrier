@@ -41,10 +41,6 @@ export function initHideNames() {
     return /url\(/.test(getComputedStyle(el).backgroundImage || "");
   }
 
-  function pictureWithin(el: Element) {
-    return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
-  }
-
   /** A name or other identifying text. Pictures inside it are avatars too, so
    * Hide Avatars alone still covers a face nested in a heading or attribution. */
   function mark(el: Element | null | undefined) {
@@ -242,15 +238,16 @@ export function initHideNames() {
       .forEach((link) => {
         if (!visible(link)) return;
         // Every picture in a profile link is an avatar, however it is drawn
-        // (the CSS only sees inline backgrounds).
-        for (const node of [link, ...link.querySelectorAll("*")]) {
-          if (isPicture(node)) markAvatar(node);
-        }
-        if (!textValue(link) || !pictureWithin(link)) return;
+        // (the CSS only sees inline backgrounds). Computed styles are read
+        // once per element here, not again per text-bearing ancestor below.
+        const nodes = [link, ...link.querySelectorAll("*")];
+        const pictures = nodes.filter(isPicture);
+        pictures.forEach(markAvatar);
+        if (!textValue(link) || !pictures.length) return;
         const textBesidePicture =
-          isPicture(link) ||
+          pictures[0] === link ||
           hasBareText(link) ||
-          [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
+          nodes.some((el) => hasBareText(el) && pictures.some((pic) => el.contains(pic)));
         if (textBesidePicture) mark(link);
       });
   }
