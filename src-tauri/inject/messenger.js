@@ -5660,7 +5660,6 @@ ${button.innerHTML}`)
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
-  var BACKGROUND_SEL = '[style*="background-image"]';
   function initHideNames() {
     const html = document.documentElement;
     let observer = null;
@@ -5678,11 +5677,19 @@ ${button.innerHTML}`)
       const cs = getComputedStyle(el);
       return cs.display !== "none" && cs.visibility !== "hidden";
     }
+    function isPicture(el) {
+      if (el.matches("img, svg, image")) return true;
+      return /url\(/.test(getComputedStyle(el).backgroundImage || "");
+    }
+    function pictureWithin(el) {
+      return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
+    }
     function mark(el) {
       if (!el?.setAttribute) return;
       el.setAttribute(IDENTITY_ATTR, "");
-      if (el.matches(BACKGROUND_SEL)) markAvatar(el);
-      el.querySelectorAll(VISUAL_SEL).forEach(markAvatar);
+      for (const node of [el, ...el.querySelectorAll("*")]) {
+        if (isPicture(node)) markAvatar(node);
+      }
     }
     function markAvatar(el) {
       if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
@@ -5819,12 +5826,12 @@ ${button.innerHTML}`)
       main2.querySelectorAll(
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
       ).forEach((link) => {
-        if (!visible(link) || !textValue(link)) return;
-        const selfPicture = link.matches(BACKGROUND_SEL);
-        if (!selfPicture && !link.querySelector(VISUAL_SEL)) return;
-        const textBesidePicture = selfPicture || hasBareText(link) || [...link.querySelectorAll("*")].some(
-          (el) => hasBareText(el) && (el.matches(BACKGROUND_SEL) || !!el.querySelector(VISUAL_SEL))
-        );
+        if (!visible(link)) return;
+        for (const node of [link, ...link.querySelectorAll("*")]) {
+          if (isPicture(node)) markAvatar(node);
+        }
+        if (!textValue(link) || !pictureWithin(link)) return;
+        const textBesidePicture = isPicture(link) || hasBareText(link) || [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
         if (textBesidePicture) mark(link);
       });
     }

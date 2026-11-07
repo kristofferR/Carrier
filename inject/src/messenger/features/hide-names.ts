@@ -12,7 +12,6 @@ const AVATAR_ATTR = "data-carrier-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
-const BACKGROUND_SEL = '[style*="background-image"]';
 
 export function initHideNames() {
   const html = document.documentElement;
@@ -35,13 +34,25 @@ export function initHideNames() {
     return cs.display !== "none" && cs.visibility !== "hidden";
   }
 
+  /** A picture by what it renders: an image element, or any background
+   * image however it is applied (inline shorthand, class, inherited rule). */
+  function isPicture(el: Element) {
+    if (el.matches("img, svg, image")) return true;
+    return /url\(/.test(getComputedStyle(el).backgroundImage || "");
+  }
+
+  function pictureWithin(el: Element) {
+    return isPicture(el) || [...el.querySelectorAll("*")].some(isPicture);
+  }
+
   /** A name or other identifying text. Pictures inside it are avatars too, so
    * Hide Avatars alone still covers a face nested in a heading or attribution. */
   function mark(el: Element | null | undefined) {
     if (!el?.setAttribute) return;
     el.setAttribute(IDENTITY_ATTR, "");
-    if (el.matches(BACKGROUND_SEL)) markAvatar(el);
-    el.querySelectorAll(VISUAL_SEL).forEach(markAvatar);
+    for (const node of [el, ...el.querySelectorAll("*")]) {
+      if (isPicture(node)) markAvatar(node);
+    }
   }
 
   /** An avatar, group picture or read-receipt face. */
@@ -229,16 +240,17 @@ export function initHideNames() {
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]',
       )
       .forEach((link) => {
-        if (!visible(link) || !textValue(link)) return;
-        const selfPicture = link.matches(BACKGROUND_SEL);
-        if (!selfPicture && !link.querySelector(VISUAL_SEL)) return;
+        if (!visible(link)) return;
+        // Every picture in a profile link is an avatar, however it is drawn
+        // (the CSS only sees inline backgrounds).
+        for (const node of [link, ...link.querySelectorAll("*")]) {
+          if (isPicture(node)) markAvatar(node);
+        }
+        if (!textValue(link) || !pictureWithin(link)) return;
         const textBesidePicture =
-          selfPicture ||
+          isPicture(link) ||
           hasBareText(link) ||
-          [...link.querySelectorAll("*")].some(
-            (el) =>
-              hasBareText(el) && (el.matches(BACKGROUND_SEL) || !!el.querySelector(VISUAL_SEL)),
-          );
+          [...link.querySelectorAll("*")].some((el) => hasBareText(el) && pictureWithin(el));
         if (textBesidePicture) mark(link);
       });
   }
