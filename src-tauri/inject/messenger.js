@@ -9707,8 +9707,9 @@ ${button.innerHTML}`)
       pageNotificationReceipts.consumeMatching(conversation, detectedAt);
       return true;
     }
-    const completeCapacityEviction = (fallback) => {
+    const completeCapacityEviction = async (fallback) => {
       if (!fallback.deliverable) return;
+      if (groupFiltering()) await learnThreadKind(fallback.key);
       const settings = window.__CARRIER_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) || groupSuppressed(fallback.key)) {
         notifiedStore.markSuppressed(
@@ -9749,7 +9750,7 @@ ${button.innerHTML}`)
       const displaced = notificationCorrelations.addRow(fallback);
       if (!displaced) return;
       clearTimeout(displaced.row.timer);
-      if (displaced.reason === "capacity") completeCapacityEviction(displaced.row);
+      if (displaced.reason === "capacity") void completeCapacityEviction(displaced.row);
     };
     const scheduleFallback = (conversation, detectedAt, confirmedRepeat = false, routeCandidates, readAt = confirmedRepeat ? detectedAt : 0) => {
       const fingerprint = notificationDedupeKey(conversation.title, conversation.body);
