@@ -2295,13 +2295,14 @@ pub(crate) fn show_message_notification(
         (
             s.notification_sound,
             crate::pause::pause_state(&s, crate::pause::now_ms())
-                != crate::pause::PauseState::Active
-                || in_call(&app),
+                != crate::pause::PauseState::Active,
             s.hide_notification_preview,
             s.group_notifications_by_conversation,
             s.attention_on_message,
         )
     };
+    // Window URLs are read on the main thread: never while holding settings.
+    let muted = muted || in_call(&app);
     late_notification_routes().lock().unwrap().forget(msg.id);
     MESSENGER_ENGLISH_UI.store(msg.english_ui, Ordering::Relaxed);
     if muted {
