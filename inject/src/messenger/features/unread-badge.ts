@@ -47,20 +47,41 @@ export function initUnreadBadge() {
   const threadStates = new Map<string, ThreadState>();
   let refreshingStates = false;
   let statesFailing = false;
+  // Bumped by an explicit mute action, so a read that started before it
+  // cannot restore the old state. Messenger may also take a moment to write
+  // the change, so the action's mute state holds briefly over the database.
+  let stateEpoch = 0;
+  const MUTE_ACTION_HOLD_MS = 5_000;
+  const muteActions = new Map<string, { muted: boolean; at: number }>();
+  const heldMute = (id: string, muted: boolean) => {
+    const action = muteActions.get(id);
+    if (!action) return muted;
+    if (Date.now() - action.at < MUTE_ACTION_HOLD_MS) return action.muted;
+    muteActions.delete(id);
+    return muted;
+  };
   const refreshThreadStates = (ids: string[]) => {
     if (refreshingStates || !ids.length) return;
     refreshingStates = true;
+    const epoch = stateEpoch;
     readThreadStates(ids, (window as unknown as { require?: unknown }).require, Date.now())
       .then((states) => {
+        if (epoch !== stateEpoch) return;
         if (states === null) {
           if (!statesFailing) diag("badge.thread-state", "Messenger database unavailable");
           statesFailing = true;
-          return;
-        }
-        statesFailing = false;
+        } else statesFailing = false;
+        // Every requested chat ends up with a current answer or none: chats
+        // the database could not answer for fall back to rendered evidence.
         let changed = false;
-        for (const [id, state] of states) {
+        for (const id of ids) {
+          const read = states?.get(id);
+          const state = read && { ...read, muted: heldMute(id, read.muted) };
           const old = threadStates.get(id);
+          if (!state) {
+            if (threadStates.delete(id)) changed = true;
+            continue;
+          }
           if (old?.unread !== state.unread || old?.muted !== state.muted) changed = true;
           threadStates.delete(id);
           threadStates.set(id, state);
@@ -265,6 +286,14 @@ export function initUnreadBadge() {
     const detail = (event as CustomEvent<{ id?: unknown; muted?: unknown }>).detail;
     if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
     if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
+    // The user's action outranks any database answer read before it.
+    stateEpoch++;
+    muteActions.set(detail.id, { muted: detail.muted, at: Date.now() });
+    if (muteActions.size > THREAD_STATE_LIMIT) {
+      muteActions.delete(muteActions.keys().next().value!);
+    }
+    const cached = threadStates.get(detail.id);
+    if (cached) threadStates.set(detail.id, { ...cached, muted: detail.muted });
     // The click is captured before Messenger updates aria-checked/the row icon.
     // Repaint both directions after that render: the old glyph must not add an
     // explicitly unmuted identity back, and muting does not change the title
