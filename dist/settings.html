@@ -113,6 +113,7 @@
         ["hide_taskbar_icon", "Hide Taskbar Icon", "Keep Carrier out of the taskbar and reopen it from the tray."],
         ["automatic_update_checks", "Automatic Update Checks", "Check for signed Carrier updates on startup and every four hours. Carrier asks before installing or opening package-manager instructions."],
         ["hold_failures", "Hold Failures for Investigation", "Keep a broken Messenger view intact. Diagnostics continue, but automatic reloads and rebuilds pause. Manual reload still works."],
+        ["focus_composer_on_return", "Focus Message Box on Return", "When you switch back to Carrier with a conversation open, put the cursor in the message box."],
         ["spellcheck", "Spell check", "Underline misspelled words while typing (applies on reload)."],
         ["block_telemetry", "Block Facebook telemetry", "Stop Facebook's analytics and logging requests. Doesn't affect messaging."],
         ["strip_link_tracking", "Remove Facebook link tracking", "Strip Facebook tracking IDs from links you copy or open in your browser."],
@@ -151,7 +152,7 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "download_behavior"] },
+          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "focus_composer_on_return", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
           fields: ["theme", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "hide_names_avatars", "system_emoji", "stop_media_autoplay", "nickname_scope"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,

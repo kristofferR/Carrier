@@ -12,6 +12,7 @@
  */
 import { diag } from "./bridge";
 import { initAutoRefresh } from "./features/auto-refresh";
+import { initComposerFocus } from "./features/composer-focus";
 import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
 import { initCookieAutoDecline } from "./features/cookie-consent";
@@ -67,6 +68,7 @@ function main() {
   // Must run before Facebook assigns eager sources to its emoji images.
   initFeature("emoji-images", initEmojiImageLoading);
   initFeature("composer-keys", initComposerKeys);
+  initFeature("composer-focus", initComposerFocus);
   initFeature("shortcuts", initShortcuts);
   initFeature("zoom", initZoom);
   initFeature("selector-health", initSelectorHealth);
