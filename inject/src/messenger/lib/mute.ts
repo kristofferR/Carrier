@@ -4,6 +4,7 @@
  * reads mute from accessible names on the row (and the open-thread Mute /
  * Unmute control), then remembers the thread id while its row is virtualized.
  */
+import { messengerDndActive } from "./messenger-dnd";
 import { threadIdFromHref } from "./threads";
 
 const MUTE_LABEL_LIMIT = 60;
@@ -53,7 +54,11 @@ export function suppressNotificationDelivery(
     | null
     | undefined,
 ): boolean {
-  return settings?.mute_notifications === true || suppressMutedDelivery(muted, settings);
+  return (
+    settings?.mute_notifications === true ||
+    messengerDndActive() ||
+    suppressMutedDelivery(muted, settings)
+  );
 }
 
 /**
