@@ -903,7 +903,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             .settings
             .lock()
             .unwrap()
-            .hide_names_avatars;
+            .hides_names();
 
         let dialog = window.dialog().file();
         // macOS shows a parented dialog as a sheet, and Carrier destroys
