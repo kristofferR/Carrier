@@ -3381,6 +3381,433 @@ ${button.innerHTML}`)
     ]);
   }
 
+  // inject/src/messenger/lib/conversation-export.ts
+  var EXPORT_MESSAGE_LIMIT = 5e4;
+  var PARTICIPANT_LIMIT = 1e3;
+  var ROW_LIMIT = 2e5;
+  var UNKNOWN_SENDER_LIMIT = 200;
+  function i64Text(value, i64ToText) {
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "number") return Number.isSafeInteger(value) ? String(value) : null;
+    if (typeof value === "string") return /^-?\d+$/.test(value) ? value : null;
+    if (value == null || !i64ToText) return null;
+    try {
+      const text = i64ToText(value);
+      return typeof text === "string" && /^-?\d+$/.test(text) ? text : null;
+    } catch {
+      return null;
+    }
+  }
+  var VAULT_MARKER = /\d{10}##\d{10}/;
+  function isVaulted(value) {
+    return VAULT_MARKER.test(value);
+  }
+  function revealText(value, unvault) {
+    if (typeof value !== "string" || value.trim() === "") return { text: null, unreadable: false };
+    if (!isVaulted(value)) return { text: value, unreadable: false };
+    let plain;
+    try {
+      plain = unvault?.(value);
+    } catch {
+      plain = void 0;
+    }
+    if (typeof plain !== "string" || isVaulted(plain)) return { text: null, unreadable: true };
+    return { text: plain.trim() === "" ? null : plain, unreadable: false };
+  }
+  var isRow = (value) => !!value && typeof value === "object";
+  function attachmentKind(row, mimeType, filename) {
+    if (mimeType?.startsWith("image/")) return "image";
+    if (mimeType?.startsWith("video/")) return "video";
+    if (mimeType?.startsWith("audio/")) return "audio";
+    if (row.hasXma === true) return "link";
+    if (filename) return "file";
+    return "other";
+  }
+  function callFromAttachment(row, unvault) {
+    const dataclass = revealText(row.xmaDataclass, unvault).text;
+    if (dataclass) {
+      try {
+        const parsed = JSON.parse(dataclass);
+        const content = isRow(parsed) ? parsed.content : null;
+        const items = !isRow(content) ? [] : content.__typename === "XMSGXmaSingleContent" ? [content] : Array.isArray(content.list) ? content.list : [];
+        for (const item of items) {
+          const data = isRow(item) ? item.custom_template_data : null;
+          if (!isRow(data) || data.__typename !== "XMSGXmaCallingTemplateData") continue;
+          const state2 = data.call_state;
+          const duration = Number(data.call_duration_sec);
+          return {
+            type: data.call_type === "VIDEO" ? "video" : "audio",
+            outcome: state2 === "MISSED" ? "missed" : state2 === "ENDED" ? "ended" : state2 === "STARTED" ? "started" : null,
+            durationSec: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null
+          };
+        }
+      } catch (_) {
+      }
+    }
+    for (const cta of [row.defaultCtaType, row.cta1Type]) {
+      if (typeof cta !== "string" || !cta.startsWith("xma_rtc_")) continue;
+      return {
+        type: cta.includes("video") ? "video" : "audio",
+        outcome: cta.includes("missed") ? "missed" : cta.includes("ended") ? "ended" : null,
+        durationSec: null
+      };
+    }
+    return null;
+  }
+  function exportHistory(ranges, truncated) {
+    if (truncated) return "partial";
+    const rows = ranges.filter(isRow);
+    if (rows.length > 1) return "partial";
+    const oldest = rows[0];
+    if (!oldest || typeof oldest.hasMoreBefore !== "boolean") return "unknown";
+    return oldest.hasMoreBefore ? "partial" : "complete";
+  }
+  function buildConversationExport(rows, i64ToText, unvault) {
+    const id = (value) => i64Text(value, i64ToText);
+    const plain = (value) => revealText(value, unvault).text;
+    const people = /* @__PURE__ */ new Map();
+    const participants = [];
+    for (const pair of rows.participants) {
+      if (!Array.isArray(pair)) continue;
+      const [participant, contact] = pair;
+      if (!isRow(participant)) continue;
+      const personId = id(participant.contactId) ?? (isRow(contact) ? id(contact.id) : null);
+      if (!personId || people.has(personId)) continue;
+      const person = {
+        id: personId,
+        name: isRow(contact) && plain(contact.name) || "",
+        nickname: plain(participant.nickname)
+      };
+      people.set(personId, person);
+      participants.push(person);
+    }
+    for (const contact of rows.contacts) {
+      if (!isRow(contact)) continue;
+      const personId = id(contact.id);
+      const name = plain(contact.name);
+      if (personId && name && !people.has(personId)) {
+        people.set(personId, { id: personId, name, nickname: null });
+      }
+    }
+    const nameOf = (personId) => personId && people.get(personId)?.name || null;
+    const reactionsByMessage = /* @__PURE__ */ new Map();
+    for (const row of rows.reactions) {
+      if (!isRow(row) || typeof row.messageId !== "string") continue;
+      const reaction = plain(row.reaction);
+      if (!reaction) continue;
+      const actorId = id(row.actorId);
+      const timestamp = id(row.timestampMs);
+      const list = reactionsByMessage.get(row.messageId) ?? [];
+      list.push({
+        actorId,
+        actorName: nameOf(actorId),
+        reaction,
+        timestampMs: timestamp === null ? null : Number(timestamp)
+      });
+      reactionsByMessage.set(row.messageId, list);
+    }
+    for (const list of reactionsByMessage.values()) {
+      list.sort((a, b) => (a.timestampMs ?? 0) - (b.timestampMs ?? 0));
+    }
+    const attachmentsByMessage = /* @__PURE__ */ new Map();
+    const callsByMessage = /* @__PURE__ */ new Map();
+    for (const row of rows.attachments) {
+      if (!isRow(row) || typeof row.messageId !== "string") continue;
+      const call = callFromAttachment(row, unvault);
+      if (call) {
+        callsByMessage.set(row.messageId, call);
+        continue;
+      }
+      const mimeType = plain(row.playableUrlMimeType) ?? plain(row.previewUrlMimeType);
+      const filename = plain(row.filename);
+      const list = attachmentsByMessage.get(row.messageId) ?? [];
+      list.push({
+        index: Number(id(row.attachmentIndex) ?? list.length),
+        value: {
+          kind: attachmentKind(row, mimeType, filename),
+          filename,
+          title: plain(row.titleText),
+          mimeType
+        }
+      });
+      attachmentsByMessage.set(row.messageId, list);
+    }
+    const messages = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const row of rows.messages) {
+      if (!isRow(row) || typeof row.messageId !== "string" || !row.messageId) continue;
+      if (seen.has(row.messageId)) continue;
+      const timestamp = id(row.timestampMs);
+      const timestampMs = timestamp === null ? Number.NaN : Number(timestamp);
+      if (!Number.isFinite(timestampMs)) continue;
+      seen.add(row.messageId);
+      const senderId = id(row.senderId);
+      const unsent = row.isUnsent === true;
+      const body = unsent ? { text: null, unreadable: false } : revealText(row.text, unvault);
+      const replySource = typeof row.replySourceId === "string" ? row.replySourceId : "";
+      const replySenderId = id(row.replyToUserId);
+      const sticker = id(row.stickerId);
+      messages.push({
+        id: row.messageId,
+        senderId,
+        senderName: nameOf(senderId),
+        timestampMs,
+        utcOffsetMinutes: rows.utcOffsetMinutes(timestampMs),
+        text: body.text,
+        system: row.isAdminMessage === true,
+        unsent,
+        unreadable: body.unreadable,
+        forwarded: row.isForwarded === true,
+        edited: Number(id(row.editCount) ?? 0) > 0,
+        sticker: sticker !== null && sticker !== "0",
+        call: callsByMessage.get(row.messageId) ?? null,
+        replyTo: replySource ? {
+          messageId: replySource,
+          senderId: replySenderId,
+          senderName: nameOf(replySenderId),
+          text: plain(row.replyMessageText) ?? plain(row.replySnippet)
+        } : null,
+        reactions: reactionsByMessage.get(row.messageId) ?? [],
+        attachments: (attachmentsByMessage.get(row.messageId) ?? []).sort((a, b) => a.index - b.index).map(({ value }) => value)
+      });
+    }
+    messages.sort(
+      (a, b) => a.timestampMs - b.timestampMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    );
+    return {
+      conversation: {
+        id: rows.threadId,
+        title: conversationTitle(rows, plain(rows.threadName), participants),
+        isGroup: rows.isGroup,
+        participants
+      },
+      history: exportHistory(rows.ranges, rows.truncated),
+      truncated: rows.truncated,
+      missing: rows.missing,
+      messages
+    };
+  }
+  function conversationTitle(rows, threadName, participants) {
+    if (threadName?.trim()) return threadName.trim();
+    const others = participants.filter((person) => person.id !== rows.viewerId && person.name);
+    if (!rows.isGroup && others[0]) return others[0].name;
+    if (others.length) return listedNames(others.map((person) => person.name));
+    return "Conversation";
+  }
+  var TITLE_BYTES = 900;
+  function listedNames(names2) {
+    const bytes = (text) => new TextEncoder().encode(text).length;
+    let title = "";
+    for (const [index, name] of names2.entries()) {
+      const next = title ? `${title}, ${name}` : name;
+      const more = names2.length - index - 1;
+      const suffix = more ? ` and ${more} more` : "";
+      if (bytes(next + suffix) > TITLE_BYTES) {
+        return title ? `${title} and ${names2.length - index} more` : `${names2.length} people`;
+      }
+      title = next;
+    }
+    return title;
+  }
+  async function readConversationExport(threadId, importModule, options) {
+    if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
+    const load = importModule;
+    let timer;
+    const read = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      const q = load("ReQL");
+      const i64ToText = i64.to_string?.bind(i64);
+      let unvault;
+      try {
+        const vault = load("MAWVault");
+        if (typeof vault?.unvault === "function") {
+          const fn = vault.unvault;
+          unvault = (value) => fn(value);
+        }
+      } catch (_) {
+      }
+      const key = i64.of_string(threadId);
+      const thread2 = await db.tables.threads.get(key);
+      if (!isRow(thread2)) return null;
+      let isGroup = false;
+      try {
+        const types = load("LSMessagingThreadTypeUtil");
+        isGroup = types.isGroup(thread2.threadType) === true;
+      } catch (_) {
+      }
+      const rows = async (query) => {
+        const result = await q.toArrayAsync(query);
+        if (!Array.isArray(result)) throw new Error("unexpected query result");
+        return result;
+      };
+      const missing = [];
+      const optional = async (part, query) => {
+        try {
+          return await rows(query());
+        } catch (_) {
+          missing.push(part);
+          return [];
+        }
+      };
+      const messages = await rows(
+        q.fromTableDescending(db.tables.messages).getKeyRange(key).take(EXPORT_MESSAGE_LIMIT + 1)
+      );
+      const truncated = messages.length > EXPORT_MESSAGE_LIMIT;
+      if (truncated) messages.length = EXPORT_MESSAGE_LIMIT;
+      const participants = await optional(
+        "participants",
+        () => q.leftJoin(
+          q.fromTableAscending(db.tables.participants).getKeyRange(key),
+          q.fromTableAscending(db.tables.contacts)
+        ).take(PARTICIPANT_LIMIT)
+      );
+      const capped = async (part, table) => {
+        const found = await optional(
+          part,
+          () => q.fromTableDescending(table).getKeyRange(key).take(ROW_LIMIT + 1)
+        );
+        if (found.length > ROW_LIMIT) {
+          found.length = ROW_LIMIT;
+          if (!missing.includes(part)) missing.push(part);
+        }
+        return found;
+      };
+      const reactions = await capped("reactions", db.tables.reactions);
+      const attachments = await capped("attachments", db.tables.attachments);
+      let ranges = [];
+      try {
+        ranges = await rows(
+          q.fromTableAscending(db.tables.messages_ranges_v2__generated).getKeyRange(key)
+        );
+      } catch (_) {
+      }
+      const known = /* @__PURE__ */ new Set();
+      for (const pair of participants) {
+        if (Array.isArray(pair) && isRow(pair[0])) {
+          const personId = i64Text(pair[0].contactId, i64ToText);
+          if (personId) known.add(personId);
+        }
+      }
+      const unknown = /* @__PURE__ */ new Set();
+      for (const row of [...messages, ...reactions]) {
+        if (!isRow(row)) continue;
+        for (const value of [row.senderId, row.actorId, row.replyToUserId]) {
+          const personId = i64Text(value, i64ToText);
+          if (personId && !known.has(personId)) unknown.add(personId);
+        }
+      }
+      const contacts = [];
+      for (const personId of [...unknown].slice(0, UNKNOWN_SENDER_LIMIT)) {
+        try {
+          contacts.push(
+            ...await rows(
+              q.fromTableAscending(db.tables.contacts).getKeyRange(i64.of_string(personId)).take(1)
+            )
+          );
+        } catch (_) {
+        }
+      }
+      return buildConversationExport(
+        {
+          threadId,
+          threadName: typeof thread2.threadName === "string" ? thread2.threadName : "",
+          isGroup,
+          viewerId: options.viewerId,
+          participants,
+          contacts,
+          messages,
+          reactions,
+          attachments,
+          ranges,
+          truncated,
+          missing,
+          utcOffsetMinutes: options.utcOffsetMinutes
+        },
+        i64ToText,
+        unvault
+      );
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), options.timeoutMs ?? 3e4);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/features/conversation-export.ts
+  var EXPORT_MAX_BYTES = 32 * 1024 * 1024;
+  function randomHex() {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  async function exportConversation(format) {
+    const threadId = threadIdFromHref(location.pathname);
+    if (!threadId) {
+      toast("Open a conversation to export it");
+      return;
+    }
+    toast("Preparing export…");
+    const conversation = await readConversationExport(
+      threadId,
+      window.require,
+      {
+        viewerId: accountId(document.cookie),
+        utcOffsetMinutes: (timestampMs) => -new Date(timestampMs).getTimezoneOffset()
+      }
+    );
+    if (!conversation) {
+      diag("export.read", "conversation database unavailable");
+      toast("Couldn't read this conversation", void 0, { warning: true });
+      return;
+    }
+    if (new TextEncoder().encode(JSON.stringify(conversation)).length > EXPORT_MAX_BYTES) {
+      toast("This conversation is too large to export", void 0, { warning: true });
+      return;
+    }
+    const reveal = `carrier-export:${randomHex()}`;
+    try {
+      await carrierExportConversation({ format, conversation, reveal });
+    } catch (error) {
+      if (error instanceof Error && error.message === "export cancelled") {
+        toast("Export cancelled");
+        return;
+      }
+      diag("export.save", error instanceof Error ? error.message : "save failed");
+      toast("Couldn't save the export", void 0, { warning: true });
+      return;
+    }
+    const count = conversation.messages.length;
+    toast(`Exported ${count.toLocaleString()} ${count === 1 ? "message" : "messages"}`, {
+      label: downloadRevealLabel(navigator.userAgent),
+      kind: "reveal-download",
+      url: reveal
+    });
+  }
+  function initConversationExport() {
+    let busy = false;
+    window.__carrierExportConversation = (format) => {
+      if (format !== "html" && format !== "json") return;
+      if (busy) {
+        toast("An export is already in progress");
+        return;
+      }
+      busy = true;
+      exportConversation(format).catch(() => {
+        diag("export.run", "export failed");
+        toast("Couldn't export this conversation", void 0, { warning: true });
+      }).finally(() => {
+        busy = false;
+      });
+    };
+  }
+
   // inject/src/messenger/lib/color.ts
   var rgb = (color) => {
     const m = color?.match(/rgba?\(([^)]+)\)/);
@@ -4120,7 +4547,7 @@ ${button.innerHTML}`)
       body: prefix ? `${displayName(prefix.person)}: ${body.slice(prefix.end)}` : body
     };
   }
-  var PARTICIPANT_LIMIT = 500;
+  var PARTICIPANT_LIMIT2 = 500;
   async function readConversationNotificationNames(threadId, importModule, timeoutMs = 750) {
     if (!/^\d+$/.test(threadId) || typeof importModule !== "function") return null;
     let timer;
@@ -4139,9 +4566,9 @@ ${button.innerHTML}`)
         q.leftJoin(
           q.fromTableAscending(db.tables.participants).getKeyRange(key),
           q.fromTableAscending(db.tables.contacts)
-        ).take(PARTICIPANT_LIMIT + 1)
+        ).take(PARTICIPANT_LIMIT2 + 1)
       );
-      if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT) return null;
+      if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT2) return null;
       let photo;
       try {
         photo = importModule("getLSMediaContactProfilePictureUrl");
@@ -12624,6 +13051,7 @@ ${text}`)) {
     initFeature("unread-badge", initUnreadBadge);
     initFeature("recent-threads", initRecentThreads);
     initFeature("thread-nav", initThreadNav);
+    initFeature("conversation-export", initConversationExport);
     initFeature("quick-reply", initQuickReply);
     initFeature("quick-mute", initQuickMute);
     initFeature("quick-like", initQuickLike);
