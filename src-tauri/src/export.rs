@@ -905,10 +905,14 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             .unwrap()
             .hide_names_avatars;
 
-        let mut dialog = window
-            .dialog()
-            .file()
-            .set_parent(&window)
+        let dialog = window.dialog().file();
+        // macOS shows a parented dialog as a sheet, and Carrier destroys
+        // Messenger windows on a theme change; AppKit can drop a sheet with
+        // its window without calling back, which would hold the export
+        // permit until restart. A free-standing panel always calls back.
+        #[cfg(not(target_os = "macos"))]
+        let dialog = dialog.set_parent(&window);
+        let mut dialog = dialog
             .set_title("Export Conversation")
             .set_file_name(suggested_file_name(&title, names_hidden, format))
             .add_filter(format.filter_name(), &[format.extension()]);
