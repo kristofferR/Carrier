@@ -95,6 +95,7 @@ cryptographically verified updates.
 
 - Native notifications with sender avatars and optional hidden previews
 - Notification sound and mute controls
+- Optionally leave group-chat messages to the unread badge instead of notifying
 - Unread count on the Dock or taskbar icon
 - Tray support, start to tray, start on login, and hide on close
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey

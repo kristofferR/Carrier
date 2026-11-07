@@ -7698,6 +7698,41 @@ ${button.innerHTML}`)
     return reloadSafeStorage(storage("localStorage"), storage("sessionStorage"));
   }
 
+  // inject/src/messenger/lib/thread-kind.ts
+  async function readThreadIsGroup(threadId, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(threadId) || typeof load !== "function") return null;
+    let timer;
+    const read = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      const types = load("LSMessagingThreadTypeUtil");
+      const threads = db?.tables?.threads;
+      if (typeof threads?.get !== "function" || typeof i64?.of_string !== "function" || typeof types?.isGroup !== "function" || typeof types.isOneToOne !== "function") {
+        return null;
+      }
+      const thread2 = await threads.get(i64.of_string(threadId));
+      if (!thread2 || typeof thread2 !== "object" || !("threadType" in thread2)) return null;
+      if (types.isGroup(thread2.threadType) === true) return true;
+      if (types.isOneToOne(thread2.threadType) === true) return false;
+      return null;
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  async function suppressAsGroupChat(notifyGroupChats, threadId, isGroup) {
+    if (notifyGroupChats !== false || !threadId) return false;
+    return await isGroup(threadId) === true;
+  }
+
   // inject/src/messenger/lib/unread.ts
   function unreadCountFromTitle(title) {
     const m = (title || "").match(/^\s*\((\d+)\)/);
@@ -7954,26 +7989,41 @@ ${button.innerHTML}`)
           deliveryHandlers.delete(deliveryHandlers.keys().next().value);
         }
       }
-      invoke("plugin:event|emit", {
-        event: "carrier:notify",
-        payload: {
-          id,
-          title,
-          subtitle,
-          body,
-          icon,
-          image,
-          dedupe_key: dedupeKey,
-          thread_path: threadPath || "",
-          // Like/Mute match English control labels; native offers them only then.
-          english_ui: /^en\b/i.test(document.documentElement.lang),
-          match_body: matchBody,
-          account: accountId(document.cookie) || "",
-          row
-        }
-      })?.catch?.(() => {
-        deliveryHandlers.delete(id);
-        diag("notify.emit", "carrier:notify emit failed");
+      const send = () => {
+        invoke("plugin:event|emit", {
+          event: "carrier:notify",
+          payload: {
+            id,
+            title,
+            subtitle,
+            body,
+            icon,
+            image,
+            dedupe_key: dedupeKey,
+            thread_path: threadPath || "",
+            // Like/Mute match English control labels; native offers them only then.
+            english_ui: /^en\b/i.test(document.documentElement.lang),
+            match_body: matchBody,
+            account: accountId(document.cookie) || "",
+            row
+          }
+        })?.catch?.(() => {
+          deliveryHandlers.delete(id);
+          diag("notify.emit", "carrier:notify emit failed");
+        });
+      };
+      const threadId = threadPathId(threadPath || "") || null;
+      if (window.__CARRIER_SETTINGS__?.notify_group_chats !== false || !threadId) {
+        send();
+        return;
+      }
+      void suppressAsGroupChat(
+        false,
+        threadId,
+        (thread2) => readThreadIsGroup(thread2, window.require)
+      ).then((suppress) => {
+        if (suppress) window.__carrierNotifyResult?.(id, "suppressed");
+        else send();
       });
     };
     const updateNotificationRoute = (id, threadPath) => {

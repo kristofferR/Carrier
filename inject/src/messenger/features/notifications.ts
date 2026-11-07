@@ -1,6 +1,7 @@
 /* --------------------- Native message notifications ------------------- */
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
+
 import { diag, invoke } from "../bridge";
 import {
   conversationNodeText,
@@ -58,6 +59,7 @@ import {
 } from "../lib/notification-names";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
+import { readThreadIsGroup, suppressAsGroupChat } from "../lib/thread-kind";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
@@ -255,26 +257,42 @@ export function initNotificationBridge() {
         deliveryHandlers.delete(deliveryHandlers.keys().next().value!);
       }
     }
-    invoke("plugin:event|emit", {
-      event: "carrier:notify",
-      payload: {
-        id,
-        title,
-        subtitle,
-        body,
-        icon,
-        image,
-        dedupe_key: dedupeKey,
-        thread_path: threadPath || "",
-        // Like/Mute match English control labels; native offers them only then.
-        english_ui: /^en\b/i.test(document.documentElement.lang),
-        match_body: matchBody,
-        account: accountId(document.cookie) || "",
-        row,
-      },
-    })?.catch?.(() => {
-      deliveryHandlers.delete(id);
-      diag("notify.emit", "carrier:notify emit failed");
+    const send = () => {
+      invoke("plugin:event|emit", {
+        event: "carrier:notify",
+        payload: {
+          id,
+          title,
+          subtitle,
+          body,
+          icon,
+          image,
+          dedupe_key: dedupeKey,
+          thread_path: threadPath || "",
+          // Like/Mute match English control labels; native offers them only then.
+          english_ui: /^en\b/i.test(document.documentElement.lang),
+          match_body: matchBody,
+          account: accountId(document.cookie) || "",
+          row,
+        },
+      })?.catch?.(() => {
+        deliveryHandlers.delete(id);
+        diag("notify.emit", "carrier:notify emit failed");
+      });
+    };
+    // Group chats switched off: answer as native does for a muted delivery,
+    // so dedupe and receipts treat the message as handled (Ref #368). A
+    // conversation of unknown kind is delivered.
+    const threadId = threadPathId(threadPath || "") || null;
+    if (window.__CARRIER_SETTINGS__?.notify_group_chats !== false || !threadId) {
+      send();
+      return;
+    }
+    void suppressAsGroupChat(false, threadId, (thread) =>
+      readThreadIsGroup(thread, (window as unknown as { require?: unknown }).require),
+    ).then((suppress) => {
+      if (suppress) window.__carrierNotifyResult?.(id, "suppressed");
+      else send();
     });
   };
 
