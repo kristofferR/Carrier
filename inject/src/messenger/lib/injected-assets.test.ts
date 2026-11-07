@@ -47,6 +47,16 @@ describe("hand-maintained injected assets", () => {
     expect(development.permissions).toContain("core:event:allow-listen");
   });
 
+  test("only Facebook and Messenger pages can reach Carrier, not user-content hosts", async () => {
+    const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
+      remote: { urls: string[] };
+    };
+
+    for (const url of release.remote.urls) {
+      expect(new URL(url).hostname).toMatch(/^(\*\.)?(facebook|messenger)\.com$/);
+    }
+  });
+
   test("the connectivity screen keeps an explicit webview fallback", async () => {
     const splash = await repoAsset("dist/index.html");
 
