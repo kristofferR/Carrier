@@ -49,9 +49,18 @@ export function suppressMutedDelivery(
 
 /** Every notification is silenced: Carrier's Mute Notifications or Messenger's Do Not Disturb. */
 export function notificationsGloballyMuted(
-  settings: { mute_notifications?: boolean } | null | undefined,
+  settings:
+    | { mute_notifications?: boolean; notifications_paused_until?: number | null }
+    | null
+    | undefined,
+  now = Date.now(),
 ): boolean {
-  return settings?.mute_notifications === true || messengerDndActive();
+  const pausedUntil = settings?.notifications_paused_until;
+  return (
+    settings?.mute_notifications === true ||
+    (typeof pausedUntil === "number" && pausedUntil > now) ||
+    messengerDndActive(now)
+  );
 }
 
 export function suppressNotificationDelivery(

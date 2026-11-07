@@ -98,6 +98,11 @@ pub(crate) struct Settings {
     pub(crate) hide_taskbar_icon: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
+    /// Notifications are paused until this time (milliseconds since 1970),
+    /// set from the tray or Dock menu. An end time rather than a timer, so a
+    /// pause survives restarts and one that ended while Carrier was closed is
+    /// already over.
+    pub(crate) notifications_paused_until: Option<i64>,
     /// Discover signed Carrier updates on startup and every four hours. This
     /// never downloads or installs without explicit confirmation in Settings.
     pub(crate) automatic_update_checks: bool,
@@ -235,6 +240,7 @@ impl Default for Settings {
             hide_on_focus_loss: false,
             hide_taskbar_icon: false,
             mute_notifications: false,
+            notifications_paused_until: None,
             automatic_update_checks: true,
             notification_sound: true,
             hide_notification_preview: false,
@@ -819,6 +825,11 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         if s.hide_taskbar_icon && !tray_available {
             show_main(app);
         }
+    }
+
+    // A pause's menus must stop saying "Paused until" once it ends.
+    if let Some(until) = s.notifications_paused_until {
+        crate::pause::schedule_pause_expiry(app, until);
     }
 
     // Keep the recent-conversations menus in step with the settings — most

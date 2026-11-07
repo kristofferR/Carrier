@@ -423,7 +423,10 @@ fn focused_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
 
 /// Apply a settings change made from the native menu: mutate, persist, re-apply.
 /// (Used for view-style toggles — not autostart, which syncs separately.)
-fn mutate_settings(app: &tauri::AppHandle, f: impl FnOnce(&mut Settings) + Send + 'static) {
+pub(crate) fn mutate_settings(
+    app: &tauri::AppHandle,
+    f: impl FnOnce(&mut Settings) + Send + 'static,
+) {
     // Native menu callbacks run on the UI thread. Never wait for a settings
     // transaction there: its owner may need that thread while applying window
     // changes. Queue the whole ordered mutation away from the UI thread.
@@ -634,6 +637,9 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
             let _ = w.eval(js);
         }
     };
+    if crate::pause::handle_pause_menu_event(app, event.id().as_ref()) {
+        return;
+    }
     match event.id().as_ref() {
         "preferences" | "dock:settings" => {
             let app = app.clone();
@@ -1006,6 +1012,7 @@ enum DockEntry {
     Recent(RecentThread),
     Separator,
     NewConversation,
+    Pause,
     Settings,
 }
 
@@ -1017,6 +1024,7 @@ fn dock_menu_entries(threads: &[RecentThread]) -> Vec<DockEntry> {
         entries.push(DockEntry::Separator);
     }
     entries.push(DockEntry::NewConversation);
+    entries.push(DockEntry::Pause);
     entries.push(DockEntry::Settings);
     entries
 }
@@ -1046,6 +1054,23 @@ pub(crate) fn rebuild_recent_menus(app: &tauri::AppHandle) {
                     true,
                     None,
                 )),
+                DockEntry::Pause => {
+                    let now = crate::pause::now_ms();
+                    let state = crate::pause::pause_state(
+                        &app.state::<AppState>().settings.lock().unwrap(),
+                        now,
+                    );
+                    let (title, entries) = crate::pause::pause_menu(state, now);
+                    let submenu = muda::Submenu::new(&title, true);
+                    for (id, label, enabled) in entries {
+                        if let Err(error) =
+                            submenu.append(&muda::MenuItem::with_id(id, &label, enabled, None))
+                        {
+                            log::warn!("failed to append macOS Dock pause item: {error}");
+                        }
+                    }
+                    menu.append(&submenu)
+                }
                 DockEntry::Settings => menu.append(&muda::MenuItem::with_id(
                     "dock:settings",
                     "Settings…",
@@ -1212,7 +1237,11 @@ mod tests {
     fn dock_menu_keeps_static_actions_without_recent_threads() {
         assert_eq!(
             dock_menu_entries(&[]),
-            vec![DockEntry::NewConversation, DockEntry::Settings]
+            vec![
+                DockEntry::NewConversation,
+                DockEntry::Pause,
+                DockEntry::Settings
+            ]
         );
     }
 
@@ -1227,6 +1256,7 @@ mod tests {
                 DockEntry::Recent(bob),
                 DockEntry::Separator,
                 DockEntry::NewConversation,
+                DockEntry::Pause,
                 DockEntry::Settings,
             ]
         );
