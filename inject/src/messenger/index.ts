@@ -15,6 +15,7 @@ import { initAutoRefresh } from "./features/auto-refresh";
 import { initComposerFocus } from "./features/composer-focus";
 import { initComposerKeys } from "./features/composer-keys";
 import { initContextMenu } from "./features/context-menu";
+import { initConversationExport } from "./features/conversation-export";
 import { initCookieAutoDecline } from "./features/cookie-consent";
 import { initDownloadAnchors } from "./features/download-anchors";
 import { initEmojiImageLoading } from "./features/emoji-images";
@@ -94,6 +95,7 @@ function main() {
   initFeature("unread-badge", initUnreadBadge);
   initFeature("recent-threads", initRecentThreads);
   initFeature("thread-nav", initThreadNav);
+  initFeature("conversation-export", initConversationExport);
   initFeature("quick-reply", initQuickReply);
   initFeature("quick-mute", initQuickMute);
   initFeature("quick-like", initQuickLike);

@@ -25,6 +25,7 @@ mod custom_css;
 mod debug_install;
 mod diag;
 mod download;
+mod export;
 mod hotkey;
 #[cfg(target_os = "linux")]
 mod hotkey_portal;
@@ -354,6 +355,7 @@ fn signed_action_message_limit(event: &str) -> usize {
     match event {
         "carrier:context-menu" => SIGNED_ACTION_CONTEXT_MENU_MESSAGE_MAX,
         "carrier:copy-image" => SIGNED_ACTION_COPY_IMAGE_MESSAGE_MAX,
+        export::EVENT => export::MESSAGE_MAX,
         _ => SIGNED_ACTION_CONTROL_MESSAGE_MAX,
     }
 }
@@ -1500,6 +1502,8 @@ pub fn run() {
                     NativeResultPhase::Presented,
                 );
             });
+
+            export::install(app.handle());
 
             // Show a native context menu only for an authorized Messenger window.
             let context_menu_handle = app.handle().clone();

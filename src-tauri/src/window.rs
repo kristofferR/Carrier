@@ -1599,6 +1599,14 @@ fn init_script(
       {{ url: url, name: name }}, true, 'cancelled', 'download rejected'
     );
   }};
+  var carrierExportConversation = function (payload) {{
+    return carrierNativeCall(
+      'carrier:export-conversation', 'saved',
+      'export cancelled', 'export timed out',
+      {{ format: payload.format, name: payload.name, content: payload.content, reveal: payload.reveal }},
+      true, 'cancelled', 'export failed'
+    );
+  }};
   var carrierShareDownload = function (downloadId, x, y, action) {{
     return carrierNativeCall(
       'carrier:share-download', 'shown',

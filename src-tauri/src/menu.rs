@@ -17,6 +17,7 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(target_os = "macos")]
 use crate::APP_TITLE;
 use crate::actions::{AppAction, NEW_CONVERSATION_JS, run_app_action, validated_thread_path};
+use crate::export::Format as ExportFormat;
 #[cfg(target_os = "macos")]
 use crate::macos::dock::{DOCK_MENU_KEEPALIVE, DOCK_NS_MENU};
 #[cfg(target_os = "macos")]
@@ -80,9 +81,14 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         Some("CmdOrCtrl+Shift+N"),
     )?;
     let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
+    let export_html = menu_item(app, "export_html", "Export Conversation as HTML…", None)?;
+    let export_json = menu_item(app, "export_json", "Export Conversation as JSON…", None)?;
     let file = SubmenuBuilder::new(app, "File")
         .item(&new_conversation)
         .item(&new_window)
+        .separator()
+        .item(&export_html)
+        .item(&export_json)
         .separator()
         .close_window()
         .build()?;
@@ -207,6 +213,8 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         Some("CmdOrCtrl+Shift+N"),
     )?;
     let new_window = menu_item(app, "new_window", "New Window", Some("CmdOrCtrl+N"))?;
+    let export_html = menu_item(app, "export_html", "Export Conversation as HTML…", None)?;
+    let export_json = menu_item(app, "export_json", "Export Conversation as JSON…", None)?;
     let close_window = menu_item(app, "close_window", "Close Window", Some("CmdOrCtrl+W"))?;
     let preferences_label = if cfg!(target_os = "windows") {
         "Settings…"
@@ -229,6 +237,9 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .id("file")
         .item(&new_conversation)
         .item(&new_window)
+        .separator()
+        .item(&export_html)
+        .item(&export_json)
         .separator()
         .item(&close_window);
     #[cfg(target_os = "windows")]
@@ -655,6 +666,8 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "theme_light" => mutate_settings(app, |s| s.theme = "light".into()),
         "theme_dark" => mutate_settings(app, |s| s.theme = "dark".into()),
         "new_conversation" => eval(NEW_CONVERSATION_JS),
+        "export_html" => eval(&ExportFormat::Html.page_script()),
+        "export_json" => eval(&ExportFormat::Json.page_script()),
         "dock:new_conversation" => {
             run_app_action(app, AppAction::NewConversation);
         }

@@ -109,6 +109,18 @@ declare const carrierPrepareDownload: (action: string, url: string) => Promise<u
 declare const carrierChooseDownload: (url: string, name: string) => Promise<unknown>;
 
 /**
+ * Ask the native shell to save a rendered conversation export where the user
+ * chooses. Rejects with "export cancelled" when the save dialog is dismissed.
+ * `reveal` is an opaque key the toast's reveal action can use afterwards.
+ */
+declare const carrierExportConversation: (payload: {
+  format: "html" | "json";
+  name: string;
+  content: string;
+  reveal: string;
+}) => Promise<void>;
+
+/**
  * Same closure-scoped credential, second action: open the macOS share sheet
  * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
  */
@@ -167,6 +179,8 @@ interface Window {
   __carrierZoomReset?: () => void;
   __carrierShortcuts?: Record<string, () => unknown>;
   __carrierToggleInfo?: () => boolean;
+  /** File ▸ Export Conversation as HTML/JSON… */
+  __carrierExportConversation?: (format: unknown) => void;
   __carrierOpenThread?: (href: string) => boolean;
   /** Temporarily resume encrypted-history indexing for conversation search. */
   __carrierWakeSearchIndex?: () => void;
