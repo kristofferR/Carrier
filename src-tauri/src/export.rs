@@ -31,6 +31,34 @@ const MESSAGE_LIMIT: usize = 50_000;
 const PARTICIPANT_LIMIT: usize = 1_000;
 const REACTION_LIMIT: usize = 1_000;
 const ATTACHMENT_LIMIT: usize = 100;
+const MISSING_LIMIT: usize = 3;
+
+/// A list that refuses to grow past `N` while it is parsed, so an oversized
+/// array is rejected before it is allocated rather than after.
+fn bounded<'de, D, T, const N: usize>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Bounded<T, const N: usize>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>, const N: usize> serde::de::Visitor<'de> for Bounded<T, N> {
+        type Value = Vec<T>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "a list of at most {N} items")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<T>, A::Error> {
+            let mut out = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(N).min(256));
+            while let Some(item) = seq.next_element()? {
+                if out.len() == N {
+                    return Err(serde::de::Error::custom(format!("more than {N} items")));
+                }
+                out.push(item);
+            }
+            Ok(out)
+        }
+    }
+    deserializer.deserialize_seq(Bounded::<T, N>(std::marker::PhantomData))
+}
 const ID_MAX: usize = 32;
 const MESSAGE_ID_MAX: usize = 512;
 const NAME_MAX: usize = 1024;
@@ -104,7 +132,9 @@ struct PageExport {
     conversation: Conversation,
     history: History,
     truncated: bool,
+    #[serde(deserialize_with = "bounded::<_, _, MISSING_LIMIT>")]
     missing: Vec<MissingPart>,
+    #[serde(deserialize_with = "bounded::<_, _, MESSAGE_LIMIT>")]
     messages: Vec<Message>,
 }
 
@@ -114,6 +144,7 @@ struct Conversation {
     id: String,
     title: String,
     is_group: bool,
+    #[serde(deserialize_with = "bounded::<_, _, PARTICIPANT_LIMIT>")]
     participants: Vec<Person>,
 }
 
@@ -147,7 +178,9 @@ struct Message {
     sticker: bool,
     call: Option<Call>,
     reply_to: Option<Reply>,
+    #[serde(deserialize_with = "bounded::<_, _, REACTION_LIMIT>")]
     reactions: Vec<Reaction>,
+    #[serde(deserialize_with = "bounded::<_, _, ATTACHMENT_LIMIT>")]
     attachments: Vec<Attachment>,
 }
 
@@ -298,7 +331,7 @@ fn validate(export: &PageExport) -> Result<(), &'static str> {
     {
         return Err("participants");
     }
-    if export.missing.len() > 3 {
+    if export.missing.len() > MISSING_LIMIT {
         return Err("missing");
     }
     if export.messages.len() > MESSAGE_LIMIT {
@@ -698,10 +731,12 @@ fn render(format: Format, export: PageExport, now_ms: i64) -> Result<String, &'s
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ExportMsg {
+struct ExportMsg<C> {
     request: String,
     format: String,
-    conversation: serde_json::Value,
+    /// First skipped (to learn where to report a refusal), then parsed straight
+    /// into the bounded model: never into an untyped tree.
+    conversation: C,
     reveal: String,
 }
 
@@ -800,7 +835,8 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             log::warn!("{EVENT} was not authorized");
             return;
         };
-        let Ok(msg) = serde_json::from_str::<ExportMsg>(&signed.message) else {
+        let Ok(msg) = serde_json::from_str::<ExportMsg<serde::de::IgnoredAny>>(&signed.message)
+        else {
             log::warn!("{EVENT} message did not parse");
             return;
         };
@@ -822,8 +858,8 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         else {
             return fail("invalid format or reveal key");
         };
-        let export = match serde_json::from_value::<PageExport>(msg.conversation) {
-            Ok(export) => export,
+        let export = match serde_json::from_str::<ExportMsg<PageExport>>(&signed.message) {
+            Ok(full) => full.conversation,
             Err(error) => return fail(&format!("model did not parse: {error}")),
         };
         let title = export.conversation.title.clone();
@@ -950,6 +986,22 @@ mod tests {
 
     fn rendered(format: Format, value: serde_json::Value) -> String {
         render(format, parse(value), T0 + 3_600_000).expect("renders")
+    }
+
+    #[test]
+    fn oversized_lists_are_refused_while_parsing() {
+        let mut model = page(vec![]);
+        model["missing"] = json!(vec!["reactions"; MISSING_LIMIT + 1]);
+        assert!(serde_json::from_value::<PageExport>(model).is_err());
+
+        let reaction =
+            json!({ "actorId": "2", "actorName": null, "reaction": "👍", "timestampMs": null });
+        let mut reactions = message("mid.1", T0);
+        reactions["reactions"] = json!(vec![reaction; REACTION_LIMIT + 1]);
+        let error = serde_json::from_value::<PageExport>(page(vec![reactions]))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("more than"), "{error}");
     }
 
     #[test]
