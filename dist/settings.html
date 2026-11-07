@@ -723,7 +723,9 @@
           [["1", "Every hour"], ["4", "Every 4 hours"], ["24", "Once a day"]],
           "Check for updates",
           "How often Carrier looks for a new signed release while it runs.",
-          !settings.automatic_update_checks,
+          !settings.automatic_update_checks ||
+            !runtimeCapabilities ||
+            !runtimeCapabilities.automaticUpdateChecks,
           Number,
         );
       }
@@ -1056,6 +1058,13 @@
 
       // Pick up changes made elsewhere (e.g. the View menu) when refocused.
       window.addEventListener("focus", refresh);
+      // A newer discovery may have replaced the offered update meanwhile.
+      window.addEventListener("focus", async () => {
+        try {
+          const discovered = await invoke("discovered_update");
+          if (notesVersion && discovered !== notesVersion) await updateController.initialize();
+        } catch (_) {}
+      });
 
       const updateButton = document.getElementById("check");
       // The pending update's own release notes, as plain text, while one is offered.
@@ -1071,7 +1080,8 @@
         notesVersion = state.version;
         let notes = null;
         try {
-          notes = await invoke("update_release_notes");
+          // Native returns notes only while it still offers this version.
+          notes = await invoke("update_release_notes", { version: state.version });
         } catch (_) {}
         if (notesVersion !== state.version) return;
         if (typeof notes !== "string" || !notes) {
