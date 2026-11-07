@@ -2647,6 +2647,7 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/composer-focus.ts
   var SETTLE_MS = 250;
+  var AFTER_LOAD_MS = 1e3;
   function currentFocus() {
     const active = document.activeElement;
     if (!active || active === document.body || active === document.documentElement) {
@@ -2656,11 +2657,20 @@ ${button.innerHTML}`)
     return link && chatRows().includes(link) ? "chat-list" : "elsewhere";
   }
   function initComposerFocus() {
+    let loadedAt = document.readyState === "complete" ? 0 : null;
+    window.addEventListener(
+      "load",
+      () => {
+        loadedAt = performance.now();
+      },
+      { once: true }
+    );
+    const settled = () => loadedAt !== null && performance.now() - loadedAt >= AFTER_LOAD_MS;
     window.addEventListener("focus", (event) => {
       if (event.target !== window) return;
       const path = location.pathname;
       setTimeout(() => {
-        if (explicitActionRecent() || location.pathname !== path) return;
+        if (!settled() || explicitActionRecent() || location.pathname !== path) return;
         const state2 = {
           enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
           threadOpen: !!threadIdFromHref(location.pathname),

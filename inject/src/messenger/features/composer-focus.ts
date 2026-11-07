@@ -4,10 +4,6 @@
 // else the user chose already has focus (Ref #359). A native action that
 // reveals the window to open a conversation owns focus instead.
 
-// Long enough for a native action evaluated right after the window shows to
-// stamp itself, and for the engine to restore the previously focused element.
-const SETTLE_MS = 250;
-
 import {
   explicitActionRecent,
   type ReturnFocus,
@@ -15,6 +11,13 @@ import {
 } from "../lib/composer-focus";
 import { threadIdFromHref } from "../lib/threads";
 import { chatRows, focusComposer, isShown } from "./conversation-actions";
+
+// Long enough for a native action evaluated right after the window shows to
+// stamp itself, and for the engine to restore the previously focused element.
+const SETTLE_MS = 250;
+// Native actions that arrive while the page loads are held and dispatched when
+// it finishes. Until then, and briefly after, the page has no say over focus.
+const AFTER_LOAD_MS = 1_000;
 
 function currentFocus(): ReturnFocus {
   const active = document.activeElement;
@@ -26,12 +29,21 @@ function currentFocus(): ReturnFocus {
 }
 
 export function initComposerFocus() {
+  let loadedAt: number | null = document.readyState === "complete" ? 0 : null;
+  window.addEventListener(
+    "load",
+    () => {
+      loadedAt = performance.now();
+    },
+    { once: true },
+  );
+  const settled = () => loadedAt !== null && performance.now() - loadedAt >= AFTER_LOAD_MS;
   window.addEventListener("focus", (event) => {
     if (event.target !== window) return;
     const path = location.pathname;
     setTimeout(() => {
       // A conversation switch in flight: its pane is not the one to type in.
-      if (explicitActionRecent() || location.pathname !== path) return;
+      if (!settled() || explicitActionRecent() || location.pathname !== path) return;
       const state = {
         enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
         threadOpen: !!threadIdFromHref(location.pathname),
