@@ -33,7 +33,7 @@ function harness({ secure = false, v2 = false } = {}) {
   };
   const db = {
     tables: { threads: { get: async (key: string) => threads[key] } },
-    runInTransaction: async (run: (t: typeof tx) => unknown) => run(tx),
+    runInTransaction: async (run: (t: typeof tx) => unknown, _mode?: string) => run(tx),
   };
   const record =
     (name: string, result?: unknown) =>
@@ -69,7 +69,7 @@ function harness({ secure = false, v2 = false } = {}) {
     if (!(name in modules)) throw new Error(`no ${name}`);
     return modules[name];
   };
-  return { calls, threads, reactions, modules, load };
+  return { calls, threads, reactions, modules, load, db };
 }
 
 const request = {
@@ -181,6 +181,19 @@ describe("reactToMessage", () => {
       expect(await reactToMessage(h.load, { ...request, deadline: 0 })).toBe("expired");
       expect(h.calls).toEqual([]);
     }
+  });
+
+  test("never reacts from a write transaction that started after the deadline", async () => {
+    const h = harness();
+    const db = h.db;
+    const run = db.runInTransaction;
+    const deadline = Date.now() + 50;
+    db.runInTransaction = async (...args: Parameters<typeof run>) => {
+      if (args[1] === "readwrite") await new Promise((resolve) => setTimeout(resolve, 80));
+      return run(...args);
+    };
+    expect(await reactToMessage(h.load, { ...request, deadline })).toBe("expired");
+    expect(h.calls).toEqual([]);
   });
 
   test("refuses what it can't do the way Messenger does", async () => {

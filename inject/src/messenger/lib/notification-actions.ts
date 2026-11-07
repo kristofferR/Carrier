@@ -203,26 +203,28 @@ export async function reactToMessage(load: Load, request: ReactionRequest): Prom
     ),
   );
   if (mine?.reaction === request.reaction) return "ok";
-  if (Date.now() >= request.deadline) return "expired";
   const factory = exported<(tx: Transaction) => unknown>(load, "LSFactory");
   const upsert = exported<(factory: unknown, args: unknown) => Promise<unknown>>(
     load,
     "LSOptimisticUpsertReactionStoredProcedure",
   );
-  await db.runInTransaction(
-    (tx) =>
-      upsert(factory(tx), {
+  // Checked inside the transaction, which may wait behind others.
+  return db.runInTransaction(
+    async (tx): Promise<ActionOutcome> => {
+      if (Date.now() >= request.deadline) return "expired";
+      await upsert(factory(tx), {
         actorId,
         messageId: message.messageId,
         reaction: request.reaction,
         sendAttribution: source,
         threadKey,
         timestampMs: i64.of_float(Date.now()),
-      }),
+      });
+      return "ok";
+    },
     "readwrite",
     undefined,
     undefined,
     TRACE,
   );
-  return "ok";
 }
