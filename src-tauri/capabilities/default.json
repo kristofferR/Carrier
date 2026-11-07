@@ -1,18 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal release capabilities for Carrier's Messenger windows. Every listed remote origin's own scripts—not just Carrier's injection—can call these commands, so grant only event emission, unread badge, notification permission query, and the scoped external opener that the page actually uses. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft.",
+  "description": "Minimal release capabilities for Carrier's Messenger windows. Every listed remote origin's own scripts—not just Carrier's injection—can call these commands, so grant only event emission, unread badge, notification permission query, and the scoped external opener that the page actually uses. meta.com/oculus.com are deliberately absent because they are transient login redirects where injected features can fail soft. fbcdn.net/fbsbx.com are absent because they serve user-uploaded content (photos, files, sandboxed frames), and Carrier's injected features never need IPC there.",
   "windows": ["main", "win-*"],
   "remote": {
     "urls": [
       "https://facebook.com",
       "https://*.facebook.com",
       "https://messenger.com",
-      "https://*.messenger.com",
-      "https://fbcdn.net",
-      "https://*.fbcdn.net",
-      "https://fbsbx.com",
-      "https://*.fbsbx.com"
+      "https://*.messenger.com"
     ]
   },
   "permissions": [
