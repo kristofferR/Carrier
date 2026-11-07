@@ -1530,6 +1530,9 @@ pub fn run() {
                 struct ContextMenuMsg {
                     items: Vec<menu::NativeContextMenuItem>,
                     request: String,
+                    /// Viewport point for a keyboard-opened menu.
+                    #[serde(default)]
+                    position: Option<(f64, f64)>,
                 }
 
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
@@ -1555,6 +1558,10 @@ pub fn run() {
                 // Popping up a native menu requires the main thread on macOS;
                 // listen_any handlers carry no such guarantee. The result is
                 // reported from the same closure once the menu call returns.
+                let position = msg
+                    .position
+                    .filter(|(x, y)| x.is_finite() && y.is_finite() && *x >= 0.0 && *y >= 0.0)
+                    .map(|(x, y)| tauri::LogicalPosition::new(x, y));
                 let popup_handle = context_menu_handle.clone();
                 let error_label = label.clone();
                 let error_request = msg.request.clone();
@@ -1563,7 +1570,12 @@ pub fn run() {
                     // the menu is dismissed, and the page's result timeout must
                     // not fire while the user is still browsing the menu.
                     let shown =
-                        menu::show_native_context_menu(&popup_handle, &label, msg.items, || {
+                        menu::show_native_context_menu(
+                            &popup_handle,
+                            &label,
+                            msg.items,
+                            position,
+                            || {
                             // This first success is an acknowledgement. A
                             // second result after popup_menu returns tells the
                             // page whether presentation ultimately succeeded.

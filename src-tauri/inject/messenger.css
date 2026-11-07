@@ -578,3 +578,10 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
 .carrier-schedule-item-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .carrier-schedule-action { border: 0; background: transparent; color: var(--schedule-accent); padding: 4px 0; }
 .carrier-schedule-warning { color: var(--warning, #e09a32); }
+
+/* Message context menu: Messenger's hover-toolbar menus open hidden while
+   Carrier reads which reactions and actions a message offers, or presses one. */
+html[data-carrier-message-menu-probe] [role="menu"] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

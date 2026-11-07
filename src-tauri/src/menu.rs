@@ -602,17 +602,18 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
     if let Some((label, action)) = context_menu_action(event.id().as_ref()) {
         let state = app.state::<AppState>();
         let key = (label.to_string(), action.to_string());
-        if let Some(value) = state.context_menu_copy_values.lock().unwrap().remove(&key) {
+        let copy = state.context_menu_copy_values.lock().unwrap().remove(&key);
+        if let Some((value, copied)) = copy {
             // Match the page-rendered menu's feedback in both directions.
             let toast = match app.clipboard().write_text(value) {
-                Ok(()) => "window.__carrierToast?.('Address copied')",
+                Ok(()) => copied,
                 Err(error) => {
-                    log::warn!("failed to write context-menu address to the clipboard: {error}");
-                    "window.__carrierToast?.('Copy failed')"
+                    log::warn!("failed to write context-menu text to the clipboard: {error}");
+                    "Copy failed"
                 }
             };
             if let Some(window) = app.get_webview_window(label) {
-                let _ = window.eval(toast);
+                let _ = window.eval(format!("window.__carrierToast?.('{toast}')"));
             }
             return;
         }
@@ -752,58 +753,122 @@ const IMAGE_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &[
 ];
 const VIDEO_CONTEXT_MENU_LABELS_NO_SHARE: &[&str] = &["Download video", "Copy video address"];
 
+/// A message's own actions, in menu order. Each is driven through Messenger's
+/// hover toolbar; the page sends only the ones Messenger offers.
+const MESSAGE_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Reply",
+    COPY_TEXT_CONTEXT_MENU_LABEL,
+    "Edit",
+    "Forward",
+    "Pin",
+    "Unpin",
+    "Unsend",
+    "Remove",
+];
+const COPY_TEXT_CONTEXT_MENU_LABEL: &str = "Copy text";
+const REACT_CONTEXT_MENU_LABEL: &str = "React";
+const MAX_CONTEXT_MENU_REACTIONS: usize = 12;
+const MAX_CONTEXT_MENU_VALUE: usize = 64 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct NativeContextMenuItem {
     pub(crate) label: String,
     pub(crate) action: String,
     pub(crate) value: Option<String>,
+    /// A quick reaction: shown in the React submenu, checked when it is
+    /// already the user's reaction to the message.
+    #[serde(default)]
+    pub(crate) reaction: bool,
+    #[serde(default)]
+    pub(crate) checked: bool,
 }
 
-fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
-    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
-    let labels_valid = labels == IMAGE_CONTEXT_MENU_LABELS
-        || labels == VIDEO_CONTEXT_MENU_LABELS
-        || labels == LINK_CONTEXT_MENU_LABELS
-        || {
-            #[cfg(not(target_os = "macos"))]
-            {
-                labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE
-                    || labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE
-            }
-            #[cfg(target_os = "macos")]
-            {
-                false
-            }
-        };
-    let value_index = if labels == IMAGE_CONTEXT_MENU_LABELS {
-        Some(3)
-    } else if labels == VIDEO_CONTEXT_MENU_LABELS {
-        Some(2)
-    } else if labels == LINK_CONTEXT_MENU_LABELS {
-        Some(0)
-    } else if labels == IMAGE_CONTEXT_MENU_LABELS_NO_SHARE {
-        Some(2)
-    } else if labels == VIDEO_CONTEXT_MENU_LABELS_NO_SHARE {
-        Some(1)
-    } else {
-        None
-    };
-    let values_valid = value_index.is_some_and(|expected| {
-        items
+/// The media and link menus, each with the index of its copied value.
+fn media_context_menu_shapes() -> Vec<(&'static [&'static str], usize)> {
+    let mut shapes = vec![
+        (IMAGE_CONTEXT_MENU_LABELS, 3),
+        (VIDEO_CONTEXT_MENU_LABELS, 2),
+        (LINK_CONTEXT_MENU_LABELS, 0),
+    ];
+    if cfg!(not(target_os = "macos")) {
+        shapes.push((IMAGE_CONTEXT_MENU_LABELS_NO_SHARE, 2));
+        shapes.push((VIDEO_CONTEXT_MENU_LABELS_NO_SHARE, 1));
+    }
+    shapes
+}
+
+/// A reaction label must be a short emoji. Messenger supplies them from the
+/// page, so letters, spacing, and invisible or direction-changing characters
+/// are refused: a label can never pose as a different menu row.
+fn valid_reaction_label(label: &str) -> bool {
+    let units = label.encode_utf16().count();
+    (1..=16).contains(&units)
+        && label.chars().all(|c| {
+            !c.is_ascii()
+                && !c.is_alphanumeric()
+                && !c.is_whitespace()
+                && !c.is_control()
+                && !matches!(
+                    c as u32,
+                    0x200B..=0x200C | 0x200E..=0x200F | 0x202A..=0x202E | 0x2060..=0x206F | 0xFEFF
+                )
+        })
+}
+
+/// Quick reactions first, then message actions in their fixed order; only
+/// Copy text carries a value.
+fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
+    let reactions = items.iter().take_while(|item| item.reaction).count();
+    let mut next_label = 0;
+    reactions <= MAX_CONTEXT_MENU_REACTIONS
+        && items[..reactions]
             .iter()
-            .enumerate()
-            .all(|(index, item)| item.value.is_some() == (index == expected))
-    });
+            .all(|item| item.value.is_none() && valid_reaction_label(&item.label))
+        && items[reactions..].iter().all(|item| {
+            let Some(index) = MESSAGE_CONTEXT_MENU_LABELS[next_label..]
+                .iter()
+                .position(|label| *label == item.label)
+            else {
+                return false;
+            };
+            next_label += index + 1;
+            !item.reaction
+                && !item.checked
+                && item.value.is_some() == (item.label == COPY_TEXT_CONTEXT_MENU_LABEL)
+        })
+}
+
+/// A menu is one known media or link shape, a message's menu, or a media
+/// shape followed by the menu of the message that holds it.
+fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
+    let media_prefix = media_context_menu_shapes()
+        .into_iter()
+        .find_map(|(labels, value_index)| {
+            let prefix = items.get(..labels.len())?;
+            prefix
+                .iter()
+                .enumerate()
+                .all(|(index, item)| {
+                    item.label == labels[index]
+                        && !item.reaction
+                        && !item.checked
+                        && item.value.is_some() == (index == value_index)
+                })
+                .then_some(labels.len())
+        });
+    let shape_valid = match media_prefix {
+        Some(len) => valid_message_items(&items[len..]),
+        None => !items.is_empty() && valid_message_items(items),
+    };
     let mut actions = std::collections::HashSet::new();
-    labels_valid
-        && values_valid
+    shape_valid
         && items.iter().all(|item| {
             item.action.len() == 32
                 && item.action.bytes().all(|byte| byte.is_ascii_hexdigit())
                 && item
                     .value
                     .as_ref()
-                    .is_none_or(|value| value.encode_utf16().count() <= 64 * 1024)
+                    .is_none_or(|value| value.encode_utf16().count() <= MAX_CONTEXT_MENU_VALUE)
                 && actions.insert(item.action.as_str())
         })
 }
@@ -818,6 +883,7 @@ pub(crate) fn show_native_context_menu(
     app: &tauri::AppHandle,
     label: &str,
     items: Vec<NativeContextMenuItem>,
+    position: Option<tauri::LogicalPosition<f64>>,
     on_presented: impl FnOnce(),
 ) -> bool {
     if !valid_context_menu_items(&items) {
@@ -835,25 +901,9 @@ pub(crate) fn show_native_context_menu(
             return false;
         }
     };
-    for item in &items {
-        let id = format!("carrier-context:{label}:{}", item.action);
-        let menu_item = match MenuItemBuilder::new(&item.label).id(id).build(app) {
-            Ok(menu_item) => menu_item,
-            Err(error) => {
-                log::warn!(
-                    "failed to build native media context menu item for action {}: {error}",
-                    item.action
-                );
-                return false;
-            }
-        };
-        if let Err(error) = menu.append(&menu_item) {
-            log::warn!(
-                "failed to append native media context menu item for action {}: {error}",
-                item.action
-            );
-            return false;
-        }
+    if let Err(error) = append_context_menu_items(app, &menu, label, &items) {
+        log::warn!("failed to build native context menu: {error}");
+        return false;
     }
     {
         let state = app.state::<AppState>();
@@ -861,7 +911,15 @@ pub(crate) fn show_native_context_menu(
         copies.retain(|(window, _), _| window != label);
         for item in &items {
             if let Some(value) = &item.value {
-                copies.insert((label.to_string(), item.action.clone()), value.clone());
+                let copied = if item.label == COPY_TEXT_CONTEXT_MENU_LABEL {
+                    "Text copied"
+                } else {
+                    "Address copied"
+                };
+                copies.insert(
+                    (label.to_string(), item.action.clone()),
+                    (value.clone(), copied),
+                );
             }
         }
     }
@@ -889,7 +947,13 @@ pub(crate) fn show_native_context_menu(
         }
     }
     on_presented();
-    match window.popup_menu(&menu) {
+    // A keyboard-opened menu has no pointer to pop up at; the page passes the
+    // focused message's position instead.
+    let shown = match position {
+        Some(position) => window.popup_menu_at(&menu, position),
+        None => window.popup_menu(&menu),
+    };
+    match shown {
         Ok(()) => true,
         Err(error) => {
             log::warn!("failed to show native media context menu: {error}");
@@ -908,6 +972,55 @@ pub(crate) fn show_native_context_menu(
             false
         }
     }
+}
+
+/// Media rows, then (after a separator) a React submenu and the message's
+/// actions. Item ids carry only the window and the opaque action token.
+fn append_context_menu_items(
+    app: &tauri::AppHandle,
+    menu: &Menu<tauri::Wry>,
+    label: &str,
+    items: &[NativeContextMenuItem],
+) -> tauri::Result<()> {
+    let id = |item: &NativeContextMenuItem| format!("carrier-context:{label}:{}", item.action);
+    // Media rows, the React submenu, and message actions each form a group.
+    let group = |item: &NativeContextMenuItem| {
+        if item.reaction {
+            1
+        } else if MESSAGE_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+            2
+        } else {
+            0
+        }
+    };
+    let mut reactions: Option<tauri::menu::Submenu<tauri::Wry>> = None;
+    let mut previous = None;
+    for item in items {
+        if previous.is_some_and(|previous| previous != group(item)) {
+            menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?)?;
+        }
+        previous = Some(group(item));
+        if item.reaction {
+            let submenu = match &reactions {
+                Some(submenu) => submenu.clone(),
+                None => {
+                    let submenu = SubmenuBuilder::new(app, REACT_CONTEXT_MENU_LABEL).build()?;
+                    menu.append(&submenu)?;
+                    reactions = Some(submenu.clone());
+                    submenu
+                }
+            };
+            submenu.append(
+                &tauri::menu::CheckMenuItemBuilder::new(&item.label)
+                    .id(id(item))
+                    .checked(item.checked)
+                    .build(app)?,
+            )?;
+        } else {
+            menu.append(&MenuItemBuilder::new(&item.label).id(id(item)).build(app)?)?;
+        }
+    }
+    Ok(())
 }
 
 fn context_menu_action(id: &str) -> Option<(&str, &str)> {
@@ -1170,7 +1283,11 @@ mod tests {
     }
 
     fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
-        let source = include_str!("../../inject/src/messenger/features/context-menu.ts");
+        let source = if name == "MESSAGE_CONTEXT_MENU_LABELS" {
+            include_str!("../../inject/src/messenger/lib/message-menu.ts")
+        } else {
+            include_str!("../../inject/src/messenger/features/context-menu.ts")
+        };
         let declaration = format!("const {name} = [");
         let body = source
             .split_once(&declaration)
@@ -1187,6 +1304,15 @@ mod tests {
             label: label.into(),
             action: action.to_string().repeat(32),
             value: None,
+            reaction: false,
+            checked: false,
+        }
+    }
+
+    fn reaction_item(label: &str, action: char) -> NativeContextMenuItem {
+        NativeContextMenuItem {
+            reaction: true,
+            ..context_item(label, action)
         }
     }
 
@@ -1308,11 +1434,92 @@ mod tests {
     }
 
     #[test]
+    fn message_menus_take_reactions_then_actions_in_order() {
+        let mut message = vec![
+            reaction_item("❤️", '1'),
+            reaction_item("👍", '2'),
+            context_item("Reply", '3'),
+            context_item("Copy text", '4'),
+            context_item("Forward", '5'),
+            context_item("Unsend", '6'),
+        ];
+        message[1].checked = true;
+        message[3].value = Some("hello".into());
+        assert!(valid_context_menu_items(&message));
+
+        // Copy text must carry its text, and nothing else may.
+        message[3].value = None;
+        assert!(!valid_context_menu_items(&message));
+        message[3].value = Some("hello".into());
+        message[2].value = Some("smuggled".into());
+        assert!(!valid_context_menu_items(&message));
+        message[2].value = None;
+
+        // Out of order, repeated, or unknown actions are refused.
+        message.swap(4, 5);
+        assert!(!valid_context_menu_items(&message));
+        message.swap(4, 5);
+        message[5].label = "Forward".into();
+        assert!(!valid_context_menu_items(&message));
+        message[5].label = "Allow microphone".into();
+        assert!(!valid_context_menu_items(&message));
+        message.pop();
+
+        // Reactions come first and never pose as actions.
+        message.swap(1, 2);
+        assert!(!valid_context_menu_items(&message));
+        message.swap(1, 2);
+        let mut posing = reaction_item("Reply", '7');
+        posing.action = "7".repeat(32);
+        message.insert(0, posing);
+        assert!(!valid_context_menu_items(&message));
+        message.remove(0);
+
+        // An action is never checked.
+        message[2].checked = true;
+        assert!(!valid_context_menu_items(&message));
+    }
+
+    #[test]
+    fn media_menus_may_carry_their_message_menu() {
+        let mut items = vec![
+            context_item("Download video", '1'),
+            context_item("Copy video address", '2'),
+            reaction_item("😆", '3'),
+            context_item("Reply", '4'),
+            context_item("Forward", '5'),
+        ];
+        items[1].value = Some("https://example.com/video.mp4".into());
+        let valid = valid_context_menu_items(&items);
+        assert_eq!(valid, cfg!(not(target_os = "macos")));
+        assert!(!valid_context_menu_items(&[]));
+    }
+
+    #[test]
+    fn reaction_labels_are_short_emoji_only() {
+        for label in ["❤", "❤️", "👍", "👍🏽", "👨‍👩‍👧", "🇳🇴"] {
+            assert!(valid_reaction_label(label), "{label}");
+        }
+        for label in [
+            "",
+            "Reply",
+            "👍 Pin",
+            "a",
+            "\u{202E}👍",
+            "👍\u{200B}",
+            "😀😀😀😀😀😀😀😀😀",
+        ] {
+            assert!(!valid_reaction_label(label), "{label:?}");
+        }
+    }
+
+    #[test]
     fn native_context_menu_allowlist_matches_injected_labels() {
         for (name, expected) in [
             ("IMAGE_CONTEXT_MENU_LABELS", IMAGE_CONTEXT_MENU_LABELS),
             ("VIDEO_CONTEXT_MENU_LABELS", VIDEO_CONTEXT_MENU_LABELS),
             ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
+            ("MESSAGE_CONTEXT_MENU_LABELS", MESSAGE_CONTEXT_MENU_LABELS),
         ] {
             assert_eq!(injected_context_menu_labels(name), expected, "{name}");
         }

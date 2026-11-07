@@ -371,6 +371,9 @@ impl Settings {
     }
 }
 
+/// Text a native copy row writes to the clipboard, and its confirmation toast.
+pub(crate) type ContextMenuCopy = (String, &'static str);
+
 pub(crate) struct AppState {
     pub(crate) settings: Mutex<Settings>,
     /// Fixed at process startup; the setting itself takes effect after restart.
@@ -443,8 +446,8 @@ pub(crate) struct AppState {
     #[cfg(target_os = "macos")]
     pub(crate) download_reservations: Mutex<HashMap<(String, String), String>>,
     /// Text captured at the genuine right-click and written to the system
-    /// clipboard when its native Copy address row is selected.
-    pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), String>>,
+    /// clipboard when its native copy row is selected, with the toast to show.
+    pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), ContextMenuCopy>>,
     /// A validated share-extension handoff awaiting delivery to the page
     /// (cold start, or a reload racing the carrier:// open). See share_intake.
     #[cfg(target_os = "macos")]

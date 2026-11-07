@@ -1637,11 +1637,11 @@ fn init_script(
       {{ data_url: dataUrl, action: action }}
     );
   }};
-  var carrierShowContextMenu = function (items) {{
+  var carrierShowContextMenu = function (items, position) {{
     return carrierNativeCall(
       'carrier:context-menu', 'shown',
       'native context menu was not shown', 'native context menu timed out',
-      {{ items: items }}, true
+      position ? {{ items: items, position: position }} : {{ items: items }}, true
     );
   }};
   var carrierReplyResult = function (id, attempt, ok) {{

@@ -1,6 +1,9 @@
 /* --------------------- Adaptive context menu -------------------------- */
 // Right-click an image, video or link to get the relevant actions
 // (download / copy / copy address / open in browser), matching the original.
+// Right-click a message (or press the context-menu key on a focused one) for
+// its reactions and Messenger's own message actions, after any media actions.
+// Selected text and links keep their usual menus.
 import {
   cleanSharedUrl,
   openUrl,
@@ -11,6 +14,20 @@ import {
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
+import {
+  keyboardMenuPoint,
+  MESSAGE_CONTEXT_MENU_LABELS,
+  messageActions,
+  type Reaction,
+  reactionLabel,
+} from "../lib/message-menu";
+import {
+  messageFor,
+  messageTextBlock,
+  reactTo,
+  readMessageOffer,
+  runMessageAction,
+} from "./message-menu";
 
 const MAX_BLOB = 512 * 1024 * 1024;
 // Native copying base64-encodes the blob before it crosses the IPC bridge, so
@@ -119,6 +136,7 @@ const clientPointOf = (event: MouseEvent) => ({
 // The macOS share sheet (NSSharingServicePicker) is native-only; other
 // platforms have no equivalent Carrier can reach, so the item stays hidden.
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
+const isLinux = !isMac && /linux/i.test(navigator.platform);
 
 function contextActionToken() {
   const bytes = new NativeUint8Array(16);
@@ -132,7 +150,12 @@ function contextActionToken() {
   return token;
 }
 
-type ContextMenuItem = [label: string, run: (action?: string) => unknown, value?: string];
+type ContextMenuItem = [
+  label: string,
+  run: (action?: string) => unknown,
+  value?: string,
+  reaction?: Reaction,
+];
 
 type NativeActionHandler = [action: string, run: () => void];
 
@@ -162,8 +185,19 @@ async function runNativeAction(event: Event) {
   }
 }
 
-function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
-  const nativeItems: { label: string; action: string; value?: string }[] = [];
+type NativeContextMenuItem = {
+  label: string;
+  action: string;
+  value?: string;
+  reaction?: true;
+  checked?: true;
+};
+
+function showNativeContextMenu(
+  items: ContextMenuItem[],
+  position: [number, number] | null,
+): Promise<void> {
+  const nativeItems: NativeContextMenuItem[] = [];
   // Replacing a menu makes any still-open native rows stale. Keep handlers
   // until native selection or replacement instead of expiring a live menu.
   clearNativeActionHandlers();
@@ -175,14 +209,15 @@ function showNativeContextMenu(items: ContextMenuItem[]): Promise<void> {
       item[1](isMac ? action : undefined);
     };
     appendOwn(nativeActionHandlers, [action, run]);
-    appendOwn(
-      nativeItems,
-      item[2] ? { label: item[0], action, value: item[2] } : { label: item[0], action },
-    );
+    const nativeItem: NativeContextMenuItem = { label: item[0], action };
+    if (item[2]) nativeItem.value = item[2];
+    if (item[3]) nativeItem.reaction = true;
+    if (item[3]?.checked) nativeItem.checked = true;
+    appendOwn(nativeItems, nativeItem);
   }
   if (!nativeShowContextMenu)
     return NativePromise.reject(new Error("native context menu unavailable"));
-  return nativeShowContextMenu(nativeItems).catch((error: unknown) => {
+  return nativeShowContextMenu(nativeItems, position ?? undefined).catch((error: unknown) => {
     clearNativeActionHandlers();
     throw error;
   });
@@ -204,6 +239,12 @@ const copyAddress = (text: string) =>
   navigator.clipboard
     ?.writeText(cleanSharedUrl(text))
     .then(() => toast("Address copied"))
+    .catch(() => toast("Copy failed"));
+
+const copyText = (text: string) =>
+  navigator.clipboard
+    ?.writeText(text)
+    .then(() => toast("Text copied"))
     .catch(() => toast("Copy failed"));
 
 // Download a media src by letting the WebView initiate the download, which the
@@ -330,326 +371,496 @@ export function initContextMenu() {
     runNativeAction,
     true,
   ]);
-  nativeReflectApply(nativeAddEventListener, document, [
-    "contextmenu",
-    async (e: MouseEvent) => {
-      // Remote page code must not be able to create Carrier's native-action menu.
-      if (!e.isTrusted) return;
-      const t = eventTargetOf(e) as Element;
-      const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-      const img = t.closest?.("img[alt]") as HTMLImageElement | null;
-      const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
-      const imgSrc = img && (img.currentSrc || img.src);
-      const vidSrc = video && (video.currentSrc || video.src);
-      const linkHref = anchor?.href;
+  let menuRequest = 0;
+  const abandonMenu = (event: Event) => {
+    if (!event.isTrusted) return;
+    if (event.type === "keydown") {
+      const key = nativeReflectApply(nativeGetKeyboardKey!, event, []) as string;
+      if (key !== "Escape") return;
+    }
+    menuRequest += 1;
+  };
+  // Open Carrier's menu for a genuine right-click, or for the context-menu
+  // key on a focused message. `prevent` cancels the triggering event once the
+  // menu is Carrier's.
+  const openContextMenu = async (
+    t: Element,
+    contextPoint: { x: number; y: number },
+    keyboard: boolean,
+    prevent: () => void,
+  ) => {
+    const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
+    const img = t.closest?.("img[alt]") as HTMLImageElement | null;
+    const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
+    const imgSrc = img && (img.currentSrc || img.src);
+    const vidSrc = video && (video.currentSrc || video.src);
+    const linkHref = anchor?.href;
 
-      // Anchor for the macOS share sheet: viewport fractions survive the
-      // download delay and window resizes better than raw pixels.
-      const contextPoint = clientPointOf(e);
-      const fx = contextPoint.x / Math.max(1, innerWidth);
-      const fy = contextPoint.y / Math.max(1, innerHeight);
-      const items: ContextMenuItem[] = [];
-      const addItem = (item: ContextMenuItem) => {
-        // Defining an own index bypasses numeric setters Messenger could add
-        // to Array.prototype before a user opens this privileged-action menu.
-        appendOwn(items, item);
-      };
-      if (imgSrc) {
+    // Anchor for the macOS share sheet: viewport fractions survive the
+    // download delay and window resizes better than raw pixels.
+    const fx = contextPoint.x / Math.max(1, innerWidth);
+    const fy = contextPoint.y / Math.max(1, innerHeight);
+    const items: ContextMenuItem[] = [];
+    const addItem = (item: ContextMenuItem) => {
+      // Defining an own index bypasses numeric setters Messenger could add
+      // to Array.prototype before a user opens this privileged-action menu.
+      appendOwn(items, item);
+    };
+    if (imgSrc) {
+      addItem([
+        IMAGE_CONTEXT_MENU_LABELS[0],
+        (action) =>
+          copyImageSrc(imgSrc, action)
+            .then(() => toast("Image copied"))
+            .catch(() => toast("Copy failed")),
+      ]);
+      addItem([
+        IMAGE_CONTEXT_MENU_LABELS[1],
+        () =>
+          downloadSrc(imgSrc, "image")
+            .then(({ url }) => toastDownloadSaved(url))
+            .catch((error) => toastDownloadFailure(error)),
+      ]);
+      if (isMac) {
         addItem([
-          IMAGE_CONTEXT_MENU_LABELS[0],
+          IMAGE_CONTEXT_MENU_LABELS[2],
           (action) =>
-            copyImageSrc(imgSrc, action)
-              .then(() => toast("Image copied"))
-              .catch(() => toast("Copy failed")),
+            action
+              ? shareSrc(imgSrc, "image", fx, fy, action).catch((error) =>
+                  toastDownloadFailure(error, "Share failed"),
+                )
+              : undefined,
         ]);
+      }
+      addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
+      addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
+    } else if (vidSrc) {
+      addItem([
+        VIDEO_CONTEXT_MENU_LABELS[0],
+        () =>
+          downloadSrc(vidSrc, "video")
+            .then(({ url }) => toastDownloadSaved(url))
+            .catch((error) => toastDownloadFailure(error)),
+      ]);
+      if (isMac) {
         addItem([
-          IMAGE_CONTEXT_MENU_LABELS[1],
-          () =>
-            downloadSrc(imgSrc, "image")
-              .then(({ url }) => toastDownloadSaved(url))
-              .catch((error) => toastDownloadFailure(error)),
+          VIDEO_CONTEXT_MENU_LABELS[1],
+          (action) =>
+            action
+              ? shareSrc(vidSrc, "video", fx, fy, action).catch((error) =>
+                  toastDownloadFailure(error, "Share failed"),
+                )
+              : undefined,
         ]);
-        if (isMac) {
+      }
+      addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
+    } else if (linkHref && !linkHref.startsWith("javascript:")) {
+      addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
+      addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
+    }
+    // A link keeps its own menu, and selected text the webview's (so Copy
+    // still copies the selection).
+    const selection = getSelection();
+    const selected =
+      selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
+    const message =
+      (imgSrc || vidSrc || !items.length) && !(selected && !items.length)
+        ? (messageFor(t) ?? null)
+        : null;
+    if (!items.length && !message) return; // fall through to the native menu (text etc.)
+    prevent();
+    // The context-menu key reports no pointer on the message; pop up at it.
+    // A keyboard-opened link menu anchors to the focused link itself.
+    const keyboardPoint =
+      message || keyboard
+        ? keyboardMenuPoint(
+            contextPoint,
+            rectOf(t),
+            rectOf(message ? (messageTextBlock(message) ?? message) : t),
+          )
+        : null;
+    // Reading a message's actions takes a moment. A newer menu, a click, or
+    // Escape in the meantime abandons this one.
+    menuRequest += 1;
+    const request = menuRequest;
+    if (message) {
+      nativeReflectApply(nativeAddEventListener, document, ["pointerdown", abandonMenu, true]);
+      nativeReflectApply(nativeAddEventListener, document, ["keydown", abandonMenu, true]);
+      let offer: Awaited<ReturnType<typeof readMessageOffer>>;
+      try {
+        offer = await readMessageOffer(message);
+      } finally {
+        nativeReflectApply(nativeRemoveEventListener, document, ["pointerdown", abandonMenu, true]);
+        nativeReflectApply(nativeRemoveEventListener, document, ["keydown", abandonMenu, true]);
+      }
+      if (request !== menuRequest) return;
+      for (let index = 0; index < offer.reactions.length; index += 1) {
+        const reaction = offer.reactions[index];
+        if (reaction)
           addItem([
-            IMAGE_CONTEXT_MENU_LABELS[2],
-            (action) =>
-              action
-                ? shareSrc(imgSrc, "image", fx, fy, action).catch((error) =>
-                    toastDownloadFailure(error, "Share failed"),
-                  )
-                : undefined,
+            reactionLabel(reaction.emoji),
+            () => reactTo(message, reaction.emoji),
+            undefined,
+            reaction,
           ]);
-        }
-        addItem([IMAGE_CONTEXT_MENU_LABELS[3], () => copyAddress(imgSrc), cleanSharedUrl(imgSrc)]);
-        addItem([IMAGE_CONTEXT_MENU_LABELS[4], () => openUrl(imgSrc)]);
-      } else if (vidSrc) {
-        addItem([
-          VIDEO_CONTEXT_MENU_LABELS[0],
-          () =>
-            downloadSrc(vidSrc, "video")
-              .then(({ url }) => toastDownloadSaved(url))
-              .catch((error) => toastDownloadFailure(error)),
-        ]);
-        if (isMac) {
-          addItem([
-            VIDEO_CONTEXT_MENU_LABELS[1],
-            (action) =>
-              action
-                ? shareSrc(vidSrc, "video", fx, fy, action).catch((error) =>
-                    toastDownloadFailure(error, "Share failed"),
-                  )
-                : undefined,
-          ]);
-        }
-        addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
-      } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        addItem([
-          LINK_CONTEXT_MENU_LABELS[0],
-          () => copyAddress(linkHref),
-          cleanSharedUrl(linkHref),
-        ]);
-        addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
-      if (!items.length) return; // fall through to the native menu (text etc.)
-      // The native side rejects an oversized copied address as untrusted
-      // input, which would reject the whole menu shape. The page-rendered
-      // menu below copies through its own closure and needs no native value,
-      // so route there instead — every row keeps working.
-      let nativeItemsAreValid = true;
-      for (let index = 0; index < items.length; index += 1) {
-        const item = items[index];
-        if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
-          nativeItemsAreValid = false;
-          break;
-        }
+      const actions = messageActions(offer);
+      for (let index = 0; index < actions.length; index += 1) {
+        const action = actions[index];
+        if (action === MESSAGE_CONTEXT_MENU_LABELS[1])
+          addItem([action, () => copyText(offer.text), offer.text]);
+        else if (action) addItem([action, () => runMessageAction(message, action)]);
       }
+      if (!items.length) {
+        toast("Messenger offers no actions for this message");
+        return;
+      }
+    }
+    // The native side rejects an oversized copied address as untrusted
+    // input, which would reject the whole menu shape. The page-rendered
+    // menu below copies through its own closure and needs no native value,
+    // so route there instead — every row keeps working.
+    let nativeItemsAreValid = true;
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (item?.[2] && item[2].length > MAX_NATIVE_CONTEXT_VALUE) {
+        nativeItemsAreValid = false;
+        break;
+      }
+    }
 
-      nativeReflectApply(nativePreventDefault, e, []);
-      // Copying an image through the page clipboard must remain inside the
-      // trusted right-click activation. macOS uses Carrier's native pasteboard;
-      // other platforms keep image menus in-page until they have an equivalent.
-      const nativeImageCopyIsSafe = isMac || !imgSrc;
-      if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe) {
-        try {
-          await showNativeContextMenu(items);
-          return;
-        } catch {
-          // The authenticated native result says presentation failed. Continue
-          // into the hardened page-rendered menu so the click is not swallowed.
-        }
+    // Copying an image through the page clipboard must remain inside the
+    // trusted right-click activation. macOS uses Carrier's native pasteboard;
+    // other platforms keep image menus in-page until they have an equivalent.
+    const nativeImageCopyIsSafe = isMac || !imgSrc;
+    // A GTK menu popped up without a pointer event gets no keyboard focus on
+    // Wayland, so a keyboard-opened Linux menu stays in the page, where
+    // arrows, Enter, and Escape work.
+    const nativeTakesKeyboard = !keyboard || !isLinux;
+    if (
+      nativeShowContextMenu &&
+      nativeItemsAreValid &&
+      nativeImageCopyIsSafe &&
+      nativeTakesKeyboard
+    ) {
+      try {
+        // GTK on Wayland cannot place a menu at the pointer once the click
+        // event is gone, so Linux always names the point. Native zoom
+        // scales CSS pixels to window coordinates.
+        const zoom = (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100;
+        const point = keyboardPoint ?? (isLinux ? [contextPoint.x, contextPoint.y] : null);
+        await showNativeContextMenu(
+          items,
+          point ? [Math.round(point[0] * zoom), Math.round(point[1] * zoom)] : null,
+        );
+        return;
+      } catch {
+        // The authenticated native result says presentation failed. Continue
+        // into the hardened page-rendered menu so the click is not swallowed.
       }
+    }
 
-      // Capture the restore target before closeMenu()/menu creation shifts
-      // focus. The right-click target is usually a non-focusable image or span,
-      // so climb to the nearest focusable ancestor and fall back to whatever
-      // held focus before the menu opened — never a bare image that .focus()
-      // would silently no-op on, losing the user's place.
-      const focusableSelector =
-        'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
-      const previouslyFocused = document.activeElement;
-      // If a menu is already open and focus is inside it, closeMenu() is about
-      // to detach that item — reuse the open menu's own restore target instead
-      // of saving a node that .focus() can no longer reach.
-      const priorReturnFocus =
-        ctxMenu && nativeReflectApply(nativeContains, ctxMenu, [previouslyFocused])
-          ? ctxMenuReturnFocus
-          : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
-            ? previouslyFocused
-            : null;
-      closeMenu();
-      ctxMenuReturnFocus =
-        (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
-      // The rows carry privileged actions, so they live in a *closed* shadow
-      // root: Messenger shares this JS world and would otherwise be able to
-      // find a row by its label and slide it under the pointer, turning the
-      // user's genuine click into one for an action they never chose. A closed
-      // root hands out no reference, so page script cannot reach the rows at
-      // all; moving the host it can still see shifts every row together, which
-      // the per-row geometry check below refuses.
-      ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-      const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []) as CSSStyleDeclaration;
-      applyStyles(ctxMenuStyle, {
-        position: "fixed",
-        left: `${contextPoint.x}px`,
-        top: `${contextPoint.y}px`,
-        zIndex: "2147483647",
-      });
-      const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
-        { mode: "closed" },
-      ]) as ShadowRoot;
-      const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-      nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
-      nativeReflectApply(nativeSetAttribute, menu, ["aria-label", "Media actions"]);
-      const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
-      applyStyles(menuStyle, {
-        background: "var(--card-background, Canvas)",
-        color: "var(--primary-text, CanvasText)",
-        border: "1px solid var(--divider, rgba(127,127,127,.3))",
-        borderRadius: "8px",
-        padding: "4px",
-        boxShadow: "0 6px 24px rgba(0,0,0,.4)",
-        minWidth: "170px",
-        font: "13px -apple-system, system-ui, sans-serif",
-      });
-      const menuItems: HTMLElement[] = [];
-      // Filled once the menu has been laid out, index-aligned with menuItems: a
-      // row whose rectangle no longer matches its entry here is not the row the
-      // user aimed at. Kept as a plain array rather than a Map keyed by row, so
-      // no page-replaceable method is ever handed a row.
-      const laidOutRects: MenuRect[] = [];
-      let focusedIndex = 0;
-      // Keyboard activation restores focus to where the user was (like Escape
-      // does); a pointer click already established a new focus context.
-      const activate = (fn: () => unknown, restoreFocus = false) => {
-        closeMenu(restoreFocus);
-        fn();
-      };
-      for (let index = 0; index < items.length; index += 1) {
-        const item = items[index];
-        if (!item) continue;
-        const label = item[0];
-        if (
-          isMac &&
-          (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])
-        ) {
-          // The native-only share action has no authorization token in the
-          // page-rendered fallback menu.
-          continue;
-        }
-        const fn = item[1];
-        const rowIndex = menuItems.length;
-        const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
-        nativeReflectApply(nativeSetTextContent, el, [label]);
-        nativeReflectApply(nativeSetAttribute, el, ["role", "menuitem"]);
-        nativeReflectApply(nativeSetTabIndex, el, [-1]);
-        const elStyle = nativeReflectApply(nativeGetStyle, el, []) as CSSStyleDeclaration;
-        applyStyles(elStyle, {
-          padding: "8px 12px",
-          cursor: "pointer",
-          borderRadius: "6px",
-          outline: "none",
+    // Capture the restore target before closeMenu()/menu creation shifts
+    // focus. The right-click target is usually a non-focusable image or span,
+    // so climb to the nearest focusable ancestor and fall back to whatever
+    // held focus before the menu opened — never a bare image that .focus()
+    // would silently no-op on, losing the user's place.
+    const focusableSelector =
+      'a[href], button, input, select, textarea, [tabindex], [contenteditable="true"]';
+    const previouslyFocused = document.activeElement;
+    // If a menu is already open and focus is inside it, closeMenu() is about
+    // to detach that item — reuse the open menu's own restore target instead
+    // of saving a node that .focus() can no longer reach.
+    const priorReturnFocus =
+      ctxMenu && nativeReflectApply(nativeContains, ctxMenu, [previouslyFocused])
+        ? ctxMenuReturnFocus
+        : previouslyFocused instanceof HTMLElement && previouslyFocused !== document.body
+          ? previouslyFocused
+          : null;
+    closeMenu();
+    ctxMenuReturnFocus = (t.closest?.(focusableSelector) as HTMLElement | null) ?? priorReturnFocus;
+    // The rows carry privileged actions, so they live in a *closed* shadow
+    // root: Messenger shares this JS world and would otherwise be able to
+    // find a row by its label and slide it under the pointer, turning the
+    // user's genuine click into one for an action they never chose. A closed
+    // root hands out no reference, so page script cannot reach the rows at
+    // all; moving the host it can still see shifts every row together, which
+    // the per-row geometry check below refuses.
+    ctxMenu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
+    const ctxMenuStyle = nativeReflectApply(nativeGetStyle, ctxMenu, []) as CSSStyleDeclaration;
+    applyStyles(ctxMenuStyle, {
+      position: "fixed",
+      left: `${keyboardPoint?.[0] ?? contextPoint.x}px`,
+      top: `${keyboardPoint?.[1] ?? contextPoint.y}px`,
+      zIndex: "2147483647",
+    });
+    const shadow = nativeReflectApply(nativeAttachShadow, ctxMenu, [
+      { mode: "closed" },
+    ]) as ShadowRoot;
+    const menu = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
+    nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
+    nativeReflectApply(nativeSetAttribute, menu, [
+      "aria-label",
+      message ? "Message actions" : "Media actions",
+    ]);
+    const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
+    applyStyles(menuStyle, {
+      background: "var(--card-background, Canvas)",
+      color: "var(--primary-text, CanvasText)",
+      border: "1px solid var(--divider, rgba(127,127,127,.3))",
+      borderRadius: "8px",
+      padding: "4px",
+      boxShadow: "0 6px 24px rgba(0,0,0,.4)",
+      minWidth: "170px",
+      font: "13px -apple-system, system-ui, sans-serif",
+    });
+    const menuItems: HTMLElement[] = [];
+    // Quick reactions share one row, like Messenger's own reaction bar.
+    let reactionRow: HTMLDivElement | null = null;
+    // Media rows, reactions, and message actions are separated like the
+    // native menu's groups.
+    let previousGroup: number | null = null;
+    // Filled once the menu has been laid out, index-aligned with menuItems: a
+    // row whose rectangle no longer matches its entry here is not the row the
+    // user aimed at. Kept as a plain array rather than a Map keyed by row, so
+    // no page-replaceable method is ever handed a row.
+    const laidOutRects: MenuRect[] = [];
+    let focusedIndex = 0;
+    // Keyboard activation restores focus to where the user was (like Escape
+    // does); a pointer click already established a new focus context.
+    const activate = (fn: () => unknown, restoreFocus = false) => {
+      closeMenu(restoreFocus);
+      fn();
+    };
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+      if (!item) continue;
+      const label = item[0];
+      if (
+        isMac &&
+        (label === IMAGE_CONTEXT_MENU_LABELS[2] || label === VIDEO_CONTEXT_MENU_LABELS[1])
+      ) {
+        // The native-only share action has no authorization token in the
+        // page-rendered fallback menu.
+        continue;
+      }
+      const fn = item[1];
+      const rowIndex = menuItems.length;
+      const reaction = item[3];
+      const group = reaction
+        ? 1
+        : (MESSAGE_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+          ? 2
+          : 0;
+      if (previousGroup !== null && previousGroup !== group) {
+        const divider = nativeReflectApply(nativeCreateElement, document, [
+          "div",
+        ]) as HTMLDivElement;
+        nativeReflectApply(nativeSetAttribute, divider, ["role", "separator"]);
+        applyStyles(nativeReflectApply(nativeGetStyle, divider, []) as CSSStyleDeclaration, {
+          height: "1px",
+          margin: "4px 8px",
+          background: "var(--divider, rgba(127,127,127,.3))",
         });
-        nativeReflectApply(nativeAddEventListener, el, [
-          "mouseenter",
-          () =>
-            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))"),
-        ]);
-        nativeReflectApply(nativeAddEventListener, el, [
-          "mouseleave",
-          () => setStyleProperty(elStyle, "background", ""),
-        ]);
-        nativeReflectApply(nativeAddEventListener, el, [
-          "focus",
-          () => {
-            // WebKit focuses a tabIndex=-1 row on click; keep arrow navigation
-            // anchored to the row that actually holds focus.
-            focusedIndex = rowIndex;
-            setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
-          },
-        ]);
-        nativeReflectApply(nativeAddEventListener, el, [
-          "blur",
-          () => setStyleProperty(elStyle, "background", ""),
-        ]);
-        nativeReflectApply(nativeAddEventListener, el, [
-          "click",
-          (ev: MouseEvent) => {
-            if (!ev.isTrusted) return;
-            nativeReflectApply(nativeStopPropagation, ev, []);
-            const expected = laidOutRects[rowIndex];
-            const point = clientPointOf(ev);
-            // No recorded rectangle means the click beat layout; refuse rather
-            // than run a privileged action we cannot vouch for.
-            if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
-              closeMenu();
-              toast("Menu action cancelled");
-              return;
-            }
-            activate(fn);
-          },
-        ]);
-        nativeReflectApply(nativeAddEventListener, el, [
-          "keydown",
-          (event: KeyboardEvent) => {
-            const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
-            if (key !== "Enter" && key !== " ") return;
-            if (!event.isTrusted) return;
-            nativeReflectApply(nativePreventDefault, event, []);
-            nativeReflectApply(nativeStopPropagation, event, []);
-            // Keyboard activation needs no geometry check: focus lives inside
-            // the closed root, so page script cannot move it to another row.
-            activate(fn, true);
-          },
-        ]);
-        appendOwn(menuItems, el);
-        nativeReflectApply(nativeAppendChild, menu, [el]);
+        nativeReflectApply(nativeAppendChild, menu, [divider]);
       }
-      nativeReflectApply(nativeAppendChild, shadow, [menu]);
-      nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
-      const r = rectOf(menu);
-      if (r.x + r.width > innerWidth) {
-        setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+      previousGroup = group;
+      const el = nativeReflectApply(nativeCreateElement, document, ["div"]) as HTMLDivElement;
+      nativeReflectApply(nativeSetTextContent, el, [label]);
+      nativeReflectApply(nativeSetAttribute, el, [
+        "role",
+        reaction ? "menuitemcheckbox" : "menuitem",
+      ]);
+      if (reaction) {
+        nativeReflectApply(nativeSetAttribute, el, ["aria-label", `React ${label}`]);
+        nativeReflectApply(nativeSetAttribute, el, ["aria-checked", `${reaction.checked}`]);
       }
-      if (r.y + r.height > innerHeight) {
-        setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+      nativeReflectApply(nativeSetTabIndex, el, [-1]);
+      const elStyle = nativeReflectApply(nativeGetStyle, el, []) as CSSStyleDeclaration;
+      applyStyles(elStyle, {
+        padding: reaction ? "6px 8px" : "8px 12px",
+        cursor: "pointer",
+        borderRadius: "6px",
+        outline: "none",
+      });
+      if (reaction) {
+        applyStyles(elStyle, { fontSize: "18px", lineHeight: "1" });
+        if (reaction.checked) setStyleProperty(elStyle, "box-shadow", "inset 0 0 0 2px Highlight");
       }
-      // Index loop, not for..of: iteration would run through a page-replaceable
-      // Array.prototype[Symbol.iterator], handing out the rows again.
-      for (let i = 0; i < menuItems.length; i += 1) {
-        const row = menuItems[i];
-        // Append unconditionally so the two arrays stay index-aligned; an empty
-        // rectangle matches no real row, so it refuses rather than misfires.
-        appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
-      }
-      nativeReflectApply(nativeAddEventListener, ctxMenu, [
+      nativeReflectApply(nativeAddEventListener, el, [
+        "mouseenter",
+        () =>
+          setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))"),
+      ]);
+      nativeReflectApply(nativeAddEventListener, el, [
+        "mouseleave",
+        () => setStyleProperty(elStyle, "background", ""),
+      ]);
+      nativeReflectApply(nativeAddEventListener, el, [
+        "focus",
+        () => {
+          // WebKit focuses a tabIndex=-1 row on click; keep arrow navigation
+          // anchored to the row that actually holds focus.
+          focusedIndex = rowIndex;
+          setStyleProperty(elStyle, "background", "var(--hover-overlay, rgba(127,127,127,.18))");
+        },
+      ]);
+      nativeReflectApply(nativeAddEventListener, el, [
+        "blur",
+        () => setStyleProperty(elStyle, "background", ""),
+      ]);
+      nativeReflectApply(nativeAddEventListener, el, [
+        "click",
+        (ev: MouseEvent) => {
+          if (!ev.isTrusted) return;
+          nativeReflectApply(nativeStopPropagation, ev, []);
+          const expected = laidOutRects[rowIndex];
+          const point = clientPointOf(ev);
+          // No recorded rectangle means the click beat layout; refuse rather
+          // than run a privileged action we cannot vouch for.
+          if (!expected || !pointerActivationIsSound(expected, rectOf(el), point.x, point.y)) {
+            closeMenu();
+            toast("Menu action cancelled");
+            return;
+          }
+          activate(fn);
+        },
+      ]);
+      nativeReflectApply(nativeAddEventListener, el, [
         "keydown",
         (event: KeyboardEvent) => {
-          // The host stays reachable from the page, so a synthetic ArrowDown or
-          // End dispatched on it would otherwise move focus onto a row of the
-          // page's choosing — inside the closed root, where it cannot reach
-          // directly — and the user's next real Enter would activate it.
-          if (!event.isTrusted) return;
           const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
-          const current = focusedIndex;
-          let next: number | null = null;
-          if (key === "ArrowDown") next = (current + 1) % menuItems.length;
-          if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
-          if (key === "Home") next = 0;
-          if (key === "End") next = menuItems.length - 1;
-          if (key === "Escape") {
-            nativeReflectApply(nativePreventDefault, event, []);
-            closeMenu(true);
-            return;
-          }
-          if (key === "Tab") {
-            // closeMenu(true) restores focus synchronously; block the browser's
-            // own Tab move so focus stays on the restoration target.
-            nativeReflectApply(nativePreventDefault, event, []);
-            closeMenu(true);
-            return;
-          }
-          if (next !== null) {
-            nativeReflectApply(nativePreventDefault, event, []);
-            focusedIndex = next;
-            const nextItem = menuItems[next];
-            if (nextItem) nativeReflectApply(nativeFocus, nextItem, []);
-          }
+          if (key !== "Enter" && key !== " ") return;
+          if (!event.isTrusted) return;
+          nativeReflectApply(nativePreventDefault, event, []);
+          nativeReflectApply(nativeStopPropagation, event, []);
+          // Keyboard activation needs no geometry check: focus lives inside
+          // the closed root, so page script cannot move it to another row.
+          activate(fn, true);
         },
       ]);
-      focusedIndex = 0;
-      const firstItem = menuItems[0];
-      if (firstItem) nativeReflectApply(nativeFocus, firstItem, [{ preventScroll: true }]);
-      nativeReflectApply(nativeSetTimeout, window, [
-        () => {
-          nativeReflectApply(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
-          nativeReflectApply(nativeAddEventListener, document, [
-            "scroll",
-            closeMenuFromScroll,
-            true,
-          ]);
-        },
-        0,
-      ]);
+      appendOwn(menuItems, el);
+      if (reaction) {
+        if (!reactionRow) {
+          reactionRow = nativeReflectApply(nativeCreateElement, document, [
+            "div",
+          ]) as HTMLDivElement;
+          nativeReflectApply(nativeSetAttribute, reactionRow, ["role", "group"]);
+          nativeReflectApply(nativeSetAttribute, reactionRow, ["aria-label", "React"]);
+          applyStyles(nativeReflectApply(nativeGetStyle, reactionRow, []) as CSSStyleDeclaration, {
+            display: "flex",
+            gap: "2px",
+          });
+          nativeReflectApply(nativeAppendChild, menu, [reactionRow]);
+        }
+        nativeReflectApply(nativeAppendChild, reactionRow, [el]);
+      } else {
+        nativeReflectApply(nativeAppendChild, menu, [el]);
+      }
+    }
+    nativeReflectApply(nativeAppendChild, shadow, [menu]);
+    nativeReflectApply(nativeAppendChild, document.body, [ctxMenu]);
+    const r = rectOf(menu);
+    if (r.x + r.width > innerWidth) {
+      setStyleProperty(ctxMenuStyle, "left", `${innerWidth - r.width - 8}px`);
+    }
+    if (r.y + r.height > innerHeight) {
+      setStyleProperty(ctxMenuStyle, "top", `${innerHeight - r.height - 8}px`);
+    }
+    // Index loop, not for..of: iteration would run through a page-replaceable
+    // Array.prototype[Symbol.iterator], handing out the rows again.
+    for (let i = 0; i < menuItems.length; i += 1) {
+      const row = menuItems[i];
+      // Append unconditionally so the two arrays stay index-aligned; an empty
+      // rectangle matches no real row, so it refuses rather than misfires.
+      appendOwn(laidOutRects, row ? rectOf(row) : { x: 0, y: 0, width: 0, height: 0 });
+    }
+    nativeReflectApply(nativeAddEventListener, ctxMenu, [
+      "keydown",
+      (event: KeyboardEvent) => {
+        // The host stays reachable from the page, so a synthetic ArrowDown or
+        // End dispatched on it would otherwise move focus onto a row of the
+        // page's choosing — inside the closed root, where it cannot reach
+        // directly — and the user's next real Enter would activate it.
+        if (!event.isTrusted) return;
+        const key = nativeReflectApply(nativeGetKeyboardKey, event, []) as string;
+        const current = focusedIndex;
+        let next: number | null = null;
+        if (key === "ArrowDown") next = (current + 1) % menuItems.length;
+        if (key === "ArrowUp") next = (current - 1 + menuItems.length) % menuItems.length;
+        if (key === "Home") next = 0;
+        if (key === "End") next = menuItems.length - 1;
+        if (key === "Escape") {
+          nativeReflectApply(nativePreventDefault, event, []);
+          closeMenu(true);
+          return;
+        }
+        if (key === "Tab") {
+          // closeMenu(true) restores focus synchronously; block the browser's
+          // own Tab move so focus stays on the restoration target.
+          nativeReflectApply(nativePreventDefault, event, []);
+          closeMenu(true);
+          return;
+        }
+        if (next !== null) {
+          nativeReflectApply(nativePreventDefault, event, []);
+          focusedIndex = next;
+          const nextItem = menuItems[next];
+          if (nextItem) nativeReflectApply(nativeFocus, nextItem, []);
+        }
+      },
+    ]);
+    focusedIndex = 0;
+    const firstItem = menuItems[0];
+    if (firstItem) nativeReflectApply(nativeFocus, firstItem, [{ preventScroll: true }]);
+    nativeReflectApply(nativeSetTimeout, window, [
+      () => {
+        nativeReflectApply(nativeAddEventListener, document, ["click", closeMenuFromClick, true]);
+        nativeReflectApply(nativeAddEventListener, document, ["scroll", closeMenuFromScroll, true]);
+      },
+      0,
+    ]);
+  };
+  // WebKitGTK sends no contextmenu event for the context-menu key or
+  // Shift+F10, so a focused message opens its menu from the key itself.
+  // Platforms that do send one get that duplicate suppressed.
+  let keyboardMenu: { target: Element; at: number } | null = null;
+  nativeReflectApply(nativeAddEventListener, window, [
+    "keydown",
+    (event: KeyboardEvent) => {
+      if (!event.isTrusted) return;
+      const key = nativeReflectApply(nativeGetKeyboardKey!, event, []) as string;
+      if (key !== "ContextMenu" && !(key === "F10" && event.shiftKey)) return;
+      const focused = document.activeElement;
+      const message = focused && messageFor(focused);
+      if (!focused || !message) return;
+      // Selected text touching the message keeps the webview's own menu, so
+      // Copy copies it. This covers every selection openContextMenu would
+      // defer for, since the focused element lies inside the message.
+      const selection = getSelection();
+      if (selection && !selection.isCollapsed && selection.containsNode(message, true)) return;
+      nativeReflectApply(nativePreventDefault, event, []);
+      nativeReflectApply(nativeStopPropagation, event, []);
+      keyboardMenu = { target: focused, at: Date.now() };
+      void openContextMenu(focused, { x: -1, y: -1 }, true, () => {});
+    },
+    true,
+  ]);
+  nativeReflectApply(nativeAddEventListener, document, [
+    "contextmenu",
+    (e: MouseEvent) => {
+      // Remote page code must not be able to create Carrier's native-action menu.
+      if (!e.isTrusted) return;
+      const target = eventTargetOf(e) as Element;
+      const duplicate = keyboardMenu?.target === target && Date.now() - keyboardMenu.at < 1000;
+      keyboardMenu = null;
+      if (duplicate) {
+        nativeReflectApply(nativePreventDefault, e, []);
+        return;
+      }
+      void openContextMenu(target, clientPointOf(e), false, () =>
+        nativeReflectApply(nativePreventDefault, e, []),
+      );
     },
     true,
   ]);
