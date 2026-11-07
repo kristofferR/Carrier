@@ -17,6 +17,11 @@
     <key>NSAllowsArbitraryLoads</key>
     <true/>
   </dict>
+  <!-- Communication notifications donate message intents (Ref #366). -->
+  <key>NSUserActivityTypes</key>
+  <array>
+    <string>INSendMessageIntent</string>
+  </array>
   <!-- LaunchServices delivers carrier:// automation URLs and share-extension
        handoffs to the running instance, or launches Carrier when needed. -->
   <key>CFBundleURLTypes</key>

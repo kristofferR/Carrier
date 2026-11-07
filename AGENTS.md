@@ -49,6 +49,12 @@ bun run tauri build --debug --features diagnostics --bundles app   # fast debug 
 export APPLE_SIGNING_IDENTITY="Developer ID Application: Kristoffer Risanger (S5Q742QZEL)"
 bun run tauri build               # uses src-tauri/tauri.conf.release.json via the CI flow
 
+# The release config embeds Carrier's Developer ID provisioning profile (communication
+# notifications, #366): put it at src-tauri/embedded.provisionprofile first (gitignored;
+# Kris's Mac keeps it in ~/.config/carrier-signing/, CI writes it from the
+# APPLE_PROVISIONING_PROFILE secret). It is tied to the Developer ID certificate, so
+# renew it with `asc profiles` when that certificate is replaced.
+
 # install without a Gatekeeper prompt (rm -rf on /Applications is blocked by the safety net):
 ditto "<path>/Carrier.app" "/Applications/Carrier.app"
 xattr -dr com.apple.quarantine "/Applications/Carrier.app"
