@@ -550,3 +550,22 @@ pub(crate) fn clear_delivered_for_thread(thread_id: &str, late_route_ids: &[u64]
     UNUserNotificationCenter::currentNotificationCenter()
         .getDeliveredNotificationsWithCompletionHandler(&handler);
 }
+
+/// Why macOS would not show Carrier's banners, from its notification settings
+/// (Ref #259). None when banners are allowed or macOS does not answer in time.
+pub(crate) fn notification_blocker() -> Option<String> {
+    use objc2_user_notifications::{UNNotificationSettings, UNUserNotificationCenter};
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handler = block2::RcBlock::new(
+        move |settings: core::ptr::NonNull<UNNotificationSettings>| {
+            // SAFETY: UserNotifications passes a valid settings object.
+            let settings = unsafe { settings.as_ref() };
+            let _ = tx.send((settings.authorizationStatus().0, settings.alertSetting().0));
+        },
+    );
+    UNUserNotificationCenter::currentNotificationCenter()
+        .getNotificationSettingsWithCompletionHandler(&handler);
+    let (status, alert) = rx.recv_timeout(std::time::Duration::from_secs(3)).ok()?;
+    crate::notifications::macos_blocker_message(status, alert)
+}
