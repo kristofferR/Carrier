@@ -4637,6 +4637,20 @@ ${button.innerHTML}`)
       clearTimeout(timer);
     }
   }
+  function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "", photo = false) {
+    if (!group || !account2) return void 0;
+    const display = (person2) => showNicknames2 && person2.nickname || person2.name;
+    if (!group.isGroup) {
+      const others = group.participants.filter((person3) => person3.id && person3.id !== account2);
+      const person2 = others.length === 1 ? others[0] : void 0;
+      return person2?.id ? { id: person2.id, name: display(person2), group: "", photo: true } : void 0;
+    }
+    const kind = titleKind === "unknown" && group.title ? normalizeSenderName(title) === normalizeSenderName(group.title) ? "group" : "sender" : titleKind;
+    const person = kind === "sender" ? namedParticipant(title, group) : notificationSenderPrefix(body, group)?.person;
+    const name = group.title || groupTitle;
+    if (!person?.id || person.id === account2 || !name) return void 0;
+    return { id: person.id, name: display(person), group: name, photo };
+  }
 
   // inject/src/messenger/lib/nickname-replies.ts
   function replyAttribution(text, sender, recipient, info, mode) {
@@ -9143,7 +9157,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "", row) => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "", row, sender) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -9167,7 +9181,8 @@ ${button.innerHTML}`)
           english_ui: /^en\b/i.test(document.documentElement.lang),
           match_body: matchBody,
           account: accountId(document.cookie) || "",
-          row
+          row,
+          sender
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -9430,6 +9445,15 @@ ${button.innerHTML}`)
             richMessageBody(named.body, threadPath),
             Boolean(image)
           );
+          const sender = hidePreview ? void 0 : communicationSender(
+            originalTitle,
+            originalBody,
+            group,
+            accountId(document.cookie),
+            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+            group?.isGroup && displayTitle ? "group" : "unknown",
+            displayTitle
+          );
           emitNotification(
             id,
             hidePreview ? "Messenger" : text.title,
@@ -9451,7 +9475,9 @@ ${button.innerHTML}`)
             // A photo-only summary ("Sent a photo", or "Kim: Sent a photo" in a
             // group) has no text for 👍 to match, whether or not its thumbnail
             // loaded.
-            hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody
+            hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody,
+            void 0,
+            sender
           );
           if (pageMatch.deliver && notifiedStore.notifiedFingerprint(pageMatch.deliver.key) === pageMatch.deliver.expect) {
             markNotified(
@@ -9922,7 +9948,21 @@ ${button.innerHTML}`)
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
-          { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt }
+          { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
+          hidePreview ? void 0 : communicationSender(
+            // Identity comes from the row's original "Name: message"
+            // preview through the full-prefix matcher, which refuses
+            // ambiguous prefixes; shortened display text must not decide.
+            conversation.title,
+            conversation.body,
+            group,
+            accountId(document.cookie),
+            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+            "group",
+            visiblePresentation.subtitle || visiblePresentation.title,
+            // In a group the icon is the sender's only when their photo won.
+            Boolean(sender) && icon === sender
+          )
         );
       }, FALLBACK_DELAY_MS);
       retainPendingFallback({

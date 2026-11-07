@@ -191,3 +191,56 @@ export async function readConversationNotificationNames(
     clearTimeout(timer);
   }
 }
+
+/** The sender a native communication notification shows (Ref #366). */
+export interface NativeSender {
+  /** Messenger participant id. */
+  id: string;
+  name: string;
+  /** The group conversation's name; empty for a one-to-one chat. */
+  group: string;
+  /** The notification's icon is this sender's own picture. */
+  photo: boolean;
+}
+
+/**
+ * Who sent this message, from Messenger's participants: the other person in a
+ * one-to-one chat, or in a group the participant the title or the "Name:"
+ * prefix names. Undefined unless exactly one participant with an id answers,
+ * so macOS never attributes a message to the wrong person.
+ */
+export function communicationSender(
+  title: string,
+  body: string,
+  group: ConversationNotificationNames | null,
+  account: string | null,
+  showNicknames: boolean,
+  titleKind: "sender" | "group" | "unknown",
+  groupTitle = "",
+  photo = false,
+): NativeSender | undefined {
+  if (!group || !account) return undefined;
+  const display = (person: NotificationParticipant) =>
+    (showNicknames && person.nickname) || person.name;
+  if (!group.isGroup) {
+    const others = group.participants.filter((person) => person.id && person.id !== account);
+    const person = others.length === 1 ? others[0] : undefined;
+    // A one-to-one chat's picture is the other person's.
+    return person?.id
+      ? { id: person.id, name: display(person), group: "", photo: true }
+      : undefined;
+  }
+  const kind =
+    titleKind === "unknown" && group.title
+      ? normalizeSenderName(title) === normalizeSenderName(group.title)
+        ? "group"
+        : "sender"
+      : titleKind;
+  const person =
+    kind === "sender"
+      ? namedParticipant(title, group)
+      : notificationSenderPrefix(body, group)?.person;
+  const name = group.title || groupTitle;
+  if (!person?.id || person.id === account || !name) return undefined;
+  return { id: person.id, name: display(person), group: name, photo };
+}

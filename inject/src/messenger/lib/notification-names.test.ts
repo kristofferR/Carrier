@@ -3,6 +3,7 @@ import { nicknameMode, showNicknames } from "./nicknames";
 import { notificationDedupeKey, notificationPresentation } from "./notification-fallback";
 import {
   type ConversationNotificationNames,
+  communicationSender,
   notificationNames,
   notificationSender,
   readConversationNotificationNames,
@@ -254,5 +255,83 @@ describe("Messenger group-name reader", () => {
     const pending = databaseHarness();
     pending.modules.LSDatabaseSingleton = { LSDatabaseSingleton: new Promise(() => {}) };
     expect(await readConversationNotificationNames("123", pending.load, 1)).toBeNull();
+  });
+});
+
+describe("communicationSender", () => {
+  const person = (id: string, name: string, nickname = "") => ({
+    id,
+    name,
+    firstName: name.split(" ")[0]!,
+    nickname,
+    avatar: "",
+  });
+
+  test("a one-to-one chat's sender is the other participant", () => {
+    const direct = {
+      title: "",
+      isGroup: false,
+      participants: [person("100", "Me Myself"), person("42", "Alex Example")],
+    };
+    expect(communicationSender("Alex Example", "Hi", direct, "100", false, "unknown")).toEqual({
+      id: "42",
+      name: "Alex Example",
+      group: "",
+      photo: true,
+    });
+  });
+
+  test("a group's sender comes from the title or the body prefix", () => {
+    const group = {
+      title: "Weekend",
+      isGroup: true,
+      participants: [person("100", "Me Myself"), person("42", "Alex Example", "Captain")],
+    };
+    expect(communicationSender("Weekend", "Alex: hi", group, "100", true, "unknown")).toEqual({
+      id: "42",
+      name: "Captain",
+      group: "Weekend",
+      photo: false,
+    });
+    // Only a picture known to be the sender's may stand for them.
+    expect(
+      communicationSender("Alex Example", "hi", group, "100", false, "sender", "", true),
+    ).toEqual({ id: "42", name: "Alex Example", group: "Weekend", photo: true });
+  });
+
+  test("an ambiguous preview prefix names nobody, whatever the display shortened", () => {
+    const group = {
+      title: "Weekend",
+      isGroup: true,
+      participants: [
+        person("100", "Me Myself"),
+        person("42", "Alex Example", "Captain: Jr"),
+        person("43", "Captain Smith"),
+      ],
+    };
+    // "Captain: Jr: hi" could be Alex (nickname "Captain: Jr") or Captain Smith.
+    expect(
+      communicationSender("Weekend", "Captain: Jr: hi", group, "100", true, "group"),
+    ).toBeUndefined();
+  });
+
+  test("stays undefined when the sender is not certain", () => {
+    const twins = {
+      title: "",
+      isGroup: false,
+      participants: [person("1", "Alex A"), person("2", "Alex B"), person("100", "Me")],
+    };
+    expect(communicationSender("Alex", "hi", twins, "100", false, "unknown")).toBeUndefined();
+    expect(communicationSender("Alex", "hi", null, "100", false, "unknown")).toBeUndefined();
+    const noId = {
+      title: "",
+      isGroup: false,
+      participants: [{ ...person("", "Alex"), id: undefined }],
+    };
+    expect(communicationSender("Alex", "hi", noId, "100", false, "unknown")).toBeUndefined();
+    const unnamedGroup = { title: "", isGroup: true, participants: [person("42", "Alex Example")] };
+    expect(
+      communicationSender("Alex Example", "hi", unnamedGroup, "100", false, "sender"),
+    ).toBeUndefined();
   });
 });

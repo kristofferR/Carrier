@@ -695,6 +695,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "objc2-intents",
  "objc2-user-notifications",
  "open",
  "serde",
@@ -3816,6 +3817,17 @@ dependencies = [
  "objc2",
  "objc2-core-foundation",
  "objc2-core-graphics",
+]
+
+[[package]]
+name = "objc2-intents"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80fac082e6de12282b24ea745e9707cd374363c7ae0b2f813bf1813cfc289325"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]

@@ -6,8 +6,10 @@
   "bundle": {
     "createUpdaterArtifacts": true,
     "macOS": {
+      "entitlements": "entitlements.release.plist",
       "files": {
-        "PlugIns/Carrier Share.appex": "target/share-extension/Carrier Share.appex"
+        "PlugIns/Carrier Share.appex": "target/share-extension/Carrier Share.appex",
+        "embedded.provisionprofile": "embedded.provisionprofile"
       }
     }
   }
