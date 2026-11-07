@@ -47,6 +47,10 @@ interface CarrierSettings {
   clear_notifications_on_view?: boolean;
   attention_on_message?: boolean;
   hide_names_avatars?: boolean;
+  /** Blur names; absent (null) keeps hide_names_avatars. */
+  hide_names?: boolean | null;
+  /** Blur avatars; absent (null) keeps hide_names_avatars. */
+  hide_avatars?: boolean | null;
   nickname_scope?: "all" | "direct" | "groups" | "off" | null;
   show_nicknames?: boolean;
   nicknames_group_only?: boolean;

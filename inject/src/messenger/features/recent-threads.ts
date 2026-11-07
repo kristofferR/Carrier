@@ -6,6 +6,7 @@
 // unavailable. The list lives in memory only — nothing is persisted to disk.
 import { invoke } from "../bridge";
 import { nicknameMode } from "../lib/nicknames";
+import { hidesNames } from "../lib/privacy";
 import { readRecentThreads } from "../lib/recent-threads";
 import { accountId, SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
 import { chatRows } from "./conversation-actions";
@@ -81,7 +82,7 @@ export function initRecentThreads() {
   let emptySince = 0;
   let pushing = false;
   let pushAgain = false;
-  const hidden = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+  const hidden = () => hidesNames(window.__CARRIER_SETTINGS__);
   // One read at a time; a request made during a read (a settings change, say)
   // runs once it finishes.
   const push = async () => {

@@ -5647,18 +5647,58 @@ ${button.innerHTML}`)
     if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
     return { prefix, colon: !!colon };
   }
+  function locateSpan(texts, from, to) {
+    const locate = (index, atEnd) => {
+      let offset = index;
+      for (let node = 0; node < texts.length; node += 1) {
+        const length = texts[node].length;
+        if (atEnd ? offset <= length : offset < length) return [node, offset];
+        offset -= length;
+      }
+      return [texts.length - 1, texts[texts.length - 1].length];
+    };
+    return { start: locate(from, false), end: locate(to, true) };
+  }
+  function prefixRange(text, prefix) {
+    const lead = text.length - text.trimStart().length;
+    if (!prefix || !text.startsWith(prefix, lead)) return null;
+    return [lead, lead + prefix.length];
+  }
+  var NAME_CHAR = "[\\p{L}\\p{M}\\p{N}_.'-]";
+  var PARTICLE = "(?:van|von|der|den|de|del|della|di|da|du|dos|das|la|le|ten|ter|bin|ibn|al)";
+  var MENTION_RE = new RegExp(
+    `(^|[^\\p{L}\\p{M}\\p{N}_])(@${NAME_CHAR}+(?:[ \\u00a0](?:${PARTICLE}[ \\u00a0])*\\p{Lu}${NAME_CHAR}*){0,3})`,
+    "gu"
+  );
+  function mentionRanges(text) {
+    return [...text.matchAll(MENTION_RE)].map((m) => {
+      const start = m.index + m[1].length;
+      return [start, start + m[2].length];
+    });
+  }
+  function hidesNames(settings) {
+    return (settings?.hide_names ?? settings?.hide_names_avatars) === true;
+  }
+  function hidesAvatars(settings) {
+    return (settings?.hide_avatars ?? settings?.hide_names_avatars) === true;
+  }
 
   // inject/src/messenger/features/hide-names.ts
   var IDENTITY_ATTR = "data-carrier-private-identity";
+  var AVATAR_ATTR = "data-carrier-private-avatar";
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
+  var PREFIX_HIGHLIGHT = "carrier-private-identity";
+  var PREFIX_HOST_ATTR = "data-carrier-private-prefix";
   function initHideNames() {
     const html = document.documentElement;
     let observer = null;
     let pending = false;
     let suppressMutations = false;
-    const on2 = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+    const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+    const on2 = () => namesHidden() || avatarsHidden();
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
@@ -5668,29 +5708,57 @@ ${button.innerHTML}`)
       const cs = getComputedStyle(el);
       return cs.display !== "none" && cs.visibility !== "hidden";
     }
+    function isPicture(el) {
+      if (el.matches("img, svg, image")) return true;
+      return /url\(/.test(getComputedStyle(el).backgroundImage || "");
+    }
     function mark(el) {
-      if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
+      if (!el?.setAttribute) return;
+      want(el, IDENTITY_ATTR);
+      for (const node of [el, ...el.querySelectorAll("*")]) {
+        if (isPicture(node) && node.getBoundingClientRect().width >= 20) markAvatar(node);
+      }
+    }
+    function markAvatar(el) {
+      if (el?.setAttribute) want(el, AVATAR_ATTR);
+    }
+    const MARKER_ATTRS = [IDENTITY_ATTR, AVATAR_ATTR, PREFIX_HOST_ATTR];
+    let wanted = /* @__PURE__ */ new Map();
+    let wantedRanges = [];
+    let appliedRanges = [];
+    function want(el, attr) {
+      let attrs = wanted.get(el);
+      if (!attrs) {
+        attrs = /* @__PURE__ */ new Set();
+        wanted.set(el, attrs);
+      }
+      attrs.add(attr);
+    }
+    const sameRange = (a, b) => a.startContainer === b.startContainer && a.startOffset === b.startOffset && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+    function applyMarkers() {
+      document.querySelectorAll(MARKER_ATTRS.map((attr) => `[${attr}]`).join(", ")).forEach((el) => {
+        const attrs = wanted.get(el);
+        for (const attr of MARKER_ATTRS) {
+          if (!attrs?.has(attr)) el.removeAttribute(attr);
+        }
+      });
+      wanted.forEach((attrs, el) => {
+        attrs.forEach((attr) => {
+          if (!el.hasAttribute(attr)) el.setAttribute(attr, "");
+        });
+      });
+      const highlights = globalThis.CSS?.highlights;
+      const unchanged = wantedRanges.length === appliedRanges.length && wantedRanges.every((range, i) => sameRange(range, appliedRanges[i]));
+      if (highlights && !unchanged) {
+        if (wantedRanges.length) highlights.set(PREFIX_HIGHLIGHT, new Highlight(...wantedRanges));
+        else highlights.delete(PREFIX_HIGHLIGHT);
+      }
+      appliedRanges = wantedRanges;
     }
     function clearMarkers() {
-      document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
-        el.removeAttribute(IDENTITY_ATTR);
-      });
-    }
-    function textLeaves(root) {
-      const out = [];
-      root.querySelectorAll?.(TEXT_SURFACE_SEL).forEach((el) => {
-        if (!visible(el) || el.closest?.('[contenteditable="true"]')) return;
-        if (!textValue(el)) return;
-        for (const child of el.children || []) {
-          if (textValue(child)) return;
-        }
-        out.push(el);
-      });
-      return out.sort((a, b) => {
-        const ar = a.getBoundingClientRect();
-        const br = b.getBoundingClientRect();
-        return ar.y - br.y || ar.x - br.x;
-      });
+      wanted = /* @__PURE__ */ new Map();
+      wantedRanges = [];
+      applyMarkers();
     }
     function textSurfaces(root) {
       const out = [];
@@ -5725,22 +5793,49 @@ ${button.innerHTML}`)
       });
       return count > 0;
     }
-    function markPreviewSenderPrefix(el) {
-      const value = textValue(el);
-      const identity = previewIdentity(value);
-      if (!identity) return false;
-      const candidates = [el, ...textSurfaces(el)].filter((candidate, index, all) => all.indexOf(candidate) === index).filter((candidate) => {
-        const candidateText = textValue(candidate);
-        if (!candidateText) return false;
-        if (candidateText === identity.prefix) return true;
-        if (identity.colon && candidateText === `${identity.prefix}:`) return true;
-        return false;
-      }).sort((a, b) => area(a) - area(b));
-      if (candidates.length) {
-        mark(candidates[0]);
-        return true;
+    function markPreviewNames(el) {
+      const identity = previewIdentity(textValue(el));
+      let prefixDone = !identity;
+      if (identity) {
+        const candidate = [el, ...textSurfaces(el)].filter((candidate2) => {
+          if (candidate2.querySelector(VISUAL_SEL)) return false;
+          const candidateText = textValue(candidate2);
+          return candidateText === identity.prefix || identity.colon && candidateText === `${identity.prefix}:`;
+        }).sort((a, b) => area(a) - area(b))[0];
+        if (candidate) {
+          mark(candidate);
+          prefixDone = true;
+        }
       }
-      mark(el);
+      const nodes = [];
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      const texts = nodes.map((node) => node.data);
+      const joined = texts.join("");
+      const ranges = mentionRanges(joined);
+      if (identity && !prefixDone) {
+        const prefix = prefixRange(joined, identity.prefix);
+        if (prefix) ranges.push(prefix);
+        else ranges.length = 0;
+      }
+      if (!ranges.length) {
+        if (identity && !prefixDone) mark(el);
+        return;
+      }
+      if (!highlightRanges(nodes, texts, ranges)) mark(el);
+    }
+    function highlightRanges(nodes, texts, ranges) {
+      if (!globalThis.CSS?.highlights || typeof Highlight === "undefined") return false;
+      for (const [from, to] of ranges) {
+        const span = locateSpan(texts, from, to);
+        for (const node of nodes.slice(span.start[0], span.end[0] + 1)) {
+          if (node.parentElement) want(node.parentElement, PREFIX_HOST_ATTR);
+        }
+        const range = document.createRange();
+        range.setStart(nodes[span.start[0]], span.start[1]);
+        range.setEnd(nodes[span.end[0]], span.end[1]);
+        wantedRanges.push(range);
+      }
       return true;
     }
     function markConversationRows() {
@@ -5755,7 +5850,7 @@ ${button.innerHTML}`)
           const r = el.getBoundingClientRect();
           const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
           const rightReceipt = r.right > rr.right - 56 && r.width >= 12 && r.width <= 34 && r.height >= 12 && r.height <= 34;
-          if (leftAvatar || rightReceipt) mark(el);
+          if (leftAvatar || rightReceipt) markAvatar(el);
         });
         const surfaces = textSurfaces(row).filter((el) => {
           if (el.getAttribute("aria-hidden") === "true") return false;
@@ -5769,7 +5864,7 @@ ${button.innerHTML}`)
         surfaces.forEach((el) => {
           const r = el.getBoundingClientRect();
           if (Math.abs(r.top - firstLineY) < 4 && r.height <= 24) firstLine.push(el);
-          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewSenderPrefix(el);
+          else if (r.top > firstLineY + 8 && r.height <= 24) markPreviewNames(el);
         });
         markDeepest(firstLine);
       }
@@ -5781,50 +5876,96 @@ ${button.innerHTML}`)
       const mr = main2.getBoundingClientRect();
       const headerBottom = mr.top + 96;
       const actionStart = mr.right - 150;
-      textLeaves(main2).forEach((el) => {
+      const inHeader = (el) => {
         const r = el.getBoundingClientRect();
-        if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart) mark(el);
+        return r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart;
+      };
+      let list = null;
+      for (let a = main2.querySelector('[role="article"]')?.parentElement; a && a !== main2; ) {
+        const overflow = getComputedStyle(a).overflowY;
+        if (overflow === "auto" || overflow === "scroll") {
+          list = a;
+          break;
+        }
+        a = a.parentElement;
+      }
+      const scrolledContent = (el) => Boolean(el.closest('[role="article"]')) || Boolean(list?.contains(el));
+      main2.querySelectorAll(TEXT_SURFACE_SEL).forEach((el) => {
+        if (!inHeader(el) || !visible(el) || el.closest('[contenteditable="true"]')) return;
+        if (!textValue(el) || [...el.children].some((child) => textValue(child))) return;
+        if (scrolledContent(el)) return;
+        mark(el);
       });
       main2.querySelectorAll(VISUAL_SEL).forEach((el) => {
-        if (!visible(el)) return;
+        if (!inHeader(el) || !visible(el) || scrolledContent(el)) return;
         const r = el.getBoundingClientRect();
-        if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
-          mark(el);
-        }
+        if (r.width >= 20 && r.height >= 20) markAvatar(el);
+      });
+    }
+    function hasBareText(el) {
+      return [...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()
+      );
+    }
+    function markMixedProfileLinks(main2) {
+      main2.querySelectorAll(
+        'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
+      ).forEach((link) => {
+        if (!visible(link)) return;
+        const nodes = [link, ...link.querySelectorAll("*")];
+        const pictures = nodes.filter(isPicture);
+        pictures.forEach(markAvatar);
+        if (!textValue(link) || !pictures.length) return;
+        const textBesidePicture = pictures[0] === link || hasBareText(link) || nodes.some((el) => hasBareText(el) && pictures.some((pic) => el.contains(pic)));
+        if (textBesidePicture) mark(link);
       });
     }
     function markThreadMessages(main2) {
       main2.querySelectorAll('[role="article"]').forEach((article) => {
-        article.querySelectorAll("h3, h3 *").forEach((el) => {
+        article.querySelectorAll("h4, h4 *").forEach((el) => {
           if (visible(el) && textValue(el)) mark(el);
         });
         article.querySelectorAll(
-          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]'
+          'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"], a[href^="/"][href$="/"]:not([href*="/messages/"]) [style*="background-image"], a[href*="/profile.php"] [style*="background-image"]'
         ).forEach((el) => {
-          if (visible(el)) mark(el);
-        });
-        textLeaves(article).forEach((el) => {
-          if (/\breplied to\b/i.test(textValue(el))) mark(el);
+          if (!visible(el)) return;
+          if (el.matches('img[referrerpolicy="origin-when-cross-origin"]')) {
+            const r = el.getBoundingClientRect();
+            const square = Math.abs(r.width - r.height) <= 2;
+            if (!square || r.width < 20 || r.width > 64) return;
+          }
+          markAvatar(el);
         });
       });
-      textSurfaces(main2).forEach((el) => {
-        const r = el.getBoundingClientRect();
-        if (r.height <= 32 && r.width <= 420 && /\breplied to\b/i.test(textValue(el))) {
-          mark(el);
+      const walker = document.createTreeWalker(main2, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!/\breplied to\b/i.test(node.data)) continue;
+        let target = null;
+        for (let el = node.parentElement; el && el !== main2; el = el.parentElement) {
+          if (el.closest('[contenteditable="true"]')) break;
+          const r = el.getBoundingClientRect();
+          if (r.height > 32 || r.width > 420) break;
+          target = el;
         }
-      });
+        if (target && visible(target)) mark(target);
+      }
     }
     function scan() {
       suppressMutations = true;
       try {
-        clearMarkers();
-        if (!on2()) return;
-        markConversationRows();
-        const main2 = mainPane();
-        if (main2) {
-          markThreadHeader(main2);
-          markThreadMessages(main2);
+        wanted = /* @__PURE__ */ new Map();
+        wantedRanges = [];
+        if (on2()) {
+          markConversationRows();
+          const main2 = mainPane();
+          if (main2) {
+            markThreadHeader(main2);
+            markThreadMessages(main2);
+            markMixedProfileLinks(main2);
+          }
         }
+        applyMarkers();
       } finally {
         queueMicrotask(() => {
           suppressMutations = false;
@@ -5847,10 +5988,17 @@ ${button.innerHTML}`)
     }
     function start() {
       if (observer) return;
-      observer = new MutationObserver(schedule);
+      observer = new MutationObserver((records) => {
+        if (records.some(
+          (record3) => record3.type !== "characterData" || record3.target.parentElement?.closest(THREAD_ROW_SEL)
+        )) {
+          schedule();
+        }
+      });
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
+        characterData: true,
         attributes: true,
         attributeFilter: ["aria-label", "href", "role", "src", "style"]
       });
@@ -5864,7 +6012,8 @@ ${button.innerHTML}`)
       window.removeEventListener("resize", schedule);
     }
     const apply = () => {
-      html.toggleAttribute("data-carrier-hide-names", on2());
+      html.toggleAttribute("data-carrier-hide-names", namesHidden());
+      html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
       if (on2()) {
         start();
         schedule();
@@ -11091,7 +11240,7 @@ ${text}`)) {
     let emptySince = 0;
     let pushing = false;
     let pushAgain = false;
-    const hidden = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const hidden = () => hidesNames(window.__CARRIER_SETTINGS__);
     const push = async () => {
       if (pushing) {
         pushAgain = true;

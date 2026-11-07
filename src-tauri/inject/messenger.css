@@ -327,26 +327,77 @@ html.__fb-dark-mode[data-carrier-authtext] body a {
 }
 
 /* ----------------------- Hide names & avatars --------------------------- */
-/* `messenger.js` marks identity surfaces with this data attribute so the blur
-   can stay narrow: conversation-list avatars/titles, active-thread header
-   identity, sender labels, reply attribution, and avatar/read-receipt images.
-   Message bodies and conversation-list previews remain readable. */
-html[data-carrier-hide-names] [data-carrier-private-identity] {
+/* `messenger.js` marks identity surfaces with these data attributes so the
+   blur can stay narrow: names (conversation-list titles, the active thread's
+   header, sender labels, reply attribution) and avatars (list and header
+   pictures, in-thread faces, read receipts). Names and avatars are hidden
+   independently (Ref #364). Message bodies and previews remain readable. */
+html[data-carrier-hide-names] [data-carrier-private-identity],
+html[data-carrier-hide-avatars] [data-carrier-private-avatar] {
   -webkit-filter: blur(6px) !important;
   filter: blur(6px) !important;
 }
 
-/* Blur profile links in the main Messenger pane to hide the active thread
-   header name/avatar and any profile-linked in-thread sender avatars without
-   touching message text or media attachments. */
-html[data-carrier-hide-names]
+/* A sender name sharing a text node with the message preview ("Name: hi")
+   has no element to blur, so messenger.js covers just the name with a
+   highlight range: invisible text under a soft shadow that reads as a blur. */
+html[data-carrier-hide-names] ::highlight(carrier-private-identity) {
+  color: transparent;
+  text-shadow: 0 0 7px rgba(128, 128, 128, 0.9);
+}
+/* WebKit paints no highlight on user-select: none text, and an explicit
+   -webkit-text-fill-color outlasts the highlight's color. Messenger sets
+   both on previews, so reset them where a name range sits. */
+html[data-carrier-hide-names] [data-carrier-private-prefix] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-text-fill-color: currentcolor !important;
+}
+
+/* Profile links in the main Messenger pane carry the active thread header's
+   name and picture and in-thread sender faces. With both hidden, blur the
+   whole link; with one, only its text or only its pictures. Message text and
+   media attachments are never touched. */
+html[data-carrier-hide-names][data-carrier-hide-avatars]
   :is(main, [role="main"]) a[href^="/"][href$="/"]:not([href*="/messages/"]),
-html[data-carrier-hide-names]
+html[data-carrier-hide-names][data-carrier-hide-avatars]
   :is(main, [role="main"]) a[href*="/profile.php"] {
   filter: blur(6px) !important;
 }
 
-html[data-carrier-hide-names]
+/* Names only. A link with no picture is all name; in a mixed link, blur
+   every element that neither is nor holds a picture, whatever its tag.
+   Pictures are image elements, inline backgrounds that load an image, and
+   anything messenger.js marked as an avatar (it also detects class-defined
+   backgrounds). A name written straight into a mixed link has no element of
+   its own, so messenger.js marks such links whole. */
+html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]):not(
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  ):not([style*="url("], [data-carrier-private-avatar]),
+html[data-carrier-hide-names]:not([data-carrier-hide-avatars])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
+  :not(img, svg, svg *, image, [style*="url("], [data-carrier-private-avatar]):not(
+    :has(img, svg, image, [style*="url("], [data-carrier-private-avatar])
+  ) {
+  filter: blur(6px) !important;
+}
+
+/* Avatars only: every picture in a profile link, including image
+   backgrounds on the link itself. */
+html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
+  :is(img, svg, image, [style*="url("]),
+html[data-carrier-hide-avatars]:not([data-carrier-hide-names])
+  :is(main, [role="main"])
+  :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])[style*="url("] {
+  filter: blur(6px) !important;
+}
+
+html[data-carrier-hide-avatars]
   :is(main, [role="main"]) img[referrerpolicy="origin-when-cross-origin"][style*="border-radius: 50%"] {
   filter: blur(6px) !important;
 }
@@ -354,7 +405,7 @@ html[data-carrier-hide-names]
 /* Read receipts are tiny avatar images rendered inside the message article,
    separate from sender/profile avatars. Keep this constrained to that 14px
    receipt shape so message media and emoji sprites stay visible. */
-html[data-carrier-hide-names]
+html[data-carrier-hide-avatars]
   :is(main, [role="main"]) [role="article"] img[height="14"][width="14"][tabindex="-1"] {
   filter: blur(6px) !important;
 }
