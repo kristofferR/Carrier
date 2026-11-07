@@ -111,6 +111,14 @@
       .swatch.theme-accent { background: conic-gradient(from 225deg, #2b2d31 0 50%, #d9dadd 50% 100%); }
       .swatch.custom { background: conic-gradient(#e5484d, #f27a1a, #f5c400, #2ea44f, #0f9d9a, #0866ff, #8a3ffc, #e0427a, #e5484d); }
       .look-cols select { margin-top: 10px; max-width: 100%; }
+      .icon-choices { display: flex; gap: 8px; padding: 2px 12px; }
+      .icon-choice {
+        display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 10px;
+        border: 1.5px solid #dadde1; background: transparent; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+      }
+      .icon-choice img { width: 30px; height: 30px; }
+      .icon-choice[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
+      .section-hint { color: #65676b; font-size: 12px; padding: 6px 12px 0; }
       footer {
         padding: 12px 20px; border-top: 1px solid #e4e6eb;
         display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -132,7 +140,7 @@
         .tab { color: #b0b3b8; }
         .tab:hover { background: #3a3b3c; color: #e4e6eb; }
         .tab.active { background: #263a59; color: #5b9bff; }
-        .section-title, .theme-card .by { color: #b0b3b8; }
+        .section-title, .theme-card .by, .section-hint { color: #b0b3b8; }
         .seg { background: #3a3b3c; }
         .seg button { color: #b0b3b8; }
         .seg button[aria-checked="true"] { background: #5a5c60; color: #ffffff; box-shadow: none; }
@@ -143,6 +151,8 @@
         .notice.error { background: #3a2422; border-color: #6b3530; }
         .notice.ok { background: #1e3326; border-color: #2f5a3d; }
         .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #242526, 0 0 0 4px #e4e6eb; }
+        .icon-choice { border-color: #3a3b3c; }
+        .icon-choice[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
       }
     </style>
   </head>
@@ -233,7 +243,7 @@
         { id: "general", label: "General", icon: ICONS.general,
           fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "focus_composer_on_return", "download_behavior"] },
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme_section", "display_heading", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "stop_media_autoplay", "nickname_scope"] },
+          fields: ["theme_section", "app_icon", "display_heading", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "stop_media_autoplay", "nickname_scope"] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
@@ -630,6 +640,38 @@
         return box;
       }
 
+      function appIconSection() {
+        const wrap = el("div");
+        const variant = settings.app_icon_variant || "auto";
+        wrap.append(sectionHead("App icon", labelled("Light or dark icon", segmented(
+          "Light or dark icon",
+          [["auto", "Match theme"], ["light", "Light"], ["dark", "Dark"]],
+          variant,
+          (value) => persist("app_icon_variant", value),
+        ))));
+        const dark = variant === "dark" || (variant === "auto" && pageIsDark());
+        const row = el("div", "icon-choices");
+        row.setAttribute("role", "radiogroup");
+        row.setAttribute("aria-label", "App icon");
+        for (const [style, name] of [["color", "Color"], ["monochrome", "Monochrome"]]) {
+          const b = el("button", "icon-choice");
+          b.type = "button";
+          b.setAttribute("role", "radio");
+          b.setAttribute("aria-checked", String((settings.app_icon_style || "color") === style));
+          const img = document.createElement("img");
+          img.src = `app-icons/${style === "color" ? "color" : "mono"}-${dark ? "dark" : "light"}.png`;
+          img.alt = "";
+          b.append(img, el("span", "", name));
+          b.onclick = () => persist("app_icon_style", style);
+          row.append(b);
+        }
+        wrap.append(row);
+        wrap.append(el("div", "section-hint", IS_LINUX
+          ? "Changes the window icon. Your app launcher keeps the installed icon."
+          : "The unread badge shows on every icon."));
+        return wrap;
+      }
+
       function displayHeading() {
         return sectionHead("Display");
       }
@@ -934,6 +976,7 @@
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
         theme_section: themeSection,
+        app_icon: appIconSection,
         display_heading: displayHeading,
         zoom: zoomRow,
         title_bar: titleBarRow,

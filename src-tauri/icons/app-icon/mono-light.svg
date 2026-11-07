@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Carrier app icon, Monochrome style, light: ink plane on white -->
+  <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#eceef1"/></linearGradient></defs>
+  <g transform="translate(56 56) scale(9.08)">
+    <rect width="100" height="100" rx="22.5" fill="url(#tile)"/>
+    <rect x=".75" y=".75" width="98.5" height="98.5" rx="21.8" fill="none" stroke="#000000" stroke-opacity=".1" stroke-width="1.5"/>
+    <path d="M50.2 60.8 L45.8 84.1 L37.5 66.5 Z" fill="#a3a7ae"/>
+    <path d="M13.7 51.1 L87.2 18.1 L50.2 60.8 Z" fill="#1c1e21"/>
+    <path d="M50.2 60.8 L87.2 18.1 L45.8 84.1 Z" fill="#4a4d53"/>
+  </g>
+</svg>

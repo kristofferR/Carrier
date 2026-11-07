@@ -87,6 +87,10 @@ pub(crate) struct Settings {
     pub(crate) accent_color: String,
     /// Font family for messages and the conversation list; empty = default.
     pub(crate) message_font: String,
+    /// App icon style: "color" or "monochrome".
+    pub(crate) app_icon_style: String,
+    /// Which app icon variant: "auto" (match light/dark), "light" or "dark".
+    pub(crate) app_icon_variant: String,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
@@ -227,6 +231,12 @@ impl Settings {
         if self.message_font.len() > 100 || self.message_font.chars().any(char::is_control) {
             self.message_font = String::new();
         }
+        if !matches!(self.app_icon_style.as_str(), "color" | "monochrome") {
+            self.app_icon_style = "color".into();
+        }
+        if !matches!(self.app_icon_variant.as_str(), "auto" | "light" | "dark") {
+            self.app_icon_variant = "auto".into();
+        }
         // Snap owns updates. Sandboxed autostart needs platform integration
         // rather than writing a host desktop file.
         if snap {
@@ -265,6 +275,8 @@ impl Default for Settings {
             color_theme: crate::themes::DEFAULT_THEME.into(),
             accent_color: String::new(),
             message_font: String::new(),
+            app_icon_style: "color".into(),
+            app_icon_variant: "auto".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
             title_bar: "auto".into(),
@@ -849,6 +861,8 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // no tray to fall back on.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let tray_available = state.tray.lock().unwrap().is_some();
+
+    crate::app_icon::apply_app_icon(app, s);
 
     crate::refresh_unread_indicators(
         app,

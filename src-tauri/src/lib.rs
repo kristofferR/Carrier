@@ -19,6 +19,7 @@ use tauri::{Listener, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 mod actions;
+mod app_icon;
 mod cli;
 mod commands;
 mod custom_css;
@@ -2189,6 +2190,19 @@ pub fn run() {
                 } else {
                     reopen_main_if_needed(app, has_visible_windows);
                 }
+            }
+
+            // Windows: a system light/dark switch reaches the windows that
+            // follow it, and "Match theme" app icons follow along.
+            #[cfg(target_os = "windows")]
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::ThemeChanged(_),
+                ..
+            } = &event
+                && label == "main"
+            {
+                app_icon::apply_app_icon_from_state(app);
             }
 
             // App activation (Cmd+Tab) can make that transparent window key.

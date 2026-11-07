@@ -266,6 +266,7 @@ fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
         // system along with `set_theme(None)`.
         let _ = window.set_background_color(background);
     }
+    crate::app_icon::apply_app_icon_from_state(app);
 }
 
 fn apply_portal_contrast(app: &tauri::AppHandle, contrast: Contrast) {

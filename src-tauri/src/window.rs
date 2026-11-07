@@ -706,6 +706,7 @@ fn build_app_window_with_render_budget(
         builder
     };
     let window = builder.build().inspect(|window| {
+        crate::app_icon::apply_window_icon(window, settings);
         #[cfg(target_os = "linux")]
         {
             crate::linux::configure_messenger_webview_memory(window);
@@ -1289,6 +1290,11 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
     });
     match builder.build() {
         Ok(window) => {
+            {
+                let state = app.state::<AppState>();
+                let s = state.settings.lock().unwrap();
+                crate::app_icon::apply_window_icon(&window, &s);
+            }
             #[cfg(target_os = "macos")]
             drop(window);
 
