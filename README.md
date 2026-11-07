@@ -95,7 +95,7 @@ cryptographically verified updates.
 
 - Native notifications with sender avatars and optional hidden previews
 - Notification sound and mute controls
-- Unread count on the Dock or taskbar icon
+- Unread count on the Dock or taskbar icon, or just a dot for privacy
 - Tray support, start to tray, start on login, and hide on close
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
 - Menu-bar-only mode on macOS

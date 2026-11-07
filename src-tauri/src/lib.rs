@@ -104,10 +104,12 @@ pub(crate) fn refresh_unread_indicators(
         0
     };
     let state = app.state::<AppState>();
-    let tooltip = if unread > 0 {
-        format!("{APP_TITLE} — {unread} unread")
-    } else {
-        APP_TITLE.to_string()
+    // Dot mode says that something is unread, never how much.
+    let dot = settings.badge_mode == "dot";
+    let tooltip = match (unread > 0, dot) {
+        (false, _) => APP_TITLE.to_string(),
+        (true, true) => format!("{APP_TITLE} — unread messages"),
+        (true, false) => format!("{APP_TITLE} — {unread} unread"),
     };
     // Linux: the KSNI handle never touches the tao main thread (and owns the
     // service, so it must not be cloned); working under the guard is safe.
@@ -116,7 +118,7 @@ pub(crate) fn refresh_unread_indicators(
         let tray = state.tray.lock().unwrap();
         if let Some(tray) = tray.as_ref() {
             let _ = tray.set_tooltip(Some(&tooltip));
-            let _ = tray.set_unread(unread);
+            let _ = tray.set_unread(tray_badge::UnreadBucket::for_badge(unread, dot));
         }
     }
     // macOS/Windows: tray setters are blocking dispatches to the main thread.
@@ -140,19 +142,19 @@ pub(crate) fn refresh_unread_indicators(
     // LauncherEntry works independently of the tray and is honored by KDE's
     // task manager plus Ubuntu Dock/Dash-to-Dock.
     #[cfg(target_os = "linux")]
-    tray_badge::update_unity_launcher_count(unread);
+    tray_badge::update_unity_launcher_count(if dot { 0 } else { unread });
 
     // Windows has no tray-managed count; the unread total rides the taskbar
     // button as an overlay icon on every Messenger window.
     #[cfg(target_os = "windows")]
-    update_windows_overlay_badges(app, unread);
+    update_windows_overlay_badges(app, tray_badge::UnreadBucket::for_badge(unread, dot));
 }
 
 /// Paint (or clear) the Windows taskbar overlay badge on every Messenger window.
 /// The Settings dialog is skipped — it carries its own taskbar button and should
 /// never show an unread count.
 #[cfg(target_os = "windows")]
-fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
+fn update_windows_overlay_badges(app: &tauri::AppHandle, bucket: tray_badge::UnreadBucket) {
     use tauri::image::Image;
     use tray_badge::{OVERLAY_BADGE_SIZE, UnreadBucket, overlay_badge_rgba};
 
@@ -161,11 +163,10 @@ fn update_windows_overlay_badges(app: &tauri::AppHandle, unread: i64) {
     // idempotent, so a theme-rebuild or a freshly opened window self-heals on
     // the page's next unread re-emit without any extra plumbing.
     static OVERLAY_CACHE: Mutex<Option<(UnreadBucket, Option<Vec<u8>>)>> = Mutex::new(None);
-    let bucket = UnreadBucket::from_count(unread);
     let rgba = {
         let mut cache = OVERLAY_CACHE.lock().unwrap();
         if cache.as_ref().map(|(cached, _)| *cached) != Some(bucket) {
-            *cache = Some((bucket, overlay_badge_rgba(unread)));
+            *cache = Some((bucket, overlay_badge_rgba(bucket)));
         }
         cache.as_ref().unwrap().1.clone()
     };
