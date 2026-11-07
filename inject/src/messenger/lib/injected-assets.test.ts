@@ -110,7 +110,7 @@ describe("hand-maintained injected assets", () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain(
-      'fields: ["block_typing_indicator", "hide_names_avatars", "block_telemetry", "strip_link_tracking"]',
+      'fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"]',
     );
   });
 

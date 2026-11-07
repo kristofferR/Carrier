@@ -4934,9 +4934,16 @@ ${button.innerHTML}`)
     if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
     return { prefix, colon: !!colon };
   }
+  function hidesNames(settings) {
+    return (settings?.hide_names ?? settings?.hide_names_avatars) === true;
+  }
+  function hidesAvatars(settings) {
+    return (settings?.hide_avatars ?? settings?.hide_names_avatars) === true;
+  }
 
   // inject/src/messenger/features/hide-names.ts
   var IDENTITY_ATTR = "data-carrier-private-identity";
+  var AVATAR_ATTR = "data-carrier-private-avatar";
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -4945,7 +4952,9 @@ ${button.innerHTML}`)
     let observer = null;
     let pending = false;
     let suppressMutations = false;
-    const on2 = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+    const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+    const on2 = () => namesHidden() || avatarsHidden();
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
@@ -4958,9 +4967,13 @@ ${button.innerHTML}`)
     function mark(el) {
       if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
     }
+    function markAvatar(el) {
+      if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
+    }
     function clearMarkers() {
-      document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
+      document.querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}]`).forEach((el) => {
         el.removeAttribute(IDENTITY_ATTR);
+        el.removeAttribute(AVATAR_ATTR);
       });
     }
     function textLeaves(root) {
@@ -5042,7 +5055,7 @@ ${button.innerHTML}`)
           const r = el.getBoundingClientRect();
           const leftAvatar = r.left < rr.left + 80 && r.width >= 20 && r.height >= 20;
           const rightReceipt = r.right > rr.right - 56 && r.width >= 12 && r.width <= 34 && r.height >= 12 && r.height <= 34;
-          if (leftAvatar || rightReceipt) mark(el);
+          if (leftAvatar || rightReceipt) markAvatar(el);
         });
         const surfaces = textSurfaces(row).filter((el) => {
           if (el.getAttribute("aria-hidden") === "true") return false;
@@ -5076,7 +5089,7 @@ ${button.innerHTML}`)
         if (!visible(el)) return;
         const r = el.getBoundingClientRect();
         if (r.top >= mr.top && r.bottom <= headerBottom && r.left < actionStart && r.width >= 20 && r.height >= 20) {
-          mark(el);
+          markAvatar(el);
         }
       });
     }
@@ -5088,7 +5101,7 @@ ${button.innerHTML}`)
         article.querySelectorAll(
           'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]'
         ).forEach((el) => {
-          if (visible(el)) mark(el);
+          if (visible(el)) markAvatar(el);
         });
         textLeaves(article).forEach((el) => {
           if (/\breplied to\b/i.test(textValue(el))) mark(el);
@@ -5151,7 +5164,8 @@ ${button.innerHTML}`)
       window.removeEventListener("resize", schedule);
     }
     const apply = () => {
-      html.toggleAttribute("data-carrier-hide-names", on2());
+      html.toggleAttribute("data-carrier-hide-names", namesHidden());
+      html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
       if (on2()) {
         start();
         schedule();
@@ -10012,7 +10026,7 @@ ${text}`)) {
     let lastSent = null;
     let emptySince = 0;
     const push = () => {
-      const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+      const hide = hidesNames(window.__CARRIER_SETTINGS__);
       const threads = hide ? [] : scan();
       if (threads === null) return;
       if (!hide && threads.length === 0) {

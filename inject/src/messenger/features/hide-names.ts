@@ -1,11 +1,14 @@
 /* ----------------------- Hide names & avatars ------------------------- */
 // Toggle marker attributes the injected CSS keys off of to blur contact
-// names and avatars (Settings / View ▸ Hide Names & Avatars / Cmd+Shift+H).
+// names and avatars (Settings ▸ Privacy, View ▸ Hide Names and Avatars,
+// Cmd+Shift+H). Names and avatars are marked separately so either can be
+// hidden alone (Ref #364).
 // Facebook's generated class names churn, so this keeps the selectors shallow
 // and marks identity surfaces by stable roles, links, and layout shape.
-import { isMetaText, previewIdentity } from "../lib/privacy";
+import { hidesAvatars, hidesNames, isMetaText, previewIdentity } from "../lib/privacy";
 
 const IDENTITY_ATTR = "data-carrier-private-identity";
+const AVATAR_ATTR = "data-carrier-private-avatar";
 const THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
 const TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
 const VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
@@ -16,7 +19,9 @@ export function initHideNames() {
   let pending = false;
   let suppressMutations = false;
 
-  const on = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+  const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+  const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+  const on = () => namesHidden() || avatarsHidden();
 
   function textValue(el: Element | null | undefined) {
     return (el?.textContent || "").replace(/\s+/g, " ").trim();
@@ -29,13 +34,20 @@ export function initHideNames() {
     return cs.display !== "none" && cs.visibility !== "hidden";
   }
 
+  /** A name or other identifying text. */
   function mark(el: Element | null | undefined) {
     if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
   }
 
+  /** An avatar, group picture or read-receipt face. */
+  function markAvatar(el: Element | null | undefined) {
+    if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
+  }
+
   function clearMarkers() {
-    document.querySelectorAll(`[${IDENTITY_ATTR}]`).forEach((el) => {
+    document.querySelectorAll(`[${IDENTITY_ATTR}], [${AVATAR_ATTR}]`).forEach((el) => {
       el.removeAttribute(IDENTITY_ATTR);
+      el.removeAttribute(AVATAR_ATTR);
     });
   }
 
@@ -141,7 +153,7 @@ export function initHideNames() {
           r.width <= 34 &&
           r.height >= 12 &&
           r.height <= 34;
-        if (leftAvatar || rightReceipt) mark(el);
+        if (leftAvatar || rightReceipt) markAvatar(el);
       });
 
       const surfaces = textSurfaces(row).filter((el) => {
@@ -187,7 +199,7 @@ export function initHideNames() {
         r.width >= 20 &&
         r.height >= 20
       ) {
-        mark(el);
+        markAvatar(el);
       }
     });
   }
@@ -203,7 +215,7 @@ export function initHideNames() {
           'img[referrerpolicy="origin-when-cross-origin"], img[height="14"][width="14"][tabindex="-1"]',
         )
         .forEach((el) => {
-          if (visible(el)) mark(el);
+          if (visible(el)) markAvatar(el);
         });
 
       textLeaves(article).forEach((el) => {
@@ -279,7 +291,8 @@ export function initHideNames() {
   }
 
   const apply = () => {
-    html.toggleAttribute("data-carrier-hide-names", on());
+    html.toggleAttribute("data-carrier-hide-names", namesHidden());
+    html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
     if (on()) {
       start();
       schedule();

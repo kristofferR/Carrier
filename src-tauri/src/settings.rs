@@ -114,7 +114,13 @@ pub(crate) struct Settings {
     /// corresponding Windows taskbar behavior.
     pub(crate) attention_on_message: bool,
     /// Blur contact names and avatars (for screen-sharing / public spaces).
+    /// The combined switch from before names and avatars were separate; the
+    /// two settings below win once set.
     pub(crate) hide_names_avatars: bool,
+    /// Blur contact names. None keeps `hide_names_avatars`.
+    pub(crate) hide_names: Option<bool>,
+    /// Blur avatars and read-receipt faces. None keeps `hide_names_avatars`.
+    pub(crate) hide_avatars: Option<bool>,
     /// Explicit scope takes precedence; None retains the legacy two-toggle preference.
     #[serde(deserialize_with = "deserialize_nickname_scope")]
     pub(crate) nickname_scope: Option<NicknameScope>,
@@ -241,6 +247,8 @@ impl Default for Settings {
             clear_notifications_on_view: true,
             attention_on_message: false,
             hide_names_avatars: false,
+            hide_names: None,
+            hide_avatars: None,
             nickname_scope: None,
             show_nicknames: true,
             nicknames_group_only: false,
@@ -255,6 +263,27 @@ impl Default for Settings {
             download_behavior: "downloads".into(),
             hold_failures: false,
         }
+    }
+}
+
+impl Settings {
+    /// Contact names are blurred (Ref #364).
+    pub(crate) fn hides_names(&self) -> bool {
+        self.hide_names.unwrap_or(self.hide_names_avatars)
+    }
+
+    /// Avatars are blurred (Ref #364).
+    pub(crate) fn hides_avatars(&self) -> bool {
+        self.hide_avatars.unwrap_or(self.hide_names_avatars)
+    }
+
+    /// The quick toggle (View menu, Cmd/Ctrl+Shift+H): reveal everything if
+    /// anything is hidden, otherwise hide both.
+    pub(crate) fn toggle_hide_identity(&mut self) {
+        let hide = !(self.hides_names() || self.hides_avatars());
+        self.hide_names = Some(hide);
+        self.hide_avatars = Some(hide);
+        self.hide_names_avatars = hide;
     }
 }
 
@@ -1082,6 +1111,27 @@ mod tests {
         // Existing installs keep Messenger's normal typing behavior.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(!s.block_typing_indicator);
+    }
+
+    #[test]
+    fn hide_names_and_avatars_split_keeps_the_legacy_switch_until_set() {
+        let legacy: Settings = serde_json::from_str(r#"{"hide_names_avatars":true}"#).unwrap();
+        assert!(legacy.hides_names() && legacy.hides_avatars());
+        let split: Settings =
+            serde_json::from_str(r#"{"hide_names_avatars":true,"hide_avatars":false}"#).unwrap();
+        assert!(split.hides_names() && !split.hides_avatars());
+
+        let mut s = split;
+        s.toggle_hide_identity();
+        assert!(
+            !s.hides_names() && !s.hides_avatars(),
+            "anything hidden: reveal all"
+        );
+        s.toggle_hide_identity();
+        assert!(
+            s.hides_names() && s.hides_avatars(),
+            "nothing hidden: hide both"
+        );
     }
 
     #[test]

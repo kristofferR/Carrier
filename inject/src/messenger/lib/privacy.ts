@@ -33,3 +33,19 @@ export function previewIdentity(value: string): { prefix: string; colon: boolean
   if (/[:;!?]/.test(prefix) || /^\d+(?:[ .-]\d+)*$/.test(prefix)) return null;
   return { prefix, colon: !!colon };
 }
+
+type IdentitySettings = {
+  hide_names_avatars?: boolean;
+  hide_names?: boolean | null;
+  hide_avatars?: boolean | null;
+};
+
+/** Contact names are blurred (Ref #364); older installs keep the combined switch. */
+export function hidesNames(settings: IdentitySettings | null | undefined): boolean {
+  return (settings?.hide_names ?? settings?.hide_names_avatars) === true;
+}
+
+/** Avatars are blurred (Ref #364); older installs keep the combined switch. */
+export function hidesAvatars(settings: IdentitySettings | null | undefined): boolean {
+  return (settings?.hide_avatars ?? settings?.hide_names_avatars) === true;
+}

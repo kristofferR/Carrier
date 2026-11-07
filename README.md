@@ -107,7 +107,7 @@ cryptographically verified updates.
 - Forced light or dark theme, or follow the operating system
 - Adjustable and persistent page zoom
 - Optional system emoji instead of Facebook's emoji sprites
-- Hide names and avatars for screen sharing or working in public
+- Hide names, avatars or both for screen sharing or working in public
 - Optional top application menu on Windows and Linux
 
 ### Messenger tools
