@@ -921,8 +921,8 @@ fn context_menu_action(id: &str) -> Option<(&str, &str)> {
 // Recent conversations (Dock / tray menu)
 // ---------------------------------------------------------------------------
 
-/// One entry of the recent-conversations list the page scrapes from the chat
-/// list and pushes over `carrier:recent-threads` (see inject/messenger.js).
+/// One entry of the recent-conversations list the page reads from Messenger's
+/// database (or the chat list) and pushes over `carrier:recent-threads`.
 /// Held in memory only; conversation names/ids are never written to disk.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct RecentThread {

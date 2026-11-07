@@ -7,17 +7,11 @@
  * Idea from fMess (github.com/toanbku/fmess, MIT).
  */
 
+import { readMessengerDatabase } from "./messenger-db";
+
 export interface ThreadState {
   unread: boolean;
   muted: boolean;
-}
-
-type Load = (name: string) => unknown;
-
-interface ThreadReaderModules {
-  db: { tables: { threads: { get(key: unknown): Promise<unknown> } } };
-  i64: { of_string(value: string): unknown; to_string?(value: unknown): unknown };
-  isThreadUnreadForViewer: (thread: unknown) => unknown;
 }
 
 /** True/false for a readable mute expiry; null when the value is not understood. */
@@ -42,63 +36,43 @@ export function muteIsActive(
   return value === -1n || value > BigInt(Math.floor(now));
 }
 
-async function loadModules(load: Load): Promise<ThreadReaderModules> {
-  const singleton = load("LSDatabaseSingleton") as { LSDatabaseSingleton: Promise<unknown> };
-  const db = (await singleton.LSDatabaseSingleton) as ThreadReaderModules["db"];
-  const i64 = load("I64") as ThreadReaderModules["i64"];
-  const { isThreadUnreadForViewer } = load("MWPIsThreadUnread") as {
-    isThreadUnreadForViewer: ThreadReaderModules["isThreadUnreadForViewer"];
-  };
-  if (
-    typeof db?.tables?.threads?.get !== "function" ||
-    typeof i64?.of_string !== "function" ||
-    typeof isThreadUnreadForViewer !== "function"
-  ) {
-    throw new Error("Messenger thread APIs changed");
-  }
-  return { db, i64, isThreadUnreadForViewer };
-}
-
 /**
  * Reads the given chats' state. Chats missing from the database, or whose
  * fields are not understood, are left out so the caller keeps its own
  * evidence for them. Null when the database or its APIs are unavailable.
  * Never writes to Messenger.
  */
-export async function readThreadStates(
+export function readThreadStates(
   ids: readonly string[],
   load: unknown,
   now: number,
   timeoutMs = 750,
 ): Promise<Map<string, ThreadState> | null> {
-  if (typeof load !== "function") return null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const read = async () => {
-    const { db, i64, isThreadUnreadForViewer } = await loadModules(load as Load);
-    const states = new Map<string, ThreadState>();
-    for (const id of ids) {
-      if (!/^\d+$/.test(id)) continue;
-      const thread = await db.tables.threads.get(i64.of_string(id));
-      if (!thread || typeof thread !== "object") continue;
-      const unread = isThreadUnreadForViewer(thread);
-      const muted = muteIsActive(
-        (thread as { muteExpireTimeMs?: unknown }).muteExpireTimeMs,
-        now,
-        i64.to_string?.bind(i64),
-      );
-      if (typeof unread !== "boolean" || muted === null) continue;
-      states.set(id, { unread, muted });
-    }
-    return states;
-  };
-  try {
-    return await Promise.race([
-      read().catch(() => null),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return readMessengerDatabase(
+    load,
+    async ({ db, i64, load }) => {
+      const { isThreadUnreadForViewer } = load("MWPIsThreadUnread") as {
+        isThreadUnreadForViewer?: (thread: unknown) => unknown;
+      };
+      if (typeof isThreadUnreadForViewer !== "function") {
+        throw new Error("Messenger thread APIs changed");
+      }
+      const states = new Map<string, ThreadState>();
+      for (const id of ids) {
+        if (!/^\d+$/.test(id)) continue;
+        const thread = await db.tables.threads.get(i64.of_string(id));
+        if (!thread || typeof thread !== "object") continue;
+        const unread = isThreadUnreadForViewer(thread);
+        const muted = muteIsActive(
+          (thread as { muteExpireTimeMs?: unknown }).muteExpireTimeMs,
+          now,
+          i64.to_string?.bind(i64),
+        );
+        if (typeof unread !== "boolean" || muted === null) continue;
+        states.set(id, { unread, muted });
+      }
+      return states;
+    },
+    timeoutMs,
+  );
 }

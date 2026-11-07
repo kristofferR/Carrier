@@ -10943,6 +10943,84 @@ ${text}`)) {
     };
   }
 
+  // inject/src/messenger/lib/messenger-db.ts
+  async function readMessengerDatabase(load, read, timeoutMs = 750) {
+    if (typeof load !== "function") return null;
+    const run = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function") {
+        throw new Error("Messenger database APIs changed");
+      }
+      return read({ db, i64, load });
+    };
+    let timer;
+    try {
+      return await Promise.race([
+        run().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/lib/recent-threads.ts
+  var MAX_NAME_CHARS = 60;
+  function conversationTitle(names2, viewer, mode) {
+    const nicknames = showNicknames(mode, names2.isGroup);
+    const others = names2.participants.filter((person) => person.id !== viewer);
+    if (!names2.isGroup) {
+      const [person, extra] = others;
+      return person && !extra ? nicknames && person.nickname || person.name : "";
+    }
+    if (names2.title.trim()) return names2.title;
+    return others.map((person) => nicknames && person.nickname || participantFirstName(person)).filter(Boolean).join(", ");
+  }
+  function readRecentThreads(load, options, timeoutMs = 2e3) {
+    const { viewer, mode, limit, fallbackName } = options;
+    return readMessengerDatabase(
+      load,
+      async ({ db, i64, load: load2 }) => {
+        const q = load2("ReQL");
+        const types = load2("LSMessagingThreadTypeUtil");
+        if (typeof q?.toArrayAsync !== "function" || typeof types?.isMessengerOrE2EEInbox !== "function" || typeof types.isArmadilloSecure !== "function" || typeof types.isGroup !== "function" || typeof i64.to_string !== "function") {
+          throw new Error("Messenger thread APIs changed");
+        }
+        const rows = await q.toArrayAsync(
+          q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(limit * 4)
+        );
+        if (!Array.isArray(rows)) throw new Error("Messenger thread APIs changed");
+        const out = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const row of rows) {
+          if (out.length >= limit) break;
+          if (!row || typeof row !== "object") continue;
+          const thread2 = row;
+          if (types.isMessengerOrE2EEInbox(thread2.folderName) !== true) continue;
+          if (thread2.isHidden === true && types.isArmadilloSecure(thread2.threadType) !== true)
+            continue;
+          const id = i64.to_string(thread2.threadKey);
+          if (typeof id !== "string" || !/^\d+$/.test(id) || seen.has(id)) continue;
+          let name = types.isGroup(thread2.threadType) === true && typeof thread2.threadName === "string" ? thread2.threadName.trim() : "";
+          if (!name) {
+            const names2 = await readConversationNotificationNames(id, load2);
+            name = names2 ? conversationTitle(names2, viewer, mode).trim() : "";
+          }
+          name || (name = fallbackName?.(id) ?? "");
+          if (!name) continue;
+          seen.add(id);
+          out.push({ name: name.slice(0, MAX_NAME_CHARS), href: `/t/${id}/` });
+        }
+        return out;
+      },
+      timeoutMs
+    );
+  }
+
   // inject/src/messenger/features/recent-threads.ts
   function initRecentThreads() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -10964,6 +11042,23 @@ ${text}`)) {
       }
       return false;
     };
+    const rowNames = () => {
+      const names2 = /* @__PURE__ */ new Map();
+      for (const a of chatRows()) {
+        const id = threadIdFromHref(a.getAttribute("href"));
+        if (id && !names2.has(id)) names2.set(id, rowName(a));
+      }
+      return names2;
+    };
+    const readDatabase = (viewer) => {
+      let names2;
+      return readRecentThreads(window.require, {
+        viewer,
+        mode: nicknameMode(window.__CARRIER_SETTINGS__),
+        limit: MAX_THREADS,
+        fallbackName: (id) => (names2 ?? (names2 = rowNames())).get(id) ?? ""
+      });
+    };
     const scan = () => {
       const rows = chatRows();
       if (chatListScrolledFromTop(rows)) return null;
@@ -10982,11 +11077,31 @@ ${text}`)) {
     };
     let lastSent = null;
     let emptySince = 0;
-    const push = () => {
-      const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
-      const threads = hide ? [] : scan();
+    let pushing = false;
+    let pushAgain = false;
+    const hidden = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const push = async () => {
+      if (pushing) {
+        pushAgain = true;
+        return;
+      }
+      pushing = true;
+      try {
+        do {
+          pushAgain = false;
+          await send();
+        } while (pushAgain);
+      } finally {
+        pushing = false;
+      }
+    };
+    const send = async () => {
+      const viewer = accountId(document.cookie);
+      let threads = !viewer || hidden() ? [] : await readDatabase(viewer) ?? scan();
+      const clear = !viewer || hidden();
+      if (clear) threads = [];
       if (threads === null) return;
-      if (!hide && threads.length === 0) {
+      if (!clear && threads.length === 0) {
         const now = Date.now();
         if (!emptySince) emptySince = now;
         if (now - emptySince < EMPTY_GRACE_MS) return;
@@ -12654,47 +12769,32 @@ ${text}`)) {
     }
     return value === -1n || value > BigInt(Math.floor(now));
   }
-  async function loadModules(load) {
-    const singleton = load("LSDatabaseSingleton");
-    const db = await singleton.LSDatabaseSingleton;
-    const i64 = load("I64");
-    const { isThreadUnreadForViewer } = load("MWPIsThreadUnread");
-    if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function" || typeof isThreadUnreadForViewer !== "function") {
-      throw new Error("Messenger thread APIs changed");
-    }
-    return { db, i64, isThreadUnreadForViewer };
-  }
-  async function readThreadStates(ids, load, now, timeoutMs = 750) {
-    if (typeof load !== "function") return null;
-    let timer;
-    const read = async () => {
-      const { db, i64, isThreadUnreadForViewer } = await loadModules(load);
-      const states = /* @__PURE__ */ new Map();
-      for (const id of ids) {
-        if (!/^\d+$/.test(id)) continue;
-        const thread2 = await db.tables.threads.get(i64.of_string(id));
-        if (!thread2 || typeof thread2 !== "object") continue;
-        const unread = isThreadUnreadForViewer(thread2);
-        const muted = muteIsActive(
-          thread2.muteExpireTimeMs,
-          now,
-          i64.to_string?.bind(i64)
-        );
-        if (typeof unread !== "boolean" || muted === null) continue;
-        states.set(id, { unread, muted });
-      }
-      return states;
-    };
-    try {
-      return await Promise.race([
-        read().catch(() => null),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(null), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
+  function readThreadStates(ids, load, now, timeoutMs = 750) {
+    return readMessengerDatabase(
+      load,
+      async ({ db, i64, load: load2 }) => {
+        const { isThreadUnreadForViewer } = load2("MWPIsThreadUnread");
+        if (typeof isThreadUnreadForViewer !== "function") {
+          throw new Error("Messenger thread APIs changed");
+        }
+        const states = /* @__PURE__ */ new Map();
+        for (const id of ids) {
+          if (!/^\d+$/.test(id)) continue;
+          const thread2 = await db.tables.threads.get(i64.of_string(id));
+          if (!thread2 || typeof thread2 !== "object") continue;
+          const unread = isThreadUnreadForViewer(thread2);
+          const muted = muteIsActive(
+            thread2.muteExpireTimeMs,
+            now,
+            i64.to_string?.bind(i64)
+          );
+          if (typeof unread !== "boolean" || muted === null) continue;
+          states.set(id, { unread, muted });
+        }
+        return states;
+      },
+      timeoutMs
+    );
   }
 
   // inject/src/messenger/features/unread-badge.ts
