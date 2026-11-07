@@ -35,6 +35,32 @@ use crate::tray::show_main_with_activation_token;
 #[cfg(target_os = "linux")]
 mod portal;
 
+/// The page's resolved sender of a message notification (Ref #366). Only
+/// macOS presents it so far.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct NotifySender {
+    /// Messenger participant id.
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    /// The group conversation's name; empty for a one-to-one chat.
+    #[serde(default)]
+    group: String,
+}
+
+impl NotifySender {
+    /// A stable identity unique to this account's participant, or None when
+    /// the page could not resolve one.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    fn identifier(&self, account: &str) -> Option<String> {
+        let digits = |value: &str| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit());
+        (digits(&self.id) && digits(account) && !self.name.trim().is_empty())
+            .then(|| format!("messenger:{account}:{}", self.id))
+    }
+}
+
 /// A new-message notification request from the page (the `carrier:notify` event).
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
 /// preview (`body`), and the sender's avatar URL; the injected bridge forwards
@@ -65,6 +91,11 @@ pub(crate) struct NotifyMsg {
     /// Kept native-side so notification clicks still work after a page reload.
     #[serde(default)]
     thread_path: String,
+    /// Who sent the message, when the page resolved them from Messenger's
+    /// participants: a communication notification on macOS (Ref #366).
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    sender: Option<NotifySender>,
     /// Messenger's UI language is English. Older page bundles omit it.
     #[serde(default)]
     english_ui: bool,
@@ -2468,14 +2499,25 @@ pub(crate) fn show_message_notification(
         // own handle, so `app` isn't needed here. The avatar temp file is read
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
-        // A message's sender becomes a communication notification (their
-        // face replaces Carrier's icon), except with hidden previews.
+        // A resolved sender becomes a communication notification (their face
+        // replaces Carrier's icon), except with hidden previews.
+        let sender_identifier = msg
+            .sender
+            .as_ref()
+            .filter(|_| !hide_preview)
+            .and_then(|sender| sender.identifier(&msg.account));
         let sender =
-            (!hide_preview && !title.is_empty()).then(|| crate::macos::notifications::MacSender {
-                name: &title,
-                avatar: avatar.as_deref(),
-                group_name: (!subtitle.is_empty()).then_some(subtitle.as_str()),
-            });
+            msg.sender
+                .as_ref()
+                .zip(sender_identifier.as_deref())
+                .map(
+                    |(sender, identifier)| crate::macos::notifications::MacSender {
+                        identifier,
+                        name: sender.name.trim(),
+                        avatar: avatar.as_deref(),
+                        group_name: Some(sender.group.trim()).filter(|group| !group.is_empty()),
+                    },
+                );
         deliver_notification_macos(
             &title,
             &body,
@@ -2950,6 +2992,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn page_sender_identity_needs_a_participant_and_account() {
+        let sender = NotifySender {
+            id: "42".into(),
+            name: "Alex".into(),
+            group: String::new(),
+        };
+        assert_eq!(
+            sender.identifier("100").as_deref(),
+            Some("messenger:100:42")
+        );
+        assert_eq!(sender.identifier(""), None);
+        let unresolved = NotifySender {
+            id: String::new(),
+            ..sender.clone()
+        };
+        assert_eq!(unresolved.identifier("100"), None);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_notifications_use_a_running_daemon_without_an_activation_file() {
@@ -3218,6 +3279,7 @@ mod tests {
             image: String::new(),
             dedupe_key: dedupe_key.into(),
             thread_path: String::new(),
+            sender: None,
             english_ui: false,
             match_body: String::new(),
             account: String::new(),
