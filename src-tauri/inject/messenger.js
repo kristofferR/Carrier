@@ -5660,6 +5660,7 @@ ${button.innerHTML}`)
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
+  var BACKGROUND_SEL = '[style*="background-image"]';
   function initHideNames() {
     const html = document.documentElement;
     let observer = null;
@@ -5678,7 +5679,10 @@ ${button.innerHTML}`)
       return cs.display !== "none" && cs.visibility !== "hidden";
     }
     function mark(el) {
-      if (el?.setAttribute) el.setAttribute(IDENTITY_ATTR, "");
+      if (!el?.setAttribute) return;
+      el.setAttribute(IDENTITY_ATTR, "");
+      if (el.matches(BACKGROUND_SEL)) markAvatar(el);
+      el.querySelectorAll(VISUAL_SEL).forEach(markAvatar);
     }
     function markAvatar(el) {
       if (el?.setAttribute) el.setAttribute(AVATAR_ATTR, "");
@@ -5806,15 +5810,22 @@ ${button.innerHTML}`)
         }
       });
     }
+    function hasBareText(el) {
+      return [...el.childNodes].some(
+        (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()
+      );
+    }
     function markMixedProfileLinks(main2) {
       main2.querySelectorAll(
         'a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"]'
       ).forEach((link) => {
-        if (!visible(link)) return;
-        const bareText = [...link.childNodes].some(
-          (node) => node.nodeType === Node.TEXT_NODE && (node.textContent || "").trim()
+        if (!visible(link) || !textValue(link)) return;
+        const selfPicture = link.matches(BACKGROUND_SEL);
+        if (!selfPicture && !link.querySelector(VISUAL_SEL)) return;
+        const textBesidePicture = selfPicture || hasBareText(link) || [...link.querySelectorAll("*")].some(
+          (el) => hasBareText(el) && (el.matches(BACKGROUND_SEL) || !!el.querySelector(VISUAL_SEL))
         );
-        if (bareText && link.querySelector(VISUAL_SEL)) mark(link);
+        if (textBesidePicture) mark(link);
       });
     }
     function markThreadMessages(main2) {
