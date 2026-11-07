@@ -45,6 +45,10 @@ function pageAction(name: string, run: Run) {
     // Native passes what is left of its acknowledgement wait: never finish
     // after it has reported failure.
     const budget = Math.min(Number(budgetMs) || 0, BUDGET_MS);
+    if (budget <= 0) {
+      void report(false);
+      return;
+    }
     const deadline = Date.now() + budget;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void Promise.race([
@@ -66,13 +70,14 @@ export function initNotificationActions() {
   window.__carrierMarkRead = pageAction("mark-read", (load, thread, _target, deadline) =>
     markThreadRead(load, thread, deadline),
   );
-  window.__carrierQuickReact = pageAction("react", async (load, thread, target) =>
+  window.__carrierQuickReact = pageAction("react", async (load, thread, target, deadline) =>
     target.message && target.reaction
       ? reactToMessage(load, {
           threadId: thread,
           messageId: target.message,
           account: target.account,
           reaction: target.reaction,
+          deadline,
         })
       : "no-message",
   );

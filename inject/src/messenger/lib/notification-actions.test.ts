@@ -72,7 +72,13 @@ function harness({ secure = false, v2 = false } = {}) {
   return { calls, threads, reactions, modules, load };
 }
 
-const request = { threadId: "123", messageId: "mid.$a", account: "42", reaction: "👍" };
+const request = {
+  threadId: "123",
+  messageId: "mid.$a",
+  account: "42",
+  reaction: "👍",
+  deadline: Number.MAX_SAFE_INTEGER,
+};
 
 describe("markThreadRead", () => {
   test("marks the conversation read through Messenger and confirms it", async () => {
@@ -81,11 +87,28 @@ describe("markThreadRead", () => {
     expect(h.calls).toEqual([{ name: "markRead", args: ["123"] }]);
   });
 
+  test("never marks read once native has given up", async () => {
+    const h = harness();
+    expect(await markThreadRead(h.load, "123", 0)).toBe("expired");
+    expect(h.calls).toEqual([]);
+  });
+
   test("fails when the read never lands or the module changed", async () => {
     const h = harness();
     h.modules.MWLSMarkThreadAsRead = async () => {};
-    expect(await markThreadRead(h.load, "123", 0, async () => {})).toBe("not-confirmed");
-    expect(await markThreadRead(h.load, "404", 0)).toBe("thread-missing");
+    let now = Date.now();
+    const deadline = now + 1000;
+    const wait = async () => {
+      now += 500;
+    };
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      expect(await markThreadRead(h.load, "123", deadline, wait)).toBe("not-confirmed");
+    } finally {
+      Date.now = realNow;
+    }
+    expect(await markThreadRead(h.load, "404", Date.now() + 1000)).toBe("thread-missing");
     h.modules.MWLSMarkThreadAsRead = {};
     await expect(markThreadRead(h.load, "123", 0)).rejects.toThrow("changed");
   });
@@ -150,6 +173,14 @@ describe("reactToMessage", () => {
       "own-message",
     );
     expect(h.calls).toEqual([]);
+  });
+
+  test("never reacts once native has given up", async () => {
+    for (const secure of [true, false]) {
+      const h = harness({ secure });
+      expect(await reactToMessage(h.load, { ...request, deadline: 0 })).toBe("expired");
+      expect(h.calls).toEqual([]);
+    }
   });
 
   test("refuses what it can't do the way Messenger does", async () => {

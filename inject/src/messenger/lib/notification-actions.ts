@@ -88,6 +88,8 @@ export async function markThreadRead(
     load,
     "MWLSMarkThreadAsRead",
   );
+  // Native has already given up and opened the conversation.
+  if (Date.now() >= deadline) return "expired";
   await markRead(db, key);
   while (true) {
     const thread = record(await db.tables.threads.get(key));
@@ -104,6 +106,8 @@ export interface ReactionRequest {
   /** The signed-in account, which must not have sent the message. */
   account: string;
   reaction: string;
+  /** Past this, native has given up: never react afterwards. */
+  deadline: number;
 }
 
 /** Add `reaction` to exactly the message a notification named. */
@@ -153,6 +157,7 @@ export async function reactToMessage(load: Load, request: ReactionRequest): Prom
       "getProtocolMsgIdByMsgIdUI",
     )(msgId);
     if (!ready?.chatJid || !protocolId) return "protocol-id";
+    if (Date.now() >= request.deadline) return "expired";
     let qplEventType: unknown;
     try {
       qplEventType = exported<(id: number, token: string) => unknown>(
@@ -198,6 +203,7 @@ export async function reactToMessage(load: Load, request: ReactionRequest): Prom
     ),
   );
   if (mine?.reaction === request.reaction) return "ok";
+  if (Date.now() >= request.deadline) return "expired";
   const factory = exported<(tx: Transaction) => unknown>(load, "LSFactory");
   const upsert = exported<(factory: unknown, args: unknown) => Promise<unknown>>(
     load,
