@@ -2647,6 +2647,8 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/composer-focus.ts
   var SETTLE_MS = 250;
+  var OPEN_WAIT_MS = 3e3;
+  var SETTLE_AFTER_OPEN_MS = 2500;
   var AFTER_LOAD_MS = 1e3;
   function currentFocus() {
     const active = document.activeElement;
@@ -2655,6 +2657,14 @@ ${button.innerHTML}`)
     }
     const link = active.closest("a");
     return link && chatRows().includes(link) ? "chat-list" : "elsewhere";
+  }
+  function returnState() {
+    return {
+      enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
+      threadOpen: !!threadIdFromHref(location.pathname),
+      dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(isShown),
+      focus: currentFocus()
+    };
   }
   function initComposerFocus() {
     let loadedAt = document.readyState === "complete" ? 0 : null;
@@ -2671,15 +2681,69 @@ ${button.innerHTML}`)
       const path = location.pathname;
       setTimeout(() => {
         if (!settled() || explicitActionRecent() || location.pathname !== path) return;
-        const state2 = {
-          enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
-          threadOpen: !!threadIdFromHref(location.pathname),
-          dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(isShown),
-          focus: currentFocus()
-        };
-        if (shouldFocusComposerOnReturn(state2)) focusComposer();
+        if (shouldFocusComposerOnReturn(returnState())) focusComposer();
       }, SETTLE_MS);
     });
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+        const link = event.target?.closest?.("a[href]");
+        if (!link || link.closest('[role="main"]')) return;
+        const target = threadIdFromHref(link.getAttribute("href"));
+        if (!target) return;
+        const startedAt = performance.now();
+        let readyAt = null;
+        const log = () => document.querySelector('[role="main"] [role="log"]');
+        const staleLog = threadIdFromHref(location.pathname) === target ? null : log();
+        let cancelled = false;
+        const cancel = (e) => {
+          if (e instanceof KeyboardEvent && !/^(Tab|Arrow|Escape|Page|Home|End)/.test(e.key)) return;
+          cancelled = true;
+        };
+        const stop = () => {
+          cancelled = true;
+          removeEventListener("pointerdown", cancel, true);
+          removeEventListener("keydown", cancel, true);
+        };
+        addEventListener("pointerdown", cancel, true);
+        addEventListener("keydown", cancel, true);
+        const check = () => {
+          const now = performance.now();
+          if (cancelled || now - startedAt > OPEN_WAIT_MS || explicitActionRecent()) return stop();
+          const current = log();
+          if (threadIdFromHref(location.pathname) !== target || !current || current === staleLog || !focusComposerReady()) {
+            requestAnimationFrame(check);
+            return;
+          }
+          readyAt ?? (readyAt = now);
+          const state2 = returnState();
+          const active = document.activeElement;
+          const incidental = link.contains(active) || !!active?.matches(":is(h1, h2)");
+          const focus = incidental ? "nothing" : state2.focus;
+          if (composerFocused()) {
+          } else if (shouldFocusComposerOnReturn({ ...state2, focus })) {
+            focusComposer();
+          } else if (focus === "elsewhere") {
+            return stop();
+          }
+          if (now - readyAt < SETTLE_AFTER_OPEN_MS) requestAnimationFrame(check);
+          else stop();
+        };
+        requestAnimationFrame(check);
+      },
+      true
+    );
+  }
+  function composerFocused() {
+    return !!document.activeElement?.matches(
+      '[role="main"] [contenteditable="true"][role="textbox"]'
+    );
+  }
+  function focusComposerReady() {
+    return [
+      ...document.querySelectorAll('[role="main"] [contenteditable="true"][role="textbox"]')
+    ].some(isShown);
   }
 
   // inject/src/messenger/lib/composer-keys.ts
