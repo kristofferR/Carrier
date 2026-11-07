@@ -7417,6 +7417,10 @@ ${button.innerHTML}`)
     );
     return mutedThreads.isMuted(id);
   }
+  function observeDatabaseMute(id, muted) {
+    mutedThreads.observe(id, muted);
+    return muted;
+  }
   function observeOpenThreadMute(id, roots) {
     const labels = [];
     for (const root of roots) {
@@ -12633,12 +12637,117 @@ ${text}`)) {
     }
   }
 
+  // inject/src/messenger/lib/thread-state.ts
+  function muteIsActive(raw, now, i64ToString) {
+    let value;
+    try {
+      if (typeof raw === "bigint") value = raw;
+      else if (typeof raw === "number" && Number.isFinite(raw)) value = BigInt(Math.trunc(raw));
+      else if (typeof raw === "string" && /^-?\d+$/.test(raw)) value = BigInt(raw);
+      else if (raw != null && i64ToString) {
+        const text = i64ToString(raw);
+        if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
+        value = BigInt(text);
+      } else return null;
+    } catch {
+      return null;
+    }
+    return value === -1n || value > BigInt(Math.floor(now));
+  }
+  async function loadModules(load) {
+    const singleton = load("LSDatabaseSingleton");
+    const db = await singleton.LSDatabaseSingleton;
+    const i64 = load("I64");
+    const { isThreadUnreadForViewer } = load("MWPIsThreadUnread");
+    if (typeof db?.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function" || typeof isThreadUnreadForViewer !== "function") {
+      throw new Error("Messenger thread APIs changed");
+    }
+    return { db, i64, isThreadUnreadForViewer };
+  }
+  async function readThreadStates(ids, load, now, timeoutMs = 750) {
+    if (typeof load !== "function") return null;
+    let timer;
+    const read = async () => {
+      const { db, i64, isThreadUnreadForViewer } = await loadModules(load);
+      const states = /* @__PURE__ */ new Map();
+      for (const id of ids) {
+        if (!/^\d+$/.test(id)) continue;
+        const thread2 = await db.tables.threads.get(i64.of_string(id));
+        if (!thread2 || typeof thread2 !== "object") continue;
+        const unread = isThreadUnreadForViewer(thread2);
+        const muted = muteIsActive(
+          thread2.muteExpireTimeMs,
+          now,
+          i64.to_string?.bind(i64)
+        );
+        if (typeof unread !== "boolean" || muted === null) continue;
+        states.set(id, { unread, muted });
+      }
+      return states;
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // inject/src/messenger/features/unread-badge.ts
   function initUnreadBadge() {
     if (!window.__TAURI_INTERNALS__) return;
     const unreadStorage = pageReloadSafeStorage();
     const accountStorageKey = mutedUnreadStorageKey(document.cookie);
     const listReadiness = new UnreadListReadiness();
+    const THREAD_STATE_LIMIT = 500;
+    const threadStates = /* @__PURE__ */ new Map();
+    let refreshingStates = false;
+    let statesFailing = false;
+    let stateEpoch = 0;
+    const MUTE_ACTION_HOLD_MS = 5e3;
+    const muteActions = /* @__PURE__ */ new Map();
+    const heldMute = (id, muted) => {
+      const action2 = muteActions.get(id);
+      if (!action2) return muted;
+      if (Date.now() - action2.at < MUTE_ACTION_HOLD_MS) return action2.muted;
+      muteActions.delete(id);
+      return muted;
+    };
+    const refreshThreadStates = (ids) => {
+      if (refreshingStates || !ids.length) return;
+      refreshingStates = true;
+      const epoch2 = stateEpoch;
+      readThreadStates(ids, window.require, Date.now()).then((states) => {
+        if (epoch2 !== stateEpoch) return;
+        if (states === null) {
+          if (!statesFailing) diag("badge.thread-state", "Messenger database unavailable");
+          statesFailing = true;
+        } else statesFailing = false;
+        let changed = false;
+        for (const id of ids) {
+          const read = states?.get(id);
+          const state2 = read && { ...read, muted: heldMute(id, read.muted) };
+          const old = threadStates.get(id);
+          if (!state2) {
+            if (threadStates.delete(id)) changed = true;
+            continue;
+          }
+          if (old?.unread !== state2.unread || old?.muted !== state2.muted) changed = true;
+          threadStates.delete(id);
+          threadStates.set(id, state2);
+          if (threadStates.size > THREAD_STATE_LIMIT) {
+            threadStates.delete(threadStates.keys().next().value);
+          }
+        }
+        if (changed) apply(true);
+      }).finally(() => {
+        refreshingStates = false;
+      });
+    };
     const unreadConversationState = () => {
       const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
@@ -12649,6 +12758,7 @@ ${text}`)) {
         ]);
       }
       const links = chatRows();
+      const listedIds = [];
       const seen = /* @__PURE__ */ new Set();
       let count = 0;
       const rowObservations = [];
@@ -12656,10 +12766,12 @@ ${text}`)) {
         const id = threadIdFromHref(a.getAttribute("href"));
         if (!id || seen.has(id)) continue;
         seen.add(id);
+        listedIds.push(id);
+        const known = threadStates.get(id);
         const row = a.closest('[role="row"]') || a;
         const spans = [...row.querySelectorAll("span")];
-        let unread = false;
-        for (const span of spans) {
+        let unread = known?.unread ?? false;
+        for (const span of known ? [] : spans) {
           if (isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))) {
             unread = true;
             break;
@@ -12683,7 +12795,7 @@ ${text}`)) {
         const hasTitle = candidates.some(
           (candidate) => !candidate.ariaHidden && !candidate.inAbbreviation && !candidate.hasTextChild && candidate.width > 1 && candidate.height > 1 && candidate.text.trim().length > 0
         );
-        const muted = observeConversationMute(id, row);
+        const muted = known ? observeDatabaseMute(id, known.muted) : observeConversationMute(id, row);
         rowObservations.push({ id, unread, muted, hydrated, hasTitle });
         if (!unread) continue;
         if (ignoreMuted && muted) continue;
@@ -12696,6 +12808,7 @@ ${text}`)) {
         scrolledFromTop = el.scrollTop > 8;
         break;
       }
+      refreshThreadStates(listedIds);
       const listHydrated = rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
       const ready2 = listReadiness.observe(rowObservations);
       return {
@@ -12773,6 +12886,13 @@ ${text}`)) {
       const detail = event.detail;
       if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
       if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
+      stateEpoch++;
+      muteActions.set(detail.id, { muted: detail.muted, at: Date.now() });
+      if (muteActions.size > THREAD_STATE_LIMIT) {
+        muteActions.delete(muteActions.keys().next().value);
+      }
+      const cached = threadStates.get(detail.id);
+      if (cached) threadStates.set(detail.id, { ...cached, muted: detail.muted });
       setTimeout(() => apply(true), 500);
     });
     let pending = false;
