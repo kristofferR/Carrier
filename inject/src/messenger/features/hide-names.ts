@@ -378,12 +378,23 @@ export function initHideNames() {
 
   function start() {
     if (observer) return;
-    observer = new MutationObserver(schedule);
+    observer = new MutationObserver((records) => {
+      // Text changes matter only in conversation rows, where a preview is
+      // rewritten in place and a highlight range would not follow a new
+      // sender's name. Messenger rewrites other text constantly, and
+      // rescanning for it kept the page busy (a full core).
+      if (
+        records.some(
+          (record) =>
+            record.type !== "characterData" || record.target.parentElement?.closest(THREAD_ROW_SEL),
+        )
+      ) {
+        schedule();
+      }
+    });
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      // Preview text is rewritten in place; a highlight range would not
-      // follow a new sender's name.
       characterData: true,
       attributes: true,
       attributeFilter: ["aria-label", "href", "role", "src", "style"],

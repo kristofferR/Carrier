@@ -5953,12 +5953,16 @@ ${button.innerHTML}`)
     }
     function start() {
       if (observer) return;
-      observer = new MutationObserver(schedule);
+      observer = new MutationObserver((records) => {
+        if (records.some(
+          (record3) => record3.type !== "characterData" || record3.target.parentElement?.closest(THREAD_ROW_SEL)
+        )) {
+          schedule();
+        }
+      });
       observer.observe(document.documentElement, {
         childList: true,
         subtree: true,
-        // Preview text is rewritten in place; a highlight range would not
-        // follow a new sender's name.
         characterData: true,
         attributes: true,
         attributeFilter: ["aria-label", "href", "role", "src", "style"]
