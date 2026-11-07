@@ -143,6 +143,9 @@ pub(crate) struct Settings {
     /// Notify for messages in group chats. Off leaves group messages to the
     /// unread badge. On by default.
     pub(crate) notify_group_chats: bool,
+    /// The reaction a notification's React button adds: one of Messenger's
+    /// six default reactions (`notifications::REACTIONS`). 👍 by default.
+    pub(crate) notification_reaction: String,
     /// macOS: stack Notification Center entries by Messenger conversation.
     pub(crate) group_notifications_by_conversation: bool,
     /// macOS/Windows: clear a conversation's delivered notifications (Action
@@ -262,6 +265,12 @@ impl Settings {
         if !matches!(self.update_check_hours, 1 | 4 | 24) {
             self.update_check_hours = 4;
         }
+        if !crate::notifications::REACTIONS
+            .iter()
+            .any(|(literal, _)| *literal == self.notification_reaction)
+        {
+            self.notification_reaction = "👍".into();
+        }
         // Snap owns updates. Sandboxed autostart needs platform integration
         // rather than writing a host desktop file.
         if snap {
@@ -316,6 +325,7 @@ impl Default for Settings {
             notification_sound: true,
             hide_notification_preview: false,
             notify_group_chats: true,
+            notification_reaction: "👍".into(),
             group_notifications_by_conversation: true,
             clear_notifications_on_view: true,
             attention_on_message: false,
@@ -768,6 +778,14 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     crate::menu::sync_setting_checks(app, s);
+    // Action titles are fixed per macOS category registration.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    let reaction_changed =
+        crate::notifications::set_notification_reaction(&s.notification_reaction);
+    #[cfg(target_os = "macos")]
+    if reaction_changed {
+        crate::macos::notifications::register_notification_categories();
+    }
     apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
@@ -1245,6 +1263,16 @@ mod tests {
         // Existing installs keep notifying for group chats.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.notify_group_chats);
+    }
+
+    #[test]
+    fn notification_reaction_defaults_to_thumbs_up_and_sanitizes_to_messenger_defaults() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.notification_reaction, "👍");
+        let s: Settings = serde_json::from_str(r#"{"notification_reaction":"😮"}"#).unwrap();
+        assert_eq!(s.sanitized().notification_reaction, "😮");
+        let s: Settings = serde_json::from_str(r#"{"notification_reaction":"hi"}"#).unwrap();
+        assert_eq!(s.sanitized().notification_reaction, "👍");
     }
 
     #[test]

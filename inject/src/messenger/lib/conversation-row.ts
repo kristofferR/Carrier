@@ -76,12 +76,6 @@ export interface ConversationTextCandidate {
 /** Row previews are capped here, without a truncation marker of their own. */
 export const ROW_BODY_LIMIT = 240;
 
-/** A row preview as 👍's match text: a capped preview is marked truncated, so
- * it can match a longer message as a prefix. */
-export function rowPreviewMatchText(body: string): string {
-  return body.length >= ROW_BODY_LIMIT ? `${body}…` : body;
-}
-
 export function conversationTextParts(
   candidates: ConversationTextCandidate[],
   canonicalBody?: (body: string) => string,

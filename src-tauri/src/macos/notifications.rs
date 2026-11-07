@@ -14,12 +14,74 @@ use crate::notifications::{
     on_notification_reply,
 };
 
-const MESSAGE_CATEGORY_ID: &str = "carrier.message";
-/// Reply alone, for a Messenger UI whose language Like/Mute can't drive.
+/// Reply alone, for a notification with no quick actions.
 const REPLY_CATEGORY_ID: &str = "carrier.message.reply";
-/// Reply and Mute, for a notification with no text for 👍 to match.
-const MUTE_CATEGORY_ID: &str = "carrier.message.mute";
 const REPLY_ACTION_ID: &str = "reply";
+
+/// The category of a notification offering Reply plus `actions`. Each entry of
+/// [`crate::notifications::ACTION_SETS`] is registered as one.
+fn category_id(actions: &[NotificationAction]) -> String {
+    if actions.is_empty() {
+        return REPLY_CATEGORY_ID.into();
+    }
+    let ids: Vec<&str> = actions.iter().map(|action| action.id()).collect();
+    format!("carrier.message.{}", ids.join("."))
+}
+
+/// Set once the notification centre is set up; categories registered before
+/// then would be dropped.
+static CATEGORIES_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Register a category per action combination. Called at setup and again when
+/// the React button's reaction changes, since action titles are fixed per
+/// registration.
+pub(crate) fn register_notification_categories() {
+    use objc2_foundation::{NSArray, NSSet, NSString};
+    use objc2_user_notifications::{
+        UNNotificationAction, UNNotificationActionOptionNone, UNNotificationCategory,
+        UNNotificationCategoryOptionNone, UNTextInputNotificationAction, UNUserNotificationCenter,
+    };
+
+    if !CATEGORIES_READY.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    let reply = UNTextInputNotificationAction::actionWithIdentifier_title_options_textInputButtonTitle_textInputPlaceholder(
+        &NSString::from_str(REPLY_ACTION_ID),
+        &NSString::from_str("Reply"),
+        UNNotificationActionOptionNone,
+        &NSString::from_str("Send"),
+        &NSString::from_str("Message…"),
+    );
+    let reply: &UNNotificationAction = &reply;
+    let intents = NSArray::<NSString>::from_slice(&[]);
+    // With more than one action, macOS folds them into the banner's Options menu.
+    let categories: Vec<_> = crate::notifications::ACTION_SETS
+        .iter()
+        .map(|set| {
+            let quick: Vec<_> = set
+                .iter()
+                .map(|action| {
+                    UNNotificationAction::actionWithIdentifier_title_options(
+                        &NSString::from_str(action.id()),
+                        &NSString::from_str(action.title()),
+                        UNNotificationActionOptionNone,
+                    )
+                })
+                .collect();
+            let mut actions = vec![reply];
+            actions.extend(quick.iter().map(|action| &**action));
+            UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                &NSString::from_str(&category_id(set)),
+                &NSArray::from_slice(&actions),
+                &intents,
+                UNNotificationCategoryOptionNone,
+            )
+        })
+        .collect();
+    let categories: Vec<&UNNotificationCategory> = categories.iter().map(|c| &**c).collect();
+    UNUserNotificationCenter::currentNotificationCenter()
+        .setNotificationCategories(&NSSet::from_slice(&categories));
+}
 const ROUTE_PAIRING_DELAY_SECONDS: f64 = 4.0;
 
 #[derive(Clone, Copy, Default)]
@@ -104,7 +166,7 @@ objc2::define_class!(
             let action = response.actionIdentifier();
 
             if let Some(action) = NotificationAction::from_id(&action.to_string()) {
-                // Like and Mute run in the background; never block this callback.
+                // Quick actions run in the background; never block this callback.
                 completion_handler.call(());
                 if let Some(id) = id {
                     on_notification_action(self.ivars().app.clone(), id, page_id, path, action, None);
@@ -179,12 +241,8 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
     use objc2::{AllocAnyThread, msg_send};
-    use objc2_foundation::{NSArray, NSError, NSSet, NSString};
-    use objc2_user_notifications::{
-        UNAuthorizationOptions, UNNotificationAction, UNNotificationActionOptionNone,
-        UNNotificationCategory, UNNotificationCategoryOptionNone, UNTextInputNotificationAction,
-        UNUserNotificationCenter,
-    };
+    use objc2_foundation::NSError;
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
 
     refresh_launch_services_registration();
 
@@ -200,40 +258,9 @@ pub(crate) fn setup_macos_notifications(app: &tauri::AppHandle) {
     std::mem::forget(delegate);
 
     // Categories are valid independently of authorization state and must be
-    // registered before a reply-eligible notification is delivered. With more
-    // than one action, macOS folds them into the banner's Options menu.
-    let reply = UNTextInputNotificationAction::actionWithIdentifier_title_options_textInputButtonTitle_textInputPlaceholder(
-        &NSString::from_str(REPLY_ACTION_ID),
-        &NSString::from_str("Reply"),
-        UNNotificationActionOptionNone,
-        &NSString::from_str("Send"),
-        &NSString::from_str("Message…"),
-    );
-    let reply_action: &UNNotificationAction = &reply;
-    let [like, mute] = [NotificationAction::Like, NotificationAction::Mute].map(|action| {
-        UNNotificationAction::actionWithIdentifier_title_options(
-            &NSString::from_str(action.id()),
-            &NSString::from_str(action.title()),
-            UNNotificationActionOptionNone,
-        )
-    });
-    let intents = NSArray::<NSString>::from_slice(&[]);
-    let category = |id: &str, actions: &[&UNNotificationAction]| {
-        UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
-            &NSString::from_str(id),
-            &NSArray::from_slice(actions),
-            &intents,
-            UNNotificationCategoryOptionNone,
-        )
-    };
-    let full = category(MESSAGE_CATEGORY_ID, &[reply_action, &*like, &*mute]);
-    let reply_and_mute = category(MUTE_CATEGORY_ID, &[reply_action, &*mute]);
-    let reply_only = category(REPLY_CATEGORY_ID, &[reply_action]);
-    center.setNotificationCategories(&NSSet::from_slice(&[
-        &*full,
-        &*reply_and_mute,
-        &*reply_only,
-    ]));
+    // registered before a reply-eligible notification is delivered.
+    CATEGORIES_READY.store(true, std::sync::atomic::Ordering::Release);
+    register_notification_categories();
 
     let options = UNAuthorizationOptions::Badge
         | UNAuthorizationOptions::Alert
@@ -303,7 +330,7 @@ fn apply_route_metadata(
     group_by_conversation: bool,
     reply_eligible: bool,
 ) -> Option<String> {
-    use crate::notifications::{NotificationAction, offered_actions};
+    use crate::notifications::offered_actions;
     use objc2::rc::Retained;
     use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSString};
 
@@ -316,11 +343,7 @@ fn apply_route_metadata(
         content.setThreadIdentifier(&NSString::from_str(thread_id));
     }
     if reply_eligible && thread_path.is_some() {
-        content.setCategoryIdentifier(&NSString::from_str(match offered_actions(id) {
-            [] => REPLY_CATEGORY_ID,
-            [NotificationAction::Mute] => MUTE_CATEGORY_ID,
-            _ => MESSAGE_CATEGORY_ID,
-        }));
+        content.setCategoryIdentifier(&NSString::from_str(&category_id(offered_actions(id))));
     }
 
     let id_key = NSString::from_str("id");
@@ -620,6 +643,9 @@ pub(crate) struct MacSender<'a> {
     pub(crate) avatar: Option<&'a Path>,
     /// The group conversation's name; None for a one-to-one chat.
     pub(crate) group_name: Option<&'a str>,
+    /// The group's own picture; None for a one-to-one chat or a group without
+    /// one, which macOS then draws from its members.
+    pub(crate) group_picture: Option<&'a Path>,
 }
 
 /// The content as a message from `sender`, via an `INSendMessageIntent`.
@@ -704,6 +730,18 @@ fn communication_content(
             Some(&from),
             None,
         );
+        // The group's picture, shown the way Messages shows a named group's.
+        if sender.group_name.is_some()
+            && let Some(bytes) = sender
+                .group_picture
+                .and_then(|path| std::fs::read(path).ok())
+        {
+            let image = INImage::imageWithImageData(&NSData::with_bytes(&bytes));
+            intent.setImage_forParameterNamed(
+                Some(&image),
+                &NSString::from_str("speakableGroupName"),
+            );
+        }
         let interaction =
             INInteraction::initWithIntent_response(INInteraction::alloc(), &intent, None);
         interaction.setDirection(INInteractionDirection::Incoming);

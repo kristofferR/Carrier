@@ -52,6 +52,10 @@ pub(crate) struct NotifySender {
     /// group's), so it may stand for them.
     #[serde(default)]
     photo: bool,
+    /// The group's own picture as a PNG data URL, decoded and limited like the
+    /// avatar. Empty for a one-to-one chat or a group without one.
+    #[serde(default)]
+    group_picture: String,
 }
 
 impl NotifySender {
@@ -103,10 +107,10 @@ pub(crate) struct NotifyMsg {
     /// Messenger's UI language is English. Older page bundles omit it.
     #[serde(default)]
     english_ui: bool,
-    /// The message's raw text (before link or photo rewording), which 👍
-    /// matches the conversation's bubble by. Never shown.
+    /// Messenger's id for the announced message, when the page knows it
+    /// exactly: what React reacts to.
     #[serde(default)]
-    match_body: String,
+    message_id: String,
     /// The signed-in Facebook account the notification arrived for.
     #[serde(default)]
     account: String,
@@ -147,16 +151,28 @@ impl NotifyMsg {
     }
 }
 
-/// What a shown notification announced, for its 👍 and Mute actions: the raw
-/// message text, when Carrier saw it, and the account it arrived for. Native
-/// memory only: Facebook clears unknown page storage on reload, and a redacted
+/// What a shown notification announced, for its quick actions: the account it
+/// arrived for and, when known, Messenger's id for the message. Native memory
+/// only: Facebook clears unknown page storage on reload, and a redacted
 /// notification never keeps one.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ActionTarget {
-    pub(crate) body: String,
-    pub(crate) at: u64,
     pub(crate) account: String,
+    /// Empty when the page could not name the exact message.
+    pub(crate) message: String,
+}
+
+/// A Messenger message id as the page reports it (`mid.$…` for regular chats,
+/// `<hex>_<hex>_m` style for encrypted ones), or empty when it is anything else.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
+fn valid_message_id(value: &str) -> String {
+    let ok = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._$:+/=_-".contains(&b));
+    if ok { value.into() } else { String::new() }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -172,21 +188,67 @@ pub(crate) fn remember_action_target(native_id: u64, target: ActionTarget) {
     targets.push_back((native_id, target));
 }
 
-/// The quick actions a shown notification offers: none for a non-English
-/// Messenger UI or without a recorded target, and Mute alone when there is no
-/// message text for 👍 to match (a photo or a sticker).
+/// Every combination of quick actions a notification can carry, in button
+/// order. macOS registers one category per entry.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) const ACTION_SETS: [&[NotificationAction]; 5] = {
+    use NotificationAction::{MarkRead, Mute, React};
+    [
+        &[],
+        &[MarkRead],
+        &[React, MarkRead],
+        &[MarkRead, Mute],
+        &[React, MarkRead, Mute],
+    ]
+};
+
+/// The quick actions a shown notification offers: none without a recorded
+/// target; Mark as Read always; React when the page named the exact message;
+/// Mute only for an English Messenger UI, whose labels it drives.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn offered_actions(native_id: u64) -> &'static [NotificationAction] {
-    if !quick_actions_supported() {
-        return &[];
-    }
-    match action_target(native_id) {
-        Some(target) if !target.body.trim().is_empty() => {
-            &[NotificationAction::Like, NotificationAction::Mute]
-        }
-        Some(_) => &[NotificationAction::Mute],
-        None => &[],
-    }
+    action_target(native_id).map_or(ACTION_SETS[0], |target| {
+        action_set(!target.message.is_empty(), quick_actions_supported())
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn action_set(react: bool, mute: bool) -> &'static [NotificationAction] {
+    ACTION_SETS[match (react, mute) {
+        (false, false) => 1,
+        (true, false) => 2,
+        (false, true) => 3,
+        (true, true) => 4,
+    }]
+}
+
+/// Messenger's six default reactions, which React can be set to: the literal
+/// Messenger sends, and the button title.
+pub(crate) const REACTIONS: [(&str, &str); 6] = [
+    ("👍", "👍"),
+    ("\u{2764}", "\u{2764}\u{fe0f}"),
+    ("😆", "😆"),
+    ("😮", "😮"),
+    ("😢", "😢"),
+    ("😡", "😡"),
+];
+
+/// Index into [`REACTIONS`] of the configured notification reaction.
+static NOTIFICATION_REACTION: AtomicUsize = AtomicUsize::new(0);
+
+/// Apply the `notification_reaction` setting. Returns whether it changed, so
+/// macOS can re-register its action titles.
+pub(crate) fn set_notification_reaction(reaction: &str) -> bool {
+    let index = REACTIONS
+        .iter()
+        .position(|(literal, _)| *literal == reaction)
+        .unwrap_or(0);
+    NOTIFICATION_REACTION.swap(index, Ordering::Relaxed) != index
+}
+
+/// The configured reaction: (literal, button title).
+pub(crate) fn notification_reaction() -> (&'static str, &'static str) {
+    REACTIONS[NOTIFICATION_REACTION.load(Ordering::Relaxed) % REACTIONS.len()]
 }
 
 /// Drop the target of a notification that was closed, cleared, or acted on,
@@ -211,9 +273,9 @@ fn action_target(native_id: u64) -> Option<ActionTarget> {
         .map(|(_, target)| target.clone())
 }
 
-/// The Messenger UI language the page last reported. Like and Mute drive
-/// English-labelled controls, so they are offered only for an English UI;
-/// Reply works in any language.
+/// The Messenger UI language the page last reported. Mute drives
+/// English-labelled controls, so it is offered only for an English UI; the
+/// other actions work in any language.
 static MESSENGER_ENGLISH_UI: AtomicBool = AtomicBool::new(false);
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -1058,7 +1120,7 @@ fn linux_reply_eligible(
         && (snap || (capabilities.actions && capabilities.inline_reply))
 }
 
-/// Like and Mute need the same route and visible preview as a reply, plus a
+/// Quick actions need the same route and visible preview as a reply, plus a
 /// server that shows actions. The Snap portal path offers only Open and Reply.
 #[cfg(target_os = "linux")]
 fn linux_quick_actions_eligible(
@@ -1524,7 +1586,8 @@ enum PendingReplyMode {
     Send,
     Draft,
     Mute,
-    Like,
+    React,
+    MarkRead,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
@@ -1694,8 +1757,8 @@ fn next_reply_attempt() -> u64 {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-/// `remaining` is what is left of the native acknowledgement wait. Like and
-/// Mute budget from it, so a page reloaded mid-action (and resumed) cannot
+/// `remaining` is what is left of the native acknowledgement wait. Quick
+/// actions budget from it, so a page reloaded mid-action (and resumed) cannot
 /// finish after the native side has already reported failure.
 fn quick_reply_script(
     id: u64,
@@ -1706,7 +1769,7 @@ fn quick_reply_script(
     remaining: Duration,
 ) -> Result<String, String> {
     let path = serde_json::to_string(thread_path).map_err(|error| error.to_string())?;
-    // Like and Mute carry a serialized `ActionTarget`. Re-serialize the parsed
+    // Quick actions carry a serialized `ActionTarget`. Re-serialize the parsed
     // object, so only serde's own JSON is ever embedded as an object literal.
     let target = || {
         serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text)
@@ -1726,8 +1789,12 @@ fn quick_reply_script(
             "window.__carrierQuickMute?.({path}, {}, {id}, {attempt}, {budget});",
             target()?
         ),
-        PendingReplyMode::Like => format!(
-            "window.__carrierQuickLike?.({path}, {}, {id}, {attempt}, {budget});",
+        PendingReplyMode::React => format!(
+            "window.__carrierQuickReact?.({path}, {}, {id}, {attempt}, {budget});",
+            target()?
+        ),
+        PendingReplyMode::MarkRead => format!(
+            "window.__carrierMarkRead?.({path}, {}, {id}, {attempt}, {budget});",
             target()?
         ),
     })
@@ -1826,7 +1893,9 @@ const REPLY_FAILED: &str = "Reply not sent — opening the conversation";
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const MUTE_FAILED: &str = "Couldn't mute. Opening the conversation.";
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-const LIKE_FAILED: &str = "Couldn't react. Opening the conversation.";
+const REACT_FAILED: &str = "Couldn't react. Opening the conversation.";
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const MARK_READ_FAILED: &str = "Couldn't mark as read. Opening the conversation.";
 
 #[cfg(target_os = "linux")]
 fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
@@ -2049,7 +2118,7 @@ fn run_hidden_page_action(
     register_pending_page_reply(id, attempt, thread_path, text, mode, deadline);
     let dispatched = eval_hidden_page_action(app, id, attempt, thread_path, text, mode, deadline);
     // A reply's page flow keeps its own fixed budget, so it gets a full
-    // acknowledgement window after a slow dispatch. Like and Mute budget from
+    // acknowledgement window after a slow dispatch. Quick actions budget from
     // `deadline` and must finish inside it.
     let ack_deadline = if mode == PendingReplyMode::Send {
         let extended = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
@@ -2096,7 +2165,8 @@ fn lock_page_actions() -> std::sync::MutexGuard<'static, ()> {
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NotificationAction {
-    Like,
+    React,
+    MarkRead,
     Mute,
 }
 
@@ -2106,29 +2176,32 @@ impl NotificationAction {
     /// Freedesktop actions.
     pub(crate) const fn id(self) -> &'static str {
         match self {
-            Self::Like => "like",
+            Self::React => "react",
+            Self::MarkRead => "read",
             Self::Mute => "mute",
         }
     }
 
-    pub(crate) const fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
-            Self::Like => "👍",
+            Self::React => notification_reaction().1,
+            Self::MarkRead => "Mark as Read",
             Self::Mute => "Mute",
         }
     }
 
     pub(crate) fn from_id(id: &str) -> Option<Self> {
-        [Self::Like, Self::Mute]
+        [Self::React, Self::MarkRead, Self::Mute]
             .into_iter()
             .find(|action| action.id() == id)
     }
 }
 
-/// Like reacts 👍 to the message the page's notification `page_id` announced
-/// (the page keeps its raw text and time); Mute silences the conversation in
-/// Messenger for 8 hours. Both drive the hidden page in the background, and a
-/// failure opens the conversation instead.
+/// React adds the configured reaction to the exact message a notification
+/// announced and Mark as Read marks its conversation read, both through
+/// Messenger's own actions; Mute silences the conversation in Messenger for 8
+/// hours. All run in the hidden page in the background, and a failure opens
+/// the conversation instead.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn on_notification_action(
     app: tauri::AppHandle,
@@ -2140,13 +2213,27 @@ pub(crate) fn on_notification_action(
 ) {
     let deadline = Instant::now() + QUICK_REPLY_ACK_TIMEOUT;
     let (mode, failure) = match action {
-        NotificationAction::Like => (PendingReplyMode::Like, LIKE_FAILED),
+        NotificationAction::React => (PendingReplyMode::React, REACT_FAILED),
+        NotificationAction::MarkRead => (PendingReplyMode::MarkRead, MARK_READ_FAILED),
         NotificationAction::Mute => (PendingReplyMode::Mute, MUTE_FAILED),
     };
-    // What this notification announced: Like matches its text, and both act
-    // only under the account it arrived for.
+    // What this notification announced: every action acts only under the
+    // account it arrived for, and React only on the message it named.
+    #[derive(Serialize)]
+    struct Request {
+        #[serde(flatten)]
+        target: ActionTarget,
+        reaction: &'static str,
+    }
     let text = action_target(id)
-        .and_then(|target| serde_json::to_string(&target).ok())
+        .filter(|target| action != NotificationAction::React || !target.message.is_empty())
+        .and_then(|target| {
+            serde_json::to_string(&Request {
+                target,
+                reaction: notification_reaction().0,
+            })
+            .ok()
+        })
         .unwrap_or_default();
     let failed = move |app: tauri::AppHandle, path: Option<String>, token: Option<String>| {
         show_action_failure_notification(&app, failure);
@@ -2422,17 +2509,13 @@ pub(crate) fn show_message_notification(
 
     // Redact the conversation subtitle too: it can contain private names.
     let (title, subtitle, body) = msg.content(hide_preview);
-    // What 👍 and Mute act on. A redacted notification offers neither, so it
-    // never keeps the text.
+    // What the quick actions act on. A redacted notification offers none.
     if !hide_preview && !msg.account.is_empty() {
         remember_action_target(
             native_id,
             ActionTarget {
-                body: msg.match_body.clone(),
-                at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |elapsed| elapsed.as_millis() as u64),
                 account: msg.account.clone(),
+                message: valid_message_id(&msg.message_id),
             },
         );
     }
@@ -2510,6 +2593,11 @@ pub(crate) fn show_message_notification(
             .as_ref()
             .filter(|_| !hide_preview)
             .and_then(|sender| sender.identifier(&msg.account));
+        let group_picture = msg
+            .sender
+            .as_ref()
+            .filter(|sender| sender_identifier.is_some() && !sender.group.trim().is_empty())
+            .and_then(|sender| avatar_to_temp_png(&sender.group_picture));
         let sender =
             msg.sender
                 .as_ref()
@@ -2520,6 +2608,7 @@ pub(crate) fn show_message_notification(
                         name: sender.name.trim(),
                         avatar: avatar.as_deref().filter(|_| sender.photo),
                         group_name: Some(sender.group.trim()).filter(|group| !group.is_empty()),
+                        group_picture: group_picture.as_deref(),
                     },
                 );
         deliver_notification_macos(
@@ -3003,6 +3092,7 @@ mod tests {
             name: "Alex".into(),
             group: String::new(),
             photo: true,
+            ..NotifySender::default()
         };
         assert_eq!(
             sender.identifier("100").as_deref(),
@@ -3286,7 +3376,7 @@ mod tests {
             thread_path: String::new(),
             sender: None,
             english_ui: false,
-            match_body: String::new(),
+            message_id: String::new(),
             account: String::new(),
             row: None,
         }
@@ -3461,17 +3551,46 @@ mod tests {
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
+    fn quick_actions_follow_what_the_notification_named() {
+        use NotificationAction::{MarkRead, Mute, React};
+        assert_eq!(action_set(false, false), [MarkRead]);
+        assert_eq!(action_set(true, false), [React, MarkRead]);
+        assert_eq!(action_set(false, true), [MarkRead, Mute]);
+        assert_eq!(action_set(true, true), [React, MarkRead, Mute]);
+        for action in [React, MarkRead, Mute] {
+            assert_eq!(NotificationAction::from_id(action.id()), Some(action));
+        }
+    }
+
+    #[test]
+    fn message_ids_keep_messenger_shapes_only() {
+        assert_eq!(
+            valid_message_id("mid.$cAABa8_x-y+z/="),
+            "mid.$cAABa8_x-y+z/="
+        );
+        assert_eq!(valid_message_id("7f3a_19c2_m"), "7f3a_19c2_m");
+        assert_eq!(valid_message_id(""), "");
+        assert_eq!(valid_message_id("a\"); alert(1)"), "");
+        assert_eq!(valid_message_id(&"a".repeat(129)), "");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
     fn page_actions_budget_from_the_remaining_native_wait() {
-        let target = r#"{"body":"hi","at":5,"account":"1"}"#;
+        let target = r#"{"account":"1","message":"mid.$1","reaction":"👍"}"#;
         let script =
             |mode, remaining| quick_reply_script(7, 3, "/t/1/", target, mode, remaining).unwrap();
         assert_eq!(
             script(PendingReplyMode::Mute, Duration::from_secs(20)),
             // Re-serialized through a map, so keys come out sorted.
-            r#"window.__carrierQuickMute?.("/t/1/", {"account":"1","at":5,"body":"hi"}, 7, 3, 18000);"#
+            r#"window.__carrierQuickMute?.("/t/1/", {"account":"1","message":"mid.$1","reaction":"👍"}, 7, 3, 18000);"#
+        );
+        assert!(
+            script(PendingReplyMode::MarkRead, Duration::from_secs(20))
+                .starts_with("window.__carrierMarkRead?.(\"/t/1/\", {")
         );
         // A resume after most of the wait has passed leaves the page no time.
-        assert!(script(PendingReplyMode::Like, Duration::from_secs(1)).ends_with(", 3, 0);"));
+        assert!(script(PendingReplyMode::React, Duration::from_secs(1)).ends_with(", 3, 0);"));
         // The target is embedded as code, so only a JSON object is accepted.
         assert!(
             quick_reply_script(
@@ -3479,7 +3598,7 @@ mod tests {
                 3,
                 "/t/1/",
                 "alert(1)",
-                PendingReplyMode::Like,
+                PendingReplyMode::React,
                 Duration::from_secs(20)
             )
             .is_err()
@@ -3667,9 +3786,8 @@ mod tests {
         // A closed or acted-on notification must not keep a target that
         // counts against the cap of those still shown.
         let target = ActionTarget {
-            body: "hi".into(),
-            at: 1,
             account: "1".into(),
+            message: "mid.$1".into(),
         };
         remember_notification_route(9_031, "/t/111/");
         remember_action_target(9_031, target.clone());
@@ -3684,9 +3802,8 @@ mod tests {
     fn clearing_a_thread_drops_its_action_targets() {
         // Windows removes a conversation's whole toast group on view.
         let target = ActionTarget {
-            body: "hi".into(),
-            at: 1,
             account: "1".into(),
+            message: "mid.$1".into(),
         };
         remember_notification_route(9_041, "/t/411/");
         remember_notification_route(9_042, "/t/422/");

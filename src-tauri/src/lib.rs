@@ -1965,9 +1965,7 @@ pub fn run() {
                         thread_path: String,
                         page_id: u64,
                         #[serde(default)]
-                        body: String,
-                        #[serde(default)]
-                        at: u64,
+                        message: String,
                         account: String,
                     }
                     let Ok(request) = serde_json::from_str::<DebugAction>(event.payload()) else {
@@ -1981,9 +1979,8 @@ pub fn run() {
                     notifications::remember_action_target(
                         1,
                         notifications::ActionTarget {
-                            body: request.body,
-                            at: request.at,
                             account: request.account,
+                            message: request.message,
                         },
                     );
                     notifications::on_notification_action(

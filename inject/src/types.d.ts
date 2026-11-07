@@ -212,8 +212,16 @@ interface Window {
     attempt: number,
     budgetMs: number,
   ) => void;
-  /** React 👍 to the message a notification announced (`target`: native ActionTarget). */
-  __carrierQuickLike?: (
+  /** React to the message a notification announced (`target`: native ActionTarget). */
+  __carrierQuickReact?: (
+    path: string,
+    target: unknown,
+    id: number,
+    attempt: number,
+    budgetMs: number,
+  ) => void;
+  /** Mark a notification's conversation read without opening it. */
+  __carrierMarkRead?: (
     path: string,
     target: unknown,
     id: number,

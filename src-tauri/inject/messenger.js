@@ -4221,8 +4221,8 @@ ${button.innerHTML}`)
     window.addEventListener("resize", scheduleScan);
     new MutationObserver((records) => {
       if (pending.size === 0) return;
-      for (const record3 of records) {
-        for (const removed of record3.removedNodes) {
+      for (const record4 of records) {
+        for (const removed of record4.removedNodes) {
           if (removed instanceof HTMLImageElement) {
             pending.delete(removed);
           } else if (removed instanceof Element) {
@@ -4300,10 +4300,10 @@ ${button.innerHTML}`)
       const group = context && useContext ? useContext(context) : void 0;
       const enabled = showNicknames(mode, group);
       if (!enabled && props && typeof props === "object") {
-        const record3 = props;
-        const contact = record3.contact;
-        if (typeof record3.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
-          return createElement(original, { ...record3, nickname: void 0 });
+        const record4 = props;
+        const contact = record4.contact;
+        if (typeof record4.nickname === "string" && contact && typeof contact === "object" && typeof contact.name === "string") {
+          return createElement(original, { ...record4, nickname: void 0 });
         }
       }
       return createElement(original, props);
@@ -4414,9 +4414,9 @@ ${button.innerHTML}`)
      * the same faces on every scan.
      */
     remember(threadId, name, url, owner = name, at = 0) {
-      const normalized2 = normalizeSenderName(name);
-      const ownerKey = normalizeSenderName(owner) || normalized2;
-      if (!threadId || !normalized2 || !url) return false;
+      const normalized = normalizeSenderName(name);
+      const ownerKey = normalizeSenderName(owner) || normalized;
+      if (!threadId || !normalized || !url) return false;
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return false;
       const photo = avatarPhotoId(url);
@@ -4449,8 +4449,8 @@ ${button.innerHTML}`)
      * worse than showing the group photo.
      */
     resolve(threadId, name) {
-      const normalized2 = normalizeSenderName(name);
-      if (!threadId || !normalized2) return { verdict: "no-sender", url: "" };
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return { verdict: "no-sender", url: "" };
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return { verdict: "ambiguous", url: "" };
       const prefix = `${key} `;
@@ -4490,15 +4490,15 @@ ${button.innerHTML}`)
      * held outside the avatar entries so evicting a face cannot resurrect it.
      */
     markAmbiguous(threadId, name) {
-      const normalized2 = normalizeSenderName(name);
-      if (!threadId || !normalized2) return false;
+      const normalized = normalizeSenderName(name);
+      if (!threadId || !normalized) return false;
       const key = entryKey(threadId, name);
       if (this.ambiguous.has(key)) return false;
       this.ambiguous.add(key);
       this.entries.delete(key);
       const prefix = `${threadId}\0`;
       for (const [candidate, entry] of [...this.entries]) {
-        if (!candidate.startsWith(prefix) || entry.owner !== normalized2) continue;
+        if (!candidate.startsWith(prefix) || entry.owner !== normalized) continue;
         this.entries.delete(candidate);
         this.ambiguous.add(candidate);
       }
@@ -4589,8 +4589,13 @@ ${button.innerHTML}`)
       );
       if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT2) return null;
       let photo;
+      let pictureOf;
       try {
         photo = importModule("getLSMediaContactProfilePictureUrl");
+      } catch (_) {
+      }
+      try {
+        pictureOf = importModule("getLSMediaThreadPictureUrl");
       } catch (_) {
       }
       const participants = [];
@@ -4623,7 +4628,8 @@ ${button.innerHTML}`)
       return {
         isGroup,
         title: "threadName" in thread2 && typeof thread2.threadName === "string" ? thread2.threadName : "",
-        participants
+        participants,
+        picture: isGroup ? groupPicture(thread2, pictureOf) : ""
       };
     };
     try {
@@ -4635,6 +4641,14 @@ ${button.innerHTML}`)
       ]);
     } finally {
       clearTimeout(timer);
+    }
+  }
+  function groupPicture(thread2, pictureOf) {
+    try {
+      const url = typeof pictureOf === "function" ? pictureOf(thread2) : null;
+      return typeof url === "string" && url.startsWith("https://") ? url : "";
+    } catch (_) {
+      return "";
     }
   }
   function communicationSender(title, body, group, account2, showNicknames2, titleKind, groupTitle = "", photo = false) {
@@ -4796,19 +4810,19 @@ ${button.innerHTML}`)
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
       const owner = useRef({}).current;
-      const record3 = props && typeof props === "object" ? props : {};
-      const thread2 = record3.thread;
+      const record4 = props && typeof props === "object" ? props : {};
+      const thread2 = record4.thread;
       let key = "", snippet = "";
       try {
         if (thread2 && typeof thread2 === "object" && "threadKey" in thread2) {
           const id = threadKey(thread2.threadKey);
           if (typeof id === "string") key = id;
         }
-        const raw = typeof record3.snippetRaw === "string" ? maybeUnvault(record3.snippetRaw) ?? record3.snippetRaw : null;
+        const raw = typeof record4.snippetRaw === "string" ? maybeUnvault(record4.snippetRaw) ?? record4.snippetRaw : null;
         if (typeof raw === "string") snippet = raw;
       } catch (_) {
       }
-      const draft = record3.isDraftMessage === true;
+      const draft = record4.isDraftMessage === true;
       useEffect(() => {
         if (!key || !snippet.includes(": ") || draft || showNicknames(mode, true)) return;
         let cancelled = false;
@@ -4839,7 +4853,7 @@ ${button.innerHTML}`)
       }, [key, owner, snippet, draft]);
       return createElement(
         original,
-        displayed !== snippet ? { ...record3, snippetRaw: displayed } : props
+        displayed !== snippet ? { ...record4, snippetRaw: displayed } : props
       );
     };
     try {
@@ -4894,15 +4908,15 @@ ${button.innerHTML}`)
         const result = Reflect.apply(target, receiver, args);
         return useMemo(() => {
           if (!result || typeof result !== "object") return result;
-          const record3 = result;
+          const record4 = result;
           const thread2 = args[0];
-          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record3.threadTitle !== "string" || !Array.isArray(record3.participantsAndContacts))
+          if (!thread2 || typeof thread2 !== "object" || !("threadKey" in thread2) || !("threadType" in thread2) || typeof record4.threadTitle !== "string" || !Array.isArray(record4.participantsAndContacts))
             return result;
           try {
-            let displayed = record3.threadTitle;
+            let displayed = record4.threadTitle;
             const group = typeof types?.isGroup === "function" ? types.isGroup(thread2.threadType) === true : void 0;
             if (!showNicknames(mode, group)) {
-              const pairs = record3.participantsAndContacts.map((pair) => {
+              const pairs = record4.participantsAndContacts.map((pair) => {
                 if (!Array.isArray(pair)) return pair;
                 const [participant, contact] = pair;
                 if (!participant || typeof participant !== "object" || !contact || typeof contact !== "object" || !("name" in contact) || typeof contact.name !== "string")
@@ -4913,13 +4927,13 @@ ${button.innerHTML}`)
                 intlList.CONJUNCTIONS?.NONE,
                 thread2.threadType,
                 pairs,
-                record3.actorId
+                record4.actorId
               );
               if (typeof computed === "string") displayed = computed;
             }
             const key = threadKey(thread2.threadKey);
-            if (typeof key === "string") titles.remember(key, record3.threadTitle, displayed);
-            return displayed === record3.threadTitle ? result : { ...record3, threadTitle: displayed };
+            if (typeof key === "string") titles.remember(key, record4.threadTitle, displayed);
+            return displayed === record4.threadTitle ? result : { ...record4, threadTitle: displayed };
           } catch (_) {
             return result;
           }
@@ -4981,10 +4995,10 @@ ${button.innerHTML}`)
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
     if (!value || typeof value !== "object") return value;
-    const record3 = value;
-    if (typeof record3.default === "function") {
+    const record4 = value;
+    if (typeof record4.default === "function") {
       try {
-        record3.default = replacement;
+        record4.default = replacement;
       } catch (_) {
       }
     }
@@ -4995,22 +5009,22 @@ ${button.innerHTML}`)
     for (let index = firstExportIndex; index < factoryArgs.length; index++) {
       const candidate = factoryArgs[index];
       if (!candidate || typeof candidate !== "object") continue;
-      const record3 = candidate;
-      if (Object.prototype.hasOwnProperty.call(record3, "exports")) {
+      const record4 = candidate;
+      if (Object.prototype.hasOwnProperty.call(record4, "exports")) {
         try {
-          record3.exports = replaceFunctionExport(record3.exports, replacement);
+          record4.exports = replaceFunctionExport(record4.exports, replacement);
         } catch (_) {
         }
       }
-      replaceFunctionExport(record3, replacement);
+      replaceFunctionExport(record4, replacement);
     }
     return replaceFunctionExport(result, replacement);
   }
   function findFTSRestoreSync(value, seen) {
     if (!value || typeof value !== "object" || seen.has(value)) return void 0;
     seen.add(value);
-    const record3 = value;
-    const getter = record3.getFTSRestoreSync;
+    const record4 = value;
+    const getter = record4.getFTSRestoreSync;
     if (typeof getter === "function") {
       try {
         const restore2 = Reflect.apply(getter, value, []);
@@ -5020,7 +5034,7 @@ ${button.innerHTML}`)
       } catch (_) {
       }
     }
-    return findFTSRestoreSync(record3.default, seen);
+    return findFTSRestoreSync(record4.default, seen);
   }
   function captureFTSRestoreSync(result, factoryArgs, onFTSRestoreSync) {
     const seen = /* @__PURE__ */ new WeakSet();
@@ -5076,8 +5090,8 @@ ${button.innerHTML}`)
       }
     }
   };
-  function wrapTelemetryMethod(record3, key, shouldBlockTelemetry) {
-    const original = record3[key];
+  function wrapTelemetryMethod(record4, key, shouldBlockTelemetry) {
+    const original = record4[key];
     if (typeof original !== "function" || wrappedTelemetryMethods.has(original)) return;
     const wrapped3 = function(...args) {
       if (shouldBlockTelemetry()) return void 0;
@@ -5085,7 +5099,7 @@ ${button.innerHTML}`)
     };
     wrappedTelemetryMethods.add(wrapped3);
     try {
-      record3[key] = wrapped3;
+      record4[key] = wrapped3;
     } catch (_) {
     }
   }
@@ -5096,8 +5110,8 @@ ${button.innerHTML}`)
       wrapTelemetryMethod(logger, method2, shouldBlockTelemetry);
     }
   }
-  function wrapFalcoFactory(record3, shouldBlockTelemetry) {
-    const original = record3.create;
+  function wrapFalcoFactory(record4, shouldBlockTelemetry) {
+    const original = record4.create;
     if (typeof original !== "function" || wrappedFalcoFactories.has(original)) return;
     const wrapped3 = function(...args) {
       const logger = Reflect.apply(original, this, args);
@@ -5106,21 +5120,21 @@ ${button.innerHTML}`)
     };
     wrappedFalcoFactories.add(wrapped3);
     try {
-      record3.create = wrapped3;
+      record4.create = wrapped3;
     } catch (_) {
     }
   }
   function patchTelemetryValue(moduleName, value, shouldBlockTelemetry) {
     if (!value || typeof value !== "object") return;
-    const record3 = value;
+    const record4 = value;
     if (moduleName === "FalcoLoggerInternal") {
-      wrapFalcoFactory(record3, shouldBlockTelemetry);
+      wrapFalcoFactory(record4, shouldBlockTelemetry);
     } else {
       const methods = moduleName === "Banzai" ? ["post"] : moduleName === "ODS" ? ODS_METHODS : ["maybeReportActiveSecond"];
-      for (const method2 of methods) wrapTelemetryMethod(record3, method2, shouldBlockTelemetry);
+      for (const method2 of methods) wrapTelemetryMethod(record4, method2, shouldBlockTelemetry);
     }
-    if (record3.default && record3.default !== value && typeof record3.default === "object") {
-      patchTelemetryValue(moduleName, record3.default, shouldBlockTelemetry);
+    if (record4.default && record4.default !== value && typeof record4.default === "object") {
+      patchTelemetryValue(moduleName, record4.default, shouldBlockTelemetry);
     }
   }
   function patchTelemetryExports(moduleName, result, factoryArgs, shouldBlockTelemetry) {
@@ -5271,11 +5285,11 @@ ${button.innerHTML}`)
       try {
         inspect2(value);
         if (value && typeof value === "object") {
-          const record3 = value;
-          inspect2(record3.default);
-          inspect2(record3.exports);
-          if (record3.exports && typeof record3.exports === "object") {
-            inspect2(record3.exports.default);
+          const record4 = value;
+          inspect2(record4.default);
+          inspect2(record4.exports);
+          if (record4.exports && typeof record4.exports === "object") {
+            inspect2(record4.exports.default);
           }
         }
       } catch (_) {
@@ -5356,10 +5370,10 @@ ${button.innerHTML}`)
   function wrapDesktopNotificationsFactory(factory, load) {
     const patch = (exports) => {
       if (!exports || typeof exports !== "object") return false;
-      const record3 = exports;
-      const trigger = record3.triggerLocalNotification;
+      const record4 = exports;
+      const trigger = record4.triggerLocalNotification;
       if (typeof trigger !== "function") return false;
-      record3.triggerLocalNotification = function(...args) {
+      record4.triggerLocalNotification = function(...args) {
         try {
           recordNotifiedMessage(args[1], load());
         } catch {
@@ -6036,7 +6050,7 @@ ${button.innerHTML}`)
       if (observer) return;
       observer = new MutationObserver((records) => {
         if (records.some(
-          (record3) => record3.type !== "characterData" || record3.target.parentElement?.closest(THREAD_ROW_SEL)
+          (record4) => record4.type !== "characterData" || record4.target.parentElement?.closest(THREAD_ROW_SEL)
         )) {
           schedule();
         }
@@ -7244,6 +7258,197 @@ ${button.innerHTML}`)
     else window.addEventListener("load", refresh, { once: true });
   }
 
+  // inject/src/messenger/lib/action-target.ts
+  function actionTargetFor(value, cookie) {
+    if (typeof value !== "object" || value === null) return null;
+    const { account: account2, message = "", reaction = "" } = value;
+    if (typeof account2 !== "string" || typeof message !== "string" || typeof reaction !== "string")
+      return null;
+    return account2 !== "" && account2 === accountId(cookie) ? { account: account2, message, reaction } : null;
+  }
+
+  // inject/src/messenger/lib/notification-actions.ts
+  var TRACE = "CarrierNotificationActions";
+  var ENTRYPOINT = "notificationInThreadReply";
+  function exported(load, name, member) {
+    const mod = load(name);
+    const value = member ? mod?.[member] : typeof mod === "function" ? mod : mod?.default;
+    if (typeof value !== "function") throw new Error(`${name} changed`);
+    return value;
+  }
+  async function database(load) {
+    const singleton = load("LSDatabaseSingleton");
+    const db = await singleton?.LSDatabaseSingleton;
+    const i64 = load("I64");
+    if (typeof db?.runInTransaction !== "function" || typeof db.tables?.threads?.get !== "function" || typeof i64?.of_string !== "function")
+      throw new Error("Messenger database APIs changed");
+    return { db, i64 };
+  }
+  var record3 = (value) => value && typeof value === "object" ? value : null;
+  async function markThreadRead(load, threadId, deadline, wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+    const { db, i64 } = await database(load);
+    const key = i64.of_string(threadId);
+    const markRead = exported(
+      load,
+      "MWLSMarkThreadAsRead"
+    );
+    await markRead(db, key);
+    while (true) {
+      const thread2 = record3(await db.tables.threads.get(key));
+      if (!thread2) return "thread-missing";
+      if (!i64.gt(thread2.lastActivityTimestampMs, thread2.lastReadWatermarkTimestampMs)) return "ok";
+      if (Date.now() >= deadline) return "not-confirmed";
+      await wait(200);
+    }
+  }
+  async function reactToMessage(load, request) {
+    const { db, i64 } = await database(load);
+    const message = record3(
+      await db.runInTransaction(
+        (tx) => tx.messages.index("messageId").get(request.messageId),
+        "readonly",
+        void 0,
+        void 0,
+        TRACE
+      )
+    );
+    if (!message) return "message-missing";
+    const threadKey = message.threadKey;
+    if (String(i64.to_string(threadKey)) !== request.threadId) return "thread-mismatch";
+    const sender = String(i64.to_string(message.senderId));
+    if (sender === request.account) return "own-message";
+    const thread2 = record3(await db.tables.threads.get(threadKey));
+    if (!thread2) return "thread-missing";
+    const types = load("LSMessagingThreadTypeUtil");
+    const attribution = exported(
+      load,
+      "LSThreadAttributionTypeUtil",
+      "getSourceWithoutReset"
+    );
+    const source = attribution(threadKey, ENTRYPOINT);
+    if (types.isArmadilloSecure(thread2.threadType)) {
+      const msgId = exported(
+        load,
+        "MAWDbMsg",
+        "toMsgId"
+      )(request.messageId);
+      if (!msgId) return "message-id";
+      const ready2 = await exported(load, "MAWMiActOnActThreadReady", "waitForACTThreadReady")(db.tables, threadKey, TRACE);
+      const protocolId = await exported(
+        load,
+        "MAWGetProtocolMsgIdByMsgIdInUI",
+        "getProtocolMsgIdByMsgIdUI"
+      )(msgId);
+      if (!ready2?.chatJid || !protocolId) return "protocol-id";
+      let qplEventType;
+      try {
+        qplEventType = exported(
+          load,
+          "qpl",
+          "_"
+        )(25313175, "1551");
+      } catch (_) {
+      }
+      const result = await exported(load, "MAWBridgeSendAndReceive", "sendAndReceive")("backend", "sendReactionMsg", {
+        args: {
+          groupIndex: void 0,
+          groupingKey: "",
+          reaction: request.reaction,
+          reactToAuthor: sender,
+          reactToProtocolMsgId: protocolId,
+          source
+        },
+        chatJid: ready2.chatJid,
+        externalId: exported(load, "MAWExternalId", "generateExternalId")(),
+        qplEventType,
+        qplInstanceKey: void 0
+      });
+      return record3(result)?.success === false ? "bridge-refused" : "ok";
+    }
+    const v2 = exported(
+      load,
+      "useIsReactionsV2Enabled",
+      "isReactionsV2Enabled"
+    );
+    if (v2(thread2)) return "reactions-v2";
+    const actorId = i64.of_string(request.account);
+    const mine = record3(
+      await db.runInTransaction(
+        (tx) => tx.reactions.get(threadKey, message.messageId, actorId),
+        "readonly",
+        void 0,
+        void 0,
+        TRACE
+      )
+    );
+    if (mine?.reaction === request.reaction) return "ok";
+    const factory = exported(load, "LSFactory");
+    const upsert = exported(
+      load,
+      "LSOptimisticUpsertReactionStoredProcedure"
+    );
+    await db.runInTransaction(
+      (tx) => upsert(factory(tx), {
+        actorId,
+        messageId: message.messageId,
+        reaction: request.reaction,
+        sendAttribution: source,
+        threadKey,
+        timestampMs: i64.of_float(Date.now())
+      }),
+      "readwrite",
+      void 0,
+      void 0,
+      TRACE
+    );
+    return "ok";
+  }
+
+  // inject/src/messenger/features/notification-actions.ts
+  var BUDGET_MS = 12e3;
+  function pageAction(name, run) {
+    return (path, target, id, attempt, budgetMs) => {
+      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+        () => diag(`${name}.ack`, `${name} acknowledgement emit failed`)
+      );
+      const thread2 = threadPathId(path);
+      const notified = actionTargetFor(target, document.cookie);
+      const load = window.require;
+      if (!thread2 || !Number.isSafeInteger(id) || id <= 0 || !notified || typeof load !== "function") {
+        void report(false);
+        return;
+      }
+      const budget = Math.min(Number(budgetMs) || 0, BUDGET_MS);
+      const deadline = Date.now() + budget;
+      let timer;
+      void Promise.race([
+        run(load, thread2, notified, deadline),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve("timed-out"), budget);
+        })
+      ]).catch(() => "exception").then((outcome) => {
+        clearTimeout(timer);
+        if (outcome !== "ok") diag(`${name}.failed`, `${name} stopped: ${outcome}`);
+        void report(outcome === "ok");
+      });
+    };
+  }
+  function initNotificationActions() {
+    window.__carrierMarkRead = pageAction(
+      "mark-read",
+      (load, thread2, _target, deadline) => markThreadRead(load, thread2, deadline)
+    );
+    window.__carrierQuickReact = pageAction(
+      "react",
+      async (load, thread2, target) => target.message && target.reaction ? reactToMessage(load, {
+        threadId: thread2,
+        messageId: target.message,
+        account: target.account,
+        reaction: target.reaction
+      }) : "no-message"
+    );
+  }
+
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
   var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
@@ -7293,9 +7498,6 @@ ${button.innerHTML}`)
     return false;
   }
   var ROW_BODY_LIMIT = 240;
-  function rowPreviewMatchText(body) {
-    return body.length >= ROW_BODY_LIMIT ? `${body}…` : body;
-  }
   function conversationTextParts(candidates, canonicalBody) {
     const values = [];
     const eligible = candidates.filter(
@@ -8673,14 +8875,6 @@ ${button.innerHTML}`)
   function isPhotoSummary(body) {
     return !body.trim() || photoSummary.test(body.trim());
   }
-  function isPhotoOnlyPreview(body) {
-    if (isPhotoSummary(body)) return true;
-    const text = body.trim();
-    for (let end = text.indexOf(": "); end > 0 && end <= 200; end = text.indexOf(": ", end + 2)) {
-      if (photoSummary.test(text.slice(end + 2).trim())) return true;
-    }
-    return false;
-  }
   function notificationPhotoText(title, body, hasThumbnail) {
     if (hasThumbnail && isPhotoSummary(body)) {
       return { title: `${title} sent an image:`, body: "" };
@@ -9116,6 +9310,11 @@ ${button.innerHTML}`)
       });
     };
     const avatarToDataUrl = (url) => facesToDataUrl([url]);
+    const isMac4 = /mac/i.test(navigator.platform);
+    const groupPicture2 = (names2) => isMac4 ? names2.then(
+      (group) => group?.isGroup && group.picture ? avatarToDataUrl(group.picture) : ""
+    ) : Promise.resolve("");
+    const withGroupPicture = (sender, picture) => sender?.group && picture ? { ...sender, group_picture: picture } : sender;
     const notificationStorage = pageReloadSafeStorage();
     const pageReceiptKey = accountScopedStorageKey(
       "__carrier_page_notification_receipts__",
@@ -9157,7 +9356,7 @@ ${button.innerHTML}`)
       deliveryHandlers.delete(id);
       handler?.(delivery);
     };
-    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", matchBody = "", row, sender) => {
+    const emitNotification = (id, title, body, icon, dedupeKey, onClick, threadPath, onDelivery, subtitle = "", image = "", messageId = "", row, sender) => {
       notifyHandlers.set(id, onClick);
       if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value);
       if (onDelivery) {
@@ -9179,7 +9378,7 @@ ${button.innerHTML}`)
           thread_path: threadPath || "",
           // Like/Mute match English control labels; native offers them only then.
           english_ui: /^en\b/i.test(document.documentElement.lang),
-          match_body: matchBody,
+          message_id: messageId,
           account: accountId(document.cookie) || "",
           row,
           sender
@@ -9372,8 +9571,9 @@ ${button.innerHTML}`)
           avatarToDataUrl(hidePreviewAtConstruction ? "" : opts.icon),
           kindWait,
           thumbnail,
-          names2
-        ]).then(([icon, , image, group]) => {
+          names2,
+          groupPicture2(names2)
+        ]).then(([icon, , image, group, picture]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
           const deliverySettings = window.__CARRIER_SETTINGS__ || {};
@@ -9445,14 +9645,17 @@ ${button.innerHTML}`)
             richMessageBody(named.body, threadPath),
             Boolean(image)
           );
-          const sender = hidePreview ? void 0 : communicationSender(
-            originalTitle,
-            originalBody,
-            group,
-            accountId(document.cookie),
-            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-            group?.isGroup && displayTitle ? "group" : "unknown",
-            displayTitle
+          const sender = hidePreview ? void 0 : withGroupPicture(
+            communicationSender(
+              originalTitle,
+              originalBody,
+              group,
+              accountId(document.cookie),
+              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+              group?.isGroup && displayTitle ? "group" : "unknown",
+              displayTitle
+            ),
+            picture
           );
           emitNotification(
             id,
@@ -9472,10 +9675,8 @@ ${button.innerHTML}`)
             } : void 0,
             "",
             hidePreview ? "" : image,
-            // A photo-only summary ("Sent a photo", or "Kim: Sent a photo" in a
-            // group) has no text for 👍 to match, whether or not its thumbnail
-            // loaded.
-            hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody,
+            // Messenger tags its notification with the message's id.
+            taggedThread && typeof opts.tag === "string" ? opts.tag : "",
             void 0,
             sender
           );
@@ -9795,7 +9996,7 @@ ${button.innerHTML}`)
         void 0,
         "",
         "",
-        hidePreview ? "" : rowPreviewMatchText(fallback.body),
+        "",
         {
           thread: fallback.key,
           fingerprint: fallback.fingerprint,
@@ -9877,7 +10078,7 @@ ${button.innerHTML}`)
           return;
         }
         const hiddenBeforeImages = settings.hide_notification_preview === true;
-        const [sender, thread2, image, group] = hiddenBeforeImages ? ["", "", "", null] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2]);
+        const [sender, thread2, image, group, picture] = hiddenBeforeImages ? ["", "", "", null, ""] : await Promise.all([senderAvatar, threadAvatar, thumbnail, names2, groupPicture2(names2)]);
         const presentation = notificationPresentation(
           nativeThreadTitles.displayed(
             conversation.key,
@@ -9947,21 +10148,24 @@ ${button.innerHTML}`)
           void 0,
           hidePreview ? "" : visiblePresentation.subtitle,
           hidePreview ? "" : image,
-          hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
+          "",
           { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
-          hidePreview ? void 0 : communicationSender(
-            // Identity comes from the row's original "Name: message"
-            // preview through the full-prefix matcher, which refuses
-            // ambiguous prefixes; shortened display text must not decide.
-            conversation.title,
-            conversation.body,
-            group,
-            accountId(document.cookie),
-            showNicknames(nicknameMode(deliverySettings), group?.isGroup),
-            "group",
-            visiblePresentation.subtitle || visiblePresentation.title,
-            // In a group the icon is the sender's only when their photo won.
-            Boolean(sender) && icon === sender
+          hidePreview ? void 0 : withGroupPicture(
+            communicationSender(
+              // Identity comes from the row's original "Name: message"
+              // preview through the full-prefix matcher, which refuses
+              // ambiguous prefixes; shortened display text must not decide.
+              conversation.title,
+              conversation.body,
+              group,
+              accountId(document.cookie),
+              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+              "group",
+              visiblePresentation.subtitle || visiblePresentation.title,
+              // In a group the icon is the sender's only when their photo won.
+              Boolean(sender) && icon === sender
+            ),
+            picture
           )
         );
       }, FALLBACK_DELAY_MS);
@@ -10363,10 +10567,10 @@ ${button.innerHTML}`)
         const key = threadIdFromHref(links[0].getAttribute("href"));
         if (key) mutatedRows.add(key);
       };
-      for (const record3 of records) {
-        inspect2(record3.target);
-        inspectMutatedRow(record3.target);
-        for (const node of record3.addedNodes) {
+      for (const record4 of records) {
+        inspect2(record4.target);
+        inspectMutatedRow(record4.target);
+        for (const node of record4.addedNodes) {
           inspect2(node);
           inspectMutatedRow(node);
         }
@@ -10431,87 +10635,31 @@ ${button.innerHTML}`)
     startPoll();
   }
 
-  // inject/src/messenger/lib/action-target.ts
-  function actionTargetFor(value, cookie) {
-    if (typeof value !== "object" || value === null) return null;
-    const { body, at, account: account2 } = value;
-    if (typeof body !== "string" || typeof at !== "number" || typeof account2 !== "string")
-      return null;
-    return account2 !== "" && account2 === accountId(cookie) ? { body, at, account: account2 } : null;
-  }
-
-  // inject/src/messenger/lib/quick-like.ts
-  function decideQuickLike(phase, snapshot, expired) {
-    if (!snapshot.threadMatches) {
-      if (phase === "waiting" && !expired) return { action: "wait", phase };
-      return { action: "failure", phase };
-    }
-    if (phase === "confirming") {
-      if (snapshot.thumbShown) return { action: "success", phase };
-      return expired ? { action: "failure", phase } : { action: "wait", phase };
+  // inject/src/messenger/lib/quick-mute.ts
+  var QUICK_MUTE_DURATION_MS = "28800000";
+  function decideQuickMute(phase, snapshot, expired) {
+    if (snapshot.threadMatches && (snapshot.muted === true || phase === "chooser" && snapshot.chooser === "unmute" || phase === "confirming" && snapshot.confirmed)) {
+      return { action: "success", phase };
     }
     if (expired) return { action: "failure", phase };
-    if (phase === "menu") {
-      if (snapshot.menu === "selected") return { action: "close-menu", phase: "confirming" };
-      if (snapshot.menu === "unselected") return { action: "select", phase: "confirming" };
-      if (snapshot.menu === "missing") return { action: "failure", phase };
+    if (!snapshot.threadMatches) {
+      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
+    }
+    if (phase === "waiting") {
+      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
+      if (snapshot.chatNotifications) return { action: "open-chooser", phase: "chooser" };
+      if (!snapshot.infoRequested) return { action: "open-info", phase };
       return { action: "wait", phase };
     }
-    if (!snapshot.settled) return { action: "settle", phase };
-    if (snapshot.ambiguous) return { action: "failure", phase };
-    if (!snapshot.targetFound) return { action: "wait", phase };
-    if (!snapshot.reactButton) return { action: "hover", phase };
-    return { action: "open-menu", phase: "menu" };
-  }
-  var normalized = (text) => text.replace(/\s+/g, " ").trim();
-  function bubbleText(label2) {
-    const match = / by [^:]*: ([\s\S]*)$/.exec(label2);
-    return match?.[1] ? normalized(match[1]) : "";
-  }
-  var bubbleSender = (label2) => / by ([^:]*): /.exec(label2)?.[1]?.trim() ?? "";
-  function bubbleMatchesNotification(label2, body) {
-    const raw = normalized(body);
-    const truncated = /(?:…|\.\.\.)$/.test(raw);
-    const preview = raw.replace(/(?:…|\.\.\.)$/, "").trim();
-    const text = bubbleText(label2);
-    if (!preview || !text) return false;
-    const fits = (candidate) => candidate.length > 0 && (truncated ? text.startsWith(candidate) : text === candidate);
-    if (fits(preview)) return true;
-    const separator = preview.indexOf(": ");
-    if (separator <= 0) return false;
-    const prefix = preview.slice(0, separator);
-    const sender = bubbleSender(label2);
-    return (sender === prefix || sender.startsWith(`${prefix} `)) && fits(preview.slice(separator + 2));
-  }
-  var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-  function bubbleSentAt(label2, now) {
-    const match = /^Enter, Message sent (?:(\p{Letter}+) )?(\d{1,2}):(\d{2})(?:\s?([ap])\.?m\.?)? by /iu.exec(
-      label2
-    );
-    if (!match) return null;
-    const today = new Date(now);
-    const day = match[1]?.toLowerCase();
-    let daysBack = 0;
-    if (day === "yesterday") daysBack = 1;
-    else if (day) {
-      const weekday = WEEKDAYS.indexOf(day);
-      if (weekday < 0) return null;
-      daysBack = (today.getDay() - weekday + 7) % 7 || 7;
+    if (phase === "chooser") {
+      if (snapshot.chooser === "mute") return { action: "choose-mute", phase: "dialog" };
+      return { action: "wait", phase };
     }
-    const meridiem = match[4]?.toLowerCase();
-    const hour = meridiem ? Number(match[2]) % 12 + (meridiem === "p" ? 12 : 0) : Number(match[2]);
-    const sent = new Date(today);
-    sent.setDate(today.getDate() - daysBack);
-    sent.setHours(hour, Number(match[3]), 0, 0);
-    return sent.getTime();
-  }
-  var FRESH_MINUTES = 5;
-  var MINUTE_MS = 6e4;
-  function bubbleIsFresh(label2, notifiedAt, now = Date.now()) {
-    const sent = bubbleSentAt(label2, now);
-    if (sent === null) return false;
-    const lag = notifiedAt - sent;
-    return lag >= -MINUTE_MS && lag < (FRESH_MINUTES + 1) * MINUTE_MS;
+    if (phase === "dialog") {
+      if (snapshot.dialog === "unselected") return { action: "select", phase };
+      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
+    }
+    return { action: "wait", phase };
   }
 
   // inject/src/messenger/lib/thread-restore.ts
@@ -10687,174 +10835,11 @@ ${button.innerHTML}`)
     };
   }
 
-  // inject/src/messenger/features/quick-like.ts
-  var POLL_MS = 250;
-  var LIKE_BUDGET_MS = 12e3;
-  var THUMB = "👍";
-  var BUBBLE = '[aria-label^="Enter, Message sent"]';
-  var REACT_BUTTON = '[role="button"][aria-label="React with an emoji"]';
-  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
-  var bubbles = () => [
-    ...document.querySelectorAll(`[role="main"] [role="article"] ${BUBBLE}`)
-  ];
-  function messageScroller(from) {
-    for (let el = from.parentElement; el && el !== document.body; el = el.parentElement) {
-      if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight)
-        return el;
-    }
-    return null;
-  }
-  var atBottom = (scroller) => !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 4;
-  function announcedBubble(notified) {
-    const matches = bubbles().filter((el) => {
-      const label2 = el.getAttribute("aria-label") || "";
-      return !/ by You(?::|$)/.test(label2) && bubbleMatchesNotification(label2, notified.body) && bubbleIsFresh(label2, notified.at);
-    });
-    if (matches.length > 1) return "ambiguous";
-    const bubble = matches[0];
-    let scope = bubble?.closest('[role="article"]');
-    while (scope?.parentElement && scope.parentElement.querySelectorAll(BUBBLE).length === 1)
-      scope = scope.parentElement;
-    return bubble && scope ? { bubble, scope } : null;
-  }
-  function reactionSummary(scope) {
-    return [...scope.querySelectorAll('[role="button"][aria-label]')].filter((el) => !el.matches(BUBBLE) && !el.closest('[role="group"]')).map((el) => el.getAttribute("aria-label")).join("\n");
-  }
-  function thumbItem(menu) {
-    for (const item of menu.querySelectorAll('[role="menuitemradio"]'))
-      if (item.querySelector("img")?.getAttribute("alt") === THUMB) return item;
-    return null;
-  }
-  async function like(path, notified, deadline) {
-    if (Date.now() >= deadline) return false;
-    const paneReady = openThreadForAction(path);
-    if (!paneReady) {
-      diag("quick-like.open", "validated thread could not be opened");
-      return false;
-    }
-    let phase = "waiting";
-    let target = null;
-    let ambiguous = false;
-    let reactButton = null;
-    let summaryBefore = "";
-    while (true) {
-      const newest = phase === "waiting" ? bubbles().pop() ?? null : null;
-      const scroller = newest ? messageScroller(newest) : null;
-      const settled = newest !== null && atBottom(scroller);
-      if (phase === "waiting") {
-        const found = announcedBubble(notified);
-        ambiguous = found === "ambiguous";
-        target = found === "ambiguous" ? null : found;
-      }
-      if (phase === "waiting") reactButton = target?.scope.querySelector(REACT_BUTTON) ?? null;
-      const menuId = reactButton?.getAttribute("aria-controls");
-      const menu = reactButton?.getAttribute("aria-expanded") === "true" ? menuId && document.getElementById(menuId) || [...document.querySelectorAll('[role="menu"]')].pop() || null : null;
-      const thumb = menu ? thumbItem(menu) : null;
-      const summary = target ? reactionSummary(target.scope) : "";
-      const snapshot = {
-        threadMatches: paneReady(),
-        targetFound: target !== null && target.bubble.isConnected,
-        ambiguous,
-        settled,
-        reactButton: reactButton !== null,
-        menu: !menu ? "none" : !thumb ? "missing" : thumb.getAttribute("aria-checked") === "true" ? "selected" : "unselected",
-        thumbShown: summary.includes(THUMB) && (summaryBefore === null || summary !== summaryBefore)
-      };
-      const decision = decideQuickLike(phase, snapshot, Date.now() >= deadline);
-      phase = decision.phase;
-      switch (decision.action) {
-        case "settle":
-          if (scroller && !atBottom(scroller)) scroller.scrollTop = scroller.scrollHeight;
-          break;
-        case "hover": {
-          const bubble = target?.bubble;
-          const rect = bubble?.getBoundingClientRect();
-          const point = rect && {
-            clientX: rect.x + rect.width / 2,
-            clientY: rect.y + rect.height / 2
-          };
-          bubble?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true, ...point }));
-          bubble?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, ...point }));
-          break;
-        }
-        case "open-menu":
-          reactButton?.click();
-          break;
-        case "select":
-          summaryBefore = summary;
-          thumb?.click();
-          break;
-        case "close-menu":
-          summaryBefore = null;
-          reactButton?.click();
-          break;
-        case "success":
-          if (menu) reactButton?.click();
-          return true;
-        case "failure":
-          if (menu) reactButton?.click();
-          diag(
-            "quick-like.delivery",
-            `like flow stopped in ${phase} (${document.visibilityState}; pane ${snapshot.threadMatches}, settled ${snapshot.settled}, target ${snapshot.targetFound}, ambiguous ${snapshot.ambiguous}, react ${snapshot.reactButton}, menu ${snapshot.menu})`
-          );
-          return false;
-        case "wait":
-          break;
-      }
-      await pause();
-    }
-  }
-  function initQuickLike() {
-    window.__carrierQuickLike = (path, target, id, attempt, budgetMs) => {
-      noteExplicitAction();
-      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
-        () => diag("quick-like.ack", "like acknowledgement emit failed")
-      );
-      const notified = actionTargetFor(target, document.cookie);
-      if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !notified?.body.trim()) {
-        void report(false);
-        return;
-      }
-      const deadline = Date.now() + Math.min(Number(budgetMs) || 0, LIKE_BUDGET_MS);
-      void withComposerDeliveryWhenAvailable(() => like(path, notified, deadline)).then((ok) => report(ok)).catch(() => {
-        diag("quick-like.exception", "like flow raised an exception");
-        void report(false);
-      });
-    };
-  }
-
-  // inject/src/messenger/lib/quick-mute.ts
-  var QUICK_MUTE_DURATION_MS = "28800000";
-  function decideQuickMute(phase, snapshot, expired) {
-    if (snapshot.threadMatches && (snapshot.muted === true || phase === "chooser" && snapshot.chooser === "unmute" || phase === "confirming" && snapshot.confirmed)) {
-      return { action: "success", phase };
-    }
-    if (expired) return { action: "failure", phase };
-    if (!snapshot.threadMatches) {
-      return phase === "waiting" ? { action: "wait", phase } : { action: "failure", phase };
-    }
-    if (phase === "waiting") {
-      if (snapshot.muted === false) return { action: "open-dialog", phase: "dialog" };
-      if (snapshot.chatNotifications) return { action: "open-chooser", phase: "chooser" };
-      if (!snapshot.infoRequested) return { action: "open-info", phase };
-      return { action: "wait", phase };
-    }
-    if (phase === "chooser") {
-      if (snapshot.chooser === "mute") return { action: "choose-mute", phase: "dialog" };
-      return { action: "wait", phase };
-    }
-    if (phase === "dialog") {
-      if (snapshot.dialog === "unselected") return { action: "select", phase };
-      if (snapshot.dialog === "ready") return { action: "confirm", phase: "confirming" };
-    }
-    return { action: "wait", phase };
-  }
-
   // inject/src/messenger/features/quick-mute.ts
-  var POLL_MS2 = 250;
+  var POLL_MS = 250;
   var MUTE_BUDGET_MS = 12e3;
   var muteExpiries = /* @__PURE__ */ new Map();
-  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
+  var pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
   var label = (el) => el.getAttribute("aria-label") || el.textContent || "";
   var PANE_MUTE_CONTROL = /^(?:(un)?mute notifications?|turn (on|off) notifications)$/i;
   function threadMuteControl(stale) {
@@ -11008,7 +10993,7 @@ ${button.innerHTML}`)
           case "wait":
             break;
         }
-        await pause2();
+        await pause();
       }
     } finally {
       const chooser = openedChooser?.isConnected ? openedChooser : null;
@@ -11074,13 +11059,13 @@ ${button.innerHTML}`)
   var composerIncludesReply = (content, reply) => reply.length > 0 && (content || "").replace(/\r\n/g, "\n").includes(reply.replace(/\r\n/g, "\n"));
 
   // inject/src/messenger/features/quick-reply.ts
-  var POLL_MS3 = 250;
+  var POLL_MS2 = 250;
   var DELIVERY_BUDGET_MS = 12e3;
   var MAX_REPLY_CHARS = 2e3;
   var COMPOSER_SELECTOR2 = '[role="main"] [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   var insertedReplies = /* @__PURE__ */ new Map();
   var replyAttempts = /* @__PURE__ */ new Map();
-  var pause3 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS3));
+  var pause2 = () => new Promise((resolve) => setTimeout(resolve, POLL_MS2));
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
@@ -11128,7 +11113,7 @@ ${button.innerHTML}`)
         phase = decision.phase;
         switch (decision.action) {
           case "wait":
-            await pause3();
+            await pause2();
             break;
           case "insert": {
             if (!box) return false;
@@ -11145,7 +11130,7 @@ ${button.innerHTML}`)
             if (state2.cancelled) return false;
             state2.clicked = true;
             button?.click();
-            await pause3();
+            await pause2();
             break;
           case "success":
             insertedReplies.delete(id);
@@ -11200,7 +11185,7 @@ ${text}`)) {
         insertedReplies.delete(id);
         return true;
       }
-      await pause3();
+      await pause2();
     }
     diag("quick-reply.draft", "fallback composer did not become ready");
     return false;
@@ -11478,7 +11463,7 @@ ${text}`)) {
   window.addEventListener("popstate", () => {
     routeChanged = true;
   });
-  var pause4 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var pause3 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
@@ -11520,12 +11505,12 @@ ${text}`)) {
         const current = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
-          await pause4();
+          await pause3();
           continue;
         }
         if (!current || hasComposerMedia(current)) {
           if (inserted) break;
-          await pause4();
+          await pause3();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
@@ -11535,13 +11520,13 @@ ${text}`)) {
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
-          await pause4();
+          await pause3();
           continue;
         }
         if (current !== box || composerText(current) !== message.text) break;
         const send = findSendButton(current, controls);
         if (!send) {
-          await pause4();
+          await pause3();
           continue;
         }
         if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
@@ -11553,7 +11538,7 @@ ${text}`)) {
           if (thread() !== message.thread || account() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
-          await pause4();
+          await pause3();
         }
         return "uncertain";
       }
@@ -11725,7 +11710,7 @@ ${text}`)) {
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
-            await pause4();
+            await pause3();
             if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
@@ -13658,7 +13643,7 @@ ${text}`)) {
     const affectsControls = (element2) => !!element2.closest(`${DIALOG2}, ${BANNER}`) || [...observedDialogs, ...markedControls].some((control) => element2.contains(control));
     new MutationObserver((records) => {
       if (records.some(
-        (record3) => record3.target instanceof Element && affectsControls(record3.target) || record3.type === "childList" && [...record3.addedNodes, ...record3.removedNodes].some(
+        (record4) => record4.target instanceof Element && affectsControls(record4.target) || record4.type === "childList" && [...record4.addedNodes, ...record4.removedNodes].some(
           (node) => node instanceof Element && (affectsControls(node) || node.querySelector(`${DIALOG2}, ${BANNER}`))
         )
       ))
@@ -13735,7 +13720,7 @@ ${text}`)) {
     initFeature("conversation-export", initConversationExport);
     initFeature("quick-reply", initQuickReply);
     initFeature("quick-mute", initQuickMute);
-    initFeature("quick-like", initQuickLike);
+    initFeature("notification-actions", initNotificationActions);
     initFeature("scheduled-send", initScheduledSend);
     initFeature("hide-names", initHideNames);
     initFeature("system-emoji", initSystemEmoji);

@@ -212,9 +212,38 @@ describe("Messenger group-name reader", () => {
   });
   test("reads only the requested group's bounded membership and its contact photos", async () => {
     const h = databaseHarness();
-    expect(await readConversationNotificationNames("123", h.load)).toEqual(group);
+    expect(await readConversationNotificationNames("123", h.load)).toEqual({
+      ...group,
+      picture: "",
+    });
     expect(h.keys).toEqual(["key:123", "key:123"]);
     expect(h.limits).toEqual([501]);
+  });
+
+  test("reads a group's own picture the way Messenger's thread picture does", async () => {
+    const h = databaseHarness();
+    const seen: unknown[] = [];
+    h.modules.getLSMediaThreadPictureUrl = (thread: unknown) => {
+      seen.push(thread);
+      return "https://scontent.example/group.jpg";
+    };
+    expect((await readConversationNotificationNames("123", h.load))?.picture).toBe(
+      "https://scontent.example/group.jpg",
+    );
+    expect(seen).toEqual([{ threadName: "Weekend", threadType: 2 }]);
+    // No photo of its own (Messenger draws the members), or an odd URL: none.
+    for (const url of [null, "", "http://insecure.example/g.jpg", "data:image/png;base64,AA"]) {
+      h.modules.getLSMediaThreadPictureUrl = () => url;
+      expect((await readConversationNotificationNames("123", h.load))?.picture).toBe("");
+    }
+    h.modules.getLSMediaThreadPictureUrl = () => {
+      throw new Error("changed");
+    };
+    expect((await readConversationNotificationNames("123", h.load))?.picture).toBe("");
+    // A one-to-one chat's picture is the other person's, never a group picture.
+    const direct = databaseHarness(undefined, false);
+    direct.modules.getLSMediaThreadPictureUrl = () => "https://scontent.example/p.jpg";
+    expect((await readConversationNotificationNames("123", direct.load))?.picture).toBe("");
   });
 
   test("reads one-to-one chats without parsing their message body as a sender prefix", async () => {

@@ -259,7 +259,7 @@
             ...(IS_WINDOWS ? ["hide_on_minimize", "hide_on_focus_loss", "hide_taskbar_icon"] : []),
           ] },
         { id: "notifications", label: "Notifications", icon: ICONS.notifications,
-          fields: ["mute_notifications", "notification_sound", "notify_group_chats", "hide_notification_preview",
+          fields: ["mute_notifications", "notification_sound", "notify_group_chats", "hide_notification_preview", "notification_reaction",
                    ...(IS_MAC ? ["group_notifications_by_conversation"] : []),
                    ...(IS_MAC || IS_WINDOWS ? ["clear_notifications_on_view", "attention_on_message"] : []),
                    "unread_badge", "muted_conversations", "badge_mode", "test_notification"] },
@@ -716,6 +716,17 @@
         );
       }
 
+      // The reaction a notification's React button adds: Messenger's defaults.
+      function notificationReactionRow() {
+        return selectRow(
+          "notification_reaction", "👍",
+          [["👍", "👍"], ["\u2764", "\u2764\ufe0f"], ["😆", "😆"], ["😮", "😮"], ["😢", "😢"], ["😡", "😡"]],
+          "Notification Reaction",
+          "The reaction a notification's React button adds to the message.",
+          false,
+        );
+      }
+
       // How often automatic update checks run; only meaningful while they are on.
       function updateCheckHoursRow() {
         return selectRow(
@@ -1018,6 +1029,7 @@
         title_bar: titleBarRow,
         badge_mode: badgeModeRow,
         muted_conversations: mutedConversationsRow,
+        notification_reaction: notificationReactionRow,
         update_check_hours: updateCheckHoursRow,
         download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,

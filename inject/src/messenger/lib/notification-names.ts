@@ -17,6 +17,9 @@ export interface ConversationNotificationNames {
   title: string;
   isGroup: boolean;
   participants: NotificationParticipant[];
+  /** A group's own picture (an https URL), or "" when Messenger shows its
+   * members' faces instead. Always "" for a one-to-one chat. */
+  picture?: string;
 }
 
 function aliases(person: NotificationParticipant) {
@@ -140,8 +143,12 @@ export async function readConversationNotificationNames(
     );
     if (!Array.isArray(rows) || !rows.length || rows.length > PARTICIPANT_LIMIT) return null;
     let photo: unknown;
+    let pictureOf: unknown;
     try {
       photo = importModule("getLSMediaContactProfilePictureUrl");
+    } catch (_) {}
+    try {
+      pictureOf = importModule("getLSMediaThreadPictureUrl");
     } catch (_) {}
     const participants: NotificationParticipant[] = [];
     for (const row of rows) {
@@ -178,6 +185,7 @@ export async function readConversationNotificationNames(
       title:
         "threadName" in thread && typeof thread.threadName === "string" ? thread.threadName : "",
       participants,
+      picture: isGroup ? groupPicture(thread, pictureOf) : "",
     };
   };
   try {
@@ -192,6 +200,20 @@ export async function readConversationNotificationNames(
   }
 }
 
+/**
+ * A group's own picture, chosen as Messenger's thread picture does: the URL
+ * `getLSMediaThreadPictureUrl` gives (the photo set for the group), or "" when
+ * there is none and Messenger draws the members' faces instead.
+ */
+function groupPicture(thread: object, pictureOf: unknown): string {
+  try {
+    const url = typeof pictureOf === "function" ? pictureOf(thread) : null;
+    return typeof url === "string" && url.startsWith("https://") ? url : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 /** The sender a native communication notification shows (Ref #366). */
 export interface NativeSender {
   /** Messenger participant id. */
@@ -201,6 +223,8 @@ export interface NativeSender {
   group: string;
   /** The notification's icon is this sender's own picture. */
   photo: boolean;
+  /** The group's own picture as a PNG data URL, when it has one. */
+  group_picture?: string;
 }
 
 /**

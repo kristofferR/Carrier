@@ -32,8 +32,8 @@ import { initMediaAutoplay } from "./features/media-autoplay";
 import { initMediaPermissionWarning } from "./features/media-permissions";
 import { initMediaViewer } from "./features/media-viewer";
 import { initMessengerDnd } from "./features/messenger-dnd";
+import { initNotificationActions } from "./features/notification-actions";
 import { initNotificationBridge } from "./features/notifications";
-import { initQuickLike } from "./features/quick-like";
 import { initQuickMute } from "./features/quick-mute";
 import { initQuickReply } from "./features/quick-reply";
 import { initRateLimit } from "./features/rate-limit";
@@ -102,7 +102,7 @@ function main() {
   initFeature("conversation-export", initConversationExport);
   initFeature("quick-reply", initQuickReply);
   initFeature("quick-mute", initQuickMute);
-  initFeature("quick-like", initQuickLike);
+  initFeature("notification-actions", initNotificationActions);
   initFeature("scheduled-send", initScheduledSend);
   initFeature("hide-names", initHideNames);
   initFeature("system-emoji", initSystemEmoji);
