@@ -52,6 +52,8 @@ import {
   notificationLinkImage,
 } from "../lib/notification-links";
 import {
+  communicationSender,
+  type NativeSender,
   notificationNames,
   notificationSender,
   readConversationNotificationNames,
@@ -246,6 +248,8 @@ export function initNotificationBridge() {
     matchBody = "",
     // The row fallback's claim on native's notification ledger.
     row?: { thread: string; fingerprint: string; body_hash: string; read_at: number },
+    // Who sent it, for a native communication notification (macOS, Ref #366).
+    sender?: NativeSender,
   ) => {
     notifyHandlers.set(id, onClick);
     if (notifyHandlers.size > 50) notifyHandlers.delete(notifyHandlers.keys().next().value!);
@@ -271,6 +275,7 @@ export function initNotificationBridge() {
         match_body: matchBody,
         account: accountId(document.cookie) || "",
         row,
+        sender,
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
@@ -635,6 +640,17 @@ export function initNotificationBridge() {
           richMessageBody(named.body, threadPath),
           Boolean(image),
         );
+        const sender = hidePreview
+          ? undefined
+          : communicationSender(
+              originalTitle,
+              originalBody,
+              group,
+              accountId(document.cookie),
+              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+              group?.isGroup && displayTitle ? "group" : "unknown",
+              displayTitle,
+            );
         emitNotification(
           id,
           hidePreview ? "Messenger" : text.title,
@@ -665,6 +681,8 @@ export function initNotificationBridge() {
           // group) has no text for 👍 to match, whether or not its thumbnail
           // loaded.
           hidePreview || isPhotoOnlyPreview(text.body) ? "" : originalBody,
+          undefined,
+          sender,
         );
         // The banner is queued — only now is it safe to persist "delivered"
         // for the pairings this signal absorbed, whether the row matched
@@ -1359,6 +1377,19 @@ export function initNotificationBridge() {
         hidePreview ? "" : image,
         hidePreview || isPhotoOnlyPreview(text.body) ? "" : rowPreviewMatchText(conversation.body),
         { thread: conversation.key, fingerprint, body_hash: bodyHash, read_at: readAt },
+        hidePreview
+          ? undefined
+          : communicationSender(
+              visiblePresentation.title,
+              visibleContent.subtitle && !visiblePresentation.subtitle
+                ? `${visibleContent.title}: ${visibleContent.body}`
+                : visibleContent.body,
+              group,
+              accountId(document.cookie),
+              showNicknames(nicknameMode(deliverySettings), group?.isGroup),
+              visiblePresentation.subtitle ? "sender" : "group",
+              visiblePresentation.subtitle || visiblePresentation.title,
+            ),
       );
     }, FALLBACK_DELAY_MS);
     retainPendingFallback({
