@@ -418,10 +418,11 @@ html[data-carrier-hide-avatars]
    its own, and nested ones multiply that on every repaint of the area: with
    group sender names blurred at every level, hovering a message pinned the
    web process for seconds on Linux. The outer blur already covers the inner
-   element, so turn the inner filters off. */
-html[data-carrier-hide-names] [data-carrier-private-identity]
-  :is([data-carrier-private-identity], [data-carrier-private-avatar]),
-html[data-carrier-hide-avatars] [data-carrier-private-avatar] [data-carrier-private-avatar],
+   element, so turn the inner filters off. Everything inside a marked element
+   is covered, including profile links the rules above blur; the :not() of two
+   ids only lifts specificity above those rules. */
+html[data-carrier-hide-names] [data-carrier-private-identity] *:not(#carrier-nest#carrier-nest),
+html[data-carrier-hide-avatars] [data-carrier-private-avatar] *:not(#carrier-nest#carrier-nest),
 html[data-carrier-hide-names][data-carrier-hide-avatars]
   :is(main, [role="main"])
   :is(a[href^="/"][href$="/"]:not([href*="/messages/"]), a[href*="/profile.php"])
