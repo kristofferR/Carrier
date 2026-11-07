@@ -419,6 +419,12 @@ export function observeConversationMute(id: string, root: ParentNode): boolean {
   return mutedThreads.isMuted(id);
 }
 
+/** Messenger's own database answered: it outranks any rendered evidence. */
+export function observeDatabaseMute(id: string, muted: boolean): boolean {
+  mutedThreads.observe(id, muted);
+  return muted;
+}
+
 /** Info-sidebar / header Mute and Unmute controls for the open thread. */
 export function observeOpenThreadMute(id: string, roots: Iterable<ParentNode>): boolean {
   const labels: string[] = [];
