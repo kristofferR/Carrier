@@ -5163,6 +5163,128 @@ ${button.innerHTML}`)
     window.addEventListener("carrier:settings", apply);
   }
 
+  // inject/src/messenger/lib/image-paste.ts
+  var ADDRESS = /^(https?|blob|data):\S+$/;
+  function isImageWithOnlyItsAddress(paste) {
+    if (!paste.fileTypes.length || !paste.fileTypes.every((type) => type.startsWith("image/"))) {
+      return false;
+    }
+    const text = paste.text.trim();
+    if (!text && paste.htmlText === null) return false;
+    if (text && !ADDRESS.test(text)) return false;
+    if (paste.htmlText === null) return true;
+    return !paste.htmlText.trim() && paste.htmlHasImage;
+  }
+
+  // inject/src/messenger/lib/share-intake.ts
+  var MAX_SHARED_FILES = 21;
+  var MAX_SHARED_NAME_BYTES = 255;
+  var MAX_SHARED_DATA_LENGTH = 140 * 1024 * 1024;
+  var SHARE_DELIVERY_TTL_MS = 2 * 60 * 1e3;
+  var MIME_BY_EXTENSION = /* @__PURE__ */ new Map([
+    ["png", "image/png"],
+    ["jpg", "image/jpeg"],
+    ["jpeg", "image/jpeg"],
+    ["gif", "image/gif"],
+    ["webp", "image/webp"],
+    ["heic", "image/heic"],
+    ["mp4", "video/mp4"],
+    ["mov", "video/quicktime"],
+    ["webm", "video/webm"],
+    ["pdf", "application/pdf"]
+  ]);
+  var utf8Length = (value) => new TextEncoder().encode(value).length;
+  function dispatchTransferEvent(target, event, property, transfer) {
+    let payloadRead = false;
+    Object.defineProperty(event, property, {
+      configurable: true,
+      get: () => {
+        payloadRead = true;
+        return transfer;
+      }
+    });
+    const cancelled = !target.dispatchEvent(event);
+    return { acknowledged: cancelled && payloadRead, payloadRead };
+  }
+  function sanitizeSharedFiles(payload, maxTotalDataLength = MAX_SHARED_DATA_LENGTH) {
+    if (!Array.isArray(payload)) return [];
+    const files = [];
+    let totalData = 0;
+    for (const entry of payload) {
+      if (files.length >= MAX_SHARED_FILES) break;
+      if (!entry || typeof entry !== "object") continue;
+      if (!Object.hasOwn(entry, "name") || !Object.hasOwn(entry, "data")) continue;
+      const { name, data } = entry;
+      if (typeof name !== "string" || typeof data !== "string") continue;
+      if (name.length === 0 || utf8Length(name) > MAX_SHARED_NAME_BYTES) continue;
+      if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
+      totalData += data.length;
+      if (totalData > maxTotalDataLength) break;
+      files.push({ name, data });
+    }
+    return files;
+  }
+  function decodeToFile(entry) {
+    try {
+      if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
+        return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
+          type: mimeForName(entry.name)
+        });
+      }
+      const binary = atob(entry.data);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new File([bytes], entry.name, { type: mimeForName(entry.name) });
+    } catch {
+      return null;
+    }
+  }
+  function decodeSharedFiles(entries) {
+    const files = entries.map(decodeToFile).filter((file) => file !== null);
+    return { files, failures: entries.length - files.length };
+  }
+  function shareIsDeliverable(parkedAtMs, nowMs) {
+    const age = nowMs - parkedAtMs;
+    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
+  }
+  function mimeForName(name) {
+    const extension = name.toLowerCase().split(".").pop() ?? "";
+    return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
+  }
+
+  // inject/src/messenger/features/image-paste.ts
+  function htmlContents(html) {
+    if (!html) return { htmlText: null, htmlHasImage: false };
+    const body = new DOMParser().parseFromString(html, "text/html").body;
+    return { htmlText: body.textContent ?? "", htmlHasImage: body.querySelector("img") !== null };
+  }
+  function initImagePaste() {
+    document.addEventListener(
+      "paste",
+      (event) => {
+        if (!event.isTrusted || !isComposerTarget(event.target)) return;
+        const data = event.clipboardData;
+        if (!data?.files.length) return;
+        const files = [...data.files];
+        const contents = {
+          fileTypes: files.map((file) => file.type),
+          text: data.getData("text/plain"),
+          ...htmlContents(data.getData("text/html"))
+        };
+        if (!isImageWithOnlyItsAddress(contents)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const pictures = new DataTransfer();
+        for (const file of files) pictures.items.add(file);
+        const again = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+        dispatchTransferEvent(event.target, again, "clipboardData", pictures);
+      },
+      true
+    );
+  }
+
   // inject/src/messenger/features/link-handling.ts
   function handleLink(e) {
     const a = e.target?.closest?.("a[href]");
@@ -10849,84 +10971,6 @@ ${text}`)) {
     }
   }
 
-  // inject/src/messenger/lib/share-intake.ts
-  var MAX_SHARED_FILES = 21;
-  var MAX_SHARED_NAME_BYTES = 255;
-  var MAX_SHARED_DATA_LENGTH = 140 * 1024 * 1024;
-  var SHARE_DELIVERY_TTL_MS = 2 * 60 * 1e3;
-  var MIME_BY_EXTENSION = /* @__PURE__ */ new Map([
-    ["png", "image/png"],
-    ["jpg", "image/jpeg"],
-    ["jpeg", "image/jpeg"],
-    ["gif", "image/gif"],
-    ["webp", "image/webp"],
-    ["heic", "image/heic"],
-    ["mp4", "video/mp4"],
-    ["mov", "video/quicktime"],
-    ["webm", "video/webm"],
-    ["pdf", "application/pdf"]
-  ]);
-  var utf8Length = (value) => new TextEncoder().encode(value).length;
-  function dispatchTransferEvent(target, event, property, transfer) {
-    let payloadRead = false;
-    Object.defineProperty(event, property, {
-      configurable: true,
-      get: () => {
-        payloadRead = true;
-        return transfer;
-      }
-    });
-    const cancelled = !target.dispatchEvent(event);
-    return { acknowledged: cancelled && payloadRead, payloadRead };
-  }
-  function sanitizeSharedFiles(payload, maxTotalDataLength = MAX_SHARED_DATA_LENGTH) {
-    if (!Array.isArray(payload)) return [];
-    const files = [];
-    let totalData = 0;
-    for (const entry of payload) {
-      if (files.length >= MAX_SHARED_FILES) break;
-      if (!entry || typeof entry !== "object") continue;
-      if (!Object.hasOwn(entry, "name") || !Object.hasOwn(entry, "data")) continue;
-      const { name, data } = entry;
-      if (typeof name !== "string" || typeof data !== "string") continue;
-      if (name.length === 0 || utf8Length(name) > MAX_SHARED_NAME_BYTES) continue;
-      if (name.includes("/") || name.includes("\\") || name.startsWith(".")) continue;
-      totalData += data.length;
-      if (totalData > maxTotalDataLength) break;
-      files.push({ name, data });
-    }
-    return files;
-  }
-  function decodeToFile(entry) {
-    try {
-      if ("fromBase64" in Uint8Array && typeof Uint8Array.fromBase64 === "function") {
-        return new File([Uint8Array.fromBase64(entry.data)], entry.name, {
-          type: mimeForName(entry.name)
-        });
-      }
-      const binary = atob(entry.data);
-      const bytes = new Uint8Array(binary.length);
-      for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-      }
-      return new File([bytes], entry.name, { type: mimeForName(entry.name) });
-    } catch {
-      return null;
-    }
-  }
-  function decodeSharedFiles(entries) {
-    const files = entries.map(decodeToFile).filter((file) => file !== null);
-    return { files, failures: entries.length - files.length };
-  }
-  function shareIsDeliverable(parkedAtMs, nowMs) {
-    const age = nowMs - parkedAtMs;
-    return age >= 0 && age <= SHARE_DELIVERY_TTL_MS;
-  }
-  function mimeForName(name) {
-    const extension = name.toLowerCase().split(".").pop() ?? "";
-    return MIME_BY_EXTENSION.get(extension) ?? "application/octet-stream";
-  }
-
   // inject/src/messenger/features/share-intake.ts
   var COMPOSER_SELECTOR3 = '[role="main"] div[role="textbox"][contenteditable="true"]';
   var COMPOSER_POLL_MS = 1e3;
@@ -12137,6 +12181,7 @@ ${text}`)) {
     initFeature("facebook-modules", initFacebookModuleInterception);
     initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);
+    initFeature("image-paste", initImagePaste);
     initFeature("shortcuts", initShortcuts);
     initFeature("zoom", initZoom);
     initFeature("selector-health", initSelectorHealth);
