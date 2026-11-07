@@ -2,6 +2,9 @@
 // actions a message offers, in what order, and where a keyboard-opened menu
 // pops up. The DOM driving lives in features/message-menu.ts.
 
+import type { ConversationTextNode } from "./conversation-row";
+import { SYSTEM_EMOJI_GLYPH_ATTR } from "./emoji";
+
 // Keep in sync with MESSAGE_CONTEXT_MENU_LABELS in src-tauri/src/menu.rs; a
 // Rust test reads this declaration.
 export const MESSAGE_CONTEXT_MENU_LABELS = [
@@ -104,4 +107,28 @@ export function keyboardMenuPoint(
     point.y <= target.y + target.height;
   if (inside && (point.x !== 0 || point.y !== 0)) return null;
   return [Math.max(0, Math.round(anchor.x)), Math.max(0, Math.round(anchor.y + anchor.height))];
+}
+
+/**
+ * A message's text with Messenger's emoji images read back as their
+ * characters. Carrier's own System emoji glyph spans are skipped, since the
+ * image beside each one already contributes the character. Messenger renders
+ * each line of a multi-line message as its own block.
+ */
+export function messageNodeText(node: ConversationTextNode | null | undefined): string {
+  if (!node) return "";
+  if (node.nodeType === 3) return node.nodeValue || "";
+  if (node.nodeType !== 1) return "";
+  if (node.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) return "";
+  const tag = (node.tagName || "").toUpperCase();
+  if (tag === "IMG") return node.getAttribute?.("alt") || "";
+  if (tag === "BR") return "\n";
+  let text = "";
+  for (const child of Array.from(node.childNodes || [])) {
+    const part = messageNodeText(child);
+    const block = (child.tagName || "").toUpperCase() === "DIV";
+    if (part && text && block && !text.endsWith("\n")) text += "\n";
+    text += part;
+  }
+  return text;
 }

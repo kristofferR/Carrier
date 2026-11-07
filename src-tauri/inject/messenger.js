@@ -2919,6 +2919,25 @@ ${button.innerHTML}`)
     return rectsMatch(expected, current) && pointInRect(current, x, y);
   }
 
+  // inject/src/messenger/lib/emoji.ts
+  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
+  var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
+  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
+  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
+  function emojiGlyph(value) {
+    const text = String(value || "").trim();
+    if (/^\(y\)$/i.test(text)) return "👍";
+    if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
+    if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
+    return text;
+  }
+  function isReactionMenuShape(children) {
+    if (children.length < 6 || children.length > 9) return false;
+    const addButton = children.at(-1);
+    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
+  }
+
   // inject/src/messenger/lib/message-menu.ts
   var MESSAGE_CONTEXT_MENU_LABELS = [
     "Reply",
@@ -2964,6 +2983,23 @@ ${button.innerHTML}`)
     const inside2 = point.x >= target.x && point.x <= target.x + target.width && point.y >= target.y && point.y <= target.y + target.height;
     if (inside2 && (point.x !== 0 || point.y !== 0)) return null;
     return [Math.max(0, Math.round(anchor.x)), Math.max(0, Math.round(anchor.y + anchor.height))];
+  }
+  function messageNodeText(node) {
+    if (!node) return "";
+    if (node.nodeType === 3) return node.nodeValue || "";
+    if (node.nodeType !== 1) return "";
+    if (node.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) return "";
+    const tag = (node.tagName || "").toUpperCase();
+    if (tag === "IMG") return node.getAttribute?.("alt") || "";
+    if (tag === "BR") return "\n";
+    let text = "";
+    for (const child of Array.from(node.childNodes || [])) {
+      const part = messageNodeText(child);
+      const block = (child.tagName || "").toUpperCase() === "DIV";
+      if (part && text && block && !text.endsWith("\n")) text += "\n";
+      text += part;
+    }
+    return text;
   }
 
   // inject/src/messenger/features/message-menu.ts
@@ -3026,19 +3062,6 @@ ${button.innerHTML}`)
   var reactionRows = (menu) => menu.querySelectorAll('[role="menuitemradio"]');
   var reactionEmoji = (row) => (row.querySelector("img[alt]")?.getAttribute("alt") || row.textContent || "").trim();
   var moreRows = (menu) => menu.querySelectorAll('[role="menuitem"]');
-  function readableText(node) {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-    if (!(node instanceof Element)) return "";
-    if (node.tagName === "IMG") return node.getAttribute("alt") ?? "";
-    if (node.tagName === "BR") return "\n";
-    let text = "";
-    for (const child of node.childNodes) {
-      const part = readableText(child);
-      if (part && text && child instanceof HTMLDivElement && !text.endsWith("\n")) text += "\n";
-      text += part;
-    }
-    return text;
-  }
   function messageTextBlock(message) {
     const blocks = [
       ...message.querySelectorAll('span[dir="auto"] > div[dir="auto"]')
@@ -3047,7 +3070,7 @@ ${button.innerHTML}`)
   }
   function messageText(message) {
     const block = messageTextBlock(message);
-    return block ? readableText(block).trim() : "";
+    return block ? messageNodeText(block).trim() : "";
   }
   function toolbarActions(message) {
     const found = [];
@@ -3376,6 +3399,15 @@ ${button.innerHTML}`)
       runNativeAction,
       true
     ]);
+    let menuRequest = 0;
+    const abandonMenu = (event) => {
+      if (!event.isTrusted) return;
+      if (event.type === "keydown") {
+        const key = nativeReflectApply3(nativeGetKeyboardKey, event, []);
+        if (key !== "Escape") return;
+      }
+      menuRequest += 1;
+    };
     const openContextMenu = async (t, contextPoint, keyboard, prevent) => {
       const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
       const img = t.closest?.("img[alt]");
@@ -3431,9 +3463,24 @@ ${button.innerHTML}`)
       const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(t) ?? null : null;
       if (!items.length && !message) return;
       prevent();
-      const keyboardPoint = message ? keyboardMenuPoint(contextPoint, rectOf(t), rectOf(messageTextBlock(message) ?? message)) : null;
+      const keyboardPoint = message || keyboard ? keyboardMenuPoint(
+        contextPoint,
+        rectOf(t),
+        rectOf(message ? messageTextBlock(message) ?? message : t)
+      ) : null;
+      menuRequest += 1;
+      const request = menuRequest;
       if (message) {
-        const offer = await readMessageOffer(message);
+        nativeReflectApply3(nativeAddEventListener2, document, ["pointerdown", abandonMenu, true]);
+        nativeReflectApply3(nativeAddEventListener2, document, ["keydown", abandonMenu, true]);
+        let offer;
+        try {
+          offer = await readMessageOffer(message);
+        } finally {
+          nativeReflectApply3(nativeRemoveEventListener2, document, ["pointerdown", abandonMenu, true]);
+          nativeReflectApply3(nativeRemoveEventListener2, document, ["keydown", abandonMenu, true]);
+        }
+        if (request !== menuRequest) return;
         for (let index = 0; index < offer.reactions.length; index += 1) {
           const reaction = offer.reactions[index];
           if (reaction)
@@ -7782,25 +7829,6 @@ ${button.innerHTML}`)
         deadline
       }) : "no-message"
     );
-  }
-
-  // inject/src/messenger/lib/emoji.ts
-  var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
-  var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
-  var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
-  var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
-  var KEYCAP_RE = /[#*0-9]️?⃣/gu;
-  function emojiGlyph(value) {
-    const text = String(value || "").trim();
-    if (/^\(y\)$/i.test(text)) return "👍";
-    if (!text || text.length > 24 || !EMOJI_TEXT_RE.test(text)) return "";
-    if (LABEL_TEXT_RE.test(text.replace(KEYCAP_RE, ""))) return "";
-    return text;
-  }
-  function isReactionMenuShape(children) {
-    if (children.length < 6 || children.length > 9) return false;
-    const addButton = children.at(-1);
-    return addButton?.glyphs === 0 && addButton.role === "button" && children.slice(0, -1).every((child) => child.glyphs === 1);
   }
 
   // inject/src/messenger/lib/conversation-row.ts

@@ -3490,9 +3490,12 @@
         found: true,
         bubbles: bubbles.length,
         own: /^At [^,]*, You(?::|$)/.test(label),
-        labelShape: label.replace(/^At [^,]*, ([^:]*)(: [\s\S]*)?$/, function (m, who, text) {
-          return "At <when>, " + (who === "You" ? "You" : "<who>") + (text ? ": <" + (text.length - 2) + " chars>" : "");
-        }),
+        // Anything but the known English shape is reduced to its length.
+        labelShape: /^At [^,]*, [^:]*(?:: [\s\S]*)?$/.test(label)
+          ? label.replace(/^At [^,]*, ([^:]*)(: [\s\S]*)?$/, function (m, who, text) {
+              return "At <when>, " + (who === "You" ? "You" : "<who>") + (text ? ": <" + (text.length - 2) + " chars>" : "");
+            })
+          : "<unrecognized label, " + label.length + " chars>",
         textNodes: bubble.querySelectorAll('span[dir="auto"] > div[dir="auto"]').length,
         rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
         bubbleRole: bubble.getAttribute("role"),

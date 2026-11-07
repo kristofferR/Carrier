@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { ConversationTextNode } from "./conversation-row";
 import {
   keyboardMenuPoint,
   menuRowAction,
   messageActions,
+  messageNodeText,
   reactionLabel,
   toolbarAction,
   uniqueReactions,
@@ -71,5 +73,36 @@ describe("keyboard menu placement", () => {
     expect(keyboardMenuPoint({ x: 0, y: 0 }, { ...target, x: 0, y: 0 }, anchor)).toEqual([
       120, 131,
     ]);
+  });
+});
+
+describe("message text", () => {
+  const text = (value: string): ConversationTextNode => ({ nodeType: 3, nodeValue: value });
+  const element = (
+    tagName: string,
+    attributes: Record<string, string>,
+    children: ConversationTextNode[] = [],
+  ): ConversationTextNode => ({
+    nodeType: 1,
+    tagName,
+    childNodes: children,
+    getAttribute: (name) => attributes[name] ?? null,
+  });
+
+  test("reads emoji images and keeps each line", () => {
+    const block = element("DIV", {}, [
+      element("DIV", {}, [text("line 1")]),
+      element("DIV", {}, [text("line 2 "), element("IMG", { alt: "😀" })]),
+    ]);
+    expect(messageNodeText(block)).toBe("line 1\nline 2 😀");
+  });
+
+  test("does not double emoji that System emoji replaced", () => {
+    const block = element("DIV", {}, [
+      text("Hello "),
+      element("IMG", { alt: "😀" }),
+      element("SPAN", { "data-carrier-system-emoji-glyph": "" }, [text("😀")]),
+    ]);
+    expect(messageNodeText(block)).toBe("Hello 😀");
   });
 });

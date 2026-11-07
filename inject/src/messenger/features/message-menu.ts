@@ -14,6 +14,7 @@ import {
   type DrivenAction,
   type MessageOffer,
   menuRowAction,
+  messageNodeText,
   type Reaction,
   toolbarAction,
   uniqueReactions,
@@ -104,22 +105,6 @@ const reactionEmoji = (row: Element) =>
 
 const moreRows = (menu: Element) => menu.querySelectorAll<HTMLElement>('[role="menuitem"]');
 
-/** Text with Messenger's emoji images read back as their characters. */
-function readableText(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-  if (!(node instanceof Element)) return "";
-  if (node.tagName === "IMG") return node.getAttribute("alt") ?? "";
-  if (node.tagName === "BR") return "\n";
-  let text = "";
-  for (const child of node.childNodes) {
-    const part = readableText(child);
-    // Messenger renders each line of a multi-line message as its own block.
-    if (part && text && child instanceof HTMLDivElement && !text.endsWith("\n")) text += "\n";
-    text += part;
-  }
-  return text;
-}
-
 /** The message's own text block. A reply's quoted message renders first, so
  * the last block is the message itself. */
 export function messageTextBlock(message: HTMLElement): HTMLElement | null {
@@ -131,7 +116,7 @@ export function messageTextBlock(message: HTMLElement): HTMLElement | null {
 
 export function messageText(message: HTMLElement): string {
   const block = messageTextBlock(message);
-  return block ? readableText(block).trim() : "";
+  return block ? messageNodeText(block).trim() : "";
 }
 
 /** Toolbar buttons that perform a message action directly. */

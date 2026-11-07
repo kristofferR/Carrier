@@ -371,6 +371,15 @@ export function initContextMenu() {
     runNativeAction,
     true,
   ]);
+  let menuRequest = 0;
+  const abandonMenu = (event: Event) => {
+    if (!event.isTrusted) return;
+    if (event.type === "keydown") {
+      const key = nativeReflectApply(nativeGetKeyboardKey!, event, []) as string;
+      if (key !== "Escape") return;
+    }
+    menuRequest += 1;
+  };
   // Open Carrier's menu for a genuine right-click, or for the context-menu
   // key on a focused message. `prevent` cancels the triggering event once the
   // menu is Carrier's.
@@ -461,11 +470,30 @@ export function initContextMenu() {
     if (!items.length && !message) return; // fall through to the native menu (text etc.)
     prevent();
     // The context-menu key reports no pointer on the message; pop up at it.
-    const keyboardPoint = message
-      ? keyboardMenuPoint(contextPoint, rectOf(t), rectOf(messageTextBlock(message) ?? message))
-      : null;
+    // A keyboard-opened link menu anchors to the focused link itself.
+    const keyboardPoint =
+      message || keyboard
+        ? keyboardMenuPoint(
+            contextPoint,
+            rectOf(t),
+            rectOf(message ? (messageTextBlock(message) ?? message) : t),
+          )
+        : null;
+    // Reading a message's actions takes a moment. A newer menu, a click, or
+    // Escape in the meantime abandons this one.
+    menuRequest += 1;
+    const request = menuRequest;
     if (message) {
-      const offer = await readMessageOffer(message);
+      nativeReflectApply(nativeAddEventListener, document, ["pointerdown", abandonMenu, true]);
+      nativeReflectApply(nativeAddEventListener, document, ["keydown", abandonMenu, true]);
+      let offer: Awaited<ReturnType<typeof readMessageOffer>>;
+      try {
+        offer = await readMessageOffer(message);
+      } finally {
+        nativeReflectApply(nativeRemoveEventListener, document, ["pointerdown", abandonMenu, true]);
+        nativeReflectApply(nativeRemoveEventListener, document, ["keydown", abandonMenu, true]);
+      }
+      if (request !== menuRequest) return;
       for (let index = 0; index < offer.reactions.length; index += 1) {
         const reaction = offer.reactions[index];
         if (reaction)
