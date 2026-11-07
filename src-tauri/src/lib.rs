@@ -1004,6 +1004,13 @@ fn app_context() -> tauri::Context<tauri::Wry> {
 }
 
 pub fn run() {
+    // Without WebView2 nothing below can open a window, so say why instead of
+    // failing silently (the portable build has no installer to fetch it).
+    #[cfg(target_os = "windows")]
+    if !windows::webview2::runtime_installed() {
+        windows::webview2::explain_missing_runtime();
+        return;
+    }
     if !debug_install::startup() {
         return;
     }
