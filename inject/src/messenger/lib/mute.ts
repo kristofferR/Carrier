@@ -34,15 +34,43 @@ const MUTED_THREAD_LIMIT = 500;
 const MUTE_ABSENCE_CONFIRM_MS = 1_000;
 const MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
 
+/**
+ * What happens to conversations muted in Messenger (Ref #259): left out of
+ * the badge and notifications, counted on the badge only, or treated like any
+ * other chat. Installs from before the choice keep their on/off setting.
+ */
+export type MutedConversationPolicy = "ignore" | "badge" | "include";
+
+type MutedPolicySettings = {
+  ignore_muted_conversations?: boolean;
+  muted_conversations?: string | null;
+};
+
+export function mutedConversationPolicy(
+  settings: MutedPolicySettings | null | undefined,
+): MutedConversationPolicy {
+  const policy = settings?.muted_conversations;
+  if (policy === "ignore" || policy === "badge" || policy === "include") return policy;
+  return settings?.ignore_muted_conversations === false ? "include" : "ignore";
+}
+
+/** Muted conversations raise no notification (every policy but "include"). */
 export function ignoresMutedConversations(
-  settings: { ignore_muted_conversations?: boolean } | null | undefined,
+  settings: MutedPolicySettings | null | undefined,
 ): boolean {
-  return settings?.ignore_muted_conversations !== false;
+  return mutedConversationPolicy(settings) !== "include";
+}
+
+/** Muted conversations stay off the unread badge (only the "ignore" policy). */
+export function badgeIgnoresMutedConversations(
+  settings: MutedPolicySettings | null | undefined,
+): boolean {
+  return mutedConversationPolicy(settings) === "ignore";
 }
 
 export function suppressMutedDelivery(
   muted: boolean,
-  settings: { ignore_muted_conversations?: boolean } | null | undefined,
+  settings: MutedPolicySettings | null | undefined,
 ): boolean {
   return muted && ignoresMutedConversations(settings);
 }
@@ -65,10 +93,7 @@ export function notificationsGloballyMuted(
 
 export function suppressNotificationDelivery(
   muted: boolean,
-  settings:
-    | { mute_notifications?: boolean; ignore_muted_conversations?: boolean }
-    | null
-    | undefined,
+  settings: ({ mute_notifications?: boolean } & MutedPolicySettings) | null | undefined,
 ): boolean {
   return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
 }

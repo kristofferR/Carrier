@@ -29,6 +29,8 @@ interface CarrierSettings {
   badge_mode?: "messages" | "conversations" | "dot";
   /** Skip badge and native notifications for Facebook-muted conversations. */
   ignore_muted_conversations?: boolean;
+  /** "ignore", "badge" (badge only) or "include"; absent on older installs. */
+  muted_conversations?: "ignore" | "badge" | "include" | null;
   /** "system", "light", or "dark". */
   theme?: "system" | "light" | "dark";
   menu_bar_only?: boolean;
