@@ -13,9 +13,11 @@ import {
 import {
   ignoresMutedConversations,
   observeConversationMute,
+  observeDatabaseMute,
   observeOpenThreadMute,
 } from "../lib/mute";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
+import { readThreadStates, type ThreadState } from "../lib/thread-state";
 import { threadIdFromHref } from "../lib/threads";
 import {
   didMutedFilterPolicyChange,
@@ -37,6 +39,63 @@ export function initUnreadBadge() {
   const accountStorageKey = mutedUnreadStorageKey(document.cookie);
   const listReadiness = new UnreadListReadiness();
 
+  // Messenger's database is the source of truth for listed chats; the
+  // rendering heuristics below remain the fallback for chats it cannot answer
+  // for (module changes, an unready database). Reads are async, so the count
+  // uses the latest snapshot and re-applies when a refresh changes it.
+  const THREAD_STATE_LIMIT = 500;
+  const threadStates = new Map<string, ThreadState>();
+  let refreshingStates = false;
+  let statesFailing = false;
+  // Bumped by an explicit mute action, so a read that started before it
+  // cannot restore the old state. Messenger may also take a moment to write
+  // the change, so the action's mute state holds briefly over the database.
+  let stateEpoch = 0;
+  const MUTE_ACTION_HOLD_MS = 5_000;
+  const muteActions = new Map<string, { muted: boolean; at: number }>();
+  const heldMute = (id: string, muted: boolean) => {
+    const action = muteActions.get(id);
+    if (!action) return muted;
+    if (Date.now() - action.at < MUTE_ACTION_HOLD_MS) return action.muted;
+    muteActions.delete(id);
+    return muted;
+  };
+  const refreshThreadStates = (ids: string[]) => {
+    if (refreshingStates || !ids.length) return;
+    refreshingStates = true;
+    const epoch = stateEpoch;
+    readThreadStates(ids, (window as unknown as { require?: unknown }).require, Date.now())
+      .then((states) => {
+        if (epoch !== stateEpoch) return;
+        if (states === null) {
+          if (!statesFailing) diag("badge.thread-state", "Messenger database unavailable");
+          statesFailing = true;
+        } else statesFailing = false;
+        // Every requested chat ends up with a current answer or none: chats
+        // the database could not answer for fall back to rendered evidence.
+        let changed = false;
+        for (const id of ids) {
+          const read = states?.get(id);
+          const state = read && { ...read, muted: heldMute(id, read.muted) };
+          const old = threadStates.get(id);
+          if (!state) {
+            if (threadStates.delete(id)) changed = true;
+            continue;
+          }
+          if (old?.unread !== state.unread || old?.muted !== state.muted) changed = true;
+          threadStates.delete(id);
+          threadStates.set(id, state);
+          if (threadStates.size > THREAD_STATE_LIMIT) {
+            threadStates.delete(threadStates.keys().next().value!);
+          }
+        }
+        if (changed) apply(true);
+      })
+      .finally(() => {
+        refreshingStates = false;
+      });
+  };
+
   // Unread conversations: Facebook renders a chat's name/preview bold only
   // while it has unread messages. The class names are hashed and unstable, so
   // we key off the computed font-weight of each list row instead. Rows are the
@@ -52,6 +111,7 @@ export function initUnreadBadge() {
       ]);
     }
     const links = chatRows();
+    const listedIds: string[] = [];
     const seen = new Set<string>();
     let count = 0;
     const rowObservations: (MutedUnreadObservation & { hasTitle: boolean })[] = [];
@@ -59,10 +119,12 @@ export function initUnreadBadge() {
       const id = threadIdFromHref(a.getAttribute("href"));
       if (!id || seen.has(id)) continue;
       seen.add(id);
+      listedIds.push(id);
+      const known = threadStates.get(id);
       const row = a.closest('[role="row"]') || a;
       const spans = [...row.querySelectorAll<HTMLElement>("span")];
-      let unread = false;
-      for (const span of spans) {
+      let unread = known?.unread ?? false;
+      for (const span of known ? [] : spans) {
         if (
           isUnreadConversationText(getComputedStyle(span).fontWeight, conversationNodeText(span))
         ) {
@@ -94,7 +156,7 @@ export function initUnreadBadge() {
           candidate.height > 1 &&
           candidate.text.trim().length > 0,
       );
-      const muted = observeConversationMute(id, row);
+      const muted = known ? observeDatabaseMute(id, known.muted) : observeConversationMute(id, row);
       rowObservations.push({ id, unread, muted, hydrated, hasTitle });
       if (!unread) continue;
       if (ignoreMuted && muted) continue;
@@ -111,6 +173,7 @@ export function initUnreadBadge() {
       scrolledFromTop = el.scrollTop > 8;
       break;
     }
+    refreshThreadStates(listedIds);
     const listHydrated =
       rowObservations.length > 0 && rowObservations.every(({ hydrated }) => hydrated === true);
     const ready = listReadiness.observe(rowObservations);
@@ -210,6 +273,14 @@ export function initUnreadBadge() {
     const detail = (event as CustomEvent<{ id?: unknown; muted?: unknown }>).detail;
     if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
     if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
+    // The user's action outranks any database answer read before it.
+    stateEpoch++;
+    muteActions.set(detail.id, { muted: detail.muted, at: Date.now() });
+    if (muteActions.size > THREAD_STATE_LIMIT) {
+      muteActions.delete(muteActions.keys().next().value!);
+    }
+    const cached = threadStates.get(detail.id);
+    if (cached) threadStates.set(detail.id, { ...cached, muted: detail.muted });
     // The click is captured before Messenger updates aria-checked/the row icon.
     // Repaint both directions after that render: the old glyph must not add an
     // explicitly unmuted identity back, and muting does not change the title
