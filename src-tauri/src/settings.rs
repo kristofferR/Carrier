@@ -97,9 +97,12 @@ pub(crate) struct Settings {
     pub(crate) hide_taskbar_icon: bool,
     /// Suppress all desktop notifications for new messages.
     pub(crate) mute_notifications: bool,
-    /// Discover signed Carrier updates on startup and every four hours. This
-    /// never downloads or installs without explicit confirmation in Settings.
+    /// Discover signed Carrier updates on startup and then every
+    /// `update_check_hours`. This never downloads or installs without explicit
+    /// confirmation in Settings.
     pub(crate) automatic_update_checks: bool,
+    /// Hours between automatic update checks: 1, 4 (default) or 24.
+    pub(crate) update_check_hours: u32,
     /// Play the OS notification sound for new-message notifications.
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
@@ -189,6 +192,9 @@ impl Settings {
         if !matches!(self.title_bar.as_str(), "auto" | "show" | "hide") {
             self.title_bar = "auto".into();
         }
+        if !matches!(self.update_check_hours, 1 | 4 | 24) {
+            self.update_check_hours = 4;
+        }
         // Snap owns updates. Sandboxed autostart needs platform integration
         // rather than writing a host desktop file.
         if snap {
@@ -232,6 +238,7 @@ impl Default for Settings {
             hide_taskbar_icon: false,
             mute_notifications: false,
             automatic_update_checks: true,
+            update_check_hours: 4,
             notification_sound: true,
             hide_notification_preview: false,
             group_notifications_by_conversation: true,
@@ -1071,6 +1078,16 @@ mod tests {
         // their settings file.
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert!(s.strip_link_tracking);
+    }
+
+    #[test]
+    fn update_check_hours_default_and_sanitize_to_offered_choices() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(s.update_check_hours, 4);
+        let s: Settings = serde_json::from_str(r#"{"update_check_hours":24}"#).unwrap();
+        assert_eq!(s.sanitized().update_check_hours, 24);
+        let s: Settings = serde_json::from_str(r#"{"update_check_hours":0}"#).unwrap();
+        assert_eq!(s.sanitized().update_check_hours, 4);
     }
 
     #[test]
