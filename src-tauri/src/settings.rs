@@ -721,6 +721,8 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     apply_global_hotkey(app, s.global_hotkey);
     let settings_json = serde_json::to_string(s).ok();
     let theme = theme_for(s);
+    #[cfg(target_os = "linux")]
+    crate::linux::apply_gtk_theme_name(app, theme);
     for (label, window) in app.webview_windows() {
         // Apply to every window (incl. the Settings dialog) so toggling Always
         // on Top from the dialog doesn't leave the dialog stuck behind the

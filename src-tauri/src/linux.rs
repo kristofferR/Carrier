@@ -2,7 +2,7 @@
 
 use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
-use gtk::prelude::{GtkWindowExt, WidgetExt};
+use gtk::prelude::{GtkSettingsExt, GtkWindowExt, WidgetExt};
 use tauri::Manager;
 use tauri::webview::{PermissionKind, PermissionResponse};
 use webkit2gtk::{CacheModel, SettingsExt, WebContextExt, WebViewExt};
@@ -329,6 +329,50 @@ pub(crate) fn system_prefers_dark() -> bool {
     })
 }
 
+/// The light variant of a GTK theme name: "Adwaita-dark" is "Adwaita".
+fn light_theme_name(name: &str) -> Option<&str> {
+    let cut = name.len().checked_sub("-dark".len())?;
+    name.get(cut..)
+        .filter(|suffix| suffix.eq_ignore_ascii_case("-dark"))
+        .and_then(|_| name.get(..cut))
+        .filter(|base| !base.is_empty())
+}
+
+thread_local! {
+    /// The desktop's GTK theme name while Carrier has swapped it for its
+    /// light variant; `None` when the desktop's own name is in place.
+    static SWAPPED_GTK_THEME: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// WebKitGTK reports `prefers-color-scheme: dark` whenever the GTK theme name
+/// ends in "-dark" (as `Adwaita-dark` from a dark desktop does), whatever
+/// `gtk-application-prefer-dark-theme` says, so Theme = Light left Messenger
+/// dark (Ref #406). Use the theme's light variant while Light is forced, and
+/// the desktop's own name otherwise.
+pub(crate) fn apply_gtk_theme_name(app: &tauri::AppHandle, theme: Option<tauri::Theme>) {
+    let _ = app.run_on_main_thread(move || {
+        let Some(settings) = gtk::Settings::default() else {
+            return;
+        };
+        let current: Option<String> = settings.gtk_theme_name().map(|name| name.to_string());
+        SWAPPED_GTK_THEME.with(|swapped| {
+            let mut swapped = swapped.borrow_mut();
+            if theme == Some(tauri::Theme::Light) {
+                let desktop = swapped.clone().or_else(|| current.clone());
+                if let Some(light) = desktop.as_deref().and_then(light_theme_name) {
+                    if current.as_deref() != Some(light) {
+                        settings.set_gtk_theme_name(Some(light));
+                    }
+                    *swapped = desktop;
+                }
+            } else if let Some(desktop) = swapped.take() {
+                settings.set_gtk_theme_name(Some(&desktop));
+            }
+        });
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +426,14 @@ mod tests {
             Some("portal unavailable"),
             "portal restarted"
         ));
+    }
+
+    #[test]
+    fn light_theme_names_drop_only_a_dark_suffix() {
+        assert_eq!(light_theme_name("Adwaita-dark"), Some("Adwaita"));
+        assert_eq!(light_theme_name("Breeze-Dark"), Some("Breeze"));
+        assert_eq!(light_theme_name("Adwaita"), None);
+        assert_eq!(light_theme_name("-dark"), None);
+        assert_eq!(light_theme_name("darkly"), None);
     }
 }
