@@ -116,6 +116,14 @@ describe("hand-maintained injected assets", () => {
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
+  test("privacy settings share their own tab", async () => {
+    const settings = await repoAsset("dist/settings.html");
+
+    expect(settings).toContain(
+      'fields: ["block_typing_indicator", "hide_names_avatars", "block_telemetry", "strip_link_tracking"]',
+    );
+  });
+
   test("Facebook link cleanup is a default-on setting beside telemetry blocking", async () => {
     const settings = await repoAsset("dist/settings.html");
 

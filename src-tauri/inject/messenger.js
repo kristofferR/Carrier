@@ -5658,7 +5658,7 @@ ${button.innerHTML}`)
     let observer = null;
     let pending = false;
     let suppressMutations = false;
-    const on = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+    const on2 = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
     }
@@ -5818,7 +5818,7 @@ ${button.innerHTML}`)
       suppressMutations = true;
       try {
         clearMarkers();
-        if (!on()) return;
+        if (!on2()) return;
         markConversationRows();
         const main2 = mainPane();
         if (main2) {
@@ -5834,7 +5834,7 @@ ${button.innerHTML}`)
     const SCAN_MIN_GAP_MS = 150;
     let lastScanAt = 0;
     function schedule() {
-      if (suppressMutations || !on() || pending) return;
+      if (suppressMutations || !on2() || pending) return;
       pending = true;
       const wait = Math.max(0, SCAN_MIN_GAP_MS - (performance.now() - lastScanAt));
       setTimeout(() => {
@@ -5864,8 +5864,8 @@ ${button.innerHTML}`)
       window.removeEventListener("resize", schedule);
     }
     const apply = () => {
-      html.toggleAttribute("data-carrier-hide-names", on());
-      if (on()) {
+      html.toggleAttribute("data-carrier-hide-names", on2());
+      if (on2()) {
         start();
         schedule();
       } else {
@@ -6411,7 +6411,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/media-autoplay.ts
   var VIDEO_SELECTOR = "video";
   function initMediaAutoplay() {
-    const on = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
+    const on2 = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
     let lastActivationAt = Number.NEGATIVE_INFINITY;
     let observer = null;
     const noteActivation = (event) => {
@@ -6419,15 +6419,15 @@ ${button.innerHTML}`)
     };
     window.addEventListener("pointerdown", noteActivation, true);
     window.addEventListener("keydown", noteActivation, true);
-    const shouldSuppress = () => shouldSuppressMediaPlay(on(), lastActivationAt, performance.now());
+    const shouldSuppress = () => shouldSuppressMediaPlay(on2(), lastActivationAt, performance.now());
     const suppress = (video, force = false) => {
-      if (!on() || !force && !shouldSuppress()) return;
+      if (!on2() || !force && !shouldSuppress()) return;
       video.autoplay = false;
       video.removeAttribute("autoplay");
       if (!video.paused) video.pause();
     };
     const scan = (root, force = false) => {
-      if (!on()) return;
+      if (!on2()) return;
       if (root.nodeType === Node.ELEMENT_NODE) {
         const element2 = root;
         if (element2.matches(VIDEO_SELECTOR)) suppress(element2, force);
@@ -6465,7 +6465,7 @@ ${button.innerHTML}`)
       observer = null;
     };
     const apply = () => {
-      if (on()) {
+      if (on2()) {
         start();
         scan(document, true);
       } else {
@@ -12193,16 +12193,16 @@ ${text}`)) {
   // inject/src/messenger/features/spellcheck.ts
   var SPELL_SEL = '[contenteditable="true"], textarea, input[type="text"], input[type="search"]';
   function applySpellcheckNow() {
-    const on = window.__CARRIER_SETTINGS__?.spellcheck === true;
+    const on2 = window.__CARRIER_SETTINGS__?.spellcheck === true;
     document.querySelectorAll(SPELL_SEL).forEach((el) => {
-      el.setAttribute?.("spellcheck", on ? "true" : "false");
+      el.setAttribute?.("spellcheck", on2 ? "true" : "false");
     });
   }
   function applySpellcheck() {
     applySpellcheckNow();
     registerAddedNodeSweep((root) => {
-      const on = window.__CARRIER_SETTINGS__?.spellcheck === true;
-      const want = on ? "true" : "false";
+      const on2 = window.__CARRIER_SETTINGS__?.spellcheck === true;
+      const want = on2 ? "true" : "false";
       const set = (el) => {
         if (el.getAttribute?.("spellcheck") !== want) el.setAttribute?.("spellcheck", want);
       };
@@ -12532,7 +12532,7 @@ ${text}`)) {
     let observer = null;
     let pending = false;
     const queuedRoots = /* @__PURE__ */ new Set();
-    const on = () => window.__CARRIER_SETTINGS__?.system_emoji === true;
+    const on2 = () => window.__CARRIER_SETTINGS__?.system_emoji === true;
     function sourceGlyph(el) {
       if (el?.nodeType !== 1 || el.hasAttribute(GLYPH_ATTR)) return "";
       if (el.matches?.("img[alt]")) {
@@ -12574,7 +12574,7 @@ ${text}`)) {
       if (span.getAttribute("aria-label") !== glyph) span.setAttribute("aria-label", glyph);
     }
     function scan(root) {
-      if (!on() || !root || root.nodeType !== 1) return;
+      if (!on2() || !root || root.nodeType !== 1) return;
       ensureGlyph(root);
       root.querySelectorAll?.(CANDIDATE_SEL).forEach(ensureGlyph);
     }
@@ -12602,7 +12602,7 @@ ${text}`)) {
       reactions.forEach((glyph) => glyph.setAttribute(REACTION_ATTR, ""));
     }
     function schedule(root = document.documentElement) {
-      if (!on()) return;
+      if (!on2()) return;
       queuedRoots.add(root);
       if (queuedRoots.size > 50) {
         queuedRoots.clear();
@@ -12649,8 +12649,8 @@ ${text}`)) {
       });
     }
     const apply = () => {
-      html.toggleAttribute("data-carrier-system-emoji", on());
-      if (on()) {
+      html.toggleAttribute("data-carrier-system-emoji", on2());
+      if (on2()) {
         start();
         schedule();
       } else {
@@ -12660,7 +12660,7 @@ ${text}`)) {
     apply();
     window.addEventListener("carrier:settings", apply);
     if (document.readyState === "loading")
-      document.addEventListener("DOMContentLoaded", () => on() && schedule(), { once: true });
+      document.addEventListener("DOMContentLoaded", () => on2() && schedule(), { once: true });
   }
 
   // inject/src/messenger/lib/telemetry.ts
@@ -12698,8 +12698,8 @@ ${text}`)) {
 
   // inject/src/messenger/features/telemetry.ts
   function initTelemetryBlocking() {
-    const on = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
-    const shouldBlock = (raw) => on() && isBlockedTelemetryUrl(raw, location.href);
+    const on2 = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const shouldBlock = (raw) => on2() && isBlockedTelemetryUrl(raw, location.href);
     try {
       const origFetch = window.fetch;
       window.fetch = function(...args) {
@@ -12726,7 +12726,7 @@ ${text}`)) {
         return origOpen.apply(this, args);
       };
       proto.send = function(...args) {
-        if (this.__carrierBlocked && on()) {
+        if (this.__carrierBlocked && on2()) {
           setTimeout(() => {
             try {
               for (const [k, v] of [
@@ -12762,6 +12762,141 @@ ${text}`)) {
       };
     } catch (_) {
     }
+  }
+
+  // inject/src/messenger/lib/typing-block.ts
+  /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
+   *
+   * MIT License
+   *
+   * Copyright (c) 2026 fMess contributors
+   *
+   * Permission is hereby granted, free of charge, to any person obtaining a copy
+   * of this software and associated documentation files (the "Software"), to deal
+   * in the Software without restriction, including without limitation the rights
+   * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   * copies of the Software, and to permit persons to whom the Software is
+   * furnished to do so, subject to the following conditions:
+   *
+   * The above copyright notice and this permission notice shall be included in all
+   * copies or substantial portions of the Software.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   * SOFTWARE.
+   */
+  function parseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  function nested(object, key) {
+    const value = object?.[key];
+    const parsed = typeof value === "string" ? parseJson(value) : value;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  }
+  var TYPING_REQUEST = 4;
+  var TYPING_LABEL = "3";
+  var IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
+  function clearTyping(text) {
+    const request = parseJson(text);
+    if (request?.type !== TYPING_REQUEST) return null;
+    const update = nested(request, "payload");
+    if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
+    const edited = text.replace(IS_TYPING, "$10");
+    return edited === text ? null : edited;
+  }
+  var PART_DATA = 13;
+  var PART_CLOSE = 14;
+  function clearTypingInFrame(bytes) {
+    const parts = [];
+    let edited = false;
+    for (let pos = 0; pos < bytes.length; ) {
+      if (bytes[pos] === PART_CLOSE) {
+        parts.push(bytes.subarray(pos, pos + 3));
+        pos += 3;
+        continue;
+      }
+      if (pos + 6 > bytes.length) return null;
+      const end = pos + 6 + ((bytes[pos + 3] ?? 0) | (bytes[pos + 4] ?? 0) << 8 | (bytes[pos + 5] ?? 0) << 16);
+      if (end > bytes.length) return null;
+      let part = bytes.subarray(pos, end);
+      const json = bytes[pos] === PART_DATA && end > pos + 8 ? new TextDecoder().decode(bytes.subarray(pos + 8, end)) : null;
+      const request = json && clearTyping(json);
+      if (request) {
+        const encoded = new TextEncoder().encode(request);
+        const length = encoded.length + 2;
+        part = new Uint8Array(8 + encoded.length);
+        part.set(bytes.subarray(pos, pos + 3));
+        part.set([length & 255, length >> 8 & 255, length >> 16], 3);
+        part.set(bytes.subarray(pos + 6, pos + 8), 6);
+        part.set(encoded, 8);
+        edited = true;
+      }
+      parts.push(part);
+      pos = end;
+    }
+    if (!edited) return null;
+    const frame = new Uint8Array(parts.reduce((size, part) => size + part.length, 0));
+    let offset = 0;
+    for (const part of parts) {
+      frame.set(part, offset);
+      offset += part.length;
+    }
+    return frame;
+  }
+  var CHAT_STATE = "sendChatStateFromComposer";
+  var CHAT_IDLE = "idle";
+  function idleChatStates(message) {
+    if (!Array.isArray(message)) return null;
+    const isTypingState = (item) => {
+      const content = item?.content;
+      return content?.name === CHAT_STATE && content.arg?.state !== CHAT_IDLE;
+    };
+    if (!message.some(isTypingState)) return null;
+    return message.map((item) => {
+      if (!isTypingState(item)) return item;
+      const content = item.content ?? {};
+      return {
+        ...item,
+        content: { ...content, arg: { ...content.arg, state: CHAT_IDLE } }
+      };
+    });
+  }
+
+  // inject/src/messenger/features/typing-block.ts
+  var on = () => window.__CARRIER_SETTINGS__?.block_typing_indicator === true;
+  function bytesOf(data) {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data))
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    return null;
+  }
+  function initTypingBlock() {
+    const nativeSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function(data) {
+      if (on() && String(this.url).includes("/ws/lightspeed")) {
+        const bytes = bytesOf(data);
+        const edited = bytes && clearTypingInFrame(bytes);
+        if (edited) {
+          diag("privacy.typing-blocked", "socket");
+          return nativeSend.call(this, edited);
+        }
+      }
+      return nativeSend.call(this, data);
+    };
+    const nativePostMessage = MessagePort.prototype.postMessage;
+    MessagePort.prototype.postMessage = function(message, ...rest) {
+      const edited = on() ? idleChatStates(message) : null;
+      if (edited) diag("privacy.typing-blocked", "worker");
+      return Reflect.apply(nativePostMessage, this, [edited ?? message, ...rest]);
+    };
   }
 
   // inject/src/messenger/lib/thread-state.ts
@@ -13257,6 +13392,7 @@ ${text}`)) {
     initFeature("rate-limit", initRateLimit);
     initFeature("facebook-workers", initFacebookWorkerOptimization);
     initFeature("facebook-modules", initFacebookModuleInterception);
+    initFeature("typing-block", initTypingBlock);
     initFeature("emoji-images", initEmojiImageLoading);
     initFeature("composer-keys", initComposerKeys);
     initFeature("image-paste", initImagePaste);
