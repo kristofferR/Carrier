@@ -164,14 +164,15 @@ pub(crate) struct ActionTarget {
 }
 
 /// A Messenger message id as the page reports it (`mid.$…` for regular chats,
-/// `<hex>_<hex>_m` style for encrypted ones), or empty when it is anything else.
+/// `<digits>@<host>.<digits>` for encrypted ones), or empty when it is anything
+/// else.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", test))]
 fn valid_message_id(value: &str) -> String {
     let ok = !value.is_empty()
         && value.len() <= 128
         && value
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._$:+/=_-".contains(&b));
+            .all(|b| b.is_ascii_alphanumeric() || b"._$:+/=_@-".contains(&b));
     if ok { value.into() } else { String::new() }
 }
 
@@ -2148,6 +2149,8 @@ fn run_hidden_page_action(
         started.elapsed().as_millis(),
         foreground.is_some()
     );
+    #[cfg(not(target_os = "macos"))]
+    log::info!("notification action finished (id {id}, ok {ok})");
     ok
 }
 
@@ -3568,7 +3571,7 @@ mod tests {
             valid_message_id("mid.$cAABa8_x-y+z/="),
             "mid.$cAABa8_x-y+z/="
         );
-        assert_eq!(valid_message_id("7f3a_19c2_m"), "7f3a_19c2_m");
+        assert_eq!(valid_message_id("123@msgr.456"), "123@msgr.456");
         assert_eq!(valid_message_id(""), "");
         assert_eq!(valid_message_id("a\"); alert(1)"), "");
         assert_eq!(valid_message_id(&"a".repeat(129)), "");
