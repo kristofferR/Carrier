@@ -2642,7 +2642,11 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         crate::pause::now_ms(),
     ) != crate::pause::PauseState::Active;
     if muted {
-        log::info!("carrier:sync-alert suppressed: notifications muted or paused ({kind:?})");
+        // The watchdog reports Recovered on every healthy heartbeat; only a
+        // suppressed problem is worth a log line.
+        if !matches!(kind, SyncAlertKind::Recovered) {
+            log::info!("carrier:sync-alert suppressed: notifications muted or paused ({kind:?})");
+        }
         return;
     }
     let gate = SYNC_ALERT_GATE.get_or_init(|| Mutex::new(SyncAlertGate::default()));
