@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { clearTypingInFrame, editJson, idleChatStates } from "./typing-block";
+import { clearTyping, clearTypingInFrame, idleChatStates } from "./typing-block";
 
 /** One Lightspeed data part: 3 header bytes, 3-byte length, 2 more bytes, then JSON. */
 function dataPart(json: string): Uint8Array {
@@ -71,10 +71,31 @@ describe("clearTypingInFrame", () => {
   });
 });
 
-describe("editJson", () => {
-  test("never re-encodes JSON whose 64-bit IDs would lose precision", () => {
-    const text = '{"type":4,"thread_key":12345678901234567890}';
-    expect(editJson(text, () => true)).toBeNull();
+describe("clearTyping", () => {
+  test("keeps 64-bit IDs and Messenger's escaping byte-for-byte", () => {
+    const inner = '{"thread_key":7987654321098765432,"is_typing":1,"note":"\\u00e9"}';
+    const text = JSON.stringify({
+      type: 4,
+      request_id: 12,
+      payload: JSON.stringify({ label: "3", payload: inner }),
+    });
+    const edited = clearTyping(text);
+    // Same length, and the innermost update is the original text with only
+    // the flag flipped: the ID and the escape survive untouched.
+    expect(edited?.length).toBe(text.length);
+    const editedInner = JSON.parse(JSON.parse(edited ?? "").payload).payload;
+    expect(editedInner).toBe(inner.replace('"is_typing":1', '"is_typing":0'));
+  });
+
+  test("leaves other requests and already-idle updates alone", () => {
+    expect(clearTyping('{"type":3,"payload":"{}"}')).toBeNull();
+    expect(clearTyping(typing(0))).toBeNull();
+    expect(clearTyping("not json")).toBeNull();
+    const otherLabel = JSON.stringify({
+      type: 4,
+      payload: JSON.stringify({ label: "4", payload: '{"is_typing":1}' }),
+    });
+    expect(clearTyping(otherLabel)).toBeNull();
   });
 });
 

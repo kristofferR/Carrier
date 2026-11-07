@@ -11775,32 +11775,21 @@ ${text}`)) {
       return null;
     }
   }
-  function editJson(text, edit) {
-    const value = parseJson(text);
-    if (!value || typeof value !== "object" || JSON.stringify(value) !== text) return null;
-    return edit(value) ? JSON.stringify(value) : null;
-  }
-  function editNested(object, key, edit) {
-    const value = object[key];
-    if (value && typeof value === "object") return edit(value);
-    const edited = typeof value === "string" ? editJson(value, edit) : null;
-    if (edited === null) return false;
-    object[key] = edited;
-    return true;
+  function nested(object, key) {
+    const value = object?.[key];
+    const parsed = typeof value === "string" ? parseJson(value) : value;
+    return parsed && typeof parsed === "object" ? parsed : null;
   }
   var TYPING_REQUEST = 4;
   var TYPING_LABEL = "3";
-  function clearTyping(request) {
-    if (request.type !== TYPING_REQUEST) return false;
-    return editNested(
-      request,
-      "payload",
-      (update) => update.label === TYPING_LABEL && editNested(update, "payload", (typing) => {
-        if (!typing.is_typing) return false;
-        typing.is_typing = 0;
-        return true;
-      })
-    );
+  var IS_TYPING = /(is_typing(?:\\)*":)1(?![0-9])/g;
+  function clearTyping(text) {
+    const request = parseJson(text);
+    if (request?.type !== TYPING_REQUEST) return null;
+    const update = nested(request, "payload");
+    if (update?.label !== TYPING_LABEL || !nested(update, "payload")?.is_typing) return null;
+    const edited = text.replace(IS_TYPING, "$10");
+    return edited === text ? null : edited;
   }
   var PART_DATA = 13;
   var PART_CLOSE = 14;
@@ -11818,7 +11807,7 @@ ${text}`)) {
       if (end > bytes.length) return null;
       let part = bytes.subarray(pos, end);
       const json = bytes[pos] === PART_DATA && end > pos + 8 ? new TextDecoder().decode(bytes.subarray(pos + 8, end)) : null;
-      const request = json && editJson(json, clearTyping);
+      const request = json && clearTyping(json);
       if (request) {
         const encoded = new TextEncoder().encode(request);
         const length = encoded.length + 2;
