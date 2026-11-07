@@ -126,6 +126,9 @@ pub(crate) struct Settings {
     pub(crate) notification_sound: bool,
     /// Notify without the sender name or message text (privacy).
     pub(crate) hide_notification_preview: bool,
+    /// Notify for messages in group chats. Off leaves group messages to the
+    /// unread badge. On by default.
+    pub(crate) notify_group_chats: bool,
     /// macOS: stack Notification Center entries by Messenger conversation.
     pub(crate) group_notifications_by_conversation: bool,
     /// macOS/Windows: clear a conversation's delivered notifications (Action
@@ -270,6 +273,7 @@ impl Default for Settings {
             automatic_update_checks: true,
             notification_sound: true,
             hide_notification_preview: false,
+            notify_group_chats: true,
             group_notifications_by_conversation: true,
             clear_notifications_on_view: true,
             attention_on_message: false,
@@ -1183,6 +1187,13 @@ mod tests {
         let s: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(s.muted_conversations, None);
         assert!(s.ignore_muted_conversations);
+    }
+
+    #[test]
+    fn settings_json_missing_notify_group_chats_defaults_to_true() {
+        // Existing installs keep notifying for group chats.
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(s.notify_group_chats);
     }
 
     #[test]
