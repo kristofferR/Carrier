@@ -1,10 +1,13 @@
 /* ---------------------- Recent conversations ------------------------- */
-// Scrape the chat list's most recent threads (display name + /t/<id> link)
-// and push them to Rust, which mirrors them into the macOS Dock menu and the
-// tray menu so a conversation is one right-click away. The list lives in
-// memory only — nothing is persisted to disk.
+// The most recent conversations (display name + /t/<id> link), pushed to Rust,
+// which mirrors them into the macOS Dock menu, the tray menu and the Windows
+// jump list so a conversation is one right-click away. Read from Messenger's
+// database; the chat-list scrape is the fallback when the database is
+// unavailable. The list lives in memory only — nothing is persisted to disk.
 import { invoke } from "../bridge";
-import { SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
+import { nicknameMode } from "../lib/nicknames";
+import { readRecentThreads } from "../lib/recent-threads";
+import { accountId, SEPARATOR_RE, threadIdFromHref } from "../lib/threads";
 import { chatRows } from "./conversation-actions";
 
 export function initRecentThreads() {
@@ -34,9 +37,29 @@ export function initRecentThreads() {
     return false;
   };
 
-  // The visible chat list, top to bottom. Only trust it while the virtualized
-  // list is at the top; after a manual scroll, visible rows no longer equal
-  // Messenger's most recent conversations.
+  // Rendered row names by thread id, for chats the database cannot name.
+  const rowNames = () => {
+    const names = new Map<string, string>();
+    for (const a of chatRows()) {
+      const id = threadIdFromHref(a.getAttribute("href"));
+      if (id && !names.has(id)) names.set(id, rowName(a));
+    }
+    return names;
+  };
+
+  const readDatabase = (viewer: string) => {
+    let names: Map<string, string> | undefined;
+    return readRecentThreads((window as unknown as { require?: unknown }).require, {
+      viewer,
+      mode: nicknameMode(window.__CARRIER_SETTINGS__),
+      limit: MAX_THREADS,
+      fallbackName: (id) => (names ??= rowNames()).get(id) ?? "",
+    });
+  };
+
+  // Fallback: the visible chat list, top to bottom. Only trust it while the
+  // virtualized list is at the top; after a manual scroll, visible rows no
+  // longer equal Messenger's most recent conversations.
   const scan = () => {
     const rows = chatRows();
     if (chatListScrolledFromTop(rows)) return null;
@@ -56,15 +79,41 @@ export function initRecentThreads() {
 
   let lastSent: string | null = null;
   let emptySince = 0;
-  const push = () => {
+  let pushing = false;
+  let pushAgain = false;
+  const hidden = () => window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
+  // One read at a time; a request made during a read (a settings change, say)
+  // runs once it finishes.
+  const push = async () => {
+    if (pushing) {
+      pushAgain = true;
+      return;
+    }
+    pushing = true;
+    try {
+      do {
+        pushAgain = false;
+        await send();
+      } while (pushAgain);
+    } finally {
+      pushing = false;
+    }
+  };
+  const send = async () => {
     // Hide Names & Avatars: never let contact names cross into native menus.
-    const hide = window.__CARRIER_SETTINGS__?.hide_names_avatars === true;
-    const threads = hide ? [] : scan();
+    // Logged out (no account cookie, e.g. the login page after a logout):
+    // nothing to show, and nothing stale either.
+    const viewer = accountId(document.cookie);
+    let threads = !viewer || hidden() ? [] : ((await readDatabase(viewer)) ?? scan());
+    // Hide Names may have been switched on, or the account logged out or
+    // changed, during the read.
+    const clear = !viewer || hidden() || accountId(document.cookie) !== viewer;
+    if (clear) threads = [];
     if (threads === null) return;
-    // An empty scan usually means the chat list hasn't rendered (mid-reload),
-    // so give it a short grace period. If rows stay absent, clear the menus so
-    // logout/offline/selector-break states do not leak stale contact names.
-    if (!hide && threads.length === 0) {
+    // An empty list usually means the chat list hasn't loaded (mid-reload),
+    // so give it a short grace period. If it stays empty, clear the menus so
+    // offline/selector-break states do not leak stale contact names.
+    if (!clear && threads.length === 0) {
       const now = Date.now();
       if (!emptySince) emptySince = now;
       if (now - emptySince < EMPTY_GRACE_MS) return;
@@ -82,7 +131,7 @@ export function initRecentThreads() {
   // The list reorders when messages arrive or are read — moments the unread
   // badge already refreshes on — so a slow poll plus the settings/visibility
   // hooks keeps the menus fresh without another DOM-wide observer. Emits only
-  // on actual change, so the steady-state cost is one scan per tick.
+  // on actual change, so the steady-state cost is one database read per tick.
   let timer: number | undefined;
   const startPoll = () => {
     clearInterval(timer);
