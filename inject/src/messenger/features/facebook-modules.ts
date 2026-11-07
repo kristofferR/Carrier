@@ -6,6 +6,7 @@ import {
 } from "../lib/facebook-modules";
 import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
+import { interceptNotificationModules } from "./page-notifications";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
 import { workerRecovery, workerReplacement } from "./worker-recovery";
@@ -66,7 +67,7 @@ export function initFacebookModuleInterception() {
   const wrap = (value: unknown): unknown => {
     if (typeof value !== "function" || wrappedDefines.has(value)) return value;
     const wrapped = createFacebookModuleDefineInterceptor(
-      value as FacebookModuleDefine,
+      interceptNotificationModules(value as FacebookModuleDefine) as FacebookModuleDefine,
       shouldBlockTelemetry,
       (restore) => searchIndex.register(restore),
       (error) => {

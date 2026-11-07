@@ -1,6 +1,7 @@
 /* --------------------- Native message notifications ------------------- */
 // Bridge the page's Web Notification API to native OS notifications so new
 // messages notify you even when Carrier is in the background.
+
 import { diag, invoke } from "../bridge";
 import {
   conversationNodeText,
@@ -56,6 +57,7 @@ import {
   notificationSender,
   readConversationNotificationNames,
 } from "../lib/notification-names";
+import { pageMessages } from "../lib/page-notifications";
 import { pageReloadSafeStorage } from "../lib/reload-safe-storage";
 import { avatarPhotoId, SenderAvatarStore } from "../lib/sender-avatars";
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
@@ -453,7 +455,7 @@ export function initNotificationBridge() {
   function CarrierNotification(
     this: CarrierNotificationInstance,
     title?: string,
-    options: { icon?: string; image?: string; body?: string } | null = {},
+    options: { icon?: string; image?: string; body?: string; tag?: string } | null = {},
   ) {
     const opts = options || {};
     const s = window.__CARRIER_SETTINGS__ || {};
@@ -465,6 +467,13 @@ export function initNotificationBridge() {
       `page constructed a Notification (visibility: ${document.visibilityState})`,
     );
     const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+    // Messenger tags its notification with the message id it just recorded,
+    // which names the exact conversation; no row has to vouch for it.
+    const taggedThread = pageMessages.threadFor(opts.tag);
+    if (taggedThread && pageMatch.signal && !pageMatch.signal.threadPath) {
+      pageMatch.signal.threadPath = `/t/${taggedThread}/`;
+      diag("notify.identity", "page notification carried its exact conversation");
+    }
     const retainSuppressedDraft = (id: number) => {
       const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
       if (!pageMatch.signal?.matchedDraft || !threadId) return;

@@ -4709,6 +4709,169 @@ ${button.innerHTML}`)
     }
   }
 
+  // inject/src/messenger/lib/page-notifications.ts
+  var CHAT_POPPER_MODULE = "useMWLSChatPopperUpper";
+  var DESKTOP_NOTIFICATIONS_MODULE = "MWDesktopNotifications";
+  var CHAT_POPPER_REWRITES = [
+    // Notify while the window is merely unfocused, not only when hidden.
+    [
+      /(\w+)\("VisibilityAPI"\)\.isVisibilityHidden\(\)===!0/,
+      '($1("VisibilityAPI").isVisibilityHidden()===!0||!document.hasFocus())'
+    ],
+    // The installed-app gate.
+    [/\w+\("isMessengerPWA"\)\(\)&&\w+\("justknobx"\)\._\("1465"\)/, "!0"]
+  ];
+  function rewriteChatPopperSource(source) {
+    let rewritten = source;
+    for (const [pattern, replacement] of CHAT_POPPER_REWRITES) {
+      if (rewritten.match(new RegExp(pattern.source, "g"))?.length !== 1) return null;
+      rewritten = rewritten.replace(pattern, replacement);
+    }
+    return rewritten;
+  }
+  function messengerId(value, i64ToString) {
+    let text = value;
+    if (typeof value === "number" || typeof value === "bigint") text = String(value);
+    else if (typeof value !== "string" && value != null && i64ToString) {
+      try {
+        text = i64ToString(value);
+      } catch {
+        return null;
+      }
+    }
+    return typeof text === "string" && /^\d+$/.test(text) ? text : null;
+  }
+  var MESSAGE_LIMIT = 100;
+  var PageMessageIndex = class {
+    constructor() {
+      __publicField(this, "threads", /* @__PURE__ */ new Map());
+    }
+    record(messageId, threadId) {
+      this.threads.delete(messageId);
+      this.threads.set(messageId, threadId);
+      if (this.threads.size > MESSAGE_LIMIT) this.threads.delete(this.threads.keys().next().value);
+    }
+    /** The conversation of the notification tagged with this message id. */
+    threadFor(tag) {
+      return typeof tag === "string" ? this.threads.get(tag) : void 0;
+    }
+  };
+  var pageMessages = new PageMessageIndex();
+  function recordNotifiedMessage(message, load) {
+    if (!message || typeof message !== "object") return;
+    const row = message;
+    if (typeof row.messageId !== "string" || !row.messageId) return;
+    let i64ToString;
+    try {
+      const i64 = typeof load === "function" ? load("I64") : null;
+      if (typeof i64?.to_string === "function") {
+        i64ToString = i64.to_string.bind(i64);
+      }
+    } catch {
+    }
+    const threadId = messengerId(row.threadKey, i64ToString);
+    if (threadId) pageMessages.record(row.messageId, threadId);
+  }
+  function sameArity(wrapped3, original) {
+    try {
+      Object.defineProperty(wrapped3, "length", { value: original.length });
+    } catch {
+    }
+    return wrapped3;
+  }
+  function wrapDesktopNotificationsFactory(factory, load) {
+    const patch = (exports) => {
+      if (!exports || typeof exports !== "object") return false;
+      const record3 = exports;
+      const trigger = record3.triggerLocalNotification;
+      if (typeof trigger !== "function") return false;
+      record3.triggerLocalNotification = function(...args) {
+        try {
+          recordNotifiedMessage(args[1], load());
+        } catch {
+        }
+        return Reflect.apply(trigger, this, args);
+      };
+      return true;
+    };
+    return sameArity(function(...args) {
+      const result = Reflect.apply(factory, this, args);
+      for (const candidate of [result, ...args.slice(-2)]) {
+        if (patch(candidate)) break;
+        if (candidate && typeof candidate === "object" && patch(candidate.exports)) {
+          break;
+        }
+      }
+      return result;
+    }, factory);
+  }
+  function wrapChatPopperFactory(factory, loadRewritten2, onUnmatched) {
+    let rewritten = null;
+    const source = rewriteChatPopperSource(Function.prototype.toString.call(factory));
+    if (source === null) onUnmatched();
+    else {
+      loadRewritten2(source, (ready2) => {
+        rewritten = ready2;
+      });
+    }
+    return sameArity(function(...args) {
+      return Reflect.apply(rewritten ?? factory, this, args);
+    }, factory);
+  }
+
+  // inject/src/messenger/features/page-notifications.ts
+  var rewriteSeq = 0;
+  function loadRewritten(source, ready2) {
+    const key = `__carrierRewritten${++rewriteSeq}`;
+    const page = window;
+    const url = URL.createObjectURL(
+      new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
+    );
+    const script = document.createElement("script");
+    const done = () => {
+      URL.revokeObjectURL(url);
+      script.remove();
+    };
+    script.onload = () => {
+      const rewritten = page[key];
+      delete page[key];
+      done();
+      if (typeof rewritten === "function") {
+        ready2(rewritten);
+        diag("notify.page-enabled", "Messenger's own notifications are enabled");
+      } else diag("notify.page-rewrite", "rewritten notification module did not load");
+    };
+    script.onerror = () => {
+      done();
+      diag("notify.page-rewrite", "the page refused the rewritten notification module");
+    };
+    (document.head || document.documentElement).append(script);
+  }
+  function interceptNotificationModules(define) {
+    const load = () => window.require;
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const name = args[0];
+        const factory = args[2];
+        if (typeof factory === "function") {
+          if (name === CHAT_POPPER_MODULE) {
+            args[2] = wrapChatPopperFactory(
+              factory,
+              loadRewritten,
+              () => diag(
+                "notify.page-rewrite",
+                "Messenger's notification gate changed; using the fallback"
+              )
+            );
+          } else if (name === DESKTOP_NOTIFICATIONS_MODULE) {
+            args[2] = wrapDesktopNotificationsFactory(factory, load);
+          }
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
+  }
+
   // inject/src/messenger/features/facebook-modules.ts
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
   function initFacebookModuleInterception() {
@@ -4752,7 +4915,7 @@ ${button.innerHTML}`)
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
       const wrapped3 = createFacebookModuleDefineInterceptor(
-        value,
+        interceptNotificationModules(value),
         shouldBlockTelemetry,
         (restore2) => searchIndex.register(restore2),
         (error) => {
@@ -8078,6 +8241,11 @@ ${button.innerHTML}`)
         `page constructed a Notification (visibility: ${document.visibilityState})`
       );
       const pageMatch = markPageNotification(String(title || "Messenger"), String(opts.body || ""));
+      const taggedThread = pageMessages.threadFor(opts.tag);
+      if (taggedThread && pageMatch.signal && !pageMatch.signal.threadPath) {
+        pageMatch.signal.threadPath = `/t/${taggedThread}/`;
+        diag("notify.identity", "page notification carried its exact conversation");
+      }
       const retainSuppressedDraft = (id) => {
         const threadId = threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "");
         if (!pageMatch.signal?.matchedDraft || !threadId) return;
