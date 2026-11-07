@@ -6,7 +6,7 @@ use tauri::{Manager, WebviewWindow};
 
 #[cfg(not(target_os = "linux"))]
 use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
 };
 
@@ -237,6 +237,32 @@ impl ksni::Tray for LinuxTray {
         if !menu.is_empty() {
             menu.push(ksni::MenuItem::Separator);
         }
+        let now = crate::pause::now_ms();
+        let state =
+            crate::pause::pause_state(&self.app.state::<AppState>().settings.lock().unwrap(), now);
+        let (title, entries) = crate::pause::pause_menu(state, now);
+        menu.push(
+            ksni::menu::SubMenu {
+                label: title,
+                submenu: entries
+                    .into_iter()
+                    .map(|(id, label, enabled)| {
+                        StandardItem {
+                            label,
+                            enabled,
+                            activate: Box::new(move |tray: &mut Self| {
+                                crate::pause::handle_pause_menu_event(&tray.app, id);
+                            }),
+                            ..Default::default()
+                        }
+                        .into()
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+            .into(),
+        );
+        menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
                 label: "Quit Carrier".into(),
@@ -486,6 +512,15 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     if !threads.is_empty() {
         menu.append(&PredefinedMenuItem::separator(app)?)?;
     }
+    let now = crate::pause::now_ms();
+    let state = crate::pause::pause_state(&app.state::<AppState>().settings.lock().unwrap(), now);
+    let (title, entries) = crate::pause::pause_menu(state, now);
+    let pause = Submenu::new(app, title, true)?;
+    for (id, label, enabled) in entries {
+        pause.append(&MenuItem::with_id(app, id, label, enabled, None::<&str>)?)?;
+    }
+    menu.append(&pause)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(
         app,
         "quit",

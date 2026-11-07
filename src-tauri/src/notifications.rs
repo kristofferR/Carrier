@@ -2269,6 +2269,14 @@ fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: 
 /// receive responses asynchronously; non-Snap Linux parks one thread per
 /// notification because KDE targets inline-reply signals to the connection
 /// that created it.
+/// A Messenger call window is open. Message notifications wait while it is,
+/// so a call is not interrupted by banners (Ref #348).
+fn in_call(app: &tauri::AppHandle) -> bool {
+    app.webview_windows()
+        .keys()
+        .any(|label| label.starts_with(crate::window::POPUP_LABEL_PREFIX))
+}
+
 pub(crate) fn show_message_notification(
     app: tauri::AppHandle,
     msg: NotifyMsg,
@@ -2282,7 +2290,9 @@ pub(crate) fn show_message_notification(
         let s = state.settings.lock().unwrap();
         (
             s.notification_sound,
-            s.mute_notifications,
+            crate::pause::pause_state(&s, crate::pause::now_ms())
+                != crate::pause::PauseState::Active
+                || in_call(&app),
             s.hide_notification_preview,
             s.group_notifications_by_conversation,
             s.attention_on_message,
@@ -2292,7 +2302,7 @@ pub(crate) fn show_message_notification(
     MESSENGER_ENGLISH_UI.store(msg.english_ui, Ordering::Relaxed);
     if muted {
         log::info!(
-            "carrier:notify suppressed by mute_notifications (id {})",
+            "carrier:notify suppressed: notifications muted, paused or in a call (id {})",
             msg.id
         );
         return NativeNotificationDelivery::Suppressed;
@@ -2622,14 +2632,12 @@ impl SyncAlertGate {
 static SYNC_ALERT_GATE: OnceLock<Mutex<SyncAlertGate>> = OnceLock::new();
 
 pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, kind: SyncAlertKind) {
-    let muted = app
-        .state::<AppState>()
-        .settings
-        .lock()
-        .unwrap()
-        .mute_notifications;
+    let muted = crate::pause::pause_state(
+        &app.state::<AppState>().settings.lock().unwrap(),
+        crate::pause::now_ms(),
+    ) != crate::pause::PauseState::Active;
     if muted {
-        log::info!("carrier:sync-alert suppressed by mute_notifications ({kind:?})");
+        log::info!("carrier:sync-alert suppressed: notifications muted or paused ({kind:?})");
         return;
     }
     let gate = SYNC_ALERT_GATE.get_or_init(|| Mutex::new(SyncAlertGate::default()));

@@ -6318,8 +6318,9 @@ ${button.innerHTML}`)
   function suppressMutedDelivery(muted, settings) {
     return muted && ignoresMutedConversations(settings);
   }
-  function notificationsGloballyMuted(settings) {
-    return settings?.mute_notifications === true || messengerDndActive();
+  function notificationsGloballyMuted(settings, now = Date.now()) {
+    const pausedUntil = settings?.notifications_paused_until;
+    return settings?.mute_notifications === true || typeof pausedUntil === "number" && pausedUntil > now || messengerDndActive(now);
   }
   function suppressNotificationDelivery(muted, settings) {
     return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);

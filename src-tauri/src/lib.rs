@@ -39,6 +39,7 @@ mod media_permissions;
 mod menu;
 mod notification_ledger;
 mod notifications;
+mod pause;
 mod preflight;
 mod render_recovery;
 mod renderer_memory;
@@ -2141,6 +2142,16 @@ pub fn run() {
                 // Expired schedules can notify immediately. Start after native
                 // notification setup, including on a cold macOS launch.
                 scheduled_send::install(app, single_instance);
+                // A pause that outlives this launch still clears its menus on time.
+                let paused_until = app
+                    .state::<AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .notifications_paused_until;
+                if let Some(until) = paused_until {
+                    pause::schedule_pause_expiry(app, until);
+                }
             }
 
             #[cfg(target_os = "linux")]
