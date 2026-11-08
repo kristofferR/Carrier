@@ -1264,7 +1264,7 @@
         </div>
         <div class="win-theme-toggle win-skin-toggle" role="group" aria-label="Preview the app window in one of Carrier's themes">
           <button type="button" class="wt-btn on" data-skin="default" aria-pressed="true" data-i18n="toggle.default">Default</button>
-          <button type="button" class="wt-btn" data-skin="oled" aria-pressed="false">OLED Black</button>
+          <button type="button" class="wt-btn" data-skin="oled" aria-pressed="false" hidden>OLED Black</button>
           <button type="button" class="wt-btn" data-skin="graphite" aria-pressed="false">Graphite</button>
           <button type="button" class="wt-btn" data-skin="warm" aria-pressed="false">Warm</button>
         </div>
@@ -2283,15 +2283,17 @@
         b.setAttribute('aria-pressed', String(on));
       });
     }
+    var oled = document.querySelector('.wt-btn[data-skin="oled"]');
     function setMode(mode) {
       stage.setAttribute('data-win-theme', mode);
       press(modes, mode, 'data-theme');
+      // OLED Black is a dark-only theme, so it's only offered in Dark.
+      if (oled) oled.hidden = mode !== 'dark';
       if (mode === 'light' && stage.getAttribute('data-win-skin') === 'oled') setSkin('default');
     }
     function setSkin(skin) {
       stage.setAttribute('data-win-skin', skin);
       press(skins, skin, 'data-skin');
-      if (skin === 'oled') setMode('dark');
     }
     modes.forEach(function (b) { b.addEventListener('click', function () { setMode(b.getAttribute('data-theme')); }); });
     skins.forEach(function (b) { b.addEventListener('click', function () { setSkin(b.getAttribute('data-skin')); }); });
