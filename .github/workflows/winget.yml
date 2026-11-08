@@ -1,0 +1,116 @@
+name: winget
+
+# Opens a microsoft/winget-pkgs pull request for each published release, using
+# komac to swap in the new installer URLs and hashes. The first version of
+# kristofferR.Chatpane is submitted by hand (packaging/winget/README.md); until
+# winget-pkgs has the package, this skips.
+#
+# release.yml publishes the draft with GITHUB_TOKEN, and events caused by that
+# token never start other workflows, so `release: published` would not fire.
+# Follow the Release run instead and check that the release is public. A held
+# (`chatpane:keep-draft`) release is skipped; dispatch this once it is published.
+on:
+  # Safe here: Release runs only for tag pushes and manual dispatch (never
+  # fork PRs), and this job checks out and executes no repository code.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to submit, e.g. v3.0.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: winget
+  cancel-in-progress: false
+
+env:
+  PACKAGE_ID: kristofferR.Chatpane
+  KOMAC_VERSION: 2.17.2
+  KOMAC_SHA256: b03b020eec98acfb0b53e284a6e21815b884be33de6785b97e7a120f0e748966
+
+jobs:
+  submit:
+    # Tag pushes only: the Release workflow's manual notarization smoke runs
+    # are workflow_dispatch and never publish anything.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          set -euo pipefail
+          skip() { echo "::notice::$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+
+          [ -n "$WINGET_TOKEN" ] || skip "WINGET_TOKEN not configured, skipping the winget submission."
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || skip "$TAG is not a stable release tag."
+
+          # The tags endpoint only returns published releases (404 for drafts).
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null) \
+            || skip "$TAG is not published (still a draft?)."
+          [ "$(jq -r '.prerelease' <<< "$release")" = "false" ] || skip "$TAG is a prerelease."
+
+          version="${TAG#v}"
+          installer() {
+            local url
+            url=$(jq -r --arg name "$1" \
+              '.assets[] | select(.name == $name) | .browser_download_url' <<< "$release")
+            [ -n "$url" ] || { echo "::error::$TAG has no $1 asset." >&2; exit 1; }
+            echo "$url"
+          }
+          x64=$(installer "Chatpane_${version}_win_x64_setup.exe")
+          arm64=$(installer "Chatpane_${version}_win_arm_setup.exe")
+
+          root="repos/microsoft/winget-pkgs/contents/manifests/k/kristofferR/Chatpane"
+          gh api "$root" >/dev/null 2>&1 \
+            || skip "$PACKAGE_ID is not in winget-pkgs yet; submit the first version by hand."
+          if gh api "$root/$version" >/dev/null 2>&1; then
+            skip "$PACKAGE_ID $version is already in winget-pkgs."
+          fi
+
+          {
+            echo "version=$version"
+            echo "x64=$x64"
+            echo "arm64=$arm64"
+            echo "notes=https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install komac
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          archive="komac-${KOMAC_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$archive" \
+            "https://github.com/russellbanks/Komac/releases/download/v${KOMAC_VERSION}/$archive"
+          echo "$KOMAC_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/komac"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/komac"
+
+      # komac checks for an open PR for this version first, so a rerun does not
+      # open a duplicate. The token owner must already have a winget-pkgs fork.
+      - name: Open the winget-pkgs pull request
+        if: steps.release.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+          X64_URL: ${{ steps.release.outputs.x64 }}
+          ARM64_URL: ${{ steps.release.outputs.arm64 }}
+          NOTES_URL: ${{ steps.release.outputs.notes }}
+        run: |
+          "$RUNNER_TEMP/komac/komac" update "$PACKAGE_ID" \
+            --version "$VERSION" \
+            --urls "$X64_URL" "$ARM64_URL" \
+            --release-notes-url "$NOTES_URL" \
+            --submit
