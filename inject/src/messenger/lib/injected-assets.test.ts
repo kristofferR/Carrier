@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -214,7 +214,17 @@ describe("hand-maintained injected assets", () => {
     const payload = landing.match(/var I18N = \/\*__I18N_LOCALES__\*\/ (\{.*\});\r?\n/)?.[1];
     expect(payload).toBeTruthy();
 
-    const locales = JSON.parse(payload || "{}") as Record<string, { t: Record<string, string> }>;
+    // English ships inline; every other language loads from docs/i18n/<lang>.json.
+    type Locale = { t: Record<string, string> };
+    const locales = JSON.parse(payload || "{}") as Record<string, Locale>;
+    expect(Object.keys(locales)).toEqual(["en"]);
+    const files = (await readdir(fileURLToPath(repoUrl("docs/i18n"))))
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -".json".length))
+      .sort();
+    for (const lang of files) {
+      locales[lang] = JSON.parse(await repoAsset(`docs/i18n/${lang}.json`)) as Locale;
+    }
     expect(Object.keys(locales)).toEqual([
       "en",
       "ar",
@@ -260,17 +270,17 @@ describe("hand-maintained injected assets", () => {
       "ช่วงเวลาห้ามรบกวน",
       "giờ yên tĩnh",
     ];
-    const conditionalUpdatePhrases: Record<string, [string, string]> = {
-      en: ["Automatic Update Checks is enabled", "Optional"],
-      ar: ["تفعيل البحث التلقائي عن التحديثات", "اختياري"],
-      es: ["búsqueda automática de actualizaciones", "opcional"],
-      fil: ["naka-enable ang awtomatikong pag-check ng update", "Opsyonal"],
-      fr: ["recherche automatique de mises à jour est activée", "facultative"],
-      nb: ["automatiske oppdateringssjekker er slått på", "Valgfri"],
-      pl: ["automatyczne sprawdzanie aktualizacji jest włączone", "Opcjonalnie"],
-      "pt-BR": ["verificação automática de atualizações está ativada", "opcional"],
-      th: ["เปิดการตรวจหาอัปเดตอัตโนมัติ", "เลือกเปิด"],
-      vi: ["bật kiểm tra cập nhật tự động", "Tùy chọn"],
+    const conditionalUpdatePhrases: Record<string, string> = {
+      en: "Automatic Update Checks is enabled",
+      ar: "تفعيل البحث التلقائي عن التحديثات",
+      es: "búsqueda automática de actualizaciones",
+      fil: "naka-enable ang Awtomatikong Pag-check ng Update",
+      fr: "recherche automatique de mises à jour est activée",
+      nb: "automatiske oppdateringssjekker er slått på",
+      pl: "automatyczne sprawdzanie aktualizacji jest włączone",
+      "pt-BR": "verificação automática de atualizações está ativada",
+      th: "เปิดการตรวจหาอัปเดตอัตโนมัติ",
+      vi: "bật Tự động kiểm tra cập nhật",
     };
     const signedCheckPayload = landing.match(
       /var I18N_SIGNED_UPDATE_CHECKS = (\{[\s\S]*?\});/,
@@ -284,18 +294,15 @@ describe("hand-maintained injected assets", () => {
       const trustAnswer = t["faq.a4"] || "";
       const repairAnswer = t["faq.a7"] || "";
       const notificationCopy = t["feat.2.body"] || "";
-      const updatePill = t["feat.pill2"] || "";
-      const conditionalCopy = conditionalUpdatePhrases[locale];
+      const conditionalPhrase = conditionalUpdatePhrases[locale];
       expect(signedCheckPhrases[locale]).toBeTruthy();
-      if (!conditionalCopy) continue;
+      if (!conditionalPhrase) continue;
 
-      const [conditionalPhrase, optionalPhrase] = conditionalCopy;
       expect(updateAnswer).toContain("GitHub");
       expect(updateAnswer).toContain("Windows");
       expect(updateAnswer).toContain("SmartScreen");
       expect(updateAnswer).toContain(conditionalPhrase);
       expect(repairAnswer).toContain(conditionalPhrase);
-      expect(updatePill).toContain(optionalPhrase);
       expect(trustAnswer).toContain("SmartScreen");
       expect(repairAnswer).toContain("https://github.com/kristofferR/Carrier/issues");
       expect(staleQuietHours.some((phrase) => notificationCopy.includes(phrase))).toBe(false);
