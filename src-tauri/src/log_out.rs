@@ -92,16 +92,21 @@ async fn reset(app: tauri::AppHandle) {
     }
 }
 
-/// Recent conversations belong to the old account: empty the Dock, tray and
-/// jump-list menus now rather than waiting for the next page report.
+/// Recent conversations and the unread count belong to the old account: empty
+/// the Dock, tray and jump-list menus and clear the badges now. The login page
+/// never reports them (an empty chat list keeps the badge reader waiting).
 fn forget_account_in_memory(app: &tauri::AppHandle) {
-    app.state::<AppState>()
-        .recent_threads
-        .lock()
-        .unwrap()
-        .clear();
+    let state = app.state::<AppState>();
+    state.recent_threads.lock().unwrap().clear();
+    state
+        .unread_count
+        .store(0, std::sync::atomic::Ordering::Release);
+    let settings = state.settings.lock().unwrap().clone();
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || crate::menu::rebuild_recent_menus(&handle));
+    let _ = app.run_on_main_thread(move || {
+        crate::menu::rebuild_recent_menus(&handle);
+        crate::refresh_unread_indicators(&handle, &settings, 0);
+    });
 }
 
 /// Remove the account's notifications from the system's notification list,

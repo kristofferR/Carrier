@@ -770,7 +770,7 @@ fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
         paths.push(data.join(crate::notifications::PERSISTED_NOTIFICATION_ROUTES_DIR));
     }
     if let Ok(config) = app.path().app_config_dir() {
-        paths.push(config.join(crate::scheduled_send::STORE_FILE));
+        paths.extend(crate::scheduled_send::account_files(&config));
     }
     paths
 }
