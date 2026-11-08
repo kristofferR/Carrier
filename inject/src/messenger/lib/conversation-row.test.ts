@@ -165,7 +165,7 @@ describe("conversationNodeText", () => {
     expect(conversationNodeText(element("SPAN", { "aria-label": "Kim Andersen" }))).toBe("");
   });
 
-  test("ignores Carrier's injected system-emoji glyphs", () => {
+  test("ignores Chatpane's injected system-emoji glyphs", () => {
     expect(
       conversationNodeText(
         element("SPAN", {}, [

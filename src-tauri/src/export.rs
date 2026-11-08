@@ -583,7 +583,7 @@ fn render_html(document: &ExportDocument) -> String {
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <meta name=\"generator\" content=\"Carrier\">\n<title>{title}</title>\n<style>{STYLE}</style>\n\
+         <meta name=\"generator\" content=\"Chatpane\">\n<title>{title}</title>\n<style>{STYLE}</style>\n\
          </head>\n<body>\n<header>\n<h1>{title}</h1>\n\
          <p class=\"meta\">{count} {noun}, exported {exported}</p>\n",
         noun = if count == 1 { "message" } else { "messages" },

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { chmod, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 // Run after the first verified debug installation. Never changes package-manager state.
 import { homedir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -44,16 +44,16 @@ if (account.exitCode !== 0 || account.stdout.toString().trim().toLowerCase() !==
   );
 }
 
-if (
-  mac &&
-  Bun.spawnSync(["brew", "list", "--cask", "carrier"], { stderr: "ignore" }).exitCode === 0
-)
-  throw new Error("Remove the Homebrew Carrier cask before enrolling");
-if (!mac && Bun.spawnSync(["pacman", "-Q", "carrier"], { stderr: "ignore" }).exitCode === 0)
-  throw new Error("Remove the AUR carrier package before enrolling");
+// The cask and AUR package were called carrier before the rename to Chatpane.
+for (const name of ["carrier", "chatpane"]) {
+  if (mac && Bun.spawnSync(["brew", "list", "--cask", name], { stderr: "ignore" }).exitCode === 0)
+    throw new Error(`Remove the Homebrew ${name} cask before enrolling`);
+  if (!mac && Bun.spawnSync(["pacman", "-Q", name], { stderr: "ignore" }).exitCode === 0)
+    throw new Error(`Remove the AUR ${name} package before enrolling`);
+}
 if (process.argv.includes("--hold-failures")) {
   const active = Bun.spawnSync(["pgrep", "-u", String(userInfo().uid), "-x", "carrier"]);
-  if (active.exitCode !== 1) throw new Error("Quit Carrier before enrolling with --hold-failures");
+  if (active.exitCode !== 1) throw new Error("Quit Chatpane before enrolling with --hold-failures");
   const { original, settings } = await loadSettings();
   await mkdir(dirname(settingsFile), { recursive: true });
   await writeFile(join(root, "settings-before-enrollment.json"), original, {
@@ -127,17 +127,20 @@ if (mac) {
   );
   const desktopQuote = (s: string) =>
     `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("`", "\\`").replaceAll("$", "\\$")}"`;
+  // Named after the app, which tells notification servers which entry it is.
+  await rm(join(applications, "carrier.desktop"), { force: true });
   await writeFile(
-    join(applications, "carrier.desktop"),
-    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Carrier\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
+    join(applications, "Chatpane.desktop"),
+    `[Desktop Entry]\nCategories=Network;InstantMessaging;\nComment=Distraction-free Messenger desktop client\nExec=${desktopQuote(binary)}\nStartupWMClass=carrier\nIcon=io.github.kristofferr.carrier\nName=Chatpane\nTerminal=false\nType=Application\nActions=new-conversation;settings;\n\n[Desktop Action new-conversation]\nName=New Conversation\nExec=${desktopQuote(binary)} --new-conversation\n\n[Desktop Action settings]\nName=Settings\nExec=${desktopQuote(binary)} --settings\n`,
   );
   const { settings } = await loadSettings();
   if ("autostart" in settings && settings.autostart === true) {
     const autostart = join(config, "autostart");
     await mkdir(autostart, { recursive: true });
+    await rm(join(autostart, "Carrier.desktop"), { force: true });
     await writeFile(
-      join(autostart, "Carrier.desktop"),
-      `[Desktop Entry]\nType=Application\nVersion=1.0\nName=Carrier\nComment=Carrier startup script\nExec=${desktopQuote(binary)}\nStartupNotify=false\nTerminal=false\n`,
+      join(autostart, "Chatpane.desktop"),
+      `[Desktop Entry]\nType=Application\nVersion=1.0\nName=Chatpane\nComment=Start Chatpane at login\nExec=${desktopQuote(binary)}\nStartupNotify=false\nTerminal=false\n`,
     );
   }
   const units = join(home, ".config/systemd/user");

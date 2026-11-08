@@ -369,7 +369,7 @@ async fn run_portal_session(
         }
     };
     let shortcut =
-        NewShortcut::new(SHORTCUT_ID, "Show or hide Carrier").preferred_trigger(PREFERRED_TRIGGER);
+        NewShortcut::new(SHORTCUT_ID, "Show or hide Chatpane").preferred_trigger(PREFERRED_TRIGGER);
     let shortcuts = [shortcut];
     let bind = tokio::time::timeout(
         BIND_TIMEOUT,

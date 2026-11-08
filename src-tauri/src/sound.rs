@@ -218,7 +218,7 @@ fn import_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join("sounds"))
-        .map_err(|error| format!("could not locate Carrier's config folder: {error}"))
+        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
 }
 
 /// The folders a chosen file may already be in, so it is used where it is.

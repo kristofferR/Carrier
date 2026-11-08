@@ -442,7 +442,7 @@ mod tests {
         let client = |address: &str| HyprClient {
             address: address.into(),
             pid: 1,
-            title: "Carrier".into(),
+            title: "Chatpane".into(),
             floating: false,
             fullscreen: serde_json::Value::Null,
             tags: Vec::new(),
@@ -450,7 +450,7 @@ mod tests {
         let (one, two) = (client("0x1"), client("0x2"));
         let ours = [&one, &two];
         let found = |label, addresses: &HashMap<String, String>| {
-            candidates(&ours, "Carrier", label, addresses)
+            candidates(&ours, "Chatpane", label, addresses)
                 .iter()
                 .map(|client| client.address.as_str())
                 .collect::<Vec<_>>()
@@ -467,7 +467,7 @@ mod tests {
         let client = HyprClient {
             address: "0x1".into(),
             pid: 1,
-            title: "Carrier".into(),
+            title: "Chatpane".into(),
             floating: true,
             fullscreen: serde_json::Value::Null,
             tags: vec!["omarchy-floating-workspace".into(), "opened*".into()],

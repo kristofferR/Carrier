@@ -152,7 +152,9 @@ impl Store {
 
     fn persist(&self, items: &[Message]) -> Result<(), String> {
         if self.unavailable {
-            return Err("Scheduled messages could not be loaded. Restart Carrier to retry.".into());
+            return Err(
+                "Scheduled messages could not be loaded. Restart Chatpane to retry.".into(),
+            );
         }
         let parent = self.path.parent().ok_or("No schedule directory")?;
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -216,7 +218,7 @@ impl Store {
             self.unavailable = true;
             log::error!("scheduled-send persistence failed: {error}");
             return Err(
-                "Could not save scheduled messages. Restart Carrier before retrying.".into(),
+                "Could not save scheduled messages. Restart Chatpane before retrying.".into(),
             );
         }
         self.items = items;
@@ -230,7 +232,7 @@ impl Store {
         now: u64,
     ) -> Result<Option<String>, String> {
         if self.unavailable {
-            return Err("Scheduled messages are unavailable. Restart Carrier to retry.".into());
+            return Err("Scheduled messages are unavailable. Restart Chatpane to retry.".into());
         }
         if !valid_account(&request.account) {
             return Err("Sign in to schedule a message.".into());

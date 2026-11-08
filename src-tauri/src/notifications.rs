@@ -1512,7 +1512,7 @@ fn show_linux_notification<F>(
         return;
     }
     let mut notification = notify_rust::Notification::new();
-    notification.appname("Carrier").summary(title);
+    notification.appname("Chatpane").summary(title);
     if !body.is_empty() {
         notification.body(body);
     }
@@ -1984,8 +1984,8 @@ const MARK_READ_FAILED: &str = "Couldn't mark as read. Opening the conversation.
 fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
     let mut notification = notify_rust::Notification::new();
     notification
-        .appname("Carrier")
-        .summary("Carrier")
+        .appname("Chatpane")
+        .summary("Chatpane")
         .body(body)
         .hint(notify_rust::Hint::SuppressSound(true));
     if let Err(error) = notification.show() {
@@ -1996,7 +1996,7 @@ fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
 #[cfg(target_os = "macos")]
 fn show_action_failure_notification(_app: &tauri::AppHandle, body: &str) {
     deliver_notification_macos(
-        "Carrier",
+        "Chatpane",
         body,
         0,
         None,
@@ -2011,7 +2011,7 @@ fn show_action_failure_notification(app: &tauri::AppHandle, body: &str) {
     crate::windows::toast::deliver_notification_windows(
         app,
         crate::windows::toast::WindowsToastOptions {
-            title: "Carrier".into(),
+            title: "Chatpane".into(),
             body: body.into(),
             avatar: None,
             image: None,
@@ -2895,7 +2895,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         SyncAlertKind::RateLimited => (
             gate.lock().unwrap().on_degraded(source, Instant::now()),
             "Messenger is rate limiting this session. Chats may be out of date. \
-             Carrier will retry automatically after the cooldown.",
+             Chatpane will retry automatically after the cooldown.",
         ),
         SyncAlertKind::Recovered => (
             gate.lock().unwrap().on_recovered(source),
@@ -2913,7 +2913,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(1);
-    let title = "Carrier";
+    let title = "Chatpane";
     let body = body.to_string();
 
     #[cfg(target_os = "macos")]
@@ -3017,7 +3017,7 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
         app,
         0,
         "Scheduled message needs attention".into(),
-        "A scheduled message was missed or its send could not be confirmed. Carrier will not retry it. Open Schedule send to review.".into(),
+        "A scheduled message was missed or its send could not be confirmed. Chatpane will not retry it. Open Schedule send to review.".into(),
     );
 }
 
@@ -3031,7 +3031,7 @@ pub(crate) fn show_app_notice(app: &tauri::AppHandle, title: String, body: Strin
 
 fn deliver_app_notice(app: &tauri::AppHandle, id: u64, title: String, body: String) {
     if let Err(error) = deliver_plain_notice(app, id, title, body, Sound::Silent) {
-        log::warn!("failed to present a Carrier notice: {error}");
+        log::warn!("failed to present a Chatpane notice: {error}");
     }
 }
 
@@ -3044,13 +3044,13 @@ pub(crate) fn macos_blocker_message(status: isize, alert: isize) -> Option<Strin
     const ALERT_DISABLED: isize = 1;
     let message = match (status, alert) {
         (DENIED, _) => {
-            "Notifications are turned off for Carrier. Turn them on in System Settings → Notifications → Carrier."
+            "Notifications are turned off for Chatpane. Turn them on in System Settings → Notifications → Chatpane."
         }
         (NOT_DETERMINED, _) => {
-            "Carrier has not been allowed to notify yet. Restart Carrier and allow notifications when macOS asks."
+            "Chatpane has not been allowed to notify yet. Restart Chatpane and allow notifications when macOS asks."
         }
         (_, ALERT_DISABLED) => {
-            "Carrier may notify, but its alerts are off. Choose Banners or Alerts in System Settings → Notifications → Carrier."
+            "Chatpane may notify, but its alerts are off. Choose Banners or Alerts in System Settings → Notifications → Chatpane."
         }
         _ => return None,
     };
@@ -3080,7 +3080,7 @@ pub(crate) fn send_test_notification(app: &tauri::AppHandle) -> Result<String, S
         app,
         next_native_notification_id(),
         "Test notification".into(),
-        "Notifications from Carrier are working.".into(),
+        "Notifications from Chatpane are working.".into(),
         sound,
     )?;
     Ok("Sent. If nothing appeared, check Focus or Do Not Disturb and your system's notification settings.".into())
@@ -3167,7 +3167,7 @@ mod tests {
         assert!(
             macos_blocker_message(1, 2)
                 .unwrap()
-                .contains("turned off for Carrier")
+                .contains("turned off for Chatpane")
         );
         assert!(
             macos_blocker_message(0, 0)

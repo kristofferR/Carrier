@@ -32,7 +32,7 @@ use crate::window::show_settings_window;
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
-        name: Some("Carrier".into()),
+        name: Some("Chatpane".into()),
         version: Some(version.into()),
         authors: Some(vec!["kristofferR".into()]),
         comments: Some("A tiny, distraction-free desktop client for Facebook Messenger.".into()),
@@ -382,7 +382,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .separator()
         .item(&clear_cache)
         .separator()
-        .about_with_text("About Carrier", Some(about))
+        .about_with_text("About Chatpane", Some(about))
         .build()?;
 
     Menu::with_items(app, &[&file, &edit, &view, &help])
@@ -554,7 +554,7 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
     let app_handle = app.clone();
     let mut dialog = app
         .dialog()
-        .message("This clears Carrier's Messenger browsing data, signs you out, and restarts the app. Continue?")
+        .message("This clears Chatpane's Messenger browsing data, signs you out, and restarts the app. Continue?")
         .title("Clear Cache and Restart")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
@@ -591,7 +591,7 @@ fn request_new_window(app: &tauri::AppHandle) {
         let mut dialog = app
             .dialog()
             .message(
-                "To keep every window in sync, Carrier reloads Messenger in your open window. \
+                "To keep every window in sync, Chatpane reloads Messenger in your open window. \
                  A call or an unsent message there will be interrupted.",
             )
             .title("Open a New Window?")
@@ -1314,7 +1314,7 @@ mod tests {
     fn about_dialog_has_visible_product_metadata() {
         let metadata = about_metadata("1.12.0");
 
-        assert_eq!(metadata.name.as_deref(), Some("Carrier"));
+        assert_eq!(metadata.name.as_deref(), Some("Chatpane"));
         assert_eq!(metadata.version.as_deref(), Some("1.12.0"));
         assert_eq!(metadata.authors, Some(vec!["kristofferR".into()]));
         assert_eq!(metadata.license.as_deref(), Some("MIT"));

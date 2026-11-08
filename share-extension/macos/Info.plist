@@ -5,7 +5,7 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>Carrier</string>
+  <string>Chatpane</string>
   <key>CFBundleExecutable</key>
   <string>Carrier Share</string>
   <key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Carrier Share</string>
+  <string>Chatpane Share</string>
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
   <key>CFBundleShortVersionString</key>

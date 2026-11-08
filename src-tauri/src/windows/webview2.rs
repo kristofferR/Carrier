@@ -85,10 +85,10 @@ pub(crate) fn explain_missing_runtime() {
         IDOK, MB_ICONWARNING, MB_OKCANCEL, MessageBoxW,
     };
     let text = wide(
-        "Carrier needs the Microsoft Edge WebView2 Runtime, which is not installed on this computer.\n\n\
-         Choose OK to open Microsoft's download page. Install the Evergreen runtime, then start Carrier again.",
+        "Chatpane needs the Microsoft Edge WebView2 Runtime, which is not installed on this computer.\n\n\
+         Choose OK to open Microsoft's download page. Install the Evergreen runtime, then start Chatpane again.",
     );
-    let title = wide("Carrier");
+    let title = wide("Chatpane");
     // SAFETY: both strings are NUL-terminated UTF-16 that outlive the call; a
     // null owner window is allowed.
     let choice = unsafe {

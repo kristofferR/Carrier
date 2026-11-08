@@ -73,7 +73,7 @@ impl Portal {
         let pending = Pending::default();
         // The portal's app ID is `snap.<name>`; it activates actions on that bus
         // name at the matching object path. snapcraft.yaml declares the slot.
-        let snap = std::env::var("SNAP_NAME").unwrap_or_else(|_| "carrier".into());
+        let snap = std::env::var("SNAP_NAME").unwrap_or_else(|_| "chatpane".into());
         let connection = zbus::blocking::connection::Builder::session()?
             .serve_at(
                 format!("/snap/{}", snap.replace('-', "_")),

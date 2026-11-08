@@ -35,12 +35,17 @@ pub(crate) fn validated_thread_path(value: &str) -> Option<String> {
     Some(format!("/t/{id}/"))
 }
 
-/// Parse the deliberately small `carrier://` automation surface. URL metadata
+/// The app's URL scheme: `chatpane://` automation and share handoffs. Linux
+/// doesn't register it.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+pub(crate) const URL_SCHEME: &str = "chatpane";
+
+/// Parse the deliberately small `chatpane://` automation surface. URL metadata
 /// is rejected rather than ignored so a copied or generated URL cannot mean
 /// something different to another parser.
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
-pub(crate) fn parse_carrier_url(url: &Url) -> Option<AppAction> {
-    if url.scheme() != "carrier"
+pub(crate) fn parse_app_url(url: &Url) -> Option<AppAction> {
+    if url.scheme() != URL_SCHEME
         || !url.username().is_empty()
         || url.password().is_some()
         || url.port().is_some()
@@ -66,10 +71,10 @@ pub(crate) fn parse_carrier_url(url: &Url) -> Option<AppAction> {
 
 /// Parse a Windows launch's argv — the cold `run()` path and the single-instance
 /// warm callback share this — into an app action. argv[0] is skipped so an
-/// executable path that happens to contain "carrier://" is never treated as an
+/// executable path that happens to contain "chatpane://" is never treated as an
 /// action; then the first recognized token wins: `--new-conversation`,
 /// `--settings`, `--thread <digits>`, or any argument that parses as a
-/// `carrier://` URL. Jump-list entries use the `--thread <id>` flag (not a URL)
+/// `chatpane://` URL. Jump-list entries use the `--thread <id>` flag (not a URL)
 /// so they keep working even if protocol registration failed. Unrecognized
 /// arguments are ignored — debug-logged, never echoed, since protocol arguments
 /// are attacker-controllable. Pure and unit-testable on every platform.
@@ -97,7 +102,7 @@ where
                 // A missing or malformed id falls through to a plain launch.
             }
             Some(other) => {
-                if let Some(action) = Url::parse(other).ok().as_ref().and_then(parse_carrier_url) {
+                if let Some(action) = Url::parse(other).ok().as_ref().and_then(parse_app_url) {
                     return Some(action);
                 }
                 log::debug!("ignoring an unrecognized launch argument");
@@ -234,17 +239,18 @@ mod tests {
     use super::*;
 
     fn parse(value: &str) -> Option<AppAction> {
-        Url::parse(value)
-            .ok()
-            .and_then(|url| parse_carrier_url(&url))
+        Url::parse(value).ok().and_then(|url| parse_app_url(&url))
     }
 
     #[test]
     fn parses_canonical_carrier_actions() {
-        assert_eq!(parse("carrier://compose"), Some(AppAction::NewConversation));
-        assert_eq!(parse("carrier://settings"), Some(AppAction::Settings));
         assert_eq!(
-            parse("carrier://t/123456"),
+            parse("chatpane://compose"),
+            Some(AppAction::NewConversation)
+        );
+        assert_eq!(parse("chatpane://settings"), Some(AppAction::Settings));
+        assert_eq!(
+            parse("chatpane://t/123456"),
             Some(AppAction::OpenThread("/t/123456/".into()))
         );
     }
@@ -252,20 +258,20 @@ mod tests {
     #[test]
     fn rejects_noncanonical_or_annotated_carrier_urls() {
         for value in [
-            "carrier://compose/",
-            "carrier://settings/",
-            "carrier://t/",
-            "carrier://t/123/",
-            "carrier://t/not-a-number",
-            "carrier://t/123?draft=yes",
-            "carrier://t/123#message",
-            "carrier://user@t/123",
-            "carrier://t:42/123",
+            "chatpane://compose/",
+            "chatpane://settings/",
+            "chatpane://t/",
+            "chatpane://t/123/",
+            "chatpane://t/not-a-number",
+            "chatpane://t/123?draft=yes",
+            "chatpane://t/123#message",
+            "chatpane://user@t/123",
+            "chatpane://t:42/123",
             "https://t/123",
         ] {
             assert_eq!(parse(value), None, "{value}");
         }
-        assert_eq!(parse(&format!("carrier://t/{}", "1".repeat(33))), None);
+        assert_eq!(parse(&format!("chatpane://t/{}", "1".repeat(33))), None);
     }
 
     #[test]
@@ -283,11 +289,11 @@ mod tests {
             Some(AppAction::OpenThread("/t/123456/".into()))
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "carrier://t/789"]),
+            action_from_argv(["carrier.exe", "chatpane://t/789"]),
             Some(AppAction::OpenThread("/t/789/".into()))
         );
         assert_eq!(
-            action_from_argv(["carrier.exe", "carrier://compose"]),
+            action_from_argv(["carrier.exe", "chatpane://compose"]),
             Some(AppAction::NewConversation)
         );
     }
@@ -296,7 +302,7 @@ mod tests {
     fn action_from_argv_skips_argv0_and_junk_and_takes_the_first_match() {
         // argv[0] is never parsed, even when it looks like a protocol URL.
         assert_eq!(
-            action_from_argv(["carrier://t/1", "--settings"]),
+            action_from_argv(["chatpane://t/1", "--settings"]),
             Some(AppAction::Settings)
         );
         // First recognized action wins; later ones are ignored.

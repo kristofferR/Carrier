@@ -34,11 +34,11 @@
         ]
       },
       {
-        title: "View & Carrier",
+        title: "View & Chatpane",
         items: [
           { keys: chord(mod, shift, "I"), action: "Toggle conversation information" },
           { keys: chord(mod, shift, "H"), action: "Hide names and avatars" },
-          { keys: chord(mod, shift, "M"), action: "Show or hide Carrier globally" },
+          { keys: chord(mod, shift, "M"), action: "Show or hide Chatpane globally" },
           {
             keys: `${chord(mod, "-")} / ${chord(mod, "=")} / ${chord(mod, "0")}`,
             action: "Zoom out / in / reset"

@@ -272,7 +272,7 @@ pub(crate) fn unity_app_uri(desktop_id: Option<&str>) -> String {
                 format!("{id}.desktop")
             }
         })
-        .unwrap_or_else(|| "Carrier.desktop".to_string());
+        .unwrap_or_else(|| "Chatpane.desktop".to_string());
     format!("application://{desktop_file}")
 }
 
@@ -489,14 +489,14 @@ mod tests {
 
     #[test]
     fn launcher_uri_uses_the_snap_desktop_id_when_present() {
-        assert_eq!(unity_app_uri(None), "application://Carrier.desktop");
+        assert_eq!(unity_app_uri(None), "application://Chatpane.desktop");
         assert_eq!(
-            unity_app_uri(Some("carrier_carrier")),
-            "application://carrier_carrier.desktop"
+            unity_app_uri(Some("chatpane_chatpane")),
+            "application://chatpane_chatpane.desktop"
         );
         assert_eq!(
-            unity_app_uri(Some("carrier_carrier.desktop")),
-            "application://carrier_carrier.desktop"
+            unity_app_uri(Some("chatpane_chatpane.desktop")),
+            "application://chatpane_chatpane.desktop"
         );
     }
 }

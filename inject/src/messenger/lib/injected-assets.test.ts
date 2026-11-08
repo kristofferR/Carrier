@@ -47,7 +47,7 @@ describe("hand-maintained injected assets", () => {
     expect(development.permissions).toContain("core:event:allow-listen");
   });
 
-  test("only Facebook and Messenger pages can reach Carrier, not user-content hosts", async () => {
+  test("only Facebook and Messenger pages can reach Chatpane, not user-content hosts", async () => {
     const release = JSON.parse(await repoAsset("src-tauri/capabilities/default.json")) as {
       remote: { urls: string[] };
     };
@@ -112,7 +112,7 @@ describe("hand-maintained injected assets", () => {
     const settings = await repoAsset("dist/settings.html");
 
     expect(settings).toContain('invoke("open_custom_css")');
-    expect(settings).toContain("Save custom.css, then reload Carrier to apply it.");
+    expect(settings).toContain("Save custom.css, then reload Chatpane to apply it.");
     expect(settings).toContain("missing or invalid CSS is safely ignored");
   });
 
@@ -145,7 +145,7 @@ describe("hand-maintained injected assets", () => {
     const info = await repoAsset("src-tauri/Info.plist");
 
     expect(info).toContain("<key>NSDownloadsFolderUsageDescription</key>");
-    expect(info).toContain("Carrier saves photos, videos, and files");
+    expect(info).toContain("Chatpane saves photos, videos, and files");
   });
 
   test("release builds bundle the pre-signed macOS share extension", async () => {

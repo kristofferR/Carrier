@@ -230,7 +230,11 @@ jobs:
           fi
           spctl --assess --type execute --verbose=2 "$APP"
           xcrun stapler validate "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" Carrier-debug-macos.zip
+          # Installed debug builds expect Carrier.app in the archive; the
+          # bundle's folder name isn't part of its signature.
+          mkdir -p debug-stage
+          ditto "$APP" debug-stage/Carrier.app
+          ditto -c -k --sequesterRsrc --keepParent debug-stage/Carrier.app Carrier-debug-macos.zip
           symbols=src-tauri/target/debug/carrier.dSYM
           app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
           symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
@@ -243,7 +247,7 @@ jobs:
       - name: Record debug identity and checksums
         run: |
           cp scripts/debug/{update,policy}.ts .
-          bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Carrier.app/Contents/MacOS/carrier Carrier-debug-macos.zip Carrier-debug-symbols.zip update.ts policy.ts
+          bun scripts/debug/manifest.ts debug-stage/Carrier.app/Contents/MacOS/carrier Carrier-debug-macos.zip Carrier-debug-symbols.zip update.ts policy.ts
 
       - name: Attest macOS debug manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

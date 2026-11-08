@@ -45,11 +45,11 @@ struct SharedFile {
     data: String,
 }
 
-/// Whether this open is the share handoff (the only `carrier://` URL Carrier
+/// Whether this open is the share handoff (the only `chatpane://` URL Carrier
 /// answers).
 fn pasteboard_name_for_handoff(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
-    if parsed.scheme() != "carrier"
+    if parsed.scheme() != crate::actions::URL_SCHEME
         || parsed.host_str() != Some("share-pasteboard")
         || parsed.query().is_some()
         || parsed.fragment().is_some()
@@ -166,13 +166,13 @@ fn target_window(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
         })
 }
 
-/// Handle one `carrier://share-pasteboard` open: take and validate the
+/// Handle one `chatpane://share-pasteboard` open: take and validate the
 /// payload, park it, surface the window, and attempt delivery. Parking comes
 /// first — the pasteboard is cleared by now, so this in-memory copy must
 /// survive a missing window (e.g. a theme rebuild in flight).
 pub(crate) fn handle_share_open(app: &tauri::AppHandle, url: &str) {
     let Some(pasteboard_name) = pasteboard_name_for_handoff(url) else {
-        log::warn!("ignoring unknown carrier:// open");
+        log::warn!("ignoring unknown chatpane:// open");
         return;
     };
     if let Some(mtm) = MainThreadMarker::new() {
@@ -256,24 +256,24 @@ mod tests {
 
     #[test]
     fn only_the_share_handoff_url_is_answered() {
-        let url = "carrier://share-pasteboard/550e8400-e29b-41d4-a716-446655440000";
+        let url = "chatpane://share-pasteboard/550e8400-e29b-41d4-a716-446655440000";
         assert!(is_share_handoff(url));
         assert_eq!(
             pasteboard_name_for_handoff(url).as_deref(),
             Some("io.github.kristofferr.carrier.share.550e8400-e29b-41d4-a716-446655440000")
         );
-        assert!(!is_share_handoff("carrier://share-pasteboard"));
-        assert!(!is_share_handoff("carrier://share-pasteboard/not-a-uuid"));
+        assert!(!is_share_handoff("chatpane://share-pasteboard"));
+        assert!(!is_share_handoff("chatpane://share-pasteboard/not-a-uuid"));
         assert!(!is_share_handoff(
-            "carrier://share-pasteboard/550E8400-E29B-41D4-A716-446655440000"
+            "chatpane://share-pasteboard/550E8400-E29B-41D4-A716-446655440000"
         ));
         assert!(!is_share_handoff(
-            "carrier://share-pasteboard/550e8400-e29b-41d4-a716-446655440000/extra"
+            "chatpane://share-pasteboard/550e8400-e29b-41d4-a716-446655440000/extra"
         ));
         assert!(!is_share_handoff(
-            "carrier://share-pasteboard/550e8400-e29b-41d4-a716-446655440000?extra=true"
+            "chatpane://share-pasteboard/550e8400-e29b-41d4-a716-446655440000?extra=true"
         ));
-        assert!(!is_share_handoff("carrier://something-else"));
+        assert!(!is_share_handoff("chatpane://something-else"));
         assert!(!is_share_handoff("https://share-pasteboard"));
     }
 

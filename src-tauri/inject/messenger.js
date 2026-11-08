@@ -38,10 +38,10 @@
   var DOWNLOAD_ACCESS_DENIED = "download folder access denied";
   var isDownloadAccessDenied = (error) => error instanceof Error && error.message === DOWNLOAD_ACCESS_DENIED;
   var downloadAccessDeniedToast = (platform) => platform === "macos" ? {
-    message: "Carrier isn't allowed to save to your Downloads folder",
+    message: "Chatpane isn't allowed to save to your Downloads folder",
     action: { label: "Open Settings", kind: "open-download-privacy" }
   } : {
-    message: "Carrier isn't allowed to save to your Downloads folder. Check the folder's permissions."
+    message: "Chatpane isn't allowed to save to your Downloads folder. Check the folder's permissions."
   };
 
   // inject/src/messenger/lib/links.ts
@@ -8031,7 +8031,7 @@ ${button.innerHTML}`)
     button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
   </style><section role="note">
     <strong>Calls don't work on Linux yet</strong>
-    <p>The browser engine Carrier uses on Linux is missing the calling support Messenger
+    <p>The browser engine Chatpane uses on Linux is missing the calling support Messenger
       needs, so voice and video calls can't start here.</p>
     <button type="button">Read more about it</button>
   </section>`;
@@ -8518,11 +8518,11 @@ ${button.innerHTML}`)
   function mediaPrivacyGuidance(platform) {
     switch (platform) {
       case "macos":
-        return "Check System Settings → Privacy & Security and allow Carrier access. Then try the call again.";
+        return "Check System Settings → Privacy & Security and allow Chatpane access. Then try the call again.";
       case "windows":
         return "Check Settings → Privacy & security and allow desktop apps access. Then try the call again.";
       case "linux":
-        return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Carrier. Then try the call again.";
+        return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Chatpane. Then try the call again.";
     }
   }
   function captureFailureMessage(failure, devices) {
@@ -8688,7 +8688,7 @@ ${button.innerHTML}`)
       const blocked = devices.filter((device) => snapshot[device] === "denied");
       const restricted = devices.some((device) => snapshot[device] === "restricted");
       title.textContent = confirmation ? "Access updated" : failure === "denied" ? blocked.length === 1 ? `${names[blocked[0]]} access is blocked` : "Call access needs attention" : "Your call could not start";
-      description.textContent = confirmation ? "Try your call again in Messenger." : permissionOnly && blocked.length ? `Allow Carrier to use your ${mediaDeviceLabel(blocked)} for calls.` : failureDescription;
+      description.textContent = confirmation ? "Try your call again in Messenger." : permissionOnly && blocked.length ? `Allow Chatpane to use your ${mediaDeviceLabel(blocked)} for calls.` : failureDescription;
       guidance.textContent = actionError || (failure === "denied" && !confirmation ? restricted ? "Access is restricted by system policy. Check with the person who manages this Mac." : devices.every((device) => snapshot[device] === "allowed") ? "macOS allows access. Check Messenger’s call settings and try again." : mediaPrivacyGuidance(platform) : "");
       guidance.hidden = !guidance.textContent;
       for (const { device, button, status, check } of rows) {
@@ -13576,7 +13576,7 @@ ${text}`)) {
         element(
           "p",
           "carrier-schedule-note carrier-schedule-divider",
-          "Sends automatically while Carrier is running and connected."
+          "Sends automatically while Chatpane is running and connected."
         )
       );
       if (rows.length && !editing) {
@@ -13989,7 +13989,7 @@ ${text}`)) {
         diag(`selector.${key}`, "core selector matched nothing on a logged-in Messenger page");
         if (!warnedUser) {
           warnedUser = true;
-          toast("A Messenger update may have broken part of Carrier — check for updates (F2).");
+          toast("A Messenger update may have broken part of Chatpane — check for updates (F2).");
         }
       }
     };
@@ -14063,8 +14063,8 @@ ${text}`)) {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute(BUTTON_ATTR, "");
-    button.setAttribute("aria-label", "Carrier Settings");
-    button.title = "Carrier Settings";
+    button.setAttribute("aria-label", "Chatpane Settings");
+    button.title = "Chatpane Settings";
     button.appendChild(createGearIcon());
     button.addEventListener("click", (event) => {
       event.preventDefault();

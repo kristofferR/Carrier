@@ -15,7 +15,7 @@
       system theme integration, privacy controls, and a system tray.
     </p>
   </description>
-  <launchable type="desktop-id">Carrier.desktop</launchable>
+  <launchable type="desktop-id">Chatpane.desktop</launchable>
   <provides>
     <binary>carrier</binary>
   </provides>

@@ -134,7 +134,7 @@ export function showMediaPermissionCard(
     description.textContent = confirmation
       ? "Try your call again in Messenger."
       : permissionOnly && blocked.length
-        ? `Allow Carrier to use your ${mediaDeviceLabel(blocked)} for calls.`
+        ? `Allow Chatpane to use your ${mediaDeviceLabel(blocked)} for calls.`
         : failureDescription;
     guidance.textContent =
       actionError ||

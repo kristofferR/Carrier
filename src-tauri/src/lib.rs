@@ -958,9 +958,9 @@ const DEFAULT_MCP_SOCKET: &str = "/tmp/tauri-mcp.sock";
 /// Window/app title. Debug builds are marked so a dev build (e.g. the
 /// tauri-mcp one) isn't mistaken for a release install.
 const APP_TITLE: &str = if cfg!(debug_assertions) {
-    "Carrier (debug)"
+    "Chatpane (debug)"
 } else {
-    "Carrier"
+    "Chatpane"
 };
 
 /// Injected assets (see `inject/`).
@@ -1065,7 +1065,7 @@ pub fn run() {
         }));
     }
 
-    // Register the carrier:// URL scheme (HKCU, no admin) so protocol launches
+    // Register the chatpane:// URL scheme (HKCU, no admin) so protocol launches
     // reach Carrier as argv, parsed in the one audited place (action_from_argv).
     // Registration only — no JS capability, no single-instance deep-link feature.
     #[cfg(target_os = "windows")]
@@ -1167,7 +1167,7 @@ pub fn run() {
                 Some(actions::AppAction::NewConversation) => {
                     Some(actions::AppAction::NewConversation)
                 }
-                // A cold carrier://t/<id> or --thread <id> launch opens the
+                // A cold chatpane://t/<id> or --thread <id> launch opens the
                 // conversation once the main page finishes loading.
                 #[cfg(target_os = "windows")]
                 Some(actions::AppAction::OpenThread(path)) => {
@@ -1226,8 +1226,8 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                if let Err(error) = app.deep_link().register("carrier") {
-                    log::warn!("failed to register the carrier:// protocol handler: {error}");
+                if let Err(error) = app.deep_link().register(actions::URL_SCHEME) {
+                    log::warn!("failed to register the chatpane:// protocol handler: {error}");
                 }
                 // Register the toast display assets for installed and portable
                 // builds; the latter has no installer-stamped shortcut.
@@ -2233,7 +2233,7 @@ pub fn run() {
             Ok(())
         })
         .build(app_context())
-        .expect("error while building Carrier")
+        .expect("error while building Chatpane")
         .run(move |app, event| {
             // `tray_icon_size` follows Windows' DPI-aware small-icon metric.
             // Re-render on the native scale event even when Messenger is idle
@@ -2330,7 +2330,7 @@ pub fn run() {
                     }
 
             // LaunchServices delivers both share-extension handoffs and the
-            // public carrier:// automation surface here, warm or cold.
+            // public chatpane:// automation surface here, warm or cold.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &event {
                 let mut automation_action = None;
@@ -2339,8 +2339,8 @@ pub fn run() {
                         macos::share_intake::handle_share_open(app, url.as_str());
                         continue;
                     }
-                    if automation_action.is_none() && url.scheme() == "carrier" {
-                        match actions::parse_carrier_url(url) {
+                    if automation_action.is_none() && url.scheme() == actions::URL_SCHEME {
+                        match actions::parse_app_url(url) {
                             Some(action) => automation_action = Some(action),
                             None => log::warn!(
                                 "ignoring malformed carrier URL ({} bytes)",

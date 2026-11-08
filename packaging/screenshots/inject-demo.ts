@@ -62,7 +62,7 @@ const code = `(() => {
   document.documentElement.replaceChildren(head, body);
   document.documentElement.lang = 'en';
   document.documentElement.dir = 'ltr';
-  document.title = 'Carrier';
+  document.title = 'Chatpane';
   const bodyTop = demo.getBoundingClientRect().top;
   win.querySelectorAll('.msg.out').forEach(bubble => {
     bubble.style.backgroundPosition = '0 ' + (-Math.round(bubble.getBoundingClientRect().top - bodyTop)) + 'px';

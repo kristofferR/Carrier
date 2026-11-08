@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Carrier</title>
+    <title>Chatpane</title>
     <style>
       :root { color-scheme: light dark; }
       * { box-sizing: border-box; }
@@ -128,7 +128,7 @@
       </div>
       <div role="status" aria-live="polite" aria-atomic="true">
         <h1 id="title">Checking Messenger</h1>
-        <p id="message">Carrier is checking whether Facebook Messenger is reachable.</p>
+        <p id="message">Chatpane is checking whether Facebook Messenger is reachable.</p>
       </div>
       <div class="actions">
         <button id="retry" type="button" disabled>Retry</button>
@@ -148,7 +148,7 @@
       function render(status) {
         document.body.dataset.state = status.state || "error";
         title.textContent = status.title || "Cannot load Messenger";
-        message.textContent = status.message || "Carrier could not reach Messenger.";
+        message.textContent = status.message || "Chatpane could not reach Messenger.";
         if (status.detail) {
           detail.textContent = status.detail;
           detail.style.display = "block";
@@ -165,7 +165,7 @@
         render({
           state: "checking",
           title: "Checking Messenger",
-          message: "Carrier is checking whether Facebook Messenger is reachable.",
+          message: "Chatpane is checking whether Facebook Messenger is reachable.",
         });
         try {
           render(await invoke("connect_messenger", { retryStartupTransients }));
@@ -173,7 +173,7 @@
           render({
             state: "error",
             title: "Cannot check Messenger",
-            message: "Carrier could not run its reachability check.",
+            message: "Chatpane could not run its reachability check.",
             detail: String(error && error.message ? error.message : error),
           });
         }
@@ -186,7 +186,7 @@
         render({
           state: "loading",
           title: "Opening Messenger",
-          message: "Carrier is asking the webview to connect without the system DNS check.",
+          message: "Chatpane is asking the webview to connect without the system DNS check.",
         });
         try {
           render(await invoke("open_messenger_anyway"));
@@ -194,7 +194,7 @@
           render({
             state: "error",
             title: "Cannot open Messenger",
-            message: "Carrier could not ask the webview to open Messenger.",
+            message: "Chatpane could not ask the webview to open Messenger.",
             detail: String(error && error.message ? error.message : error),
           });
         }

@@ -274,7 +274,7 @@ jobs:
           fi
           # Require a plain vX.Y.Z tag: the download-link/version rewrites below
           # only understand three-part semver, so a prerelease tag such as
-          # v1.4.0-rc.1 would leave stale paths and Carrier_* filenames behind.
+          # v1.4.0-rc.1 would leave stale paths and Chatpane_* filenames behind.
           if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Release tag must be vX.Y.Z with no prerelease suffix; got ${GITHUB_REF_NAME}" >&2
             exit 1
@@ -351,8 +351,8 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
-    # Predictable, versioned asset names (e.g. Carrier_1.0.0_mac_arm.dmg and
-    # Carrier_1.0.0_mac_intel.dmg). The publish job rewrites the README and
+    # Predictable, versioned asset names (e.g. Chatpane_1.0.0_mac_arm.dmg and
+    # Chatpane_1.0.0_mac_intel.dmg). The publish job rewrites the README and
     # landing-page download links to each release's version.
     env:
       ASSET_PLATFORM: ${{ contains(matrix.target, 'apple-darwin') && 'mac' || contains(matrix.target, 'windows') && 'win' || 'lin' }}
@@ -457,7 +457,7 @@ jobs:
           # cannot create or modify the GitHub release itself.
           releaseId: ${{ needs.prepare_release.outputs.release_id }}
           releaseBody: ${{ needs.prepare_release.outputs.release_body }}
-          # Versioned, friendly asset names (Carrier_1.2.1_lin_x64.AppImage,
+          # Versioned, friendly asset names (Chatpane_1.2.1_lin_x64.AppImage,
           # _win_x64_setup.exe, …); the publish job's README links and the
           # Homebrew cask both reference these exact names.
           # NB: tauri-action v1.0.0 renamed this input from `assetNamePattern`
@@ -467,7 +467,7 @@ jobs:
           # Homebrew tap" step and the README's Windows/Linux download links
           # since v1.2.0. Only the DMG and portable zip stayed correct because
           # they're renamed by explicit steps below.
-          releaseAssetNamePattern: "Carrier_[version]_${{ env.ASSET_PLATFORM }}_${{ env.ASSET_ARCH }}[_setup][ext]"
+          releaseAssetNamePattern: "Chatpane_[version]_${{ env.ASSET_PLATFORM }}_${{ env.ASSET_ARCH }}[_setup][ext]"
           # The release config enables createUpdaterArtifacts (kept out of the
           # base config so a local `tauri build` doesn't require the signing key).
           # macOS generates Tauri's stock .app.tar.gz updater archive first; the
@@ -556,7 +556,7 @@ jobs:
           if [ -z "${SRC}" ]; then echo "No .dmg found."; exit 0; fi
           xcrun notarytool submit "${SRC}" --apple-id "${APPLE_ID}" --password "${APPLE_PASSWORD}" --team-id "${APPLE_TEAM_ID}" --wait
           xcrun stapler staple "${SRC}"
-          DEST="Carrier_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.dmg"
+          DEST="Chatpane_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.dmg"
           cp "${SRC}" "${DEST}"
           bun run tauri signer sign --app-version "${GITHUB_REF_NAME#v}" "${DEST}"
           DMG_SIGNATURE=$(cat "${DEST}.sig")
@@ -609,7 +609,7 @@ jobs:
           mv "$tmp_latest/latest.next.json" "$tmp_latest/latest.json"
           gh release upload "$GITHUB_REF_NAME" "$tmp_latest/latest.json" --clobber
 
-          default_dmg="Carrier_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.dmg"
+          default_dmg="Chatpane_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.dmg"
           assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$rel_id/assets" --paginate)
           default_dmg_id=$(printf '%s\n' "$assets" \
             | jq -r --arg name "$default_dmg" '.[] | select(.name == $name) | .id' \
@@ -619,8 +619,8 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$default_dmg_id"
           fi
 
-          updater_src="Carrier_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.app.tar.gz"
-          updater_dest="Carrier_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.app.tar.gz"
+          updater_src="Chatpane_${GITHUB_REF_NAME#v}_${TAURI_MAC_ARCH}.app.tar.gz"
+          updater_dest="Chatpane_${GITHUB_REF_NAME#v}_${ASSET_PLATFORM}_${ASSET_ARCH}.app.tar.gz"
           for updater_asset in "$updater_src" "$updater_dest"; do
             updater_id=$(printf '%s\n' "$assets" \
               | jq -r --arg name "$updater_asset" '.[] | select(.name == $name) | .id' \
@@ -641,12 +641,12 @@ jobs:
         run: |
           $arch = if ("${{ matrix.target }}" -match "aarch64") { "arm" } else { "x64" }
           $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $zipName = "Carrier_${version}_win_${arch}_portable.zip"
+          $zipName = "Chatpane_${version}_win_${arch}_portable.zip"
           $exe = Get-ChildItem -Path "src-tauri/target/${{ matrix.target }}/release" -Filter "*.exe" -File | Select-Object -First 1
           if (-not $exe) { throw "No app .exe found in release dir" }
           $staging = "portable-staging"
           New-Item -ItemType Directory -Path $staging | Out-Null
-          Copy-Item $exe.FullName "$staging/Carrier.exe"
+          Copy-Item $exe.FullName "$staging/Chatpane.exe"
           Compress-Archive -Path "$staging/*" -DestinationPath $zipName
           "PORTABLE_ZIP=$zipName" >> $env:GITHUB_ENV
 
@@ -744,12 +744,14 @@ jobs:
             gh api "repos/${REPO}/contents/${path}?ref=${base}" --jq '.content' | base64 -d > "$temp"
             cp "$temp" "${temp}.orig"
             # Update tag paths, artifact filenames, and visible vX.Y.Z labels.
+            # Links still named after Carrier (the app's old name) move to the
+            # Chatpane_* assets.
             # The label pattern is a full three-part semver so it can't match
             # one-component SVG path commands (e.g. the Windows logo's `v9.451`),
             # which the broader `v[0-9]+(\.[0-9]+)+` corrupted on every release.
             sed -i -E \
               -e "s#/releases/download/v[0-9]+(\\.[0-9]+)+/#/releases/download/${TAG}/#g" \
-              -e "s/Carrier_[0-9]+(\\.[0-9]+)+_/Carrier_${VERSION}_/g" \
+              -e "s/(Carrier|Chatpane)_[0-9]+(\\.[0-9]+)+_/Chatpane_${VERSION}_/g" \
               -e "s/v[0-9]+\\.[0-9]+\\.[0-9]+/v${VERSION}/g" \
               "$temp"
             if cmp -s "$temp" "${temp}.orig"; then
@@ -815,8 +817,10 @@ jobs:
           echo "released=true" >> "$GITHUB_OUTPUT"
 
       # Update the Homebrew cask in kristofferR/homebrew-tap so users get
-      # `brew install --cask carrier` and `brew upgrade`. Skips automatically if
-      # HOMEBREW_TAP_TOKEN (a PAT with write access to the tap) isn't configured.
+      # `brew install --cask chatpane` and `brew upgrade`. The cask was called
+      # carrier before the rename; the tap's cask_renames.json moves installs
+      # over. Skips automatically if HOMEBREW_TAP_TOKEN (a PAT with write access
+      # to the tap) isn't configured.
       - name: Update Homebrew tap
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -836,95 +840,101 @@ jobs:
           # Download the assets the cask references (token has access to this repo).
           mkdir -p /tmp/assets
           for asset in \
-            "Carrier_${VERSION}_mac_arm.dmg" \
-            "Carrier_${VERSION}_mac_intel.dmg" \
-            "Carrier_${VERSION}_lin_arm.AppImage" \
-            "Carrier_${VERSION}_lin_x64.AppImage"; do
+            "Chatpane_${VERSION}_mac_arm.dmg" \
+            "Chatpane_${VERSION}_mac_intel.dmg" \
+            "Chatpane_${VERSION}_lin_arm.AppImage" \
+            "Chatpane_${VERSION}_lin_x64.AppImage"; do
             GH_TOKEN="$RELEASE_TOKEN" gh release download "$GITHUB_REF_NAME" --repo "$REPO" --pattern "$asset" --dir /tmp/assets
           done
 
           # Compute SHA256 hashes (fails if any asset is missing).
-          SHA_MAC_ARM=$(sha256sum "/tmp/assets/Carrier_${VERSION}_mac_arm.dmg" | cut -d' ' -f1)
-          SHA_MAC_INTEL=$(sha256sum "/tmp/assets/Carrier_${VERSION}_mac_intel.dmg" | cut -d' ' -f1)
-          SHA_LIN_ARM=$(sha256sum "/tmp/assets/Carrier_${VERSION}_lin_arm.AppImage" | cut -d' ' -f1)
-          SHA_LIN_X64=$(sha256sum "/tmp/assets/Carrier_${VERSION}_lin_x64.AppImage" | cut -d' ' -f1)
+          SHA_MAC_ARM=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_mac_arm.dmg" | cut -d' ' -f1)
+          SHA_MAC_INTEL=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_mac_intel.dmg" | cut -d' ' -f1)
+          SHA_LIN_ARM=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_lin_arm.AppImage" | cut -d' ' -f1)
+          SHA_LIN_X64=$(sha256sum "/tmp/assets/Chatpane_${VERSION}_lin_x64.AppImage" | cut -d' ' -f1)
 
-          cat > /tmp/carrier.rb << CASK_EOF
-          cask "carrier" do
+          # The site moves to https://chatpane.app/ once Pages serves it there.
+          HOMEPAGE="https://kristofferr.github.io/Carrier/"
+          cat > /tmp/chatpane.rb << CASK_EOF
+          cask "chatpane" do
+            arch arm: "arm", intel: on_system_conditional(macos: "intel", linux: "x64")
+            os macos: "mac", linux: "lin"
+            url_end = on_system_conditional macos: "dmg", linux: "AppImage"
+
             version "${VERSION}"
+            sha256 arm:          "${SHA_MAC_ARM}",
+                   intel:        "${SHA_MAC_INTEL}",
+                   arm64_linux:  "${SHA_LIN_ARM}",
+                   x86_64_linux: "${SHA_LIN_X64}"
 
             on_macos do
-              on_arm do
-                sha256 "${SHA_MAC_ARM}"
+              app "Chatpane.app"
 
-                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_mac_arm.dmg",
-                    verified: "github.com/${REPO}/"
-              end
-
-              on_intel do
-                sha256 "${SHA_MAC_INTEL}"
-
-                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_mac_intel.dmg",
-                    verified: "github.com/${REPO}/"
-              end
+              zap trash: [
+                "~/Library/Application Scripts/io.github.kristofferr.carrier.share",
+                "~/Library/Application Scripts/S5Q742QZEL.io.github.kristofferr.carrier",
+                "~/Library/Application Support/io.github.kristofferr.carrier",
+                "~/Library/Caches/io.github.kristofferr.carrier",
+                "~/Library/Containers/io.github.kristofferr.carrier.share",
+                "~/Library/Group Containers/S5Q742QZEL.io.github.kristofferr.carrier",
+                "~/Library/HTTPStorages/io.github.kristofferr.carrier.binarycookies*",
+                "~/Library/LaunchAgents/Carrier.plist",
+                "~/Library/LaunchAgents/Chatpane.plist",
+                "~/Library/Logs/io.github.kristofferr.carrier",
+                "~/Library/Preferences/io.github.kristofferr.carrier.plist",
+                "~/Library/WebKit/io.github.kristofferr.carrier",
+              ]
             end
-
             on_linux do
-              on_arm do
-                sha256 "${SHA_LIN_ARM}"
+              app_image "Chatpane_#{version}_lin_#{arch}.AppImage", target: "Chatpane.AppImage"
 
-                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_lin_arm.AppImage",
-                    verified: "github.com/${REPO}/"
-              end
-
-              on_intel do
-                sha256 "${SHA_LIN_X64}"
-
-                url "https://github.com/${REPO}/releases/download/v#{version}/Carrier_#{version}_lin_x64.AppImage",
-                    verified: "github.com/${REPO}/"
-              end
-
-              container type: :naked
+              zap trash: [
+                "~/.cache/io.github.kristofferr.carrier",
+                "~/.config/autostart/Carrier.desktop",
+                "~/.config/autostart/Chatpane.desktop",
+                "~/.config/io.github.kristofferr.carrier",
+                "~/.local/share/io.github.kristofferr.carrier",
+              ]
             end
 
-            name "Carrier"
-            desc "Distraction-free desktop client for Facebook Messenger"
-            homepage "https://github.com/${REPO}"
+            url "https://github.com/${REPO}/releases/download/v#{version}/Chatpane_#{version}_#{os}_#{arch}.#{url_end}",
+                verified: "github.com/${REPO}/"
+            name "Chatpane"
+            name "Chatpane for Messenger"
+            desc "Facebook Messenger client"
+            homepage "${HOMEPAGE}"
 
-            on_macos do
-              app "Carrier.app"
+            livecheck do
+              url :url
+              strategy :github_latest
             end
 
-            on_linux do
-              on_arm do
-                binary "Carrier_#{version}_lin_arm.AppImage", target: "carrier"
-              end
-
-              on_intel do
-                binary "Carrier_#{version}_lin_x64.AppImage", target: "carrier"
-              end
-            end
+            auto_updates true
           end
           CASK_EOF
 
           # Strip the heredoc indentation.
-          sed -i 's/^          //' /tmp/carrier.rb
+          sed -i 's/^          //' /tmp/chatpane.rb
 
-          CONTENT=$(base64 -w 0 /tmp/carrier.rb)
-          EXISTING_SHA=$(gh api "repos/${TAP_REPO}/contents/Casks/carrier.rb" --jq '.sha' 2>/dev/null || echo "")
-
-          if [ -n "$EXISTING_SHA" ]; then
-            gh api --method PUT "repos/${TAP_REPO}/contents/Casks/carrier.rb" \
-              -f message="Update Carrier to ${VERSION}" \
-              -f content="$CONTENT" \
-              -f sha="$EXISTING_SHA" \
-              -f branch="main"
-          else
-            gh api --method PUT "repos/${TAP_REPO}/contents/Casks/carrier.rb" \
-              -f message="Add Carrier ${VERSION}" \
-              -f content="$CONTENT" \
-              -f branch="main"
+          # One commit: the cask was called carrier, and Homebrew follows
+          # cask_renames.json only when the new cask exists and the old one is
+          # gone, so all three change together.
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git" /tmp/tap
+          cd /tmp/tap
+          mkdir -p Casks
+          cp /tmp/chatpane.rb Casks/chatpane.rb
+          git rm -q --ignore-unmatch Casks/carrier.rb
+          renames='{}'
+          if [ -f cask_renames.json ]; then renames=$(cat cask_renames.json); fi
+          jq --indent 2 '. + {"carrier": "chatpane"}' <<< "$renames" > cask_renames.json
+          git add Casks/chatpane.rb cask_renames.json
+          if git diff --cached --quiet; then
+            echo "Homebrew tap already current for ${VERSION}."
+            exit 0
           fi
+          git -c user.name=kristofferR -c user.email=481270+kristofferR@users.noreply.github.com \
+            commit -q -m "Update Chatpane to ${VERSION}"
+          git push -q origin HEAD
 
   # Publish/update the AUR package by filling packaging/aur/PKGBUILD.tpl with
   # this release's version and checksums. Skips automatically if
@@ -955,11 +965,11 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p /tmp/aur
-          gh release download "$GITHUB_REF_NAME" --pattern "Carrier_${VERSION}_lin_x64.deb" --dir /tmp/aur
-          gh release download "$GITHUB_REF_NAME" --pattern "Carrier_${VERSION}_lin_arm.deb" --dir /tmp/aur
+          gh release download "$GITHUB_REF_NAME" --pattern "Chatpane_${VERSION}_lin_x64.deb" --dir /tmp/aur
+          gh release download "$GITHUB_REF_NAME" --pattern "Chatpane_${VERSION}_lin_arm.deb" --dir /tmp/aur
 
-          SHA_X64=$(sha256sum "/tmp/aur/Carrier_${VERSION}_lin_x64.deb" | cut -d' ' -f1)
-          SHA_ARM=$(sha256sum "/tmp/aur/Carrier_${VERSION}_lin_arm.deb" | cut -d' ' -f1)
+          SHA_X64=$(sha256sum "/tmp/aur/Chatpane_${VERSION}_lin_x64.deb" | cut -d' ' -f1)
+          SHA_ARM=$(sha256sum "/tmp/aur/Chatpane_${VERSION}_lin_arm.deb" | cut -d' ' -f1)
           SHA_LICENSE=$(sha256sum LICENSE | cut -d' ' -f1)
 
           # Must land inside the workspace: the deploy action below runs in a
@@ -975,7 +985,7 @@ jobs:
         if: env.HAS_AUR_KEY == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         with:
-          pkgname: carrier
+          pkgname: chatpane
           pkgbuild: ./aur/PKGBUILD
           commit_username: kristofferR
           commit_email: 481270+kristofferR@users.noreply.github.com

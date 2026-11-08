@@ -3,7 +3,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["carrier"]
+        "schemes": ["chatpane"]
       }
     }
   }

@@ -273,7 +273,7 @@ impl ksni::Tray for LinuxTray {
         menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
-                label: "Quit Carrier".into(),
+                label: "Quit Chatpane".into(),
                 activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
                 ..Default::default()
             }
@@ -544,7 +544,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     menu.append(&MenuItem::with_id(
         app,
         "quit",
-        "Quit Carrier",
+        "Quit Chatpane",
         true,
         None::<&str>,
     )?)?;

@@ -7,7 +7,7 @@ use crate::actions::AppAction;
 /// Return the first supported action flag. The executable name, desktop
 /// environment metadata, and unknown future flags are intentionally ignored.
 /// Windows routes launches through `action_from_argv` instead (it also parses
-/// `--thread` and `carrier://` URLs), so this flag-only parser is compiled only
+/// `--thread` and `chatpane://` URLs), so this flag-only parser is compiled only
 /// where it is used.
 #[cfg(any(not(target_os = "windows"), test))]
 pub(crate) fn parse_cli_action<I, S>(args: I) -> Option<AppAction>
@@ -25,7 +25,7 @@ where
 
 /// The launch-action parser for this platform's argv surface, used for both the
 /// cold `run()` path and the single-instance warm callback. Windows also
-/// understands `--thread <id>` and `carrier://` URLs (they arrive as argv);
+/// understands `--thread <id>` and `chatpane://` URLs (they arrive as argv);
 /// the other desktops keep the flag-only parser above.
 pub(crate) fn parse_launch_action<I, S>(args: I) -> Option<AppAction>
 where

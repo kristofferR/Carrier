@@ -54,10 +54,10 @@ export const downloadAccessDeniedToast = (
 ): { message: string; action?: CarrierToastAction } =>
   platform === "macos"
     ? {
-        message: "Carrier isn't allowed to save to your Downloads folder",
+        message: "Chatpane isn't allowed to save to your Downloads folder",
         action: { label: "Open Settings", kind: "open-download-privacy" },
       }
     : {
         message:
-          "Carrier isn't allowed to save to your Downloads folder. Check the folder's permissions.",
+          "Chatpane isn't allowed to save to your Downloads folder. Check the folder's permissions.",
       };

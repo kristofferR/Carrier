@@ -15,7 +15,7 @@ use crate::settings::{
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 #[cfg(any(target_os = "linux", test))]
-const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/carrier";
+const AUR_PACKAGE_URL: &str = "https://aur.archlinux.org/packages/chatpane";
 #[cfg(any(target_os = "linux", test))]
 const RELEASES_URL: &str = "https://github.com/kristofferR/Carrier/releases/latest";
 // Autostart can beat the OS network/DNS service by a few seconds. Keep the
@@ -114,15 +114,15 @@ impl UpdateInstallMode {
     #[cfg(any(target_os = "linux", test))]
     fn aur(has_paru: bool, has_yay: bool) -> Self {
         let instructions = if has_paru {
-            "Run paru -S carrier to update."
+            "Run paru -S chatpane to update."
         } else if has_yay {
-            "Run yay -S carrier to update."
+            "Run yay -S chatpane to update."
         } else {
             "Update the carrier package with your AUR helper."
         };
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Carrier on AUR".into()),
+            button_label: Some("Open Chatpane on AUR".into()),
             instructions: Some(instructions.into()),
             manual_url: Some(AUR_PACKAGE_URL),
         }
@@ -134,7 +134,7 @@ impl UpdateInstallMode {
             kind: UpdateInstallKind::Manual,
             button_label: Some("Open Snap update guide".into()),
             instructions: Some(
-                "Snap keeps Carrier up to date. To check now, run `sudo snap refresh carrier` or use your software center.".into(),
+                "Snap keeps Chatpane up to date. To check now, run `sudo snap refresh chatpane` or use your software center.".into(),
             ),
             manual_url: Some("https://snapcraft.io/docs/keeping-snaps-up-to-date"),
         }
@@ -144,9 +144,9 @@ impl UpdateInstallMode {
     fn manual_linux() -> Self {
         Self {
             kind: UpdateInstallKind::Manual,
-            button_label: Some("Open Carrier downloads".into()),
+            button_label: Some("Open Chatpane downloads".into()),
             instructions: Some(
-                "Update Carrier with the package manager or installation method you used.".into(),
+                "Update Chatpane with the package manager or installation method you used.".into(),
             ),
             manual_url: Some(RELEASES_URL),
         }
@@ -536,7 +536,7 @@ pub(crate) async fn update_install_mode() -> Result<UpdateInstallMode, String> {
 pub(crate) async fn open_manual_update() -> Result<(), String> {
     let mode = current_update_install_mode_off_main().await?;
     let Some(manual_url) = mode.manual_url else {
-        return Err("This Carrier installation supports built-in updates.".into());
+        return Err("This Chatpane installation supports built-in updates.".into());
     };
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -607,17 +607,17 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
             if remember_available_update(app, Some(update)) {
                 let body = match current_update_install_mode_off_main().await {
                     Ok(mode) if mode.is_manual() => format!(
-                        "Carrier {} is available. Open Settings for package-manager instructions.",
+                        "Chatpane {} is available. Open Settings for package-manager instructions.",
                         version
                     ),
                     Ok(_) => format!(
-                        "Carrier {} is available. Open Settings to review and install it.",
+                        "Chatpane {} is available. Open Settings to review and install it.",
                         version
                     ),
                     Err(error) => {
                         log::warn!("failed to detect the update install mode: {error}");
                         format!(
-                            "Carrier {} is available. Open Settings to review it.",
+                            "Chatpane {} is available. Open Settings to review it.",
                             version
                         )
                     }
@@ -625,7 +625,7 @@ async fn run_automatic_update_check(app: &tauri::AppHandle) {
                 if let Err(error) = app
                     .notification()
                     .builder()
-                    .title("Carrier update available")
+                    .title("Chatpane update available")
                     .body(body)
                     .show()
                 {
@@ -776,7 +776,7 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> 
         std::env::temp_dir().join(format!("carrier-update-{}-{nonce}", std::process::id()));
     let result = (|| {
         fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
-        let dmg_path = work_dir.join("Carrier-update.dmg");
+        let dmg_path = work_dir.join("Chatpane-update.dmg");
         fs::write(&dmg_path, bytes).map_err(|e| e.to_string())?;
 
         let mountpoint = work_dir.join("mount");
@@ -797,7 +797,7 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> 
         let source_app = find_app_bundle(&mountpoint)?;
         let destination_app = current_app_bundle()?;
         replace_app_bundle(&source_app, &destination_app, &work_dir)?;
-        Ok(destination_app)
+        Ok(renamed_app_bundle(&destination_app))
     })();
 
     let _ = fs::remove_dir_all(&work_dir);
@@ -830,7 +830,7 @@ fn schedule_macos_relaunch(installed_app: &std::path::Path) -> Result<(), String
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("Could not schedule Carrier to reopen after the update: {error}"))
+        .map_err(|error| format!("Could not schedule Chatpane to reopen after the update: {error}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -866,13 +866,40 @@ fn find_app_bundle(mountpoint: &std::path::Path) -> Result<std::path::PathBuf, S
     for entry in std::fs::read_dir(mountpoint).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().is_some_and(|ext| ext == "app") {
-            if path.file_name().is_some_and(|name| name == "Carrier.app") {
+            if path.file_name().is_some_and(|name| name == "Chatpane.app") {
                 return Ok(path);
             }
             fallback = Some(path);
         }
     }
     fallback.ok_or_else(|| "The update DMG did not contain an app bundle.".into())
+}
+
+/// The app was renamed from Carrier to Chatpane, but an update replaces the
+/// bundle in place. Rename an install still called `Carrier.app` so Finder,
+/// Launchpad and Spotlight show the new name; a rename keeps the bundle's file
+/// identity, which Dock items resolve. Keeps the old path when the folder
+/// can't be renamed, such as an /Applications that needs admin rights.
+#[cfg(target_os = "macos")]
+fn renamed_app_bundle(installed: &std::path::Path) -> std::path::PathBuf {
+    let renamed = installed.with_file_name("Chatpane.app");
+    if installed
+        .file_name()
+        .is_none_or(|name| name != "Carrier.app")
+        || renamed.exists()
+    {
+        return installed.to_path_buf();
+    }
+    match std::fs::rename(installed, &renamed) {
+        Ok(()) => {
+            log::info!("renamed Carrier.app to Chatpane.app");
+            renamed
+        }
+        Err(error) => {
+            log::warn!("couldn't rename Carrier.app to Chatpane.app: {error}");
+            installed.to_path_buf()
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -977,7 +1004,7 @@ fn navigate_to_messenger(window: &WebviewWindow) -> MessengerLoadStatus {
         },
         Err(e) => MessengerLoadStatus::unexpected(
             "Cannot open Messenger",
-            format!("Carrier has an invalid Messenger URL: {e}"),
+            format!("Chatpane has an invalid Messenger URL: {e}"),
         ),
     }
 }
@@ -1226,21 +1253,21 @@ mod tests {
         assert_eq!(paru.kind, UpdateInstallKind::Manual);
         assert_eq!(
             paru.instructions.as_deref(),
-            Some("Run paru -S carrier to update.")
+            Some("Run paru -S chatpane to update.")
         );
         assert_eq!(
             serde_json::to_value(&paru).unwrap(),
             serde_json::json!({
                 "kind": "manual",
-                "buttonLabel": "Open Carrier on AUR",
-                "instructions": "Run paru -S carrier to update."
+                "buttonLabel": "Open Chatpane on AUR",
+                "instructions": "Run paru -S chatpane to update."
             })
         );
 
         let yay = linux_update_install_mode(pacman_install, false, true);
         assert_eq!(
             yay.instructions.as_deref(),
-            Some("Run yay -S carrier to update.")
+            Some("Run yay -S chatpane to update.")
         );
 
         let generic = linux_update_install_mode(pacman_install, false, false);

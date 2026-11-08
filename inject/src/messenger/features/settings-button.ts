@@ -74,8 +74,8 @@ function createSettingsSlot(): HTMLDivElement {
   const button = document.createElement("button");
   button.type = "button";
   button.setAttribute(BUTTON_ATTR, "");
-  button.setAttribute("aria-label", "Carrier Settings");
-  button.title = "Carrier Settings";
+  button.setAttribute("aria-label", "Chatpane Settings");
+  button.title = "Chatpane Settings";
   button.appendChild(createGearIcon());
   button.addEventListener("click", (event) => {
     event.preventDefault();

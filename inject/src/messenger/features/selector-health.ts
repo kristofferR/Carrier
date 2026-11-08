@@ -50,7 +50,7 @@ export function initSelectorHealth() {
       diag(`selector.${key}`, "core selector matched nothing on a logged-in Messenger page");
       if (!warnedUser) {
         warnedUser = true;
-        toast("A Messenger update may have broken part of Carrier — check for updates (F2).");
+        toast("A Messenger update may have broken part of Chatpane — check for updates (F2).");
       }
     }
   };

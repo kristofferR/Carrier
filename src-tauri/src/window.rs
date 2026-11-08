@@ -686,7 +686,7 @@ fn build_app_window_with_render_budget(
                 tauri::async_runtime::spawn_blocking(move || {
                     let denied = folder.is_some_and(|folder| is_folder_access_denied(&folder));
                     if denied {
-                        log::warn!("a download failed because Carrier may not access its folder");
+                        log::warn!("a download failed because Chatpane may not access its folder");
                     }
                     notify_download_finished(&handle, &webview, &download_id, &url, false, denied);
                 });
@@ -961,8 +961,8 @@ pub(crate) fn install_main_close_handler(app: &tauri::AppHandle, window: &Webvie
                     match handle
                         .notification()
                         .builder()
-                        .title("Carrier is still running")
-                        .body("Use the tray icon to reopen or quit Carrier.")
+                        .title("Chatpane is still running")
+                        .body("Use the tray icon to reopen or quit Chatpane.")
                         .show()
                     {
                         Ok(()) => {
@@ -1180,7 +1180,7 @@ pub(crate) fn recreate_messenger_window(
         if memory_recycle || render_budget.used() {
             // Frame recovery and optional recycling are bounded to this window.
             log::error!(
-                "failed to construct replacement Messenger window {label}; reopen Carrier from the tray or relaunch manually"
+                "failed to construct replacement Messenger window {label}; reopen Chatpane from the tray or relaunch manually"
             );
             crate::webview_watchdog::realtime_window_rebuild_failed(&label);
             app.state::<AppState>()
@@ -1194,7 +1194,7 @@ pub(crate) fn recreate_messenger_window(
         // the same persisted cookies/settings as an ordinary app launch.
         log::error!(
             "failed to rebuild blank Messenger webview {label} after \
-             {MAX_BUILD_ATTEMPTS} attempts; restarting Carrier"
+             {MAX_BUILD_ATTEMPTS} attempts; restarting Chatpane"
         );
         crate::webview_watchdog::realtime_window_rebuild_failed(&label);
         app.restart();
@@ -1658,7 +1658,7 @@ fn init_script(
         cleanup();
         try {{ resolve(JSON.parse(result.data)); }} catch (error) {{ reject(error); }}
       }};
-      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Carrier to retry.')); }}, 15000);
+      var timeout = nativeSetTimeout(function () {{ cleanup(); reject(new Error('Scheduled messages did not respond. Restart Chatpane to retry.')); }}, 15000);
       nativeReflectApply(nativeWindowAddEventListener, window, [resultEvent, finish]);
       payload.request = request;
       carrierAuthorizedEmit('carrier:scheduled-send', payload).catch(function (error) {{ cleanup(); reject(error); }});

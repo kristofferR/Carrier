@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Carrier",
+  "productName": "Chatpane",
   "version": "3.0.1",
   "identifier": "io.github.kristofferr.carrier",
   "build": {
@@ -26,7 +26,7 @@
     "publisher": "kristofferR",
     "category": "SocialNetworking",
     "shortDescription": "Distraction-free Messenger desktop client",
-    "longDescription": "Carrier wraps the Facebook Messenger web app in a tiny native window and strips away the surrounding Facebook chrome \u2014 no Feed, no Reels, no Marketplace. Built with Tauri.",
+    "longDescription": "Chatpane (formerly Carrier) wraps the Facebook Messenger web app in a tiny native window and strips away the surrounding Facebook chrome \u2014 no Feed, no Reels, no Marketplace. Built with Tauri.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,6 +34,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist"
@@ -48,7 +53,10 @@
         "files": {
           "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
         },
-        "section": "net"
+        "section": "net",
+        "provides": ["carrier"],
+        "conflicts": ["carrier"],
+        "replaces": ["carrier"]
       },
       "rpm": {
         "desktopTemplate": "linux/carrier.desktop.hbs",
@@ -56,6 +64,8 @@
           "webkit2gtk4.1",
           "gtk3"
         ],
+        "provides": ["carrier"],
+        "obsoletes": ["carrier"],
         "files": {
           "/usr/share/metainfo/io.github.kristofferr.carrier.metainfo.xml": "linux/io.github.kristofferr.carrier.metainfo.xml"
         }

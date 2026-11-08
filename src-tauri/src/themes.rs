@@ -6,7 +6,7 @@
 //! never a third mode. Every theme starts with a header comment:
 //!
 //! ```css
-//! /* Carrier theme
+//! /* Chatpane theme
 //!    name: Fjord
 //!    author: ingrid
 //!    mode: dark
@@ -159,7 +159,7 @@ fn is_hex_color(value: &str) -> bool {
 
 /// Read the header comment at the top of a theme file.
 pub(crate) fn parse_header(css: &str) -> Result<ThemeHeader, String> {
-    const MISSING: &str = "it doesn't start with a theme header. The file must begin with a comment whose first line ends in \"theme\" (such as \"Carrier theme\"), followed by a line such as \"name: My theme\".";
+    const MISSING: &str = "it doesn't start with a theme header. The file must begin with a comment whose first line ends in \"theme\" (such as \"Chatpane theme\"), followed by a line such as \"name: My theme\".";
     let body = css.trim_start_matches('\u{feff}').trim_start();
     let comment = body
         .strip_prefix("/*")
@@ -276,7 +276,7 @@ fn scan_tokens<'i>(
                     if is_url {
                         let argument = parser.expect_string_cloned().map_err(|_| {
                             parser.new_custom_error(format!(
-                                "line {line} has a URL Carrier can't read."
+                                "line {line} has a URL Chatpane can't read."
                             ))
                         })?;
                         if !is_data_url(&argument) {
@@ -345,7 +345,7 @@ pub(crate) fn themes_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(THEMES_DIR))
-        .map_err(|error| format!("could not locate Carrier's config folder: {error}"))
+        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
 }
 
 fn read_user_theme(path: &Path) -> Option<String> {
@@ -710,7 +710,7 @@ pub(crate) async fn list_fonts() -> Vec<String> {
 mod tests {
     use super::*;
 
-    const HEADER: &str = "/* Carrier theme\n   name: Fjord\n   author: ingrid\n   preview: #242933 #2e3440 #2e3440 #5e81ac #3b4252\n*/\n";
+    const HEADER: &str = "/* Chatpane theme\n   name: Fjord\n   author: ingrid\n   preview: #242933 #2e3440 #2e3440 #5e81ac #3b4252\n*/\n";
 
     #[test]
     fn headers_name_the_theme_and_its_card() {
@@ -736,17 +736,17 @@ mod tests {
                 .contains("theme header")
         );
         assert!(
-            parse_header("/* Carrier theme\n author: x */")
+            parse_header("/* Chatpane theme\n author: x */")
                 .unwrap_err()
                 .contains("name")
         );
         assert!(
-            parse_header("/* Carrier theme\n name: x\n preview: #fff #000 */")
+            parse_header("/* Chatpane theme\n name: x\n preview: #fff #000 */")
                 .unwrap_err()
                 .contains("five colors")
         );
         assert!(
-            parse_header("/* Carrier theme\n name: x\n mode: sepia */")
+            parse_header("/* Chatpane theme\n name: x\n mode: sepia */")
                 .unwrap_err()
                 .contains("light or dark")
         );

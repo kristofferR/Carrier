@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-pub(crate) const UPDATE_INSTRUCTIONS: &str = "This debug installation receives debug drafts through carrier-debug-update. Release updates are blocked. New debug builds install only while Carrier is quit.";
+pub(crate) const UPDATE_INSTRUCTIONS: &str = "This debug installation receives debug drafts through carrier-debug-update. Release updates are blocked. New debug builds install only while Chatpane is quit.";
 
 fn install_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
@@ -54,14 +54,14 @@ pub(crate) fn spawn_staged_build_notices(app: tauri::AppHandle) {
             }
             let short = build.revision.get(..12).unwrap_or(&build.revision);
             log::info!(
-                "debug build {} {short} is staged until Carrier quits",
+                "debug build {} {short} is staged until Chatpane quits",
                 build.version
             );
             crate::notifications::show_app_notice(
                 &app,
-                "Carrier debug update ready".into(),
+                "Chatpane debug update ready".into(),
                 format!(
-                    "Carrier {} debug ({short}) is staged. Quit Carrier to install it; the updater runs every five minutes while Carrier is closed.",
+                    "Chatpane {} debug ({short}) is staged. Quit Chatpane to install it; the updater runs every five minutes while Chatpane is closed.",
                     build.version
                 ),
             );
@@ -99,7 +99,7 @@ pub(crate) fn startup() -> bool {
     if let Some(dir) = install_dir() {
         if dir.join("debug-only").exists() && !cfg!(feature = "diagnostics") {
             eprintln!(
-                "Carrier: this machine requires a diagnostics debug build. Run carrier-debug-update."
+                "Chatpane: this machine requires a diagnostics debug build. Run carrier-debug-update."
             );
             std::process::exit(1);
         }

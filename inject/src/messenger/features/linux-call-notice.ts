@@ -46,7 +46,7 @@ export function initLinuxCallNotice() {
     button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
   </style><section role="note">
     <strong>Calls don't work on Linux yet</strong>
-    <p>The browser engine Carrier uses on Linux is missing the calling support Messenger
+    <p>The browser engine Chatpane uses on Linux is missing the calling support Messenger
       needs, so voice and video calls can't start here.</p>
     <button type="button">Read more about it</button>
   </section>`;

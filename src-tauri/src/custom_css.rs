@@ -26,7 +26,7 @@ pub(crate) fn custom_css_path(app: &tauri::AppHandle) -> Result<PathBuf, String>
     app.path()
         .app_config_dir()
         .map(|dir| dir.join(CUSTOM_CSS_FILE))
-        .map_err(|error| format!("could not locate Carrier's config folder: {error}"))
+        .map_err(|error| format!("could not locate Chatpane's config folder: {error}"))
 }
 
 fn ensure_custom_css_at(path: &Path) -> Result<(), String> {

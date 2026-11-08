@@ -25,10 +25,10 @@ pub(crate) fn linux_desktop_id() -> String {
     if is_snap() {
         // snapd prefixes exported desktop files with the instance name; the
         // launcher is named after the app, whose key matches the snap name.
-        let app = std::env::var("SNAP_NAME").unwrap_or_else(|_| "carrier".into());
+        let app = std::env::var("SNAP_NAME").unwrap_or_else(|_| "chatpane".into());
         let instance = std::env::var("SNAP_INSTANCE_NAME").unwrap_or_else(|_| app.clone());
         format!("{instance}_{app}")
     } else {
-        "Carrier".into()
+        "Chatpane".into()
     }
 }

@@ -504,7 +504,7 @@ export function initScheduledSend() {
       element(
         "p",
         "carrier-schedule-note carrier-schedule-divider",
-        "Sends automatically while Carrier is running and connected.",
+        "Sends automatically while Chatpane is running and connected.",
       ),
     );
     if (rows.length && !editing) {

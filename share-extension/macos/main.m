@@ -17,7 +17,7 @@
 #import <Foundation/Foundation.h>
 
 static NSString *const kCarrierPasteboardPrefix = @"io.github.kristofferr.carrier.share.";
-static NSString *const kCarrierHandoffURLPrefix = @"carrier://share-pasteboard";
+static NSString *const kCarrierHandoffURLPrefix = @"chatpane://share-pasteboard";
 /// Mirrors the intake's cap; a larger selection is refused here so the sheet
 /// reports the failure instead of the app silently dropping it.
 static const NSUInteger kCarrierMaxBytes = 100 * 1024 * 1024;

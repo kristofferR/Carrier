@@ -83,7 +83,7 @@ jobs:
             appstreamcli validate --no-net "$legacy_metadata"
           fi
 
-          rendered="$validation_tmp/Carrier.desktop"
+          rendered="$validation_tmp/Chatpane.desktop"
           sed \
             -e '/{{#if comment}}/d' \
             -e '/{{#if mime_type}}/,/{{\/if}}/d' \
@@ -92,7 +92,7 @@ jobs:
             -e 's/{{comment}}/Distraction-free Messenger desktop client/' \
             -e 's/{{exec}}/carrier/g' \
             -e 's/{{icon}}/carrier/g' \
-            -e 's/{{name}}/Carrier/g' \
+            -e 's/{{name}}/Chatpane/g' \
             src-tauri/linux/carrier.desktop.hbs > "$rendered"
           desktop-file-validate "$rendered"
 

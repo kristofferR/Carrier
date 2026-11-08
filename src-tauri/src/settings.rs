@@ -469,7 +469,7 @@ pub(crate) struct AppState {
     /// clipboard when its native copy row is selected, with the toast to show.
     pub(crate) context_menu_copy_values: Mutex<HashMap<(String, String), ContextMenuCopy>>,
     /// A validated share-extension handoff awaiting delivery to the page
-    /// (cold start, or a reload racing the carrier:// open). See share_intake.
+    /// (cold start, or a reload racing the chatpane:// open). See share_intake.
     #[cfg(target_os = "macos")]
     pub(crate) pending_share: Mutex<Option<crate::macos::share_intake::PendingShare>>,
     /// The newest native action waiting for the main Messenger page hooks.
@@ -804,7 +804,7 @@ pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
     };
     let mut paths = webview_data_paths(app);
     if kind == ACCOUNT_RESET {
-        log::info!("resetting Carrier's account data");
+        log::info!("resetting Chatpane's account data");
         paths.extend(account_data_paths(app));
     }
 
@@ -1082,7 +1082,7 @@ mod tests {
         );
         assert!(
             !s.tray_notice_shown,
-            "the first hide-to-tray should explain where Carrier went"
+            "the first hide-to-tray should explain where Chatpane went"
         );
         assert!(!s.system_emoji, "system_emoji should default to false");
         assert!(

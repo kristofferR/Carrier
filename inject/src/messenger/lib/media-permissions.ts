@@ -34,11 +34,11 @@ export function captureFailure(error: unknown) {
 export function mediaPrivacyGuidance(platform: MediaPlatform): string {
   switch (platform) {
     case "macos":
-      return "Check System Settings → Privacy & Security and allow Carrier access. Then try the call again.";
+      return "Check System Settings → Privacy & Security and allow Chatpane access. Then try the call again.";
     case "windows":
       return "Check Settings → Privacy & security and allow desktop apps access. Then try the call again.";
     case "linux":
-      return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Carrier. Then try the call again.";
+      return "Check your desktop’s privacy and sound input settings, hardware privacy switches, and any sandbox permissions for Chatpane. Then try the call again.";
   }
 }
 

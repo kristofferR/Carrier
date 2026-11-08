@@ -1,4 +1,4 @@
-# Carrier — project guide & agent handoff
+# Chatpane (formerly Carrier) — project guide & agent handoff
 
 ## Contributor pull requests
 
@@ -12,6 +12,16 @@
   Missing or unavailable reasoning levels do not block a PR.
 - Routine automated review bots need not be listed. Put this disclosure in
   the PR description, never in commit authorship or co-author trailers.
+
+**Naming:** the app is **Chatpane** ("Chatpane for Messenger" in stores), renamed
+from Carrier. Everything users see says Chatpane: the product name, window and
+notification text, packages (Homebrew cask, AUR, Snap, deb/rpm), release assets
+and the `chatpane://` scheme. Internal names deliberately keep `carrier`: the
+bundle identifier `io.github.kristofferr.carrier` (it locates app data, logins
+and OS permissions), the crate and binary `carrier`, `carrier:*` events and
+`__carrier*` globals, and the personal debug tooling (`carrier-debug-update`,
+debug builds installed as `Carrier.app`). The rest of this guide still says
+Carrier in places; read it as Chatpane.
 
 Carrier is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
 `facebook.com/messages` in a chrome-stripped native window). Repo:
