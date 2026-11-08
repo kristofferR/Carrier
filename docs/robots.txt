@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kristofferr.github.io/Carrier/sitemap.xml

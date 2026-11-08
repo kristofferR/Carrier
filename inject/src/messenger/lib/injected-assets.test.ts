@@ -296,6 +296,13 @@ describe("hand-maintained injected assets", () => {
       const notificationCopy = t["feat.2.body"] || "";
       const conditionalPhrase = conditionalUpdatePhrases[locale];
       expect(signedCheckPhrases[locale]).toBeTruthy();
+      if (locale !== "en") {
+        // The prerendered page (scripts/site/build.ts) must carry the phrase.
+        const page = await repoAsset(`docs/${locale}/index.html`);
+        expect(page).toMatch(
+          new RegExp(`data-i18n="dl\\.trust"[^>]*>[^<]* · ${signedCheckPhrases[locale]}</p>`),
+        );
+      }
       if (!conditionalPhrase) continue;
 
       expect(updateAnswer).toContain("GitHub");

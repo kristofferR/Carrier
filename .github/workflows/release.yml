@@ -732,7 +732,13 @@ jobs:
           base=$(gh api "repos/${REPO}/git/ref/heads/main" --jq '.object.sha')
           base_tree=$(gh api "repos/${REPO}/git/commits/${base}" --jq '.tree.sha')
           tree_entries='[]'
-          for path in README.md docs/index.html; do
+          # The prerendered language pages (scripts/site/build.ts) carry the same
+          # links. Their translations hold a {version} token, so rewriting the
+          # pages here matches what a rebuild from the new docs/index.html makes.
+          pages_list=$(gh api "repos/${REPO}/contents/docs/i18n?ref=${base}" \
+            --jq '.[] | select(.name | endswith(".json")) | "docs/" + (.name | rtrimstr(".json")) + "/index.html"')
+          mapfile -t pages <<< "$pages_list"
+          for path in README.md docs/index.html "${pages[@]}"; do
             temp="/tmp/$(basename "$path")"
             gh api "repos/${REPO}/contents/${path}?ref=${base}" --jq '.content' | base64 -d > "$temp"
             cp "$temp" "${temp}.orig"

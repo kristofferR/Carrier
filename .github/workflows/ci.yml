@@ -141,6 +141,16 @@ jobs:
       - name: Generated bundles are fresh
         run: git diff --exit-code src-tauri/inject
 
+      # The landing page's language pages, sitemap and robots.txt are
+      # generated from docs/index.html + docs/i18n/*.json.
+      - name: Build site
+        run: bun run build:site
+
+      - name: Generated site is fresh
+        run: |
+          git status --porcelain docs
+          test -z "$(git status --porcelain docs)"
+
   # Audit Cargo.lock against the RUSTSEC advisory database. Needs no build, so
   # it skips the GTK dependency install the other jobs pay for.
   audit:
