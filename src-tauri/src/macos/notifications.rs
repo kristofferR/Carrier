@@ -762,7 +762,7 @@ fn communication_content(
     }
 }
 
-/// Remove every delivered Carrier notification (Log Out and Reset; Ref #356).
+/// Remove every delivered Carrier notification (Log Out; Ref #356).
 pub(crate) fn clear_all_delivered() {
     objc2_user_notifications::UNUserNotificationCenter::currentNotificationCenter()
         .removeAllDeliveredNotifications();

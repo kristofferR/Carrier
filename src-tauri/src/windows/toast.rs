@@ -565,7 +565,7 @@ pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     crate::notifications::take_routed_notification_ids_for_thread(&format!("/t/{thread_id}/"));
 }
 
-/// Clear every Carrier toast from Action Center (Log Out and Reset; Ref #356).
+/// Clear every Carrier toast from Action Center (Log Out; Ref #356).
 #[cfg(target_os = "windows")]
 pub(crate) fn clear_all(app: &tauri::AppHandle) {
     match ToastNotificationManager::History() {

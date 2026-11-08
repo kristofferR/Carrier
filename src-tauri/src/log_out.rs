@@ -1,49 +1,26 @@
-//! Log Out, and Log Out and Reset Carrier… (Ref #356). Both run Facebook's
-//! own logout in the Messenger page, so the session ends on Facebook's side
-//! too. The reset then deletes everything Carrier keeps for the account and
-//! restarts; `settings.json` stays.
+//! Log Out… (Ref #356). Runs Facebook's own logout in the Messenger page, so
+//! the session ends on Facebook's side too, then deletes everything Carrier
+//! keeps for the account and restarts; `settings.json` stays.
 
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use crate::settings::AppState;
 
-/// File/app menu and tray: Log Out.
+/// File/app menu and tray: Log Out…, after confirmation.
 pub(crate) fn log_out(app: &tauri::AppHandle) {
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        match crate::account::page_request(&app, "log-out", serde_json::Value::Null).await {
-            Ok(_) => {
-                log::info!("logged out of Facebook");
-                forget_account_in_memory(&app);
-                show_login_page(&app);
-            }
-            Err(error) => {
-                log::warn!("log out failed: {error}");
-                message(
-                    &app,
-                    "Couldn't Log Out",
-                    &format!("Facebook didn't end the session. {error}"),
-                );
-            }
-        }
-    });
-}
-
-/// File/app menu and tray: Log Out and Reset Carrier…, after confirmation.
-pub(crate) fn confirm_reset(app: &tauri::AppHandle) {
     let handle = app.clone();
     let mut dialog = app
         .dialog()
         .message(
-            "Carrier logs you out of Facebook, deletes everything it stored for this account \
-             (cookies, Messenger's data and cache, notification history and recent \
-             conversations) and restarts. Your Carrier settings are kept.",
+            "Carrier logs you out of Facebook, deletes what it stored for this account on \
+             this computer (cookies, Messenger's data and cache, notification history and \
+             recent conversations) and restarts. Your Carrier settings are kept.",
         )
-        .title("Log Out and Reset Carrier")
+        .title("Log Out")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            "Log Out and Reset".into(),
+            "Log Out".into(),
             "Cancel".into(),
         ));
     if let Some(window) = crate::menu::dialog_parent(app) {
@@ -62,8 +39,8 @@ async fn reset(app: tauri::AppHandle) {
         log::error!("failed to schedule the account reset: {error}");
         message(
             &app,
-            "Couldn't Reset Carrier",
-            &format!("Carrier couldn't prepare the reset: {error}"),
+            "Couldn't Log Out",
+            &format!("Carrier couldn't prepare the log out: {error}"),
         );
         return;
     }
@@ -71,7 +48,7 @@ async fn reset(app: tauri::AppHandle) {
     forget_delivered_notifications(&app);
     match logged_out {
         Ok(_) => {
-            log::info!("logged out of Facebook; resetting Carrier");
+            log::info!("logged out of Facebook; clearing the account and restarting");
             app.restart();
         }
         Err(error) => {
@@ -118,20 +95,6 @@ fn forget_delivered_notifications(app: &tauri::AppHandle) {
     #[cfg(target_os = "windows")]
     crate::windows::toast::clear_all(app);
     let _ = app;
-}
-
-/// Every Messenger window shows Facebook's login page afterwards.
-fn show_login_page(app: &tauri::AppHandle) {
-    let Ok(url) = tauri::Url::parse(crate::HOME_URL) else {
-        return;
-    };
-    for (label, window) in app.webview_windows() {
-        if crate::window::is_messenger_window_label(&label)
-            && let Err(error) = window.navigate(url.clone())
-        {
-            log::warn!("failed to show the login page in {label}: {error}");
-        }
-    }
 }
 
 fn message(app: &tauri::AppHandle, title: &str, text: &str) {

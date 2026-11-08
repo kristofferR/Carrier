@@ -673,7 +673,7 @@ pub(crate) fn schedule_webview_data_clear(app: &tauri::AppHandle) -> Result<(), 
     schedule_clear(app, CLEAR_WEBVIEW_DATA)
 }
 
-/// Log Out and Reset Carrier… (Ref #356): the webview data plus everything
+/// Log Out… (Ref #356): the webview data plus everything
 /// else Carrier keeps for the account. `settings.json` stays.
 pub(crate) fn schedule_account_reset(app: &tauri::AppHandle) -> Result<(), String> {
     schedule_clear(app, ACCOUNT_RESET)
