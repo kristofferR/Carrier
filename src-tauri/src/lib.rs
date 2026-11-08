@@ -2235,7 +2235,7 @@ pub fn run() {
             }
 
             // Windows: a system light/dark switch reaches the windows that
-            // follow it, and "Match theme" app icons follow along.
+            // follow it, and so does a dark-mode app icon.
             #[cfg(target_os = "windows")]
             if let tauri::RunEvent::WindowEvent {
                 label,

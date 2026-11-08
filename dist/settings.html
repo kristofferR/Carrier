@@ -36,24 +36,63 @@
       .tab:hover { background: #f0f2f5; color: #1c1e21; }
       .tab.active { background: #e7f0ff; color: #0866ff; }
       .tab.active svg { stroke-width: 1.9; }
-      main { flex: 1; overflow-y: auto; padding: 6px 10px; }
-      .row {
-        display: flex; align-items: flex-start; gap: 12px;
-        padding: 12px; border-radius: 8px; cursor: pointer;
+      main { flex: 1; overflow-y: auto; padding: 14px 16px; background: #f0f2f5; }
+      /* Every tab is a stack of cards. A row is its label and a one-line hint
+         on the left and its control on the right, so controls share one right
+         edge; rows in a card are divided by a line. */
+      .card {
+        background: #ffffff; border: 1px solid #e4e6eb; border-radius: 12px;
+        padding: 0 16px; margin-bottom: 12px;
       }
-      .row:hover { background: #f0f2f5; }
-      .row input { margin-top: 2px; width: 16px; height: 16px; }
+      .card-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 13px 0 10px;
+      }
+      .card-title { font-size: 15px; font-weight: 600; }
+      .card > .hint { margin: -4px 0 8px; }
+      .row {
+        display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        padding: 10px 0;
+      }
+      .row + .row, .card-head + .row { border-top: 1px solid #ebedf0; }
+      label.row { cursor: pointer; }
+      .row > .text { flex: 1 1 auto; min-width: 0; }
+      .row > :not(.text) { flex: 0 0 auto; }
+      select {
+        -webkit-appearance: none; appearance: none; max-width: 260px; cursor: pointer;
+        font: inherit; font-size: 13px; color: inherit;
+        padding: 6px 30px 6px 10px; border: 1px solid #ccd0d5; border-radius: 8px;
+        background: #ffffff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2365676b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 11px center / 10px 6px;
+      }
+      select:disabled { opacity: .5; cursor: default; }
+      select:focus-visible { outline: 2px solid #0866ff; outline-offset: 1px; }
       .label { font-weight: 500; }
       .hint { color: #65676b; font-size: 12px; margin-top: 2px; }
-      .nickname-options { border: 1px solid #ececee; border-radius: 8px; background: #fafafa; }
-      .nickname-heading { padding: 12px 12px 0; }
-      /* Appearance: theme gallery, accent, font, app icon. */
-      .section-head {
-        display: flex; align-items: center; justify-content: space-between; gap: 12px;
-        padding: 14px 12px 8px;
+      /* An on/off switch: a native checkbox, so labels, keyboard and forms
+         behave as before. */
+      input.switch {
+        -webkit-appearance: none; appearance: none; margin: 0; flex: none;
+        position: relative; width: 36px; height: 20px; border-radius: 99px;
+        background: #ccd0d5; cursor: pointer; transition: background-color .15s;
       }
-      .section-title { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #65676b; }
-      .section-control { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+      input.switch::before {
+        content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+        border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,.25);
+        transition: transform .15s;
+      }
+      input.switch:checked { background: #0866ff; }
+      input.switch:checked::before { transform: translateX(16px); }
+      input.switch:focus-visible { outline: 2px solid #0866ff; outline-offset: 2px; }
+      input.switch:disabled { opacity: .45; cursor: default; }
+      @media (prefers-reduced-motion: reduce) {
+        input.switch, input.switch::before { transition: none; }
+      }
+      button.secondary {
+        border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer;
+        background: #e4e6eb; color: #1c1e21; font: inherit; font-size: 13px; font-weight: 600;
+      }
+      button.secondary:disabled { opacity: .55; cursor: default; }
+      /* Appearance: theme gallery, accent, font, app icon. */
       .seg { display: inline-flex; background: #e4e6eb; border-radius: 8px; padding: 2px; }
       .seg button {
         border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 500;
@@ -62,7 +101,7 @@
       .seg button[aria-checked="true"] { background: #ffffff; color: #1c1e21; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
       .theme-grid {
         display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        gap: 12px; padding: 2px 12px;
+        gap: 12px; padding: 2px 0;
       }
       .theme-card {
         display: flex; flex-direction: column; gap: 4px; min-width: 0;
@@ -95,14 +134,14 @@
         outline: 1.5px dashed #bcc0c4; flex-direction: column; align-items: center; justify-content: center;
         gap: 4px; color: #65676b; font-size: 12.5px;
       }
-      .theme-links { display: flex; flex-direction: column; justify-content: center; gap: 8px; font-size: 13px; padding-bottom: 20px; }
+      .theme-links { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; font-size: 13px; padding: 12px 0 14px; }
+      .theme-links .hint { margin: 0; }
       .link-button { border: 0; background: transparent; padding: 0; font: inherit; color: #0866ff; cursor: pointer; text-align: left; }
-      .notice { margin: 10px 12px 0; padding: 9px 12px; border-radius: 8px; font-size: 13px; display: flex; gap: 10px; align-items: flex-start; }
+      .notice { margin: 0 0 14px; padding: 9px 12px; border-radius: 8px; font-size: 13px; display: flex; gap: 10px; align-items: flex-start; }
       .notice.error { background: #fdecea; border: 1px solid #f5c2bd; }
       .notice.ok { background: #e8f5ec; border: 1px solid #b7e0c3; }
       .notice span { flex: 1; }
-      .look-cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; padding: 14px 12px 0; }
-      .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 10px; }
+            .swatches { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
       .swatch {
         width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
         box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); display: grid; place-items: center;
@@ -110,16 +149,22 @@
       .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1c1e21; }
       .swatch.theme-accent { background: conic-gradient(from 225deg, #2b2d31 0 50%, #d9dadd 50% 100%); }
       .swatch.custom { background: conic-gradient(#e5484d, #f27a1a, #f5c400, #2ea44f, #0f9d9a, #0866ff, #8a3ffc, #e0427a, #e5484d); }
-      .look-cols select { margin-top: 10px; max-width: 100%; }
-      .icon-choices { display: flex; align-items: center; gap: 8px; padding: 2px 12px; }
-      .icon-choices .seg { margin-left: 8px; }
-      .icon-choice {
-        display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 10px;
-        border: 1.5px solid #dadde1; background: transparent; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+      /* App icon: the title and the dark-mode switch on the left, the icons
+         as tiles on the right (one row, or one per mode). */
+      .icon-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 14px 0; }
+      .icon-switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; cursor: pointer; }
+      .icon-rows { display: grid; grid-template-columns: auto auto; align-items: center; gap: 10px 12px; }
+      .icon-rows .mode { font-size: 12.5px; font-weight: 600; color: #65676b; text-align: right; }
+      .icon-tiles { display: flex; gap: 8px; grid-column: 2; }
+      .icon-tile {
+        display: flex; flex-direction: column; align-items: center; gap: 6px; width: 92px;
+        padding: 10px 4px 8px; border: 1.5px solid #dadde1; border-radius: 10px; background: transparent;
+        font: inherit; font-size: 12px; color: inherit; cursor: pointer;
       }
-      .icon-choice img { width: 30px; height: 30px; }
-      .icon-choice[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
-      .section-hint { color: #65676b; font-size: 12px; padding: 6px 12px 0; }
+      .icon-tile img { width: 52px; height: 52px; }
+      .icon-tile[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
+      .icon-tile:focus-visible { outline: 2px solid #0866ff; outline-offset: 2px; }
+      .section-hint { color: #65676b; font-size: 12px; padding: 0 0 12px; }
       #update-notes { margin: 4px 0; font-size: 12px; max-width: 420px; }
       #update-notes summary { cursor: pointer; }
       .update-notes-text { white-space: pre-wrap; max-height: 160px; overflow: auto; margin-top: 4px; }
@@ -136,15 +181,20 @@
       #status { opacity: .7; font-size: 12px; min-height: 16px; }
       @media (prefers-color-scheme: dark) {
         body { background: #242526; color: #e4e6eb; }
-        .row:hover { background: #3a3b3c; }
         .tabs { background: #242526; }
         .tabs, footer { border-color: #3a3b3c; }
         .hint { color: #b0b3b8; }
-        .nickname-options { background: #272829; border-color: #343536; }
+        main { background: #18191a; }
+        .card { background: #242526; border-color: #3a3b3c; }
+        .row + .row, .card-head + .row { border-color: #343536; }
+        input.switch { background: #4e4f50; }
+        input.switch:checked { background: #2d88ff; }
+        button.secondary { background: #3a3b3c; color: #e4e6eb; }
+        select { background-color: #3a3b3c; border-color: #4e4f50; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23b0b3b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
         .tab { color: #b0b3b8; }
         .tab:hover { background: #3a3b3c; color: #e4e6eb; }
         .tab.active { background: #263a59; color: #5b9bff; }
-        .section-title, .theme-card .by, .section-hint { color: #b0b3b8; }
+        .theme-card .by, .section-hint { color: #b0b3b8; }
         .seg { background: #3a3b3c; }
         .seg button { color: #b0b3b8; }
         .seg button[aria-checked="true"] { background: #5a5c60; color: #ffffff; box-shadow: none; }
@@ -155,8 +205,9 @@
         .notice.error { background: #3a2422; border-color: #6b3530; }
         .notice.ok { background: #1e3326; border-color: #2f5a3d; }
         .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #242526, 0 0 0 4px #e4e6eb; }
-        .icon-choice { border-color: #3a3b3c; }
-        .icon-choice[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
+        .icon-tile { border-color: #3a3b3c; }
+        .icon-tile[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
+        .icon-rows .mode { color: #b0b3b8; }
       }
     </style>
   </head>
@@ -198,11 +249,11 @@
         ["attention_on_message", "Bounce Dock Icon", "Bounce the Dock icon when a message arrives while Carrier is unfocused."],
         ["hide_names", "Hide Names", "Blur contact names in the conversation list and open conversation. Cmd/Ctrl+Shift+H toggles names and avatars together."],
         ["hide_avatars", "Hide Avatars", "Blur profile pictures, group pictures and read-receipt faces."],
-        ["system_emoji", "System Emoji", "Render emoji with your system's emoji font instead of Facebook's."],
+        ["system_emoji", "System Emoji", "Your system's emoji font instead of Facebook's."],
         ["block_typing_indicator", "Block Typing Indicator", "Don't show others that you are typing. You still see when they type."],
         ["stop_media_autoplay", "Stop Media Autoplay", "Pause videos and GIFs that start automatically. Manual playback still works."],
         ["menu_bar_only", "Menu Bar Only", "Hide the Dock icon and live in the menu bar (needs the tray)."],
-        ["hide_menu_bar", "Hide Top Menu", "Hide the Carrier / File / Edit / View / Window row. Settings remains available from the gear button or F3."],
+        ["hide_menu_bar", "Hide Top Menu", "Settings stays on the gear button and F3."],
         ["hide_on_minimize", "Hide When Minimized", "Move Carrier into the tray instead of leaving it minimized."],
         ["hide_on_focus_loss", "Hide When Focus Is Lost", "Move Carrier into the tray whenever another app gets focus."],
         ["hide_taskbar_icon", "Hide Taskbar Icon", "Keep Carrier out of the taskbar and reopen it from the tray."],
@@ -251,9 +302,14 @@
 
       const TABS = [
         { id: "general", label: "General", icon: ICONS.general,
-          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "focus_composer_on_return", "download_behavior"] },
+          fields: ["always_on_top", "global_hotkey", "hide_on_close", "spellcheck", "stop_media_autoplay", "focus_composer_on_return", "download_behavior"] },
+        // A tab is one card of `fields`, or `cards`: each a list of fields or
+        // the key of a section that builds its own card.
         { id: "appearance", label: "Appearance", icon: ICONS.appearance,
-          fields: ["theme_section", "app_icon", "display_heading", "zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "stop_media_autoplay", "nickname_scope"] },
+          cards: [
+            ["zoom", ...(IS_MAC ? [] : ["hide_menu_bar"]), ...(IS_LINUX ? ["title_bar"] : []), "system_emoji", "nickname_scope"],
+            "theme_section", "look_section", "app_icon",
+          ] },
         { id: "tray", label: "Tray & Startup", icon: ICONS.tray,
           fields: [
             "show_tray", "start_to_tray", "autostart",
@@ -268,7 +324,7 @@
                    "unread_badge", "muted_conversations", "badge_mode", "test_notification"] },
         { id: "privacy", label: "Privacy", icon: ICONS.privacy,
           fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"] },
-        { id: "account", label: "Account", icon: ICONS.account, fields: ["messenger_account"] },
+        { id: "account", label: "Account", icon: ICONS.account, cards: ["messenger_account"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "update_check_hours", "hold_failures", "send_with_accelerator", "multi_instance", "custom_css", "open_logs"] },
       ];
@@ -329,6 +385,45 @@
         }
       }
 
+      // A row's left side: its label and hint.
+      function rowText(label, hint) {
+        const text = document.createElement("div");
+        text.className = "text";
+        const name = document.createElement("div");
+        name.className = "label";
+        name.textContent = label;
+        text.append(name);
+        if (hint) {
+          const line = document.createElement("div");
+          line.className = "hint";
+          line.textContent = hint;
+          text.append(line);
+        }
+        return text;
+      }
+
+      // A row with a button on the right.
+      function buttonRow(label, hint, buttonText, onClick) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary";
+        btn.textContent = buttonText;
+        btn.onclick = () => onClick(btn, row);
+        row.append(rowText(label, hint), btn);
+        return row;
+      }
+
+      function switchInput(checked) {
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "switch";
+        input.setAttribute("role", "switch");
+        input.checked = checked;
+        return input;
+      }
+
       // Build a <select> row bound to a setting. `parse` converts the chosen
       // option value before persisting (e.g. Number for the numeric zoom);
       // string settings omit it.
@@ -345,9 +440,7 @@
         }
         sel.disabled = !!disabled;
         sel.onchange = () => persist(key, parse ? parse(sel.value) : sel.value);
-        const text = document.createElement("div");
-        text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
-        row.append(sel, text);
+        row.append(rowText(label, hint), sel);
         return row;
       }
 
@@ -409,17 +502,16 @@
         return seg;
       }
 
-      function sectionHead(title, control) {
-        const head = el("div", "section-head");
-        head.append(el("div", "section-title", title));
+      // A card with a title, and a control on the title's right.
+      function titledCard(title, control) {
+        const card = el("section", "card");
+        const head = el("div", "card-head");
+        const heading = el("h2", "card-title", title);
+        heading.style.margin = "0";
+        head.append(heading);
         if (control) head.append(control);
-        return head;
-      }
-
-      function labelled(label, control) {
-        const wrap = el("div", "section-control");
-        wrap.append(el("span", "", label), control);
-        return wrap;
+        card.append(head);
+        return card;
       }
 
       function checkMark() {
@@ -522,18 +614,17 @@
       }
 
       function themeSection() {
-        const wrap = el("div");
+        const wrap = titledCard("Theme", segmented(
+          "Light or dark",
+          [["system", "System"], ["light", "Light"], ["dark", "Dark"]],
+          settings.theme || "system",
+          (value) => persist("theme", value),
+        ));
         if (!themes) {
           loadThemes().then(render);
           return wrap;
         }
         const dark = pageIsDark();
-        wrap.append(sectionHead("Theme", labelled("Light or dark", segmented(
-          "Light or dark",
-          [["system", "System"], ["light", "Light"], ["dark", "Dark"]],
-          settings.theme || "system",
-          (value) => persist("theme", value),
-        ))));
 
         const grid = el("div", "theme-grid");
         grid.setAttribute("role", "radiogroup");
@@ -544,8 +635,8 @@
         add.type = "button";
         const addPreview = el("span", "preview");
         addPreview.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
-        addPreview.append(el("span", "", "Add theme…"));
-        add.append(addPreview, el("span", "by", "A .css theme file"));
+        addPreview.append(el("span", "", "Add theme file…"));
+        add.append(addPreview);
         add.onclick = addTheme;
         grid.append(add);
 
@@ -561,9 +652,8 @@
           remove.onclick = () => removeTheme(selected);
           links.append(remove);
         }
-        links.append(el("span", "hint", "custom.css still applies last (Advanced)."));
-        grid.append(links);
-        wrap.append(grid);
+        links.append(el("span", "hint", "custom.css (Advanced) still applies last."));
+        wrap.append(grid, links);
 
         if (themeNotice) {
           const notice = el("div", `notice ${themeNotice.kind}`);
@@ -578,17 +668,17 @@
           notice.append(dismiss);
           wrap.append(notice);
         }
-
-        const cols = el("div", "look-cols");
-        cols.append(accentPicker(), fontPicker());
-        wrap.append(cols);
         return wrap;
       }
 
+      function lookSection() {
+        const card = el("section", "card");
+        card.append(accentPicker(), fontPicker());
+        return card;
+      }
+
       function accentPicker() {
-        const box = el("div");
-        box.append(el("div", "label", "Accent color"));
-        box.append(el("div", "hint", "Your messages, links, buttons and unread dots."));
+        const box = el("div", "row");
         const row = el("div", "swatches");
         row.setAttribute("role", "radiogroup");
         row.setAttribute("aria-label", "Accent color");
@@ -615,14 +705,12 @@
         input.onchange = () => persist("accent_color", input.value.toLowerCase());
         custom.onclick = () => input.click();
         row.append(custom, input);
-        box.append(row);
+        box.append(rowText("Accent color", "Your messages, links, buttons and unread dots."), row);
         return box;
       }
 
       function fontPicker() {
-        const box = el("div");
-        box.append(el("div", "label", "Message font"));
-        box.append(el("div", "hint", "Messages and the conversation list."));
+        const box = el("label", "row");
         const select = document.createElement("select");
         select.setAttribute("aria-label", "Message font");
         const current = settings.message_font || "";
@@ -646,46 +734,65 @@
             .catch((e) => console.error(e));
         }
         select.onchange = () => persist("message_font", select.value);
-        box.append(select);
+        box.append(rowText("Message font", "Messages and the message box."), select);
         return box;
       }
 
-      function appIconSection() {
-        const wrap = el("div");
-        const variant = settings.app_icon_variant || "light";
-        wrap.append(sectionHead("App icon"));
-        const dark = variant === "dark" || (variant === "auto" && pageIsDark());
-        const row = el("div", "icon-choices");
-        row.setAttribute("role", "radiogroup");
-        row.setAttribute("aria-label", "App icon");
-        for (const [style, name] of [["color", "Color"], ["monochrome", "Monochrome"]]) {
-          const b = el("button", "icon-choice");
-          b.type = "button";
-          b.setAttribute("role", "radio");
-          b.setAttribute("aria-checked", String((settings.app_icon_style || "color") === style));
+      const APP_ICONS = [
+        ["color-light", "Color"], ["color-dark", "Color dark"],
+        ["mono-light", "Mono"], ["mono-dark", "Mono dark"],
+      ];
+
+      // One row of icon tiles; picking one saves it to `key`.
+      function iconTiles(key, label) {
+        const tiles = el("div", "icon-tiles");
+        tiles.setAttribute("role", "radiogroup");
+        tiles.setAttribute("aria-label", label);
+        for (const [icon, name] of APP_ICONS) {
+          const tile = el("button", "icon-tile");
+          tile.type = "button";
+          tile.setAttribute("role", "radio");
+          tile.setAttribute("aria-checked", String(settings[key] === icon));
           const img = document.createElement("img");
-          img.src = `app-icons/${style === "color" ? "color" : "mono"}-${dark ? "dark" : "light"}.png`;
+          img.src = `app-icons/${icon}.png`;
           img.alt = "";
-          b.append(img, el("span", "", name));
-          b.onclick = () => persist("app_icon_style", style);
-          row.append(b);
+          tile.append(img, el("span", "", name));
+          tile.onclick = () => persist(key, icon);
+          tiles.append(tile);
         }
-        // The tiles preview the variant, so the switch sits with them.
-        row.append(segmented(
-          "Light or dark icon",
-          [["light", "Light"], ["dark", "Dark"], ["auto", "Match theme"]],
-          variant,
-          (value) => persist("app_icon_variant", value),
-        ));
-        wrap.append(row);
-        wrap.append(el("div", "section-hint", IS_LINUX
-          ? "Changes the window icon. Your app launcher keeps the installed icon."
-          : "The unread badge shows on every icon."));
-        return wrap;
+        return tiles;
       }
 
-      function displayHeading() {
-        return sectionHead("Display");
+      // The icon you pick is the icon you get. With a different icon in dark
+      // mode, each mode has its own row; any pair works.
+      function appIconSection() {
+        const card = el("section", "card");
+        const body = el("div", "icon-card");
+        const left = el("div");
+        const title = el("h2", "card-title", "App icon");
+        title.style.margin = "0";
+        const toggle = el("label", "icon-switch");
+        const perMode = !!settings.app_icon_dark;
+        const input = switchInput(perMode);
+        // Turning it on starts dark mode at the picked icon's dark version.
+        input.onchange = () => persist("app_icon_dark", (fresh) =>
+          input.checked ? (fresh.app_icon || "color-light").replace("-light", "-dark") : "");
+        toggle.append(input, el("span", "", "Different icon in dark mode"));
+        left.append(title, toggle);
+
+        const rows = el("div", "icon-rows");
+        if (perMode) {
+          rows.append(el("div", "mode", "Light mode"), iconTiles("app_icon", "App icon in light mode"));
+          rows.append(el("div", "mode", "Dark mode"), iconTiles("app_icon_dark", "App icon in dark mode"));
+        } else {
+          rows.append(iconTiles("app_icon", "App icon"));
+        }
+        body.append(left, rows);
+        card.append(body);
+        if (IS_LINUX) {
+          card.append(el("div", "section-hint", "Changes the window icon. Your app launcher keeps the installed icon."));
+        }
+        return card;
       }
 
       // Page zoom — the same 10% steps as the Cmd/Ctrl+−/=/0 keyboard zoom
@@ -701,7 +808,7 @@
         }
         return selectRow(
           "zoom", 100, options,
-          "Page zoom", "Scale the Messenger page (Cmd/Ctrl + − / = / 0 also works).",
+          "Page zoom", "Cmd/Ctrl + − / = / 0 also works.",
           false, Number,
         );
       }
@@ -764,7 +871,7 @@
           "title_bar", "auto",
           [["auto", "Automatic"], ["show", "Shown"], ["hide", "Hidden"]],
           "Title Bar",
-          "Automatic hides the title bar on tiling window managers (Hyprland, Sway, i3…) and keeps it on regular desktops.",
+          "Automatic hides it on tiling window managers.",
           false,
         );
       }
@@ -794,54 +901,31 @@
         return current.nickname_scope || (current.show_nicknames === false ? "off" : current.nicknames_group_only ? "groups" : "all");
       }
 
-      function nicknameRows() {
-        const group = document.createElement("div");
-        group.className = "nickname-options";
-        group.setAttribute("role", "group");
-        group.setAttribute("aria-labelledby", "nickname-heading");
-        const heading = document.createElement("div");
-        heading.className = "nickname-heading";
-        heading.innerHTML = '<div class="label" id="nickname-heading">Disable nicknames</div><div class="hint">Choose where Carrier uses real names, including sidebar previews and notifications.</div>';
-        group.append(heading);
-        const mode = nicknameScope(settings);
-        for (const [scope, label, hint] of [
-          ["direct", "One-to-one chats", "Use real names in private conversations."],
-          ["groups", "Group chats", "Use real names for group members."],
-        ]) {
-          const row = document.createElement("label");
-          row.className = "row";
-          const cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.dataset.nicknameScope = scope;
-          cb.checked = mode !== "all" && mode !== scope;
-          cb.onchange = () => {
-            const disabled = cb.checked;
-            return persist("nickname_scope", (fresh) => {
-              const current = nicknameScope(fresh);
-              const other = scope === "direct" ? "groups" : "direct";
-              const otherEnabled = current === "all" || current === other;
-              return disabled ? (otherEnabled ? other : "off") : (otherEnabled ? "all" : scope);
-            });
-          };
-          const text = document.createElement("div");
-          text.innerHTML = `<div class="label">${label}</div><div class="hint">${hint}</div>`;
-          row.append(cb, text);
-          group.append(row);
-        }
-        return group;
+      // `nickname_scope` names where nicknames still show.
+      function nicknameRow() {
+        return selectRow(
+          "nickname_scope", nicknameScope(settings),
+          [
+            ["all", "Show nicknames"],
+            ["groups", "Real names in one-to-one chats"],
+            ["direct", "Real names in group chats"],
+            ["off", "Real names everywhere"],
+          ],
+          "Nicknames", "Where Carrier shows real names instead.",
+          false,
+        );
       }
 
-      function checkboxRow(key) {
+      function switchRow(key) {
         const meta = FIELD_META[key];
         const row = document.createElement("label");
         row.className = "row";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
         // Hide Names / Hide Avatars fall back to the older combined switch.
-        cb.checked =
+        const cb = switchInput(
           key === "hide_names" || key === "hide_avatars"
             ? (settings[key] ?? settings.hide_names_avatars) === true
-            : !!settings[key];
+            : !!settings[key],
+        );
         const trayRequired =
           IS_WINDOWS &&
           (settings.hide_on_minimize || settings.hide_on_focus_loss || settings.hide_taskbar_icon);
@@ -856,7 +940,6 @@
           cb.disabled = true;
         }
         cb.onchange = () => persist(key, cb.checked);
-        const text = document.createElement("div");
         let hint = meta.hint;
         const pausedUntil = settings.notifications_paused_until;
         if (key === "mute_notifications" && typeof pausedUntil === "number" && pausedUntil > Date.now()) {
@@ -882,8 +965,7 @@
             hint = "Unavailable in this installation environment.";
           }
         }
-        text.innerHTML = `<div class="label">${meta.label}</div><div class="hint">${hint}</div>`;
-        row.append(cb, text);
+        row.append(rowText(meta.label, hint), cb);
         return row;
       }
 
@@ -948,80 +1030,60 @@
         document.getElementById("rows").setAttribute("aria-labelledby", "tab-" + activeTab);
       }
 
-      // Carrier logs warnings and page-integration failures to a file; this
-      // opens its folder so the log is easy to attach to a bug report.
       function testNotificationRow() {
-        const row = document.createElement("div");
-        row.className = "row";
-        row.style.cursor = "default";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "action";
-        btn.textContent = "Send Test Notification";
-        const text = document.createElement("div");
-        text.innerHTML =
-          '<div class="label">Test notifications</div><div class="hint" role="status">Check that your system shows Carrier\'s notifications. Carrier\'s own mute and pause are ignored.</div>';
-        const hint = text.querySelector(".hint");
-        btn.onclick = async () => {
-          btn.disabled = true;
-          hint.textContent = "Sending…";
-          try {
-            hint.textContent = await invoke("send_test_notification");
-          } catch (e) {
-            hint.textContent = String(e && e.message ? e.message : e);
-          } finally {
-            btn.disabled = false;
-          }
-        };
-        row.append(btn, text);
-        return row;
+        return buttonRow(
+          "Test notifications",
+          "Check that your system shows Carrier's notifications. Carrier's own mute and pause are ignored.",
+          "Send Test Notification",
+          async (btn, row) => {
+            const hint = row.querySelector(".hint");
+            hint.setAttribute("role", "status");
+            btn.disabled = true;
+            hint.textContent = "Sending…";
+            try {
+              hint.textContent = await invoke("send_test_notification");
+            } catch (e) {
+              hint.textContent = String(e && e.message ? e.message : e);
+            } finally {
+              btn.disabled = false;
+            }
+          },
+        );
       }
 
+      // Carrier logs warnings and page-integration failures to a file; this
+      // opens its folder so the log is easy to attach to a bug report.
       function openLogsRow() {
-        const row = document.createElement("div");
-        row.className = "row";
-        row.style.cursor = "default";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "action";
-        btn.textContent = "Open log folder";
-        btn.onclick = async () => {
-          try {
-            await invoke("open_log_folder");
-          } catch (e) {
-            setStatus("Could not open the log folder.");
-            console.error(e);
-          }
-        };
-        const text = document.createElement("div");
-        text.innerHTML =
-          '<div class="label">Diagnostics log</div><div class="hint">Warnings and page-integration failures are logged here — attach the file to bug reports.</div>';
-        row.append(btn, text);
-        return row;
+        return buttonRow(
+          "Diagnostics log",
+          "Warnings and page-integration failures are logged here — attach the file to bug reports.",
+          "Open log folder",
+          async () => {
+            try {
+              await invoke("open_log_folder");
+            } catch (e) {
+              setStatus("Could not open the log folder.");
+              console.error(e);
+            }
+          },
+        );
       }
 
       function customCssRow() {
-        const row = document.createElement("div");
-        row.className = "row";
-        row.style.cursor = "default";
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "action";
-        btn.textContent = "Open custom.css";
-        btn.onclick = async () => {
-          try {
-            await invoke("open_custom_css");
-            setStatus("Save custom.css, then reload Carrier to apply it.");
-          } catch (e) {
-            setStatus("Could not open custom.css.");
-            console.error(e);
-          }
-        };
-        const text = document.createElement("div");
-        text.innerHTML =
-          '<div class="label">Custom CSS</div><div class="hint">Advanced, best-effort Messenger styling. Facebook markup changes may break it; missing or invalid CSS is safely ignored.</div>';
-        row.append(btn, text);
-        return row;
+        return buttonRow(
+          "Custom CSS",
+          "Advanced, best-effort Messenger styling. Facebook markup changes may break it; missing or invalid CSS is safely ignored.",
+          "Open custom.css",
+          async () => {
+            try {
+              await invoke("open_custom_css");
+              setStatus("Save custom.css, then reload Carrier to apply it.");
+            } catch (e) {
+              setStatus("Could not open custom.css.");
+              console.error(e);
+            }
+          },
+        );
       }
 
       // ----- Account: Messenger's own account settings (Ref #358) -----
@@ -1048,17 +1110,10 @@
 
       function accountToggleRow(setting, label, hint, value) {
         const row = el("label", "row");
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = value === true;
+        const cb = switchInput(value === true);
         cb.disabled = value === null || messengerAccount.loading;
         cb.onchange = () => loadMessengerAccount({ setting, value: cb.checked });
-        const text = el("div");
-        text.append(
-          el("div", "label", label),
-          el("div", "hint", value === null ? "Messenger didn't report this setting." : hint),
-        );
-        row.append(cb, text);
+        row.append(rowText(label, value === null ? "Messenger didn't report this setting." : hint), cb);
         return row;
       }
 
@@ -1097,16 +1152,13 @@
         sel.onchange = () => {
           if (sel.value !== "on") loadMessengerAccount({ setting: "doNotDisturb", value: Number(sel.value) });
         };
-        const text = el("div");
-        text.append(el("div", "label", "Do Not Disturb"), el("div", "hint", hint));
-        row.append(sel, text);
+        row.append(rowText("Do Not Disturb", hint), sel);
         return row;
       }
 
       function messengerAccountSection() {
-        const wrap = el("div");
+        const wrap = titledCard("Messenger account");
         wrap.append(
-          sectionHead("Messenger account"),
           el(
             "div",
             "section-hint",
@@ -1147,12 +1199,12 @@
         return wrap;
       }
 
-      // Pseudo-fields are <select> rows;
-      // everything else is a checkbox.
+      // Fields with their own builder; every other field is a switch. The
+      // sections (theme, look, app icon, account) build a whole card.
       const CUSTOM_ROWS = {
         theme_section: themeSection,
         app_icon: appIconSection,
-        display_heading: displayHeading,
+        look_section: lookSection,
         zoom: zoomRow,
         title_bar: titleBarRow,
         badge_mode: badgeModeRow,
@@ -1164,7 +1216,7 @@
         custom_css: customCssRow,
         open_logs: openLogsRow,
         test_notification: testNotificationRow,
-        nickname_scope: nicknameRows,
+        nickname_scope: nicknameRow,
         messenger_account: messengerAccountSection,
       };
 
@@ -1172,9 +1224,18 @@
         const root = document.getElementById("rows");
         root.innerHTML = "";
         const tab = TABS.find((t) => t.id === activeTab) || TABS[0];
-        for (const key of tab.fields) {
-          const build = CUSTOM_ROWS[key];
-          root.appendChild(build ? build() : checkboxRow(key));
+        for (const entry of tab.cards || [tab.fields]) {
+          if (typeof entry === "string") {
+            root.appendChild(CUSTOM_ROWS[entry]());
+            continue;
+          }
+          const card = document.createElement("section");
+          card.className = "card";
+          for (const key of entry) {
+            const build = CUSTOM_ROWS[key];
+            card.appendChild(build ? build() : switchRow(key));
+          }
+          root.appendChild(card);
         }
       }
 
