@@ -145,6 +145,11 @@ mod tests {
     }
 
     #[test]
+    fn the_light_icon_is_the_default_even_in_dark_mode() {
+        assert!(!wants_dark(&Settings::default(), |_| true));
+    }
+
+    #[test]
     fn the_light_color_icon_is_the_installed_one() {
         assert_eq!(icon_png("color", false), None);
         assert_eq!(icon_png("color", true), Some(COLOR_DARK));
