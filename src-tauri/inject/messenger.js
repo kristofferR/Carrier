@@ -3726,7 +3726,7 @@ ${button.innerHTML}`)
       }
       menuRequest += 1;
     };
-    const openContextMenu = async (t, contextPoint, keyboard, prevent) => {
+    const openContextMenu = async (t, contextPoint, keyboard, prevent, selectedByClick = false) => {
       const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
       const img = t.closest?.("img[alt]");
       const anchor = t.closest?.("a[href]");
@@ -3777,10 +3777,11 @@ ${button.innerHTML}`)
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
       const selection = getSelection();
-      const selected = selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
+      const selected = !selectedByClick && selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
       const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(t) ?? null : null;
       if (!items.length && !message) return;
       prevent();
+      if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
       const keyboardPoint = message || keyboard ? keyboardMenuPoint(
         contextPoint,
         rectOf(t),
@@ -4068,6 +4069,15 @@ ${button.innerHTML}`)
       },
       true
     ]);
+    let secondaryPress = null;
+    nativeReflectApply3(nativeAddEventListener2, window, [
+      "mousedown",
+      (e) => {
+        if (!e.isTrusted || !(e.button === 2 || isMac2 && e.button === 0 && e.ctrlKey)) return;
+        secondaryPress = { collapsed: getSelection()?.isCollapsed ?? true, at: Date.now() };
+      },
+      true
+    ]);
     nativeReflectApply3(nativeAddEventListener2, document, [
       "contextmenu",
       (e) => {
@@ -4079,11 +4089,14 @@ ${button.innerHTML}`)
           nativeReflectApply3(nativePreventDefault, e, []);
           return;
         }
+        const selectedByClick = !!secondaryPress?.collapsed && Date.now() - secondaryPress.at < 1e3;
+        secondaryPress = null;
         void openContextMenu(
           target,
           clientPointOf(e),
           false,
-          () => nativeReflectApply3(nativePreventDefault, e, [])
+          () => nativeReflectApply3(nativePreventDefault, e, []),
+          selectedByClick
         );
       },
       true

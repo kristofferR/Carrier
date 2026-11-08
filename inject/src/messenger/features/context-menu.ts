@@ -388,6 +388,7 @@ export function initContextMenu() {
     contextPoint: { x: number; y: number },
     keyboard: boolean,
     prevent: () => void,
+    selectedByClick = false,
   ) => {
     const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
     const img = t.closest?.("img[alt]") as HTMLImageElement | null;
@@ -460,15 +461,21 @@ export function initContextMenu() {
     }
     // A link keeps its own menu, and selected text the webview's (so Copy
     // still copies the selection).
+    // macOS selects the word under a right-click before the event arrives;
+    // that selection is the click's, not the user's.
     const selection = getSelection();
     const selected =
-      selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
+      !selectedByClick &&
+      selection !== null &&
+      !selection.isCollapsed &&
+      selection.containsNode(t, true);
     const message =
       (imgSrc || vidSrc || !items.length) && !(selected && !items.length)
         ? (messageFor(t) ?? null)
         : null;
     if (!items.length && !message) return; // fall through to the native menu (text etc.)
     prevent();
+    if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
     // The context-menu key reports no pointer on the message; pop up at it.
     // A keyboard-opened link menu anchors to the focused link itself.
     const keyboardPoint =
@@ -846,6 +853,17 @@ export function initContextMenu() {
     },
     true,
   ]);
+  // Whether text was selected when the secondary button went down, before
+  // macOS selects the word under the pointer for the context click.
+  let secondaryPress: { collapsed: boolean; at: number } | null = null;
+  nativeReflectApply(nativeAddEventListener, window, [
+    "mousedown",
+    (e: MouseEvent) => {
+      if (!e.isTrusted || !(e.button === 2 || (isMac && e.button === 0 && e.ctrlKey))) return;
+      secondaryPress = { collapsed: getSelection()?.isCollapsed ?? true, at: Date.now() };
+    },
+    true,
+  ]);
   nativeReflectApply(nativeAddEventListener, document, [
     "contextmenu",
     (e: MouseEvent) => {
@@ -858,8 +876,14 @@ export function initContextMenu() {
         nativeReflectApply(nativePreventDefault, e, []);
         return;
       }
-      void openContextMenu(target, clientPointOf(e), false, () =>
-        nativeReflectApply(nativePreventDefault, e, []),
+      const selectedByClick = !!secondaryPress?.collapsed && Date.now() - secondaryPress.at < 1000;
+      secondaryPress = null;
+      void openContextMenu(
+        target,
+        clientPointOf(e),
+        false,
+        () => nativeReflectApply(nativePreventDefault, e, []),
+        selectedByClick,
       );
     },
     true,
