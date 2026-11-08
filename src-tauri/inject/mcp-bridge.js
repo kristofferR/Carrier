@@ -559,7 +559,7 @@
         // (the fMess review features). Counts and geometry only; selection
         // is reported by length. `:selectall` runs WebKit's Select All with
         // nothing focused; `:drag:<pane>:<dx>` drags a pane edge by dx px.
-        var fmessProbe = /^__carrier_mcp_fmess_probe__(?::(selectall|drag:(list|details):(-?\d+)|reset:(list|details)|open:(\d+)))?$/.exec(code);
+        var fmessProbe = /^__carrier_mcp_fmess_probe__(?::(selectall|drag:(list|details):(-?\d+)|reset:(list|details)|open:(\d+)|sound))?$/.exec(code);
         if (fmessProbe) {
           Promise.resolve(fmessFeatureProbe(fmessProbe)).then(reply, function (e) {
             reply({ error: String(e) });
@@ -3335,6 +3335,33 @@
               }, 300);
             });
           });
+        }
+      } else if (match[1] === "sound") {
+        // Plays Messenger's message sound once through SoundPlayer, as
+        // Messenger does, and reports whether its <audio> element played
+        // (it shouldn't: Carrier routes the sound through Web Audio).
+        try {
+          var config = window.require("MWChatConfig");
+          var urls = [config.soundNotifOggUrl, config.soundNotifMp3Url];
+          window.require("SoundPlayer").play(urls, {});
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              var elements = Array.prototype.filter.call(document.querySelectorAll("audio"), function (audio) {
+                return urls.some(function (url) {
+                  return url && audio.src && audio.src.indexOf(String(url).split("?")[0].split("/").pop()) !== -1;
+                });
+              });
+              resolve({
+                played: true,
+                elements: elements.length,
+                elementPlayed: elements.some(function (audio) {
+                  return audio.played && audio.played.length > 0;
+                }),
+              });
+            }, 1500);
+          });
+        } catch (e) {
+          action = { played: false, error: String(e).slice(0, 200) };
         }
       } else if (match[5]) {
         // Opens the nth conversation that is already read (one whose row has
