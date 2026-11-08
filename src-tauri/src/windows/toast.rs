@@ -565,6 +565,21 @@ pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     crate::notifications::take_routed_notification_ids_for_thread(&format!("/t/{thread_id}/"));
 }
 
+/// Clear every Carrier toast from Action Center (Log Out and Reset; Ref #356).
+#[cfg(target_os = "windows")]
+pub(crate) fn clear_all(app: &tauri::AppHandle) {
+    match ToastNotificationManager::History() {
+        Ok(history) => {
+            for app_id in toast_history_app_ids(&app.config().identifier) {
+                if let Err(error) = history.ClearWithId(&HSTRING::from(&app_id)) {
+                    log::warn!("failed to clear toasts for {app_id}: {error}");
+                }
+            }
+        }
+        Err(error) => log::warn!("failed to reach toast history: {error}"),
+    }
+}
+
 /// Register Carrier's dedicated toast AppUserModelID in
 /// `HKCU\Software\Classes\AppUserModelId\<aumid>` with its display assets.
 /// This works independently of the installed shortcut, so installed and

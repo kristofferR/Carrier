@@ -1,9 +1,10 @@
 /* ----------------------- Account requests ------------------------------ */
 // Native asks through `window.__carrierAccount(request, action, value)` and
 // reads the answer on `carrier:account-result`: Messenger's own account
-// settings for Settings → Account (Ref #358).
+// settings for Settings → Account (Ref #358), and Log Out (Ref #356).
 import { diag, invoke } from "../bridge";
 import { pageRequire } from "../lib/facebook-loader";
+import { logOutOfFacebook } from "../lib/log-out";
 import { changeMessengerAccount, readMessengerAccount } from "../lib/messenger-account";
 import { setMessengerDndUntil } from "../lib/messenger-dnd";
 import { accountId } from "../lib/threads";
@@ -18,6 +19,13 @@ export function initAccountRequests() {
     return account;
   };
   const actions: Record<string, Action> = {
+    // Log Out (Ref #356): Facebook's own logout, so the session ends there too.
+    "log-out": () =>
+      logOutOfFacebook({
+        load: pageRequire(),
+        cookie: () => document.cookie,
+        post: (url, body) => fetch(url, { method: "POST", body, credentials: "include" }),
+      }).then(() => null),
     read: () => readMessengerAccount(pageRequire(), signedIn()),
     "set-active-status": (value) =>
       changeMessengerAccount(pageRequire(), signedIn(), {

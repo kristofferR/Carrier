@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-const LEDGER_FILE: &str = "notification-ledger.json";
+pub(crate) const LEDGER_FILE: &str = "notification-ledger.json";
 const LEDGER_LIMIT: usize = 1000;
 /// A conversation read while Carrier was closed never reports that read, so
 /// its entry expires instead of silencing an identical preview forever.

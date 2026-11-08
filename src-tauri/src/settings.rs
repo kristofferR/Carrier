@@ -660,6 +660,8 @@ pub(crate) fn replace_file(source: &Path, destination: &Path) -> std::io::Result
 }
 
 const CLEAR_WEBVIEW_DATA_MARKER: &str = ".clear-webview-data-on-next-launch";
+const CLEAR_WEBVIEW_DATA: &[u8] = b"pending";
+const ACCOUNT_RESET: &[u8] = b"reset";
 
 fn clear_webview_data_marker(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -668,8 +670,22 @@ fn clear_webview_data_marker(app: &tauri::AppHandle) -> Result<PathBuf, String> 
 }
 
 pub(crate) fn schedule_webview_data_clear(app: &tauri::AppHandle) -> Result<(), String> {
+    schedule_clear(app, CLEAR_WEBVIEW_DATA)
+}
+
+/// Log Out and Reset Carrier… (Ref #356): the webview data plus everything
+/// else Carrier keeps for the account. `settings.json` stays.
+pub(crate) fn schedule_account_reset(app: &tauri::AppHandle) -> Result<(), String> {
+    schedule_clear(app, ACCOUNT_RESET)
+}
+
+fn schedule_clear(app: &tauri::AppHandle, kind: &[u8]) -> Result<(), String> {
     let marker = clear_webview_data_marker(app)?;
-    std::fs::write(&marker, b"pending").map_err(|e| e.to_string())?;
+    // A reset still waiting for a retry must not shrink to a cache clear.
+    if std::fs::read(&marker).is_ok_and(|pending| pending == ACCOUNT_RESET) {
+        return Ok(());
+    }
+    std::fs::write(&marker, kind).map_err(|e| e.to_string())?;
 
     // Best-effort for the current process. On macOS this only schedules
     // WKWebView's async clear, so startup also removes the on-disk profile before
@@ -723,9 +739,21 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
         }
     }
 
+    // Everything but the log folder: this run's log file is already open
+    // there, and deleting it would lose the log of the clear itself.
     #[cfg(not(target_os = "macos"))]
     if let Ok(local_data) = app.path().app_local_data_dir() {
-        paths.push(local_data);
+        let logs = app.path().app_log_dir().ok();
+        match std::fs::read_dir(&local_data) {
+            Ok(entries) => paths.extend(
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| Some(path) != logs.as_ref()),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => paths.push(local_data),
+        }
     }
 
     paths.sort();
@@ -733,16 +761,35 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     paths
 }
 
+/// What Carrier itself derives from the signed-in account, beyond the webview.
+fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(data) = app.path().app_data_dir() {
+        paths.push(data.join(crate::notification_ledger::LEDGER_FILE));
+        #[cfg(target_os = "macos")]
+        paths.push(data.join(crate::notifications::PERSISTED_NOTIFICATION_ROUTES_DIR));
+    }
+    if let Ok(config) = app.path().app_config_dir() {
+        paths.push(config.join(crate::scheduled_send::STORE_FILE));
+    }
+    paths
+}
+
 pub(crate) fn clear_pending_webview_data(app: &tauri::AppHandle) {
     let Ok(marker) = clear_webview_data_marker(app) else {
         return;
     };
-    if !marker.exists() {
+    let Ok(kind) = std::fs::read(&marker) else {
         return;
+    };
+    let mut paths = webview_data_paths(app);
+    if kind == ACCOUNT_RESET {
+        log::info!("resetting Carrier's account data");
+        paths.extend(account_data_paths(app));
     }
 
     let mut all_removed = true;
-    for path in webview_data_paths(app) {
+    for path in paths {
         if let Err(e) = remove_path_if_exists(&path) {
             all_removed = false;
             log::error!("failed to remove webview data path {}: {e}", path.display());

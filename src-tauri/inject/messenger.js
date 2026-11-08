@@ -233,6 +233,67 @@
     });
   }
 
+  // inject/src/messenger/lib/threads.ts
+  function threadIdFromHref(href) {
+    const m = (href || "").match(/\/t\/(\d+)/);
+    return m ? m[1] : null;
+  }
+  function threadPathId(href) {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    return m ? m[1] : null;
+  }
+  function accountId(cookie) {
+    return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
+  }
+  function accountScopedStorageKey(baseKey, cookie) {
+    const account2 = accountId(cookie);
+    return account2 ? `${baseKey}:${account2}` : null;
+  }
+  function isMessengerContentPath(pathname) {
+    const path = String(pathname || "");
+    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
+  }
+  var SEPARATOR_RE = /^[·•.,\s]+$/;
+
+  // inject/src/messenger/lib/log-out.ts
+  async function logOutOfFacebook({ load, cookie, post }) {
+    if (!accountId(cookie())) return;
+    const [environment, relay, query, dtsg, route] = await loadFacebookModules(load, [
+      "CometRelayEnvironment",
+      "relay-runtime",
+      "CometLogoutHandlerQuery.graphql",
+      "DTSG",
+      "XLogoutControllerRouteBuilder"
+    ]);
+    const data = await relay.fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" }).toPromise();
+    const hash = data?.viewer?.logout_hash;
+    if (typeof hash !== "string" || !hash) throw new Error("Facebook sent no logout token.");
+    const body = new URLSearchParams({ h: hash, ref: "mb" });
+    const token = dtsg.getToken?.();
+    if (typeof token === "string" && token) body.set("fb_dtsg", token);
+    const built = defaultExport(route).buildURL?.({
+      button_location: "settings",
+      button_name: "logout"
+    });
+    const url = typeof built === "string" && built.startsWith("/logout.php") ? built : "/logout.php";
+    await post(url, body).catch(() => {
+    });
+    if (accountId(cookie())) throw new Error("Facebook didn't end the session.");
+    try {
+      const [monster, serviceWorker] = await loadFacebookModules(
+        load,
+        ["WebStorageMonster", "ServiceWorkerLoginAndLogout"],
+        3e3
+      );
+      const whitelist = Array.isArray(data?.logout_whitelist) ? data.logout_whitelist : [];
+      defaultExport(monster).cleanOnLogout?.(
+        whitelist
+      );
+      defaultExport(serviceWorker).logout?.();
+    } catch (_) {
+    }
+  }
+
   // inject/src/messenger/lib/messenger-dnd.ts
   var muteUntilSeconds = null;
   function setMessengerDndUntil(seconds) {
@@ -419,28 +480,6 @@
     await Promise.all([saved, reported]);
   }
 
-  // inject/src/messenger/lib/threads.ts
-  function threadIdFromHref(href) {
-    const m = (href || "").match(/\/t\/(\d+)/);
-    return m ? m[1] : null;
-  }
-  function threadPathId(href) {
-    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
-    return m ? m[1] : null;
-  }
-  function accountId(cookie) {
-    return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
-  }
-  function accountScopedStorageKey(baseKey, cookie) {
-    const account2 = accountId(cookie);
-    return account2 ? `${baseKey}:${account2}` : null;
-  }
-  function isMessengerContentPath(pathname) {
-    const path = String(pathname || "");
-    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
-  }
-  var SEPARATOR_RE = /^[·•.,\s]+$/;
-
   // inject/src/messenger/features/account-requests.ts
   function initAccountRequests() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -450,6 +489,12 @@
       return account2;
     };
     const actions = {
+      // Log Out (Ref #356): Facebook's own logout, so the session ends there too.
+      "log-out": () => logOutOfFacebook({
+        load: pageRequire(),
+        cookie: () => document.cookie,
+        post: (url, body) => fetch(url, { method: "POST", body, credentials: "include" })
+      }).then(() => null),
       read: () => readMessengerAccount(pageRequire(), signedIn()),
       "set-active-status": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
         setting: "activeStatus",

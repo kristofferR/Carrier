@@ -540,7 +540,7 @@
           reply(loginLayoutProbe());
           return;
         }
-        // Runs an account request (Settings → Account) without the
+        // Runs an account request (Settings → Account, Log Out) without the
         // Settings window; the answer is logged natively.
         var accountCall = /^__carrier_mcp_account__:([a-z-]+)(?::(.*))?$/.exec(code);
         if (accountCall) {

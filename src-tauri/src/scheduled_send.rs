@@ -459,6 +459,9 @@ fn respond(
     }
 }
 
+/// Scheduled messages, in the config directory.
+pub(crate) const STORE_FILE: &str = "scheduled-messages.json";
+
 pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
     let Ok(directory) = app.path().app_config_dir() else {
         return;
@@ -468,7 +471,7 @@ pub(crate) fn install(app: &tauri::AppHandle, single_instance: bool) {
     if !single_instance {
         return;
     }
-    let mut store = Store::load(directory.join("scheduled-messages.json"));
+    let mut store = Store::load(directory.join(STORE_FILE));
     let mut recovered = store.items.clone();
     let mut changed = false;
     for item in &mut recovered {

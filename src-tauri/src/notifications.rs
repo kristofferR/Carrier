@@ -534,7 +534,7 @@ fn late_notification_routes() -> &'static Mutex<LateNotificationRoutes> {
 }
 
 #[cfg(target_os = "macos")]
-const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
+pub(crate) const PERSISTED_NOTIFICATION_ROUTES_DIR: &str = "notification-routes";
 #[cfg(any(target_os = "macos", test))]
 static PERSISTED_NOTIFICATION_ROUTE_IO: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(any(target_os = "macos", test))]
@@ -1092,6 +1092,16 @@ pub(crate) fn clear_avatar_cache() {
                 let _ = std::fs::remove_dir(path);
             }
         }
+    }
+}
+
+/// Delete this run's avatar directory (Log Out and Reset; Ref #356).
+pub(crate) fn remove_avatar_cache() {
+    if let Some(Some(dir)) = AVATAR_CACHE_DIR.get()
+        && let Err(error) = std::fs::remove_dir_all(dir)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("failed to remove the avatar cache: {error}");
     }
 }
 

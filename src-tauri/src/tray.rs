@@ -262,6 +262,20 @@ impl ksni::Tray for LinuxTray {
             .into(),
         );
         menu.push(ksni::MenuItem::Separator);
+        for (id, label) in LOG_OUT_ITEMS {
+            menu.push(
+                StandardItem {
+                    label: label.into(),
+                    activate: Box::new(move |tray: &mut Self| match id {
+                        "log_out" => crate::log_out::log_out(&tray.app),
+                        _ => crate::log_out::confirm_reset(&tray.app),
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        menu.push(ksni::MenuItem::Separator);
         menu.push(
             StandardItem {
                 label: "Quit Carrier".into(),
@@ -493,6 +507,12 @@ pub(crate) fn wants_tray(s: &Settings) -> bool {
             && (s.hide_on_minimize || s.hide_on_focus_loss || s.hide_taskbar_icon))
 }
 
+/// Log Out and Log Out and Reset Carrier… (Ref #356), above Quit.
+const LOG_OUT_ITEMS: [(&str, &str); 2] = [
+    ("log_out", "Log Out"),
+    ("log_out_reset", "Log Out and Reset Carrier…"),
+];
+
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::new(app)?;
@@ -519,6 +539,11 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
         pause.append(&MenuItem::with_id(app, id, label, enabled, None::<&str>)?)?;
     }
     menu.append(&pause)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    // Handled by the app-wide menu handler, like the recent conversations.
+    for (id, label) in LOG_OUT_ITEMS {
+        menu.append(&MenuItem::with_id(app, id, label, true, None::<&str>)?)?;
+    }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(
         app,
