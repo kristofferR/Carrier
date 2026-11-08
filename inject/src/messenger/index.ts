@@ -60,6 +60,7 @@ import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
 import { initZoom } from "./features/zoom";
 import { initMuteActionTracking } from "./lib/mute";
+import { migratePageStorage } from "./lib/storage-migration";
 
 function initFeature(name: string, init: () => void) {
   try {
@@ -71,6 +72,8 @@ function initFeature(name: string, init: () => void) {
 }
 
 function main() {
+  // First: every feature below reads state stored under the new names.
+  initFeature("storage-migration", migratePageStorage);
   initFeature("rate-limit", initRateLimit);
   // Before Facebook's first paint, so its layout starts below the window buttons.
   initFeature("title-bar", initTitleBar);

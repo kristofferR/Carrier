@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://kristofferr.github.io/Carrier/">
-    <img src="docs/carrier-screenshot.png" alt="Chatpane showing Messenger in a focused desktop window" width="860">
+    <img src="docs/chatpane-screenshot.png" alt="Chatpane showing Messenger in a focused desktop window" width="860">
   </a>
 </p>
 

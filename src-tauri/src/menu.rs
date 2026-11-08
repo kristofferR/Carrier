@@ -1045,7 +1045,7 @@ fn append_context_menu_items(
     label: &str,
     items: &[NativeContextMenuItem],
 ) -> tauri::Result<()> {
-    let id = |item: &NativeContextMenuItem| format!("carrier-context:{label}:{}", item.action);
+    let id = |item: &NativeContextMenuItem| format!("chatpane-context:{label}:{}", item.action);
     // Media rows, the React submenu, message actions, conversation actions,
     // and conversation export each form a group.
     let group = |item: &NativeContextMenuItem| {
@@ -1097,7 +1097,7 @@ fn append_context_menu_items(
 }
 
 fn context_menu_action(id: &str) -> Option<(&str, &str)> {
-    let (label, action) = id.strip_prefix("carrier-context:")?.rsplit_once(':')?;
+    let (label, action) = id.strip_prefix("chatpane-context:")?.rsplit_once(':')?;
     if label.is_empty()
         || action.len() != 32
         || !action.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1674,10 +1674,10 @@ mod tests {
     fn native_context_action_ids_bind_the_window_and_opaque_action() {
         let token = "0123456789abcdef0123456789abcdef";
         assert_eq!(
-            context_menu_action(&format!("carrier-context:win-2:{token}")),
+            context_menu_action(&format!("chatpane-context:win-2:{token}")),
             Some(("win-2", token))
         );
-        assert_eq!(context_menu_action("carrier-context:win-2:share"), None);
+        assert_eq!(context_menu_action("chatpane-context:win-2:share"), None);
         assert_eq!(context_menu_action(&format!("other:win-2:{token}")), None);
     }
 }

@@ -247,7 +247,7 @@ fn capture_native_output() -> std::io::Result<()> {
         }
     }
     std::thread::Builder::new()
-        .name("carrier-native-log".into())
+        .name("chatpane-native-log".into())
         .spawn(move || {
             let mut size = output.metadata().map(|m| m.len()).unwrap_or(0);
             let mut writable = true;

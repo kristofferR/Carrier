@@ -12,7 +12,7 @@ export const workerReplacement = new DedicatedWorkerReplacement(loadFacebookModu
 
 export const workerRecovery = new FacebookWorkerRecovery(
   loadFacebookModule,
-  () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? undefined,
+  () => accountScopedStorageKey("chatpane-worker-recovery", document.cookie) ?? undefined,
   async () => {
     if (
       window.__CHATPANE_SETTINGS__?.multi_instance !== false ||

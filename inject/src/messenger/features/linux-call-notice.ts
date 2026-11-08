@@ -25,7 +25,7 @@ export function initLinuxCallNotice() {
   if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
 
   const host = document.createElement("div");
-  host.id = "carrier-linux-call-notice";
+  host.id = "chatpane-linux-call-notice";
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; color-scheme: light dark;

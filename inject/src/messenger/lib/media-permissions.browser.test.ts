@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "capture recovery lifecycle in a real DOM",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-permissions-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-permissions-test-"));
     try {
       const entry = fileURLToPath(new URL("../features/media-permissions.ts", import.meta.url));
       const bundle = await build({
@@ -72,7 +72,7 @@ async function runFixtures(init: () => void) {
     roots.set(this, root);
     return root;
   };
-  const banner = () => document.getElementById("carrier-media-permission-banner");
+  const banner = () => document.getElementById("chatpane-media-permission-banner");
   const root = () => roots.get(banner()!)!;
   let nativeCalls = 0;
   Object.assign(window, {

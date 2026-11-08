@@ -296,7 +296,7 @@ export class NotifiedSignatureStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_notified_previews__",
+    private readonly storageKey = "__chatpane_notified_previews__",
   ) {
     try {
       const raw = this.storage?.getItem(this.storageKey);
@@ -744,7 +744,7 @@ export class PendingPageNotificationStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_pending_page_notifications__",
+    private readonly storageKey = "__chatpane_pending_page_notifications__",
     private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
     now = Date.now(),
   ) {
@@ -908,7 +908,7 @@ export class PageNotificationReceiptStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_page_notification_receipts__",
+    private readonly storageKey = "__chatpane_page_notification_receipts__",
     private readonly ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS,
     now = Date.now(),
   ) {

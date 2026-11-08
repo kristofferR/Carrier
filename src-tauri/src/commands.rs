@@ -773,7 +773,7 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> 
         .map_err(|e| e.to_string())?
         .as_millis();
     let work_dir =
-        std::env::temp_dir().join(format!("carrier-update-{}-{nonce}", std::process::id()));
+        std::env::temp_dir().join(format!("chatpane-update-{}-{nonce}", std::process::id()));
     let result = (|| {
         fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
         let dmg_path = work_dir.join("Chatpane-update.dmg");
@@ -814,7 +814,7 @@ fn macos_relaunch_command(pid: u32, installed_app: &std::path::Path) -> std::pro
     command
         .arg("-c")
         .arg(MACOS_RELAUNCH_SCRIPT)
-        .arg("carrier-update-relaunch")
+        .arg("chatpane-update-relaunch")
         .arg(pid.to_string())
         .arg(installed_app);
     command
@@ -963,7 +963,7 @@ fn install_with_admin_privileges(
         ),
         source = applescript_string(&source_app.display().to_string()),
         destination = applescript_string(&destination_app.display().to_string()),
-        backup = applescript_string(&format!("{}.carrier-backup", destination_app.display())),
+        backup = applescript_string(&format!("{}.chatpane-backup", destination_app.display())),
     );
     let mut command = std::process::Command::new("osascript");
     command.arg("-e").arg(script);
@@ -1234,7 +1234,7 @@ mod tests {
             vec![
                 OsStr::new("-c"),
                 OsStr::new(MACOS_RELAUNCH_SCRIPT),
-                OsStr::new("carrier-update-relaunch"),
+                OsStr::new("chatpane-update-relaunch"),
                 OsStr::new("42"),
                 OsStr::new("/Applications/Chatpane Beta.app"),
             ]

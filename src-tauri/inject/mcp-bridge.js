@@ -821,7 +821,7 @@
           reply({
             found: true,
             disabledLabel: callButton.getAttribute("aria-label") !== "Start a voice call",
-            notice: !!document.getElementById("carrier-linux-call-notice"),
+            notice: !!document.getElementById("chatpane-linux-call-notice"),
           });
           return;
         }
@@ -912,7 +912,7 @@
             return;
           }
           try {
-            var inputValue = "carrier-probe-no-match";
+            var inputValue = "chatpane-probe-no-match";
             var valueSetter = Object.getOwnPropertyDescriptor(
               window.HTMLInputElement.prototype,
               "value",
@@ -1346,7 +1346,7 @@
             return { source: sources.slice(0, 4).join(" > "), locations: locations.slice(0, 6) };
           }
           if (stack.indexOf("user-script") !== -1) {
-            return { source: "carrier-user-script", locations: [] };
+            return { source: "chatpane-user-script", locations: [] };
           }
         } catch (_) {}
         return { source: "unknown", locations: [] };
@@ -2402,7 +2402,7 @@
     // splitGroupSender() in the injected code accepts a prefix up to 80
     // characters; a shorter limit here would report senders it can resolve.
     var NOTIFY_PREVIEW_NAME_RE = /^([^:]{1,80}):(?=\s|$)/;
-    var SENDER_AVATAR_KEY = "__carrier_sender_avatars__";
+    var SENDER_AVATAR_KEY = "__chatpane_sender_avatars__";
     // Exactly EMOJI_SOURCE_RE from inject/src/messenger/lib/emoji.ts: a
     // narrower test here would call a sprite production skips an avatar.
     var EMOJI_SPRITE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
@@ -2626,7 +2626,7 @@
         if (!notifyLeafContent(span) || !visible(span)) return;
         var childContent = false;
         Array.prototype.forEach.call(span.children || [], function (child) {
-          if (child.hasAttribute("data-carrier-system-emoji-glyph")) return;
+          if (child.hasAttribute("data-chatpane-system-emoji-glyph")) return;
           if (child.tagName === "SPAN" && notifyLeafContent(child)) childContent = true;
         });
         if (!childContent) leaves.push({ span: span, box: rect(span) });
@@ -3060,7 +3060,7 @@
       return {
         route: routeKind(location.pathname),
         hasQuery: !!location.search || !!location.hash,
-        systemEmoji: document.documentElement.hasAttribute("data-carrier-system-emoji"),
+        systemEmoji: document.documentElement.hasAttribute("data-chatpane-system-emoji"),
         senderAvatarCache: liveSenderAvatarStats(),
         rows: rows,
         threadArticles: threadArticles(10),
@@ -3184,7 +3184,7 @@
       var chatpaneAttrs = function (el) {
         return Array.prototype.filter
           .call(el.attributes || [], function (a) {
-            return a.name.indexOf("data-carrier") === 0;
+            return a.name.indexOf("data-chatpane") === 0;
           })
           .map(function (a) {
             return a.name;
@@ -3212,7 +3212,7 @@
               overflowY: cs.overflowY,
               margin: cs.margin,
               padding: cs.padding,
-              carrier: chatpaneAttrs(el),
+              chatpane: chatpaneAttrs(el),
             });
           }
           var buttons = Array.prototype.map.call(
@@ -3294,7 +3294,7 @@
         return el ? getComputedStyle(el).webkitUserSelect || getComputedStyle(el).userSelect : null;
       };
       var edges = function () {
-        return Array.prototype.map.call(document.querySelectorAll(".carrier-pane-edge"), function (edge) {
+        return Array.prototype.map.call(document.querySelectorAll(".chatpane-pane-edge"), function (edge) {
           return { pane: edge.dataset.pane, side: edge.dataset.side, edge: rect(edge), host: rect(edge.parentElement) };
         });
       };
@@ -3309,7 +3309,7 @@
       } else if (match[2]) {
         // `dragged` means the pane changed width during the drag. Zero-distance
         // and boundary-clamped drags can leave the width unchanged.
-        var edge = document.querySelector('.carrier-pane-edge[data-pane="' + match[2] + '"]');
+        var edge = document.querySelector('.chatpane-pane-edge[data-pane="' + match[2] + '"]');
         if (!edge) action = { dragged: false, reason: "no edge" };
         else {
           var host = edge.parentElement;
@@ -3395,7 +3395,7 @@
         if (target) target.click();
         action = { opened: !!target, readRows: readRows.length };
       } else if (match[4]) {
-        var resetEdge = document.querySelector('.carrier-pane-edge[data-pane="' + match[4] + '"]');
+        var resetEdge = document.querySelector('.chatpane-pane-edge[data-pane="' + match[4] + '"]');
         if (resetEdge) resetEdge.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
         action = { reset: !!resetEdge };
       }
@@ -3404,19 +3404,19 @@
       var messageText = main && main.querySelector('[role="log"] [dir="auto"]');
       var gradientBoxes = main ? main.querySelectorAll('[style*="--chat-outgoing-message-background-gradient"]').length : 0;
       var postImages = main ? main.querySelectorAll('img[height="100%"][width="100%"]') : [];
-      var indicator = document.getElementById("carrier-scroll-indicator");
+      var indicator = document.getElementById("chatpane-scroll-indicator");
       return {
         action: action,
         html: {
-          chats: html.hasAttribute("data-carrier-chats"),
-          login: html.hasAttribute("data-carrier-login"),
-          scrollbars: html.getAttribute("data-carrier-scrollbars"),
-          resizing: html.hasAttribute("data-carrier-resizing"),
+          chats: html.hasAttribute("data-chatpane-chats"),
+          login: html.hasAttribute("data-chatpane-login"),
+          scrollbars: html.getAttribute("data-chatpane-scrollbars"),
+          resizing: html.hasAttribute("data-chatpane-resizing"),
           scrollbarWidth: getComputedStyle(html).scrollbarWidth || null,
         },
         panes: {
           edges: edges(),
-          chatRow: !!document.querySelector("[data-carrier-chat-row]"),
+          chatRow: !!document.querySelector("[data-chatpane-chat-row]"),
           main: rect(main),
           stored: window.__CHATPANE_SETTINGS__ && window.__CHATPANE_SETTINGS__.pane_widths,
         },
@@ -3429,7 +3429,7 @@
           indicator: !!indicator,
           indicatorOpacity: indicator ? getComputedStyle(indicator).opacity : null,
         },
-        gradient: { boxes: gradientBoxes, styled: !!document.getElementById("carrier-chat-gradient") },
+        gradient: { boxes: gradientBoxes, styled: !!document.getElementById("chatpane-chat-gradient") },
         postImages: {
           count: postImages.length,
           autoHeight: Array.prototype.filter.call(postImages, function (img) {
@@ -3443,8 +3443,8 @@
       var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
       var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
       var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
-      var IDENTITY_SEL = "[data-carrier-private-identity], [data-carrier-private-avatar]";
-      var WRAPPER_SEL = "[data-carrier-private-wrapper]";
+      var IDENTITY_SEL = "[data-chatpane-private-identity], [data-chatpane-private-avatar]";
+      var WRAPPER_SEL = "[data-chatpane-private-wrapper]";
       var PREVIEW_NAME_RE = /^([^:]{1,40}):(?=\s|$)/;
       var PREVIEW_EVENT_RE =
         /^(.{1,40}?)(?=\s+(?:sent|replied|reacted|liked|laughed|loved|mentioned|shared|left|joined|added|removed|changed|created|named|started)\b)/i;
@@ -3479,9 +3479,9 @@
             aria: n.getAttribute("aria-label") ? "[present]" : "",
             style: n.getAttribute("style") ? "[present]" : "",
             className: n.getAttribute("class") ? "[present]" : "",
-            chatpaneIdentity: n.hasAttribute("data-carrier-private-identity"),
-            chatpaneAvatar: n.hasAttribute("data-carrier-private-avatar"),
-            chatpaneWrapper: n.hasAttribute("data-carrier-private-wrapper"),
+            chatpaneIdentity: n.hasAttribute("data-chatpane-private-identity"),
+            chatpaneAvatar: n.hasAttribute("data-chatpane-private-avatar"),
+            chatpaneWrapper: n.hasAttribute("data-chatpane-private-wrapper"),
             rect: rect(n),
           });
         }
@@ -3510,10 +3510,10 @@
             hasReplyPhrase: /\breplied to\b/i.test(text),
             previewNamePattern: PREVIEW_NAME_RE.test(text),
             previewEventPattern: PREVIEW_EVENT_RE.test(text),
-            chatpaneIdentity: el.hasAttribute("data-carrier-private-identity"),
-            chatpaneAvatar: el.hasAttribute("data-carrier-private-avatar"),
+            chatpaneIdentity: el.hasAttribute("data-chatpane-private-identity"),
+            chatpaneAvatar: el.hasAttribute("data-chatpane-private-avatar"),
             chatpaneIdentityAncestor: !!el.closest(IDENTITY_SEL),
-            chatpaneWrapper: el.hasAttribute("data-carrier-private-wrapper"),
+            chatpaneWrapper: el.hasAttribute("data-chatpane-private-wrapper"),
             chatpaneWrapperAncestor: !!el.closest(WRAPPER_SEL),
           },
         };
@@ -3573,8 +3573,8 @@
 
       return {
         url: location.href.replace(/\d{3,}/g, "{id}"),
-        hasHideAttr: document.documentElement.hasAttribute("data-carrier-hide-names"),
-        hasHideAvatarsAttr: document.documentElement.hasAttribute("data-carrier-hide-avatars"),
+        hasHideAttr: document.documentElement.hasAttribute("data-chatpane-hide-names"),
+        hasHideAvatarsAttr: document.documentElement.hasAttribute("data-chatpane-hide-avatars"),
         selectors: {
           conversationRows: rows(5),
           identityMarkers: list(IDENTITY_SEL, 40),
@@ -3952,7 +3952,7 @@
     // ":restore" can put back exactly what was there — including removing the
     // key if it did not exist.
     function persistThemeAndReload(mode) {
-      var CACHE = "__carrier_settings";
+      var CACHE = "__chatpane_settings";
       var STASH = "__chatpane_mcp_theme_stash";
       var raw = localStorage.getItem(CACHE);
       if (mode === "restore") {

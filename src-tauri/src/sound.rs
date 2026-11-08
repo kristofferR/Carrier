@@ -829,7 +829,7 @@ mod tests {
 
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "carrier-sound-{label}-{}-{}",
+            "chatpane-sound-{label}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));

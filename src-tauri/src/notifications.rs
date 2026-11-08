@@ -1056,7 +1056,7 @@ fn create_avatar_cache_dir() -> Option<PathBuf> {
         hasher.write_u32(std::process::id());
         hasher.write_usize(attempt);
         let dir = temp_dir.join(format!(
-            "carrier-avatars-{}-{:016x}",
+            "chatpane-avatars-{}-{:016x}",
             std::process::id(),
             hasher.finish()
         ));
@@ -1087,7 +1087,7 @@ pub(crate) fn clear_avatar_cache() {
             if entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with("carrier-avatars-")
+                .starts_with("chatpane-avatars-")
             {
                 let Ok(file_type) = entry.file_type() else {
                     continue;
@@ -1117,7 +1117,7 @@ pub(crate) fn remove_avatar_cache() {
             && entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with("carrier-avatars-")
+                .starts_with("chatpane-avatars-")
             && let Err(error) = std::fs::remove_dir_all(entry.path())
         {
             log::warn!("failed to remove an avatar cache: {error}");
@@ -2342,7 +2342,7 @@ pub(crate) fn on_notification_action(
     let fallback_path_copy = fallback_path.clone();
     let fallback_token = activation_token.clone();
     if let Err(error) = std::thread::Builder::new()
-        .name("carrier-notification-action".into())
+        .name("chatpane-notification-action".into())
         .spawn(move || {
             let _permit = permit;
             let _guard = lock_page_actions();
@@ -2393,7 +2393,7 @@ pub(crate) fn on_notification_reply(
     let fallback_text = text.clone();
     let fallback_token = activation_token.clone();
     if let Err(error) = std::thread::Builder::new()
-        .name("carrier-quick-reply".into())
+        .name("chatpane-quick-reply".into())
         .spawn(move || {
             let _permit = permit;
             let _guard = lock_page_actions();
@@ -3225,7 +3225,7 @@ mod tests {
         // No service directories: this models GNOME owning the name without
         // any corresponding D-Bus activation file, regardless of the host desktop.
         let config = std::env::temp_dir().join(format!(
-            "carrier-notification-bus-{}.conf",
+            "chatpane-notification-bus-{}.conf",
             uuid::Uuid::new_v4()
         ));
         std::fs::write(
@@ -3992,7 +3992,7 @@ mod tests {
     fn late_notification_route_survives_a_process_restart() {
         let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
         let directory = std::env::temp_dir().join(format!(
-            "carrier-notification-routes-test-{}-{sequence}",
+            "chatpane-notification-routes-test-{}-{sequence}",
             std::process::id()
         ));
 
@@ -4015,7 +4015,7 @@ mod tests {
     fn late_routes_are_correlated_for_clear_on_view() {
         let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
         let directory = std::env::temp_dir().join(format!(
-            "carrier-notification-clear-test-{}-{sequence}",
+            "chatpane-notification-clear-test-{}-{sequence}",
             std::process::id()
         ));
 
@@ -4036,7 +4036,7 @@ mod tests {
     fn stale_persisted_routes_and_temporary_files_are_pruned() {
         let sequence = PERSISTED_NOTIFICATION_ROUTE_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
         let directory = std::env::temp_dir().join(format!(
-            "carrier-notification-prune-test-{}-{sequence}",
+            "chatpane-notification-prune-test-{}-{sequence}",
             std::process::id()
         ));
         persist_notification_route_in_dir(&directory, 9_031, "/t/111/").unwrap();

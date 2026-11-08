@@ -136,9 +136,9 @@ describe("hand-maintained injected assets", () => {
   test("media viewer controls use a measured safe top inset", async () => {
     const css = await repoAsset("src-tauri/inject/messenger.css");
 
-    expect(css).toContain("data-carrier-media-controls");
-    expect(css).toContain("data-carrier-media-actions");
-    expect(css).toContain("translate: 0 var(--carrier-media-controls-offset");
+    expect(css).toContain("data-chatpane-media-controls");
+    expect(css).toContain("data-chatpane-media-actions");
+    expect(css).toContain("translate: 0 var(--chatpane-media-controls-offset");
   });
 
   test("macOS downloads declare a Files & Folders permission purpose", async () => {
@@ -179,7 +179,7 @@ describe("hand-maintained injected assets", () => {
   });
 
   test("the share extension build rejects multiline bundle versions", async () => {
-    const outputDir = await mkdtemp(join(tmpdir(), "carrier-share-version-"));
+    const outputDir = await mkdtemp(join(tmpdir(), "chatpane-share-version-"));
     try {
       const result = Bun.spawnSync([
         "sh",

@@ -281,7 +281,7 @@ export async function downloadSrc(
   const a = document.createElement("a");
   a.href = href;
   a.download = name;
-  a.setAttribute("data-carrier-native-download", "");
+  a.setAttribute("data-chatpane-native-download", "");
   a.style.display = "none";
   document.body.appendChild(a);
   try {

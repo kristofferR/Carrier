@@ -176,7 +176,7 @@ impl LinuxTray {
 #[cfg(target_os = "linux")]
 impl ksni::Tray for LinuxTray {
     fn id(&self) -> String {
-        "carrier".into()
+        "chatpane".into()
     }
 
     fn category(&self) -> ksni::Category {
@@ -592,7 +592,7 @@ pub(crate) fn build_tray_with_menu(
     // taskbar-tinted symbolic mark, per the Tray icon style setting.
     #[cfg(not(target_os = "macos"))]
     let icon = windows_tray_image(app, icon_style, tray_icon_size(), taskbar_prefers_dark());
-    let builder = TrayIconBuilder::with_id("carrier-tray")
+    let builder = TrayIconBuilder::with_id("chatpane-tray")
         .tooltip(APP_TITLE)
         .icon(icon)
         .show_menu_on_left_click(false)

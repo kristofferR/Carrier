@@ -65,9 +65,9 @@ pub(crate) fn push(window: &tauri::WebviewWindow, widths: PaneWidths) {
     let _ = window.eval(format!(
         "(function () {{ var w = {json}; var s = window.__CHATPANE_SETTINGS__; \
          if (s && typeof s === 'object') s.pane_widths = w; \
-         try {{ var c = JSON.parse(localStorage.getItem('__carrier_settings') || 'null'); \
+         try {{ var c = JSON.parse(localStorage.getItem('__chatpane_settings') || 'null'); \
          if (c && typeof c === 'object' && !Array.isArray(c)) {{ c.pane_widths = w; \
-         localStorage.setItem('__carrier_settings', JSON.stringify(c)); }} }} catch (e) {{}} \
+         localStorage.setItem('__chatpane_settings', JSON.stringify(c)); }} }} catch (e) {{}} \
          window.dispatchEvent(new Event('chatpane:pane-widths')); }})();"
     ));
 }

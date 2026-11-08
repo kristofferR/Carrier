@@ -23,9 +23,9 @@ pub(crate) const EVENT: &str = "chatpane:export-conversation";
 /// The request carries the whole conversation model. The page refuses models
 /// over 32 MiB before JSON-escaping them into the signed message.
 pub(crate) const MESSAGE_MAX: usize = 64 * 1024 * 1024;
-const REVEAL_PREFIX: &str = "carrier-export:";
+const REVEAL_PREFIX: &str = "chatpane-export:";
 
-const FORMAT_NAME: &str = "carrier-conversation-export";
+const FORMAT_NAME: &str = "chatpane-conversation-export";
 const FORMAT_VERSION: u32 = 1;
 const MESSAGE_LIMIT: usize = 50_000;
 const PARTICIPANT_LIMIT: usize = 1_000;
@@ -1107,7 +1107,7 @@ mod tests {
 
         let text = rendered(Format::Json, model);
         assert!(text.starts_with(
-            "{\n  \"format\": \"carrier-conversation-export\",\n  \"version\": 1,\n  \"exportedAt\": "
+            "{\n  \"format\": \"chatpane-conversation-export\",\n  \"version\": 1,\n  \"exportedAt\": "
         ));
         let saved: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(saved["format"], FORMAT_NAME);
@@ -1238,7 +1238,7 @@ mod tests {
     fn accepts_only_opaque_reveal_keys() {
         let key = format!("{REVEAL_PREFIX}{}", "a".repeat(32));
         assert_eq!(reveal_url(&key).map(|url| url.to_string()), Some(key));
-        assert!(reveal_url("carrier-export:short").is_none());
+        assert!(reveal_url("chatpane-export:short").is_none());
         assert!(reveal_url(&format!("https://{}", "a".repeat(32))).is_none());
         assert!(reveal_url(&format!("{REVEAL_PREFIX}{}", "g".repeat(32))).is_none());
     }

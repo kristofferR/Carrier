@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "silent recovery preserves the DOM, protects drafts and holds, and verifies worker health",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-silent-recovery-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-silent-recovery-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const bundle = await build({
@@ -360,7 +360,7 @@ async function runFixtures(
     connected = successful = false;
     supported = false;
     for (let i = 0; i < 10; i++) await tick();
-    const banner = document.getElementById("carrier-sync-banner");
+    const banner = document.getElementById("chatpane-sync-banner");
     assert(
       "unsupported recovery offers reconnect and reload",
       !!banner &&
@@ -426,17 +426,17 @@ async function runFixtures(
     logger.start(1);
     window.__chatpaneOnNotification?.();
     for (let i = 0; i < 25; i++) await tick();
-    const processingBanner = document.getElementById("carrier-sync-banner");
+    const processingBanner = document.getElementById("chatpane-sync-banner");
     assert("stalled processing is visible despite healthy transport", !!processingBanner);
     assert(
       "processing warning does not claim a broken connection",
       processingBanner?.textContent?.includes("slow to update") === true,
     );
-    const reload = processingBanner?.querySelector<HTMLButtonElement>("[data-carrier-reload]");
+    const reload = processingBanner?.querySelector<HTMLButtonElement>("[data-chatpane-reload]");
     assert("processing stall offers manual reload", !!reload && !reload.hidden && !reload.disabled);
     assert(
       "processing stall does not offer an ineffective worker reconnect",
-      !processingBanner?.querySelector("button:not([hidden]):not([data-carrier-reload])"),
+      !processingBanner?.querySelector("button:not([hidden]):not([data-chatpane-reload])"),
     );
     assert(
       "processing stall never reloads or repairs automatically",
@@ -455,14 +455,14 @@ async function runFixtures(
     await tick();
     assert(
       "unrelated completion cannot clear the processing warning",
-      !!document.getElementById("carrier-sync-banner"),
+      !!document.getElementById("chatpane-sync-banner"),
     );
     logger.endSuccess(1);
     await tick();
     await tick();
     assert(
       "draining the stalled batch clears the warning",
-      !document.getElementById("carrier-sync-banner"),
+      !document.getElementById("chatpane-sync-banner"),
     );
     modules.MAWBridgeSendAndReceive = { sendAndReceive: async () => {} };
     for (let i = 0; i < 16; i++) await tick();

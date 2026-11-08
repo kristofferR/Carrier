@@ -289,7 +289,7 @@ fn launcher_sender() -> &'static std::sync::mpsc::Sender<LauncherUpdate> {
     SENDER.get_or_init(|| {
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::Builder::new()
-            .name("carrier-unity-badge".into())
+            .name("chatpane-unity-badge".into())
             .spawn(move || launcher_worker(receiver))
             .expect("Unity badge worker starts");
         sender

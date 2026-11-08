@@ -10,9 +10,9 @@
 import { indicatorPlace } from "../lib/scrollbars";
 
 /** "overlay" or "classic" on <html>: which scroll bars the engine draws. */
-const KIND_ATTR = "data-carrier-scrollbars";
-const INDICATOR_ID = "carrier-scroll-indicator";
-const CHATS_ATTR = "data-carrier-chats";
+const KIND_ATTR = "data-chatpane-scrollbars";
+const INDICATOR_ID = "chatpane-scroll-indicator";
+const CHATS_ATTR = "data-chatpane-chats";
 // Finding what covers a point is costly: a few times a second while scrolling.
 const COVER_CHECK_MS = 250;
 const HIDE_AFTER_MS = 800;

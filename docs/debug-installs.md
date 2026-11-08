@@ -43,7 +43,7 @@ one notification per staged build saying that quitting Chatpane installs it.
 
 - macOS app: `/Applications/Chatpane.app`
 - Linux app: `~/.local/bin/carrier` (both desktop and autostart entries use it)
-- Check now: `~/.local/bin/carrier-debug-update --check`
+- Check now: `~/.local/bin/chatpane-debug-update --check`
 - macOS scheduler: `io.github.kristofferr.chatpane.debug-update` LaunchAgent
 - Linux scheduler: `chatpane-debug-update.timer` user unit
 

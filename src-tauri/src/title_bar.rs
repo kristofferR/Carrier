@@ -203,7 +203,7 @@ pub(crate) fn sync(window: &WebviewWindow) {
     }
     let _ = window.eval(format!(
         "document.documentElement && document.documentElement.style.setProperty(\
-         '--carrier-title-bar-inset', '{inset}px'); window.__chatpaneTitleBar?.({json});",
+         '--chatpane-title-bar-inset', '{inset}px'); window.__chatpaneTitleBar?.({json});",
         inset = state.inset
     ));
     #[cfg(target_os = "macos")]

@@ -373,7 +373,7 @@ export class FacebookWorkerRecovery {
           this.ownSetup = undefined;
           this.currentPhase = "dedicated-termination";
           Reflect.apply(lifecycle.callback, undefined, [
-            "carrier-sync-recovery",
+            "chatpane-sync-recovery",
             id,
             "chatpane_recovery",
           ]);
@@ -460,7 +460,7 @@ export class FacebookWorkerRecovery {
             this.lifecycleRestartUsedScope = startingScope;
             this.ownSetup = undefined;
             this.currentPhase = "shared-shutdown";
-            await shutdown.call(setup, false, "carrier-sync-recovery");
+            await shutdown.call(setup, false, "chatpane-sync-recovery");
             return "started";
           }
         }

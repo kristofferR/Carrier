@@ -9,11 +9,11 @@ import {
 
 describe("accountScopedStorageKey", () => {
   test("uses c_user as the account boundary", () => {
-    expect(accountScopedStorageKey("carrier", "locale=en; c_user=123; xs=secret")).toBe(
-      "carrier:123",
+    expect(accountScopedStorageKey("chatpane", "locale=en; c_user=123; xs=secret")).toBe(
+      "chatpane:123",
     );
-    expect(accountScopedStorageKey("carrier", "locale=en")).toBeNull();
-    expect(accountScopedStorageKey("carrier", "c_user=invalid")).toBeNull();
+    expect(accountScopedStorageKey("chatpane", "locale=en")).toBeNull();
+    expect(accountScopedStorageKey("chatpane", "c_user=invalid")).toBeNull();
   });
 });
 

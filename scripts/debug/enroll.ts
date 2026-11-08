@@ -70,7 +70,7 @@ if (process.argv.includes("--hold-failures")) {
   await rename(`${settingsFile}.debug-install.tmp`, settingsFile);
 }
 await mkdir(join(home, ".local/bin"), { recursive: true });
-const wrapper = join(home, ".local/bin/carrier-debug-update");
+const wrapper = join(home, ".local/bin/chatpane-debug-update");
 const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
 const path = [
   join(home, ".local/bin"),

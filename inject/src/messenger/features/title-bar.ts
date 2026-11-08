@@ -24,10 +24,10 @@ interface TitleBarState {
   maximized: boolean;
 }
 
-const INSET_VAR = "--carrier-title-bar-inset";
-const KIND_ATTR = "data-carrier-title-bar";
-const STRIP_ID = "carrier-title-strip";
-const CONTROLS_ID = "carrier-window-controls";
+const INSET_VAR = "--chatpane-title-bar-inset";
+const KIND_ATTR = "data-chatpane-title-bar";
+const STRIP_ID = "chatpane-title-strip";
+const CONTROLS_ID = "chatpane-window-controls";
 
 let state: TitleBarState | null = null;
 

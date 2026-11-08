@@ -4,8 +4,8 @@
 // Settings stays reachable even when the native menu bar is hidden.
 import { isMessengerHeaderOverflowControl } from "../lib/settings-button";
 
-const SLOT_ATTR = "data-carrier-settings-slot";
-const BUTTON_ATTR = "data-carrier-settings-button";
+const SLOT_ATTR = "data-chatpane-settings-slot";
+const BUTTON_ATTR = "data-chatpane-settings-button";
 
 function isOverflowButton(button: Element): boolean {
   return (

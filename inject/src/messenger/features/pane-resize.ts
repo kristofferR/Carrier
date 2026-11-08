@@ -20,10 +20,10 @@ import {
 } from "../lib/pane-resize";
 import { isMessengerContentPath } from "../lib/threads";
 
-const PANE_ATTR = "data-carrier-pane";
-const CHAT_ROW_ATTR = "data-carrier-chat-row";
-const RESIZING_ATTR = "data-carrier-resizing";
-const EDGE_CLASS = "carrier-pane-edge";
+const PANE_ATTR = "data-chatpane-pane";
+const CHAT_ROW_ATTR = "data-chatpane-chat-row";
+const RESIZING_ATTR = "data-chatpane-resizing";
+const EDGE_CLASS = "chatpane-pane-edge";
 const SELECTORS: Record<Pane, string> = {
   list: `[role="navigation"][${PANE_ATTR}="list"]`,
   details: `[${CHAT_ROW_ATTR}] > :nth-child(2)`,
@@ -61,11 +61,11 @@ function rememberLocally(widths: PaneWidths) {
     const settings = window.__CHATPANE_SETTINGS__;
     if (settings && typeof settings === "object") settings.pane_widths = { ...widths };
     const cached = JSON.parse(
-      localStorage.getItem("__carrier_settings") || "null",
+      localStorage.getItem("__chatpane_settings") || "null",
     ) as ChatpaneSettings | null;
     if (cached && typeof cached === "object" && !Array.isArray(cached)) {
       cached.pane_widths = { ...widths };
-      localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+      localStorage.setItem("__chatpane_settings", JSON.stringify(cached));
     }
   } catch (_) {}
 }
@@ -98,7 +98,7 @@ const SIZE_PROPS = ["flex", "width", "max-width"] as const;
 export function initPaneResize() {
   let widths = storedWidths();
   const widthStyle = document.createElement("style");
-  widthStyle.setAttribute("data-carrier-pane-widths", "");
+  widthStyle.setAttribute("data-chatpane-pane-widths", "");
   const edgeStyle = document.createElement("style");
   edgeStyle.textContent = EDGE_CSS;
   const showWidths = () => {

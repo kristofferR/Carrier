@@ -7,23 +7,23 @@
 
 /* Black with phosphor green, and messages in a monospace font. */
 :root {
-  --carrier-wash: #000000;
-  --carrier-page: #050805;
-  --carrier-chat: #050805;
-  --carrier-field: #0c140c;
-  --carrier-hover: rgba(80, 255, 120, 0.06);
-  --carrier-line: rgba(80, 255, 120, 0.16);
-  --carrier-text: #b6f5c0;
-  --carrier-text-2: #4f9a5c;
-  --carrier-icon: #b6f5c0;
-  --carrier-brand: #3dff6e;
-  --carrier-brand-soft: #0f2a14;
-  --carrier-brand-soft-text: #5cff7a;
-  --carrier-out: #3dff6e;
-  --carrier-out-text: #001a06;
-  --carrier-in: #0c1a0e;
-  --carrier-in-text: #b6f5c0;
-  --carrier-selection: rgba(61, 255, 110, 0.25);
+  --chatpane-wash: #000000;
+  --chatpane-page: #050805;
+  --chatpane-chat: #050805;
+  --chatpane-field: #0c140c;
+  --chatpane-hover: rgba(80, 255, 120, 0.06);
+  --chatpane-line: rgba(80, 255, 120, 0.16);
+  --chatpane-text: #b6f5c0;
+  --chatpane-text-2: #4f9a5c;
+  --chatpane-icon: #b6f5c0;
+  --chatpane-brand: #3dff6e;
+  --chatpane-brand-soft: #0f2a14;
+  --chatpane-brand-soft-text: #5cff7a;
+  --chatpane-out: #3dff6e;
+  --chatpane-out-text: #001a06;
+  --chatpane-in: #0c1a0e;
+  --chatpane-in-text: #b6f5c0;
+  --chatpane-selection: rgba(61, 255, 110, 0.25);
 }
 
 /* The same text the message font setting styles, so a chosen font still wins. */

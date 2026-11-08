@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "title-only conversations do not freeze Dock and tray updates",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-unread-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-unread-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const entry = fileURLToPath(new URL("../features/unread-badge.ts", import.meta.url));

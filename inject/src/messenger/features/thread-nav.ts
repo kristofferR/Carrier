@@ -6,7 +6,7 @@ import { threadRestoreStep } from "../lib/thread-restore";
 import { advanceThreadViewed, initialThreadViewedState } from "../lib/thread-viewed";
 import { threadIdFromHref, threadPathId } from "../lib/threads";
 
-const RESTORED_THREAD_KEY = "carrier-restored-thread";
+const RESTORED_THREAD_KEY = "chatpane-restored-thread";
 let cancelThreadRestore = () => {};
 
 /** The open thread's header "ⓘ" button that shows/hides the details sidebar. */

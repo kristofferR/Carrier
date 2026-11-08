@@ -224,7 +224,7 @@
               reject(error);
             }
           },
-          "carrier"
+          "chatpane"
         );
       } catch (error) {
         clearTimeout(timer);
@@ -997,7 +997,7 @@
     const controls = /* @__PURE__ */ new Map();
     if (!region) return controls;
     for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-carrier-schedule")) continue;
+      if (button.hasAttribute("data-chatpane-schedule")) continue;
       controls.set(button, `${button.getAttribute("aria-label") ?? ""}
 ${button.innerHTML}`);
     }
@@ -1008,7 +1008,7 @@ ${button.innerHTML}`);
     if (!region) return null;
     const changed = [];
     for (const button of region.querySelectorAll('button, [role="button"]')) {
-      if (button.hasAttribute("data-carrier-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
+      if (button.hasAttribute("data-chatpane-schedule") || !(box.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) || !isShown(button) || button.getAttribute("aria-disabled") === "true" || button.matches(":disabled"))
         continue;
       if (before.get(button) !== `${button.getAttribute("aria-label") ?? ""}
 ${button.innerHTML}`)
@@ -1336,7 +1336,7 @@ ${button.innerHTML}`)
             this.ownSetup = void 0;
             this.currentPhase = "dedicated-termination";
             Reflect.apply(lifecycle.callback, void 0, [
-              "carrier-sync-recovery",
+              "chatpane-sync-recovery",
               id,
               "chatpane_recovery"
             ]);
@@ -1383,7 +1383,7 @@ ${button.innerHTML}`)
               this.lifecycleRestartUsedScope = startingScope;
               this.ownSetup = void 0;
               this.currentPhase = "shared-shutdown";
-              await shutdown.call(setup, false, "carrier-sync-recovery");
+              await shutdown.call(setup, false, "chatpane-sync-recovery");
               return "started";
             }
           }
@@ -1670,7 +1670,7 @@ ${button.innerHTML}`)
   var RATE_LIMIT_RETRY_STATE_EVENT = "chatpane:rate-limit-retry-state";
   var RATE_LIMIT_RETRY_EVENT = "chatpane:rate-limit-retry";
   var RATE_LIMIT_EVENT = "chatpane:rate-limit-change";
-  var RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
+  var RATE_LIMIT_STORAGE_KEY = "chatpane-rate-limit";
   var state;
   var storageKey = null;
   var rateLimitAccountScope = () => storageKey ?? "";
@@ -1856,7 +1856,7 @@ ${button.innerHTML}`)
     const nativeClearTimeout4 = clearTimeout.bind(globalThis);
     const watchdog = new RealtimeHealthWatchdog();
     const workerFailures = new ConsecutiveFailureThreshold(WORKER_FAILURE_LIMIT);
-    const accountKey = () => accountScopedStorageKey("carrier-worker-connected", document.cookie);
+    const accountKey = () => accountScopedStorageKey("chatpane-worker-connected", document.cookie);
     const rememberedConnection = (key) => {
       try {
         return !!key && localStorage.getItem(key) === "1";
@@ -2247,7 +2247,7 @@ ${button.innerHTML}`)
   var workerReplacement = new DedicatedWorkerReplacement(loadFacebookModule);
   var workerRecovery = new FacebookWorkerRecovery(
     loadFacebookModule,
-    () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
+    () => accountScopedStorageKey("chatpane-worker-recovery", document.cookie) ?? void 0,
     async () => {
       if (window.__CHATPANE_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
         return false;
@@ -2290,7 +2290,7 @@ ${button.innerHTML}`)
     let busySince;
     let unverifiedSince;
     let outageRequests = 0;
-    const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
+    const accountScope = () => accountScopedStorageKey("chatpane-worker-recovery", document.cookie);
     let scope = accountScope();
     let scopeEpoch = 0;
     let offlineObserved = !navigator.onLine;
@@ -2594,7 +2594,7 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/features/sync-processing.ts
   var syncProcessing = new SyncProcessingProgress(
-    () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? void 0
+    () => accountScopedStorageKey("chatpane-sync-processing", document.cookie) ?? void 0
   );
   var syncProcessingStalled = false;
   var failures = 0;
@@ -2989,7 +2989,7 @@ ${button.innerHTML}`)
   }
   function chatGradientCss(bubbleClasses) {
     if (!bubbleClasses.length) return "";
-    const chat = `html[data-carrier-chats] [role="main"] [style*="${GRADIENT_VAR}"]`;
+    const chat = `html[data-chatpane-chats] [role="main"] [style*="${GRADIENT_VAR}"]`;
     return `${chat} :is(${bubbleClasses.join(", ")}) {
   background-image: var(${GRADIENT_VAR}) !important;
   background-attachment: fixed !important;
@@ -3004,7 +3004,7 @@ ${button.innerHTML}`)
   var CHECK_MS = 1e3;
   function initChatGradient() {
     const style = document.createElement("style");
-    style.id = "carrier-chat-gradient";
+    style.id = "chatpane-chat-gradient";
     const classes = /* @__PURE__ */ new Set();
     const rulesRead = /* @__PURE__ */ new WeakMap();
     const readSheets = () => {
@@ -3594,7 +3594,7 @@ ${button.innerHTML}`)
 
   // inject/src/messenger/lib/emoji.ts
   var EMOJI_SOURCE_RE = /(?:emoji|emoji\.php|\/images\/emoji)/i;
-  var SYSTEM_EMOJI_GLYPH_ATTR = "data-carrier-system-emoji-glyph";
+  var SYSTEM_EMOJI_GLYPH_ATTR = "data-chatpane-system-emoji-glyph";
   var EMOJI_TEXT_RE = /[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/u;
   var LABEL_TEXT_RE = /[\p{Letter}\p{Number}]/u;
   var KEYCAP_RE = /[#*0-9]️?⃣/gu;
@@ -3676,7 +3676,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/hidden-menu.ts
-  var PROBE_ATTRIBUTE = "data-carrier-message-menu-probe";
+  var PROBE_ATTRIBUTE = "data-chatpane-message-menu-probe";
   var POLL_MS = 16;
   var MENU_WAIT_MS = 800;
   async function waitFor(read, ms) {
@@ -4144,7 +4144,7 @@ ${button.innerHTML}`)
       toast("This conversation is too large to export", void 0, { warning: true });
       return;
     }
-    const reveal = `carrier-export:${randomHex()}`;
+    const reveal = `chatpane-export:${randomHex()}`;
     try {
       await chatpaneExportConversation({ format, conversation, reveal });
     } catch (error) {
@@ -4463,7 +4463,7 @@ ${button.innerHTML}`)
     const a = document.createElement("a");
     a.href = href;
     a.download = name;
-    a.setAttribute("data-carrier-native-download", "");
+    a.setAttribute("data-chatpane-native-download", "");
     a.style.display = "none";
     document.body.appendChild(a);
     try {
@@ -5126,7 +5126,7 @@ ${button.innerHTML}`)
     };
     const decline = (button) => {
       done = true;
-      document.documentElement.setAttribute("data-carrier-cookie-decline", "attempted");
+      document.documentElement.setAttribute("data-chatpane-cookie-decline", "attempted");
       stop();
       button.dispatchEvent(
         new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
@@ -5243,7 +5243,7 @@ ${button.innerHTML}`)
         const a = e.target?.closest?.("a[download]");
         const href = a?.href;
         if (!a || !href || !/^(blob:|data:|https?:)/i.test(href)) return;
-        if (a.hasAttribute("data-carrier-native-download")) return;
+        if (a.hasAttribute("data-chatpane-native-download")) return;
         if (!e.isTrusted) return;
         a.removeAttribute("target");
         e.preventDefault();
@@ -5462,7 +5462,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/lib/sender-avatars.ts
   var SENDER_AVATAR_LIMIT = 500;
   var SENDER_AVATAR_VERSION = 3;
-  var SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
+  var SENDER_AVATAR_STORAGE_KEY = "__chatpane_sender_avatars__";
   var normalizeSenderName = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
   var entryKey = (threadId, name) => `${threadId}\0${normalizeSenderName(name)}`;
   function avatarPhotoId(url) {
@@ -7386,7 +7386,7 @@ ${button.innerHTML}`)
     window.addEventListener("chatpane:settings", apply2);
     new MutationObserver(apply2).observe(html, { attributes: true, attributeFilter: ["class"] });
   }
-  var DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
+  var DARK_MARKERS = ["data-chatpane-dark", "data-fmess-dark"];
   function initThemeMarkers() {
     const html = document.documentElement;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -7407,7 +7407,7 @@ ${button.innerHTML}`)
     let current = null;
     const enter = (el) => {
       current = el;
-      el.dataset.carrierPrevStyle = el.getAttribute("style") || "";
+      el.dataset.chatpanePrevStyle = el.getAttribute("style") || "";
       Object.assign(el.style, {
         position: "fixed",
         inset: "0",
@@ -7421,8 +7421,8 @@ ${button.innerHTML}`)
     };
     const leave = () => {
       if (current) {
-        current.setAttribute("style", current.dataset.carrierPrevStyle || "");
-        delete current.dataset.carrierPrevStyle;
+        current.setAttribute("style", current.dataset.chatpanePrevStyle || "");
+        delete current.dataset.chatpanePrevStyle;
         current = null;
         document.dispatchEvent(new Event("fullscreenchange"));
       }
@@ -7497,13 +7497,13 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/hide-names.ts
-  var IDENTITY_ATTR = "data-carrier-private-identity";
-  var AVATAR_ATTR = "data-carrier-private-avatar";
+  var IDENTITY_ATTR = "data-chatpane-private-identity";
+  var AVATAR_ATTR = "data-chatpane-private-avatar";
   var THREAD_ROW_SEL = '[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]';
   var TEXT_SURFACE_SEL = "span, div, h1, h2, h3, h4";
   var VISUAL_SEL = 'img, svg, image, [style*="background-image"]';
-  var PREFIX_HIGHLIGHT = "carrier-private-identity";
-  var PREFIX_HOST_ATTR = "data-carrier-private-prefix";
+  var PREFIX_HIGHLIGHT = "chatpane-private-identity";
+  var PREFIX_HOST_ATTR = "data-chatpane-private-prefix";
   function initHideNames() {
     const html = document.documentElement;
     let observer = null;
@@ -7825,8 +7825,8 @@ ${button.innerHTML}`)
       window.removeEventListener("resize", schedule);
     }
     const apply2 = () => {
-      html.toggleAttribute("data-carrier-hide-names", namesHidden());
-      html.toggleAttribute("data-carrier-hide-avatars", avatarsHidden());
+      html.toggleAttribute("data-chatpane-hide-names", namesHidden());
+      html.toggleAttribute("data-chatpane-hide-avatars", avatarsHidden());
       if (on2()) {
         start();
         schedule();
@@ -8010,7 +8010,7 @@ ${button.innerHTML}`)
   function initLinuxCallNotice() {
     if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
     const host = document.createElement("div");
-    host.id = "carrier-linux-call-notice";
+    host.id = "chatpane-linux-call-notice";
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>
     :host { all: initial; color-scheme: light dark;
@@ -8091,21 +8091,21 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/login-tidy.ts
-  var HIDE = "data-carrier-hide";
-  var COL = "data-carrier-login-col";
-  var ANC = "data-carrier-login-anc";
-  var FORM = "data-carrier-login-form";
-  var CARD = "data-carrier-login-card";
-  var LIGHT_BG = "data-carrier-login-light-bg";
-  var REQUIRED = "data-carrier-login-required";
-  var FOOTER = "data-carrier-login-footer";
-  var FOOTER_KEEP = "data-carrier-login-footer-keep";
-  var FOOTER_LINKS = "data-carrier-login-footer-links";
-  var LANGUAGES = "data-carrier-login-languages";
-  var LANGUAGE_LINK = "data-carrier-login-language-link";
-  var LOGO = "data-carrier-login-logo";
-  var LOGIN_REDIRECT = "carrier:login-redirect";
-  var LOADING = "data-carrier-login-loading";
+  var HIDE = "data-chatpane-hide";
+  var COL = "data-chatpane-login-col";
+  var ANC = "data-chatpane-login-anc";
+  var FORM = "data-chatpane-login-form";
+  var CARD = "data-chatpane-login-card";
+  var LIGHT_BG = "data-chatpane-login-light-bg";
+  var REQUIRED = "data-chatpane-login-required";
+  var FOOTER = "data-chatpane-login-footer";
+  var FOOTER_KEEP = "data-chatpane-login-footer-keep";
+  var FOOTER_LINKS = "data-chatpane-login-footer-links";
+  var LANGUAGES = "data-chatpane-login-languages";
+  var LANGUAGE_LINK = "data-chatpane-login-language-link";
+  var LOGO = "data-chatpane-login-logo";
+  var LOGIN_REDIRECT = "chatpane:login-redirect";
+  var LOADING = "data-chatpane-login-loading";
   var LOADER_LIMIT_MS = 15e3;
   function returnToMessengerAfterLogin() {
     if (!onFacebookHost()) return "idle";
@@ -8191,7 +8191,7 @@ ${button.innerHTML}`)
       copy.setAttribute("fill", color);
       copy.removeAttribute("class");
       const data = encodeURIComponent(new XMLSerializer().serializeToString(copy));
-      html.style.setProperty("--carrier-login-logo", `url("data:image/svg+xml,${data}")`);
+      html.style.setProperty("--chatpane-login-logo", `url("data:image/svg+xml,${data}")`);
       html.setAttribute(LOGO, color);
     };
     const restoreRequiredLoginUi = () => {
@@ -8279,15 +8279,15 @@ ${button.innerHTML}`)
       if (onFacebookHost() && /^\/(?:auth_platform|checkpoint|two_factor|two_step|authentication|recover|confirmemail|device-based)/i.test(
         location.pathname
       )) {
-        html.setAttribute("data-carrier-authtext", "");
+        html.setAttribute("data-chatpane-authtext", "");
       } else {
-        html.removeAttribute("data-carrier-authtext");
+        html.removeAttribute("data-chatpane-authtext");
       }
       const pass = document.querySelector('input[name="pass"]');
       const isLogin = onFacebookHost() && !!pass && !!document.querySelector('input[name="email"]');
       if (!isLogin) {
-        if (html.hasAttribute("data-carrier-login")) {
-          html.removeAttribute("data-carrier-login");
+        if (html.hasAttribute("data-chatpane-login")) {
+          html.removeAttribute("data-chatpane-login");
           document.querySelectorAll(`[${HIDE}]`).forEach((el) => el.removeAttribute(HIDE));
           document.querySelectorAll(`[${COL}]`).forEach((el) => el.removeAttribute(COL));
           document.querySelectorAll(`[${ANC}]`).forEach((el) => el.removeAttribute(ANC));
@@ -8295,19 +8295,19 @@ ${button.innerHTML}`)
           document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
           document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
           html.removeAttribute(LOGO);
-          html.style.removeProperty("--carrier-login-logo");
+          html.style.removeProperty("--chatpane-login-logo");
           clearFooterMarks();
-          html.removeAttribute("data-carrier-login-dark");
+          html.removeAttribute("data-chatpane-login-dark");
         }
-        if (tidyObserver && /\bc_user=/.test(document.cookie) && (loginRecovery === "settled" || loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname)) && !html.hasAttribute("data-carrier-authtext") && document.readyState === "complete") {
+        if (tidyObserver && /\bc_user=/.test(document.cookie) && (loginRecovery === "settled" || loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname)) && !html.hasAttribute("data-chatpane-authtext") && document.readyState === "complete") {
           tidyObserver.disconnect();
           tidyObserver = null;
           window.removeEventListener("resize", schedule);
         }
         return;
       }
-      html.setAttribute("data-carrier-login", "");
-      html.toggleAttribute("data-carrier-login-dark", wantDark());
+      html.setAttribute("data-chatpane-login", "");
+      html.toggleAttribute("data-chatpane-login-dark", wantDark());
       const form = pass.closest("form");
       if (!form) return;
       document.querySelectorAll(`[${FORM}]`).forEach((el) => {
@@ -8344,18 +8344,18 @@ ${button.innerHTML}`)
         el.removeAttribute(FOOTER_LINKS);
       });
       if (!col.hasAttribute(COL)) col.setAttribute(COL, "");
-      html.setAttribute("data-carrier-login-vw", String(Math.round(window.innerWidth)));
-      html.setAttribute("data-carrier-login-vh", String(Math.round(window.innerHeight)));
+      html.setAttribute("data-chatpane-login-vw", String(Math.round(window.innerWidth)));
+      html.setAttribute("data-chatpane-login-vh", String(Math.round(window.innerHeight)));
       html.setAttribute(
-        "data-carrier-login-col-w",
+        "data-chatpane-login-col-w",
         String(Math.round(col.getBoundingClientRect().width))
       );
       html.setAttribute(
-        "data-carrier-login-card-w",
+        "data-chatpane-login-card-w",
         String(Math.round(card.getBoundingClientRect().width))
       );
       html.setAttribute(
-        "data-carrier-login-form-w",
+        "data-chatpane-login-form-w",
         String(Math.round(form.getBoundingClientRect().width))
       );
       restoreRequiredLoginUi();
@@ -8595,7 +8595,7 @@ ${button.innerHTML}`)
     const failureDescription = [...failureGroups].map(([reason, group]) => captureFailureMessage(reason, group)).join(" ");
     const platform = chatpaneMediaPlatform;
     const host = document.createElement("div");
-    host.id = "carrier-media-permission-banner";
+    host.id = "chatpane-media-permission-banner";
     const root = host.attachShadow({ mode: "closed" });
     root.innerHTML = `<style>
     :host { all: initial; position: fixed; bottom: 68px; right: 20px; z-index: 2147483646;
@@ -9207,7 +9207,7 @@ ${button.innerHTML}`)
   var READ_TRANSITION_MIN_OBSERVATIONS = READ_DROP_MIN_OBSERVATIONS;
   var RETIRED_FINGERPRINT_TTL_MS = 3e4;
   var NotifiedSignatureStore = class {
-    constructor(storage = null, storageKey2 = "__carrier_notified_previews__") {
+    constructor(storage = null, storageKey2 = "__chatpane_notified_previews__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "entries", /* @__PURE__ */ new Map());
@@ -9493,7 +9493,7 @@ ${button.innerHTML}`)
     return validOpaqueTextIdentity(identity.title, TITLE_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.body, BODY_PREFIX_LIMIT) && validOpaqueTextIdentity(identity.message, BODY_PREFIX_LIMIT) && (identity.sender === null || typeof identity.sender === "string" && HASH_RE.test(identity.sender));
   };
   var PendingPageNotificationStore = class {
-    constructor(storage = null, storageKey2 = "__carrier_pending_page_notifications__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+    constructor(storage = null, storageKey2 = "__chatpane_pending_page_notifications__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
@@ -9607,7 +9607,7 @@ ${button.innerHTML}`)
     }
   };
   var PageNotificationReceiptStore = class {
-    constructor(storage = null, storageKey2 = "__carrier_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
+    constructor(storage = null, storageKey2 = "__chatpane_page_notification_receipts__", ttlMs = PAGE_NOTIFICATION_RECEIPT_TTL_MS, now = Date.now()) {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ttlMs", ttlMs);
@@ -10418,10 +10418,10 @@ ${button.innerHTML}`)
   var MUTED_UNREAD_CLEAR_CONFIRM_MS = 2e4;
   var MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
   function mutedUnreadStorageKey(cookie) {
-    return accountScopedStorageKey("__carrier_muted_unreads__", cookie);
+    return accountScopedStorageKey("__chatpane_muted_unreads__", cookie);
   }
   var MutedUnreadStore = class {
-    constructor(storage = null, storageKey2 = "__carrier_muted_unreads__") {
+    constructor(storage = null, storageKey2 = "__chatpane_muted_unreads__") {
       __publicField(this, "storage", storage);
       __publicField(this, "storageKey", storageKey2);
       __publicField(this, "ids", /* @__PURE__ */ new Set());
@@ -10599,11 +10599,11 @@ ${button.innerHTML}`)
     const withGroupPicture = (sender, picture) => sender?.group && picture ? { ...sender, group_picture: picture } : sender;
     const notificationStorage = pageReloadSafeStorage();
     const pageReceiptKey = accountScopedStorageKey(
-      "__carrier_page_notification_receipts__",
+      "__chatpane_page_notification_receipts__",
       document.cookie
     );
     const pendingPageKey = accountScopedStorageKey(
-      "__carrier_pending_page_notifications__",
+      "__chatpane_pending_page_notifications__",
       document.cookie
     );
     const pageNotificationReceipts = new PageNotificationReceiptStore(
@@ -11958,10 +11958,10 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/pane-resize.ts
-  var PANE_ATTR = "data-carrier-pane";
-  var CHAT_ROW_ATTR = "data-carrier-chat-row";
-  var RESIZING_ATTR = "data-carrier-resizing";
-  var EDGE_CLASS = "carrier-pane-edge";
+  var PANE_ATTR = "data-chatpane-pane";
+  var CHAT_ROW_ATTR = "data-chatpane-chat-row";
+  var RESIZING_ATTR = "data-chatpane-resizing";
+  var EDGE_CLASS = "chatpane-pane-edge";
   var SELECTORS = {
     list: `[role="navigation"][${PANE_ATTR}="list"]`,
     details: `[${CHAT_ROW_ATTR}] > :nth-child(2)`
@@ -11995,11 +11995,11 @@ ${button.innerHTML}`)
       const settings = window.__CHATPANE_SETTINGS__;
       if (settings && typeof settings === "object") settings.pane_widths = { ...widths };
       const cached = JSON.parse(
-        localStorage.getItem("__carrier_settings") || "null"
+        localStorage.getItem("__chatpane_settings") || "null"
       );
       if (cached && typeof cached === "object" && !Array.isArray(cached)) {
         cached.pane_widths = { ...widths };
-        localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+        localStorage.setItem("__chatpane_settings", JSON.stringify(cached));
       }
     } catch (_) {
     }
@@ -12021,7 +12021,7 @@ ${button.innerHTML}`)
   function initPaneResize() {
     let widths = storedWidths();
     const widthStyle = document.createElement("style");
-    widthStyle.setAttribute("data-carrier-pane-widths", "");
+    widthStyle.setAttribute("data-chatpane-pane-widths", "");
     const edgeStyle = document.createElement("style");
     edgeStyle.textContent = EDGE_CSS;
     const showWidths = () => {
@@ -12259,7 +12259,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/features/thread-nav.ts
-  var RESTORED_THREAD_KEY = "carrier-restored-thread";
+  var RESTORED_THREAD_KEY = "chatpane-restored-thread";
   var cancelThreadRestore = () => {
   };
   function conversationInfoButton() {
@@ -13298,7 +13298,7 @@ ${text}`)) {
     if (text !== void 0) el.textContent = text;
     return el;
   }
-  var action = (label2, run, className = "carrier-schedule-action") => {
+  var action = (label2, run, className = "chatpane-schedule-action") => {
     const button = element("button", className, label2);
     button.type = "button";
     button.addEventListener("click", (event) => {
@@ -13487,7 +13487,7 @@ ${text}`)) {
       }
     };
     const customPicker = (container, due = Date.now() + 10 * 6e4) => {
-      const fields = element("div", "carrier-schedule-fields");
+      const fields = element("div", "chatpane-schedule-fields");
       const dateLabel = element("label", "", "Date");
       const date = element("input", "");
       date.type = "date";
@@ -13517,15 +13517,15 @@ ${text}`)) {
           }
           void save(value);
         },
-        "carrier-schedule-primary"
+        "chatpane-schedule-primary"
       );
       container.append(fields, confirm);
     };
     const render = () => {
       if (!panel) return;
       panel.replaceChildren();
-      const heading = element("div", "carrier-schedule-heading");
-      const closeButton = action("", () => close(true), "carrier-schedule-close");
+      const heading = element("div", "chatpane-schedule-heading");
+      const closeButton = action("", () => close(true), "chatpane-schedule-close");
       closeButton.setAttribute("aria-label", "Close scheduling");
       closeButton.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
       heading.append(
@@ -13534,12 +13534,12 @@ ${text}`)) {
       );
       panel.append(heading);
       if (editing) {
-        panel.append(element("p", "carrier-schedule-preview", editing.text));
+        panel.append(element("p", "chatpane-schedule-preview", editing.text));
         if (editing.status === "uncertain")
           panel.append(
             element(
               "p",
-              "carrier-schedule-warning",
+              "chatpane-schedule-warning",
               "Check the conversation before rescheduling. Messenger may already have accepted this message."
             )
           );
@@ -13552,52 +13552,52 @@ ${text}`)) {
               const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
               if (updated) void save(updated.due);
             },
-            "carrier-schedule-preset"
+            "chatpane-schedule-preset"
           );
           choice.append(
             element("span", "", preset.label),
-            element("span", "carrier-schedule-time", formatScheduleTime(preset.due))
+            element("span", "chatpane-schedule-time", formatScheduleTime(preset.due))
           );
           panel.append(choice);
         }
-        const details = element("details", "carrier-schedule-custom");
+        const details = element("details", "chatpane-schedule-custom");
         details.append(element("summary", "", "Choose date & time"));
         customPicker(details);
         details.addEventListener("toggle", positionPanel);
         panel.append(details);
       } else
-        panel.append(element("p", "carrier-schedule-note", "Write a text message to schedule it."));
+        panel.append(element("p", "chatpane-schedule-note", "Write a text message to schedule it."));
       panel.append(
         element(
           "p",
-          "carrier-schedule-note",
+          "chatpane-schedule-note",
           `${Intl.DateTimeFormat().resolvedOptions().timeZone} · 24-hour time`
         ),
         element(
           "p",
-          "carrier-schedule-note carrier-schedule-divider",
+          "chatpane-schedule-note chatpane-schedule-divider",
           "Sends automatically while Chatpane is running and connected."
         )
       );
       if (rows.length && !editing) {
-        panel.append(element("h3", "carrier-schedule-divider", "Scheduled messages"));
+        panel.append(element("h3", "chatpane-schedule-divider", "Scheduled messages"));
         for (const row of [...rows].sort((a, b) => a.due - b.due)) {
-          const item = element("div", "carrier-schedule-item");
+          const item = element("div", "chatpane-schedule-item");
           const status = row.status === "missed" || row.status === "missed_draft" ? "Not sent" : row.status === "uncertain" ? "Send unconfirmed" : row.status === "sending" ? "Submitting…" : row.status === "draft" ? "Not scheduled" : "Scheduled";
           item.append(
             element(
               "strong",
-              row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain" ? "carrier-schedule-warning" : "",
+              row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain" ? "chatpane-schedule-warning" : "",
               `${status} · ${formatScheduleTime(row.due, true)}`
             ),
             element(
               "small",
-              "carrier-schedule-note",
+              "chatpane-schedule-note",
               row.thread === thread() ? "This conversation" : "Another conversation"
             ),
-            element("p", "carrier-schedule-preview", row.text)
+            element("p", "chatpane-schedule-preview", row.text)
           );
-          const actions = element("div", "carrier-schedule-item-actions");
+          const actions = element("div", "chatpane-schedule-item-actions");
           if (row.status !== "sending") {
             actions.append(
               action(row.status === "scheduled" ? "Edit time" : "Reschedule", () => {
@@ -13642,8 +13642,8 @@ ${text}`)) {
         return;
       }
       if (findComposer() !== box || thread() !== panelThread || hasComposerMedia(box)) return;
-      panel = element("div", "carrier-schedule-panel");
-      panel.id = "carrier-schedule-panel";
+      panel = element("div", "chatpane-schedule-panel");
+      panel.id = "chatpane-schedule-panel";
       panel.setAttribute("role", "dialog");
       panel.setAttribute("aria-label", "Schedule send");
       document.body.append(panel);
@@ -13689,13 +13689,13 @@ ${text}`)) {
           () => {
             void open();
           },
-          "carrier-schedule-button"
+          "chatpane-schedule-button"
         );
-        button.setAttribute("data-carrier-schedule", "");
+        button.setAttribute("data-chatpane-schedule", "");
         button.setAttribute("aria-label", "Schedule send");
         button.setAttribute("aria-haspopup", "dialog");
         button.setAttribute("aria-expanded", "false");
-        button.setAttribute("aria-controls", "carrier-schedule-panel");
+        button.setAttribute("aria-controls", "chatpane-schedule-panel");
         button.title = "Schedule send";
         button.innerHTML = '<svg viewBox="2 2 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 4h2v5.4l3.5 2-.9 1.8L11 12.6Z"/></svg>';
       }
@@ -13758,7 +13758,7 @@ ${text}`)) {
       ensureButton();
       new MutationObserver((records) => {
         if (records.every(
-          (r) => r.target instanceof Element && (r.target.closest(".carrier-schedule-panel") || r.target === button) || r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every((n) => n === button)
+          (r) => r.target instanceof Element && (r.target.closest(".chatpane-schedule-panel") || r.target === button) || r.type === "childList" && [...r.addedNodes, ...r.removedNodes].every((n) => n === button)
         ))
           return;
         scheduleMount();
@@ -13830,9 +13830,9 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/scrollbars.ts
-  var KIND_ATTR = "data-carrier-scrollbars";
-  var INDICATOR_ID = "carrier-scroll-indicator";
-  var CHATS_ATTR = "data-carrier-chats";
+  var KIND_ATTR = "data-chatpane-scrollbars";
+  var INDICATOR_ID = "chatpane-scroll-indicator";
+  var CHATS_ATTR = "data-chatpane-chats";
   var COVER_CHECK_MS = 250;
   var HIDE_AFTER_MS = 800;
   function drawsOverlayScrollbars(root) {
@@ -13909,7 +13909,7 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/selection.ts
-  var CHATS_ATTR2 = "data-carrier-chats";
+  var CHATS_ATTR2 = "data-chatpane-chats";
   function initSelection() {
     const html = document.documentElement;
     const sync = () => {
@@ -13926,7 +13926,7 @@ ${text}`)) {
     }
     window.addEventListener("popstate", sync);
     sync();
-    const pageSelectAll = (target) => html.hasAttribute(CHATS_ATTR2) && !html.hasAttribute("data-carrier-login") && (target === document.body || target === html);
+    const pageSelectAll = (target) => html.hasAttribute(CHATS_ATTR2) && !html.hasAttribute("data-chatpane-login") && (target === document.body || target === html);
     document.addEventListener(
       "selectstart",
       (event) => {
@@ -13965,7 +13965,7 @@ ${text}`)) {
     // never runs — so a hidden window says nothing about whether the selector
     // still works, and checking one would report a break every interval for as
     // long as Chatpane sits in the background.
-    { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true }
+    { key: "settings-button", sel: "[data-chatpane-settings-button]", needsVisible: true }
   ];
   function initSelectorHealth() {
     if (!window.__TAURI_INTERNALS__) return;
@@ -14004,8 +14004,8 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/settings-button.ts
-  var SLOT_ATTR = "data-carrier-settings-slot";
-  var BUTTON_ATTR = "data-carrier-settings-button";
+  var SLOT_ATTR = "data-chatpane-settings-slot";
+  var BUTTON_ATTR = "data-chatpane-settings-button";
   function isOverflowButton(button) {
     return button.matches('button, [role="button"]') && isMessengerHeaderOverflowControl(button.querySelector("svg path")?.getAttribute("d") || "");
   }
@@ -14231,12 +14231,12 @@ ${text}`)) {
       const settings = window.__CHATPANE_SETTINGS__ && typeof window.__CHATPANE_SETTINGS__ === "object" && !Array.isArray(window.__CHATPANE_SETTINGS__) ? window.__CHATPANE_SETTINGS__ : null;
       if (settings) settings.zoom = clamped;
       const cached = JSON.parse(
-        localStorage.getItem("__carrier_settings") || "null"
+        localStorage.getItem("__chatpane_settings") || "null"
       );
       const nextSettings = cached && typeof cached === "object" && !Array.isArray(cached) ? cached : settings ? Object.assign({}, settings) : null;
       if (nextSettings) {
         nextSettings.zoom = clamped;
-        localStorage.setItem("__carrier_settings", JSON.stringify(nextSettings));
+        localStorage.setItem("__chatpane_settings", JSON.stringify(nextSettings));
       }
     } catch (_) {
     }
@@ -14535,7 +14535,7 @@ ${text}`)) {
       }
       return false;
     };
-    const SYNC_BANNER_ID = "carrier-sync-banner";
+    const SYNC_BANNER_ID = "chatpane-sync-banner";
     let manualRetryPending = false;
     const showSyncBanner = (limited = false) => {
       try {
@@ -14561,7 +14561,7 @@ ${text}`)) {
           cursor: "pointer",
           pointerEvents: "auto"
         };
-        let retry = banner.querySelector("button:not([data-carrier-reload])");
+        let retry = banner.querySelector("button:not([data-chatpane-reload])");
         if ((limited || recoveryFailed) && !retry) {
           retry = document.createElement("button");
           retry.type = "button";
@@ -14582,11 +14582,11 @@ ${text}`)) {
           retry.disabled = limited ? manualRetryPending || rateLimitRemainingMs() <= 0 : protectedNow || !navigator.onLine;
           retry.textContent = limited ? retry.disabled ? "Retry pending…" : "Try again" : "Reconnect";
         }
-        let reload = banner.querySelector("[data-carrier-reload]");
+        let reload = banner.querySelector("[data-chatpane-reload]");
         if ((recoveryFailed || syncProcessingStalled) && !reload) {
           reload = document.createElement("button");
           reload.type = "button";
-          reload.dataset.carrierReload = "";
+          reload.dataset.chatpaneReload = "";
           reload.textContent = "Reload";
           Object.assign(reload.style, buttonStyle);
           reload.addEventListener("click", (event) => {
@@ -14695,9 +14695,9 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/system-emoji.ts
-  var SOURCE_ATTR = "data-carrier-emoji-sprite";
+  var SOURCE_ATTR = "data-chatpane-emoji-sprite";
   var GLYPH_ATTR = SYSTEM_EMOJI_GLYPH_ATTR;
-  var REACTION_ATTR = "data-carrier-reaction-emoji";
+  var REACTION_ATTR = "data-chatpane-reaction-emoji";
   var CANDIDATE_SEL = "img[alt], [aria-label]";
   var INTERACTIVE_SEL = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
   function initSystemEmoji() {
@@ -14723,7 +14723,7 @@ ${text}`)) {
     function clearGlyph(el) {
       el.__chatpaneSystemEmojiGlyph?.remove?.();
       el.removeAttribute(SOURCE_ATTR);
-      el.removeAttribute("data-carrier-emoji-glyph");
+      el.removeAttribute("data-chatpane-emoji-glyph");
       delete el.__chatpaneSystemEmojiGlyph;
     }
     function ensureGlyph(el) {
@@ -14733,7 +14733,7 @@ ${text}`)) {
         return;
       }
       el.setAttribute(SOURCE_ATTR, "");
-      el.setAttribute("data-carrier-emoji-glyph", glyph);
+      el.setAttribute("data-chatpane-emoji-glyph", glyph);
       let span = el.__chatpaneSystemEmojiGlyph;
       if (!span?.isConnected) {
         span = document.createElement("span");
@@ -14822,7 +14822,7 @@ ${text}`)) {
       });
     }
     const apply2 = () => {
-      html.toggleAttribute("data-carrier-system-emoji", on2());
+      html.toggleAttribute("data-chatpane-system-emoji", on2());
       if (on2()) {
         start();
         schedule();
@@ -14938,10 +14938,10 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/title-bar.ts
-  var INSET_VAR = "--carrier-title-bar-inset";
-  var KIND_ATTR2 = "data-carrier-title-bar";
-  var STRIP_ID = "carrier-title-strip";
-  var CONTROLS_ID = "carrier-window-controls";
+  var INSET_VAR = "--chatpane-title-bar-inset";
+  var KIND_ATTR2 = "data-chatpane-title-bar";
+  var STRIP_ID = "chatpane-title-strip";
+  var CONTROLS_ID = "chatpane-window-controls";
   var state2 = null;
   function control(action2) {
     chatpaneWindowControl(action2)?.catch?.(
@@ -15495,7 +15495,7 @@ ${text}`)) {
   }
 
   // inject/src/messenger/lib/media-viewer.ts
-  var MEDIA_VIEWER_ATTR = "data-carrier-media-viewer";
+  var MEDIA_VIEWER_ATTR = "data-chatpane-media-viewer";
   var DIALOG = '[role="dialog"]';
   var HIDDEN = '[hidden], [aria-hidden="true"], [inert]';
   function isMediaViewerShape(shape) {
@@ -15521,7 +15521,7 @@ ${text}`)) {
     const rect = dialog.getBoundingClientRect();
     if (!coversViewport(rect, viewport)) return false;
     let overlay = dialog.getAttribute("aria-modal") === "true";
-    let excluded = !!dialog.closest("[data-carrier-shortcuts-overlay]");
+    let excluded = !!dialog.closest("[data-chatpane-shortcuts-overlay]");
     for (let ancestor = dialog; ancestor; ancestor = ancestor.parentElement) {
       const position = getComputedStyle(ancestor).position;
       if (position === "fixed" || position === "absolute") overlay = true;
@@ -15572,9 +15572,9 @@ ${text}`)) {
   var DIALOG2 = '[role="dialog"]';
   var BANNER = 'div[role="banner"]';
   var CONTROL = 'a[href], button, [role="button"]';
-  var BANNER_ATTR = "data-carrier-media-controls";
-  var ACTIONS_ATTR = "data-carrier-media-actions";
-  var OFFSET = "--carrier-media-controls-offset";
+  var BANNER_ATTR = "data-chatpane-media-controls";
+  var ACTIONS_ATTR = "data-chatpane-media-actions";
+  var OFFSET = "--chatpane-media-controls-offset";
   var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control2) => control2.getBoundingClientRect()).filter(
     (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && // Controls sit near the top; Chatpane's strip (and the offset clearing
     // it) can move them further down, so the band grows with it.
@@ -15698,6 +15698,44 @@ ${text}`)) {
     schedule();
   }
 
+  // inject/src/messenger/lib/storage-migration.ts
+  function chatpaneStorageKey(key) {
+    if (key.startsWith("__carrier_")) return `__chatpane_${key.slice("__carrier_".length)}`;
+    if (key.startsWith("carrier-")) return `chatpane-${key.slice("carrier-".length)}`;
+    if (key === "carrier:login-redirect") return "chatpane:login-redirect";
+    return null;
+  }
+  function migrateStorageKeys(storage) {
+    if (!storage) return;
+    const keys = [];
+    try {
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key !== null) keys.push(key);
+      }
+    } catch (_) {
+      return;
+    }
+    for (const key of keys) {
+      const renamed = chatpaneStorageKey(key);
+      if (!renamed) continue;
+      try {
+        const value = storage.getItem(key);
+        if (value !== null && storage.getItem(renamed) === null) storage.setItem(renamed, value);
+        storage.removeItem(key);
+      } catch (_) {
+      }
+    }
+  }
+  function migratePageStorage() {
+    for (const name of ["localStorage", "sessionStorage"]) {
+      try {
+        migrateStorageKeys(window[name]);
+      } catch (_) {
+      }
+    }
+  }
+
   // inject/src/messenger/index.ts
   function initFeature(name, init) {
     try {
@@ -15708,6 +15746,7 @@ ${text}`)) {
     }
   }
   function main() {
+    initFeature("storage-migration", migratePageStorage);
     initFeature("rate-limit", initRateLimit);
     initFeature("title-bar", initTitleBar);
     initFeature("facebook-workers", initFacebookWorkerOptimization);

@@ -395,6 +395,14 @@
 
       let activeTab = "general";
       try {
+        // Chatpane was called Carrier; move the remembered tab to the new key.
+        const legacyTab = localStorage.getItem("carrier:settingsTab");
+        if (legacyTab !== null) {
+          if (localStorage.getItem("chatpane:settingsTab") === null) {
+            localStorage.setItem("chatpane:settingsTab", legacyTab);
+          }
+          localStorage.removeItem("carrier:settingsTab");
+        }
         const saved = localStorage.getItem("chatpane:settingsTab");
         if (saved && TABS.some((t) => t.id === saved)) activeTab = saved;
       } catch (_) {}

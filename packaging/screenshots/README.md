@@ -32,8 +32,8 @@ notifications, pointer, underlying windows, or personal data are visible.
 
 | Image | SHA-256 |
 | --- | --- |
-| `carrier-linux-en-light.png` | `25062985d53d566fe313f619a07bd49fd7691edbf2a5435f6775cbe47f30f53a` |
-| `carrier-linux-en-dark.png` | `dfa908e4d63c71ea515500699fe009c12fec6a8095be16ba04b8447084371b6c` |
+| `chatpane-linux-en-light.png` | `25062985d53d566fe313f619a07bd49fd7691edbf2a5435f6775cbe47f30f53a` |
+| `chatpane-linux-en-dark.png` | `dfa908e4d63c71ea515500699fe009c12fec6a8095be16ba04b8447084371b6c` |
 
 The AppStream URLs point to these inspected files on the permanent artifact
 host. Replacing either image requires a new privacy inspection before upload.

@@ -5,7 +5,7 @@ import { accountScopedStorageKey } from "../lib/threads";
 export const RATE_LIMIT_RETRY_STATE_EVENT = "chatpane:rate-limit-retry-state";
 export const RATE_LIMIT_RETRY_EVENT = "chatpane:rate-limit-retry";
 export const RATE_LIMIT_EVENT = "chatpane:rate-limit-change";
-export const RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
+export const RATE_LIMIT_STORAGE_KEY = "chatpane-rate-limit";
 let state: RateLimitState | undefined;
 let storageKey: string | null = null;
 export const rateLimitAccountScope = () => storageKey ?? "";

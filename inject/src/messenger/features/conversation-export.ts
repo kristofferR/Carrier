@@ -37,7 +37,7 @@ async function exportConversation(threadId: string, format: ExportFormat) {
     toast("This conversation is too large to export", undefined, { warning: true });
     return;
   }
-  const reveal = `carrier-export:${randomHex()}`;
+  const reveal = `chatpane-export:${randomHex()}`;
   try {
     await chatpaneExportConversation({ format, conversation, reveal });
   } catch (error) {

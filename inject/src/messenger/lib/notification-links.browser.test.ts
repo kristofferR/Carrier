@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "reads the link card label without unrelated or hidden message text",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-link-card-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-link-card-test-"));
     try {
       const entry = fileURLToPath(new URL("./notification-links.ts", import.meta.url));
       const images = fileURLToPath(new URL("./notification-images.ts", import.meta.url));

@@ -13,21 +13,21 @@ import {
   onFacebookHost,
 } from "./cookie-consent";
 
-const HIDE = "data-carrier-hide";
-const COL = "data-carrier-login-col";
-const ANC = "data-carrier-login-anc";
-const FORM = "data-carrier-login-form";
-const CARD = "data-carrier-login-card";
-const LIGHT_BG = "data-carrier-login-light-bg";
-const REQUIRED = "data-carrier-login-required";
-const FOOTER = "data-carrier-login-footer";
-const FOOTER_KEEP = "data-carrier-login-footer-keep";
-const FOOTER_LINKS = "data-carrier-login-footer-links";
-const LANGUAGES = "data-carrier-login-languages";
-const LANGUAGE_LINK = "data-carrier-login-language-link";
-const LOGO = "data-carrier-login-logo";
-const LOGIN_REDIRECT = "carrier:login-redirect";
-const LOADING = "data-carrier-login-loading";
+const HIDE = "data-chatpane-hide";
+const COL = "data-chatpane-login-col";
+const ANC = "data-chatpane-login-anc";
+const FORM = "data-chatpane-login-form";
+const CARD = "data-chatpane-login-card";
+const LIGHT_BG = "data-chatpane-login-light-bg";
+const REQUIRED = "data-chatpane-login-required";
+const FOOTER = "data-chatpane-login-footer";
+const FOOTER_KEEP = "data-chatpane-login-footer-keep";
+const FOOTER_LINKS = "data-chatpane-login-footer-links";
+const LANGUAGES = "data-chatpane-login-languages";
+const LANGUAGE_LINK = "data-chatpane-login-language-link";
+const LOGO = "data-chatpane-login-logo";
+const LOGIN_REDIRECT = "chatpane:login-redirect";
+const LOADING = "data-chatpane-login-loading";
 const LOADER_LIMIT_MS = 15_000;
 
 type LoginRecoveryState = "idle" | "pending" | "settled";
@@ -150,7 +150,7 @@ export function initLoginTidy() {
     copy.setAttribute("fill", color);
     copy.removeAttribute("class");
     const data = encodeURIComponent(new XMLSerializer().serializeToString(copy));
-    html.style.setProperty("--carrier-login-logo", `url("data:image/svg+xml,${data}")`);
+    html.style.setProperty("--chatpane-login-logo", `url("data:image/svg+xml,${data}")`);
     html.setAttribute(LOGO, color);
   };
 
@@ -289,9 +289,9 @@ export function initLoginTidy() {
         location.pathname,
       )
     ) {
-      html.setAttribute("data-carrier-authtext", "");
+      html.setAttribute("data-chatpane-authtext", "");
     } else {
-      html.removeAttribute("data-carrier-authtext");
+      html.removeAttribute("data-chatpane-authtext");
     }
     // The login page has both an identifier and a password field. Checkpoint /
     // re-auth / recovery forms have only a password field, so require both to
@@ -299,8 +299,8 @@ export function initLoginTidy() {
     const pass = document.querySelector('input[name="pass"]');
     const isLogin = onFacebookHost() && !!pass && !!document.querySelector('input[name="email"]');
     if (!isLogin) {
-      if (html.hasAttribute("data-carrier-login")) {
-        html.removeAttribute("data-carrier-login");
+      if (html.hasAttribute("data-chatpane-login")) {
+        html.removeAttribute("data-chatpane-login");
         document.querySelectorAll(`[${HIDE}]`).forEach((el) => el.removeAttribute(HIDE));
         document.querySelectorAll(`[${COL}]`).forEach((el) => el.removeAttribute(COL));
         document.querySelectorAll(`[${ANC}]`).forEach((el) => el.removeAttribute(ANC));
@@ -308,9 +308,9 @@ export function initLoginTidy() {
         document.querySelectorAll(`[${CARD}]`).forEach((el) => el.removeAttribute(CARD));
         document.querySelectorAll(`[${REQUIRED}]`).forEach((el) => el.removeAttribute(REQUIRED));
         html.removeAttribute(LOGO);
-        html.style.removeProperty("--carrier-login-logo");
+        html.style.removeProperty("--chatpane-login-logo");
         clearFooterMarks();
-        html.removeAttribute("data-carrier-login-dark");
+        html.removeAttribute("data-chatpane-login-dark");
       }
       // Once confidently logged in (auth cookie set, not on a checkpoint/2FA
       // interstitial, page fully loaded), stop watching: this observer fires
@@ -323,7 +323,7 @@ export function initLoginTidy() {
         /\bc_user=/.test(document.cookie) &&
         (loginRecovery === "settled" ||
           (loginRecovery === "idle" && !["/", "/home.php"].includes(location.pathname))) &&
-        !html.hasAttribute("data-carrier-authtext") &&
+        !html.hasAttribute("data-chatpane-authtext") &&
         document.readyState === "complete"
       ) {
         tidyObserver.disconnect();
@@ -332,11 +332,11 @@ export function initLoginTidy() {
       }
       return;
     }
-    html.setAttribute("data-carrier-login", "");
+    html.setAttribute("data-chatpane-login", "");
     // Newer login layouts define a light palette below <html>, so changing
     // Facebook's root class alone cannot theme them. Keep this independent of
     // force-theme, which may already have set the root class before we run.
-    html.toggleAttribute("data-carrier-login-dark", wantDark());
+    html.toggleAttribute("data-chatpane-login-dark", wantDark());
     const form = pass.closest("form");
     if (!form) return;
     document.querySelectorAll(`[${FORM}]`).forEach((el) => {
@@ -388,18 +388,18 @@ export function initLoginTidy() {
       el.removeAttribute(FOOTER_LINKS);
     });
     if (!col.hasAttribute(COL)) col.setAttribute(COL, "");
-    html.setAttribute("data-carrier-login-vw", String(Math.round(window.innerWidth)));
-    html.setAttribute("data-carrier-login-vh", String(Math.round(window.innerHeight)));
+    html.setAttribute("data-chatpane-login-vw", String(Math.round(window.innerWidth)));
+    html.setAttribute("data-chatpane-login-vh", String(Math.round(window.innerHeight)));
     html.setAttribute(
-      "data-carrier-login-col-w",
+      "data-chatpane-login-col-w",
       String(Math.round(col.getBoundingClientRect().width)),
     );
     html.setAttribute(
-      "data-carrier-login-card-w",
+      "data-chatpane-login-card-w",
       String(Math.round(card.getBoundingClientRect().width)),
     );
     html.setAttribute(
-      "data-carrier-login-form-w",
+      "data-chatpane-login-form-w",
       String(Math.round(form.getBoundingClientRect().width)),
     );
     restoreRequiredLoginUi();

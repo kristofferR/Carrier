@@ -186,10 +186,10 @@
       if (shortcutOverlay) return;
       shortcutReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const overlay = document.createElement("div");
-      overlay.setAttribute("data-carrier-shortcuts-overlay", "");
+      overlay.setAttribute("data-chatpane-shortcuts-overlay", "");
       overlay.setAttribute("role", "dialog");
       overlay.setAttribute("aria-modal", "true");
-      overlay.setAttribute("aria-labelledby", "carrier-shortcuts-title");
+      overlay.setAttribute("aria-labelledby", "chatpane-shortcuts-title");
       Object.assign(overlay.style, {
         position: "fixed",
         inset: "0",
@@ -222,7 +222,7 @@
         marginBottom: "16px"
       });
       const title = document.createElement("h2");
-      title.id = "carrier-shortcuts-title";
+      title.id = "chatpane-shortcuts-title";
       title.textContent = "Keyboard Shortcuts";
       Object.assign(title.style, { margin: "0", fontSize: "20px", lineHeight: "1.2" });
       const close = document.createElement("button");

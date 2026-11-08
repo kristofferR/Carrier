@@ -182,7 +182,7 @@ function element<K extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) el.textContent = text;
   return el;
 }
-const action = (label: string, run: () => void, className = "carrier-schedule-action") => {
+const action = (label: string, run: () => void, className = "chatpane-schedule-action") => {
   const button = element("button", className, label);
   button.type = "button";
   button.addEventListener("click", (event) => {
@@ -414,7 +414,7 @@ export function initScheduledSend() {
     }
   };
   const customPicker = (container: HTMLElement, due = Date.now() + 10 * 60_000) => {
-    const fields = element("div", "carrier-schedule-fields");
+    const fields = element("div", "chatpane-schedule-fields");
     const dateLabel = element("label", "", "Date");
     const date = element("input", "");
     date.type = "date";
@@ -444,15 +444,15 @@ export function initScheduledSend() {
         }
         void save(value);
       },
-      "carrier-schedule-primary",
+      "chatpane-schedule-primary",
     );
     container.append(fields, confirm);
   };
   const render = () => {
     if (!panel) return;
     panel.replaceChildren();
-    const heading = element("div", "carrier-schedule-heading");
-    const closeButton = action("", () => close(true), "carrier-schedule-close");
+    const heading = element("div", "chatpane-schedule-heading");
+    const closeButton = action("", () => close(true), "chatpane-schedule-close");
     closeButton.setAttribute("aria-label", "Close scheduling");
     closeButton.innerHTML =
       '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 4 12 12M16 4 4 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -462,12 +462,12 @@ export function initScheduledSend() {
     );
     panel.append(heading);
     if (editing) {
-      panel.append(element("p", "carrier-schedule-preview", editing.text));
+      panel.append(element("p", "chatpane-schedule-preview", editing.text));
       if (editing.status === "uncertain")
         panel.append(
           element(
             "p",
-            "carrier-schedule-warning",
+            "chatpane-schedule-warning",
             "Check the conversation before rescheduling. Messenger may already have accepted this message.",
           ),
         );
@@ -480,37 +480,37 @@ export function initScheduledSend() {
             const updated = schedulePresets(Date.now()).find((p) => p.label === preset.label);
             if (updated) void save(updated.due);
           },
-          "carrier-schedule-preset",
+          "chatpane-schedule-preset",
         );
         choice.append(
           element("span", "", preset.label),
-          element("span", "carrier-schedule-time", formatScheduleTime(preset.due)),
+          element("span", "chatpane-schedule-time", formatScheduleTime(preset.due)),
         );
         panel.append(choice);
       }
-      const details = element("details", "carrier-schedule-custom");
+      const details = element("details", "chatpane-schedule-custom");
       details.append(element("summary", "", "Choose date & time"));
       customPicker(details);
       details.addEventListener("toggle", positionPanel);
       panel.append(details);
     } else
-      panel.append(element("p", "carrier-schedule-note", "Write a text message to schedule it."));
+      panel.append(element("p", "chatpane-schedule-note", "Write a text message to schedule it."));
     panel.append(
       element(
         "p",
-        "carrier-schedule-note",
+        "chatpane-schedule-note",
         `${Intl.DateTimeFormat().resolvedOptions().timeZone} · 24-hour time`,
       ),
       element(
         "p",
-        "carrier-schedule-note carrier-schedule-divider",
+        "chatpane-schedule-note chatpane-schedule-divider",
         "Sends automatically while Chatpane is running and connected.",
       ),
     );
     if (rows.length && !editing) {
-      panel.append(element("h3", "carrier-schedule-divider", "Scheduled messages"));
+      panel.append(element("h3", "chatpane-schedule-divider", "Scheduled messages"));
       for (const row of [...rows].sort((a, b) => a.due - b.due)) {
-        const item = element("div", "carrier-schedule-item");
+        const item = element("div", "chatpane-schedule-item");
         const status =
           row.status === "missed" || row.status === "missed_draft"
             ? "Not sent"
@@ -525,18 +525,18 @@ export function initScheduledSend() {
           element(
             "strong",
             row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain"
-              ? "carrier-schedule-warning"
+              ? "chatpane-schedule-warning"
               : "",
             `${status} · ${formatScheduleTime(row.due, true)}`,
           ),
           element(
             "small",
-            "carrier-schedule-note",
+            "chatpane-schedule-note",
             row.thread === thread() ? "This conversation" : "Another conversation",
           ),
-          element("p", "carrier-schedule-preview", row.text),
+          element("p", "chatpane-schedule-preview", row.text),
         );
-        const actions = element("div", "carrier-schedule-item-actions");
+        const actions = element("div", "chatpane-schedule-item-actions");
         if (row.status !== "sending") {
           actions.append(
             action(row.status === "scheduled" ? "Edit time" : "Reschedule", () => {
@@ -584,8 +584,8 @@ export function initScheduledSend() {
       return;
     }
     if (findComposer() !== box || thread() !== panelThread || hasComposerMedia(box)) return;
-    panel = element("div", "carrier-schedule-panel");
-    panel.id = "carrier-schedule-panel";
+    panel = element("div", "chatpane-schedule-panel");
+    panel.id = "chatpane-schedule-panel";
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", "Schedule send");
     document.body.append(panel);
@@ -646,13 +646,13 @@ export function initScheduledSend() {
         () => {
           void open();
         },
-        "carrier-schedule-button",
+        "chatpane-schedule-button",
       );
-      button.setAttribute("data-carrier-schedule", "");
+      button.setAttribute("data-chatpane-schedule", "");
       button.setAttribute("aria-label", "Schedule send");
       button.setAttribute("aria-haspopup", "dialog");
       button.setAttribute("aria-expanded", "false");
-      button.setAttribute("aria-controls", "carrier-schedule-panel");
+      button.setAttribute("aria-controls", "chatpane-schedule-panel");
       button.title = "Schedule send";
       // Even-odd hands punch through the filled clock to the actual composer.
       button.innerHTML =
@@ -726,7 +726,7 @@ export function initScheduledSend() {
         records.every(
           (r) =>
             (r.target instanceof Element &&
-              (r.target.closest(".carrier-schedule-panel") || r.target === button)) ||
+              (r.target.closest(".chatpane-schedule-panel") || r.target === button)) ||
             (r.type === "childList" &&
               [...r.addedNodes, ...r.removedNodes].every((n) => n === button)),
         )

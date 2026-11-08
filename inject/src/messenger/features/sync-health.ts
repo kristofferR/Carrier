@@ -250,7 +250,7 @@ export function initSyncHealth() {
   // window for as long as sync is degraded. Reconciled every tick so a page
   // re-render that drops it just brings it back. No CSS animation and no
   // status role, so it can never trip the spinner detector above.
-  const SYNC_BANNER_ID = "carrier-sync-banner";
+  const SYNC_BANNER_ID = "chatpane-sync-banner";
   let manualRetryPending = false;
   const showSyncBanner = (limited = false) => {
     try {
@@ -284,7 +284,7 @@ export function initSyncHealth() {
         cursor: "pointer",
         pointerEvents: "auto",
       };
-      let retry = banner.querySelector<HTMLButtonElement>("button:not([data-carrier-reload])");
+      let retry = banner.querySelector<HTMLButtonElement>("button:not([data-chatpane-reload])");
       if ((limited || recoveryFailed) && !retry) {
         retry = document.createElement("button");
         retry.type = "button";
@@ -313,11 +313,11 @@ export function initSyncHealth() {
             : "Try again"
           : "Reconnect";
       }
-      let reload = banner.querySelector<HTMLButtonElement>("[data-carrier-reload]");
+      let reload = banner.querySelector<HTMLButtonElement>("[data-chatpane-reload]");
       if ((recoveryFailed || syncProcessingStalled) && !reload) {
         reload = document.createElement("button");
         reload.type = "button";
-        reload.dataset.carrierReload = "";
+        reload.dataset.chatpaneReload = "";
         reload.textContent = "Reload";
         Object.assign(reload.style, buttonStyle);
         reload.addEventListener("click", (event) => {

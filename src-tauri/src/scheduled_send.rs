@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn persistence_and_claims_prevent_duplicate_delivery() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("messages.json");
         let mut store = Store::load(path.clone());
         store.commit(vec![message()]).unwrap();
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn saved_draft_cannot_send_until_the_composer_clear_is_acknowledged() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let mut store = Store::load(dir.join("messages.json"));
         let mut req = Request {
             request: "a".repeat(32),
@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn rescheduling_keeps_existing_message_armed_without_a_second_request() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("messages.json");
         let mut store = Store::load(path.clone());
         store.commit(vec![message()]).unwrap();
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn rescheduling_a_recovered_draft_still_requires_arming() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let mut store = Store::load(dir.join("messages.json"));
         let mut draft = message();
         draft.status = Status::Draft;
@@ -699,7 +699,7 @@ mod tests {
     #[test]
     fn expired_unarmed_draft_still_requires_composer_clear_before_rescheduling() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let mut store = Store::load(dir.join("messages.json"));
         let mut draft = message();
         draft.status = Status::Draft;
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn a_stale_claim_from_another_account_does_not_block_delivery() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let mut store = Store::load(dir.join("messages.json"));
         let mut foreign = message();
         foreign.status = Status::Sending;
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn schedule_limit_counts_only_the_current_account() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let mut store = Store::load(dir.join("messages.json"));
         let mut items = vec![message(); MAX_ITEMS];
         for (index, item) in items.iter_mut().enumerate() {
@@ -771,7 +771,7 @@ mod tests {
     #[test]
     fn unreadable_store_is_not_overwritten() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("messages.json");
         std::fs::write(&path, "broken").unwrap();
@@ -783,7 +783,7 @@ mod tests {
     #[test]
     fn published_schedule_with_recovery_marker_cannot_send_after_restart() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("messages.json");
         let mut store = Store::load(path.clone());
         store.commit(vec![message()]).unwrap();
@@ -801,7 +801,7 @@ mod tests {
     #[test]
     fn recovery_only_disables_sends_changed_by_the_interrupted_commit() {
         let dir =
-            std::env::temp_dir().join(format!("carrier-schedule-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("chatpane-schedule-test-{}", uuid::Uuid::new_v4()));
         let path = dir.join("messages.json");
         let mut store = Store::load(path.clone());
         let unchanged = message();

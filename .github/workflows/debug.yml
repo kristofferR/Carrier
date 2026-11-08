@@ -156,9 +156,9 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/carrier-signing.keychain-db"
+          KEYCHAIN_PATH="$RUNNER_TEMP/chatpane-signing.keychain-db"
           KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
-          CERTIFICATE_PATH="$RUNNER_TEMP/carrier-signing.p12"
+          CERTIFICATE_PATH="$RUNNER_TEMP/chatpane-signing.p12"
           printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -266,8 +266,8 @@ jobs:
       - name: Remove the temporary signing keychain
         if: always()
         run: |
-          security delete-keychain "$RUNNER_TEMP/carrier-signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/carrier-signing.p12"
+          security delete-keychain "$RUNNER_TEMP/chatpane-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/chatpane-signing.p12"
 
 
   draft:

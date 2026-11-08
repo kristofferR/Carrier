@@ -32,7 +32,7 @@ export function showMediaPermissionCard(
     .join(" ");
   const platform: MediaPlatform = chatpaneMediaPlatform;
   const host = document.createElement("div");
-  host.id = "carrier-media-permission-banner";
+  host.id = "chatpane-media-permission-banner";
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
     :host { all: initial; position: fixed; bottom: 68px; right: 20px; z-index: 2147483646;

@@ -9,9 +9,9 @@ import {
   SYSTEM_EMOJI_GLYPH_ATTR,
 } from "../lib/emoji";
 
-const SOURCE_ATTR = "data-carrier-emoji-sprite";
+const SOURCE_ATTR = "data-chatpane-emoji-sprite";
 const GLYPH_ATTR = SYSTEM_EMOJI_GLYPH_ATTR;
-const REACTION_ATTR = "data-carrier-reaction-emoji";
+const REACTION_ATTR = "data-chatpane-reaction-emoji";
 const CANDIDATE_SEL = "img[alt], [aria-label]";
 const INTERACTIVE_SEL =
   'button, a[href], input, textarea, select, [role="button"], [role="link"], [contenteditable="true"]';
@@ -42,7 +42,7 @@ export function initSystemEmoji() {
   function clearGlyph(el: Element) {
     el.__chatpaneSystemEmojiGlyph?.remove?.();
     el.removeAttribute(SOURCE_ATTR);
-    el.removeAttribute("data-carrier-emoji-glyph");
+    el.removeAttribute("data-chatpane-emoji-glyph");
     delete el.__chatpaneSystemEmojiGlyph;
   }
 
@@ -53,7 +53,7 @@ export function initSystemEmoji() {
       return;
     }
     el.setAttribute(SOURCE_ATTR, "");
-    el.setAttribute("data-carrier-emoji-glyph", glyph);
+    el.setAttribute("data-chatpane-emoji-glyph", glyph);
     let span = el.__chatpaneSystemEmojiGlyph;
     if (!span?.isConnected) {
       span = document.createElement("span");
@@ -157,7 +157,7 @@ export function initSystemEmoji() {
   }
 
   const apply = () => {
-    html.toggleAttribute("data-carrier-system-emoji", on());
+    html.toggleAttribute("data-chatpane-system-emoji", on());
     if (on()) {
       start();
       schedule();

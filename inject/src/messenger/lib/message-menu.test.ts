@@ -101,7 +101,7 @@ describe("message text", () => {
     const block = element("DIV", {}, [
       text("Hello "),
       element("IMG", { alt: "😀" }),
-      element("SPAN", { "data-carrier-system-emoji-glyph": "" }, [text("😀")]),
+      element("SPAN", { "data-chatpane-system-emoji-glyph": "" }, [text("😀")]),
     ]);
     expect(messageNodeText(block)).toBe("Hello 😀");
   });

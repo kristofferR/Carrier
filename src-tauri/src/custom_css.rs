@@ -54,6 +54,37 @@ pub(crate) fn ensure_custom_css(app: &tauri::AppHandle) -> Result<PathBuf, Strin
     Ok(path)
 }
 
+/// Chatpane was called Carrier, and stylesheets written for it name
+/// `--carrier-*` variables, `.carrier-*`/`#carrier-*` selectors and
+/// `data-carrier-*` attributes. Returns the CSS with those names moved to
+/// Chatpane's, or None when nothing needs converting.
+pub(crate) fn convert_legacy_css(css: &str) -> Option<String> {
+    const RENAMES: [(&str, &str); 4] = [
+        ("--carrier-", "--chatpane-"),
+        ("data-carrier-", "data-chatpane-"),
+        (".carrier-", ".chatpane-"),
+        ("#carrier-", "#chatpane-"),
+    ];
+    RENAMES.iter().any(|(old, _)| css.contains(old)).then(|| {
+        RENAMES
+            .iter()
+            .fold(css.to_owned(), |css, (old, new)| css.replace(old, new))
+    })
+}
+
+/// A user stylesheet read from `path`, converted from Carrier's names and
+/// saved back the first time, so the conversion happens once.
+pub(crate) fn upgrade_css_file(path: &Path, css: String) -> String {
+    let Some(converted) = convert_legacy_css(&css) else {
+        return css;
+    };
+    match std::fs::write(path, &converted) {
+        Ok(()) => log::info!("converted {} to Chatpane's CSS names", path.display()),
+        Err(error) => log::warn!("couldn't save converted {}: {error}", path.display()),
+    }
+    converted
+}
+
 fn read_custom_css_from_path(path: &Path) -> Option<String> {
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
@@ -78,7 +109,7 @@ fn read_custom_css_from_path(path: &Path) -> Option<String> {
         return None;
     }
     match std::fs::read_to_string(path) {
-        Ok(css) if !css.trim().is_empty() => Some(css),
+        Ok(css) if !css.trim().is_empty() => Some(upgrade_css_file(path, css)),
         Ok(_) => None,
         Err(error) => {
             log::warn!("could not read custom CSS file {}: {error}", path.display());
@@ -97,10 +128,10 @@ fn custom_css_script(css: &str) -> String {
     format!(
         r#"(function () {{
   var css = {literal};
-  var style = document.querySelector('style[data-carrier-custom]');
+  var style = document.querySelector('style[data-chatpane-custom]');
   if (!style) {{
     style = document.createElement('style');
-    style.setAttribute('data-carrier-custom', '');
+    style.setAttribute('data-chatpane-custom', '');
     (document.head || document.documentElement).appendChild(style);
   }}
   style.textContent = css;
@@ -134,10 +165,32 @@ mod tests {
 
     fn test_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "carrier-custom-css-{}-{}-{name}",
+            "chatpane-custom-css-{}-{}-{name}",
             std::process::id(),
             TEST_SEQ.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn carrier_css_names_convert_once() {
+        let css = ":root { --carrier-out: #5e81ac; }\n[data-carrier-theme] .carrier-out, #carrier-sync-banner { color: var(--carrier-text); }";
+        assert_eq!(
+            convert_legacy_css(css).as_deref(),
+            Some(
+                ":root { --chatpane-out: #5e81ac; }\n[data-chatpane-theme] .chatpane-out, #chatpane-sync-banner { color: var(--chatpane-text); }"
+            )
+        );
+        assert_eq!(
+            convert_legacy_css(":root { --chatpane-out: red; } .carrierx {}"),
+            None
+        );
+
+        let path = test_path("legacy.css");
+        std::fs::write(&path, css).unwrap();
+        let first = read_custom_css_from_path(&path).unwrap();
+        assert!(!first.contains("carrier"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), first);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -192,7 +245,7 @@ mod tests {
     fn injection_uses_text_content_and_a_json_string_literal() {
         let script = custom_css_script("body::after { content: \"</style>\\n\u{2028}\u{2029}\"; }");
         assert!(script.contains("style.textContent = css"));
-        assert!(script.contains("data-carrier-custom"));
+        assert!(script.contains("data-chatpane-custom"));
         assert!(script.contains(r#"\"</style>\\n"#));
         assert!(script.contains("\\u2028"));
         assert!(script.contains("\\u2029"));

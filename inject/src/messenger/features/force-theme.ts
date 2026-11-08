@@ -37,7 +37,7 @@ export function initForceTheme() {
 // scheme, which Chatpane sets from the light/dark choice, so the media query is
 // the source of truth. The second name keeps themes written for other
 // Messenger apps working unchanged.
-const DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
+const DARK_MARKERS = ["data-chatpane-dark", "data-fmess-dark"];
 
 export function initThemeMarkers() {
   const html = document.documentElement;

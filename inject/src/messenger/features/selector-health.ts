@@ -20,7 +20,7 @@ const WATCHED_SELECTORS = [
   // never runs — so a hidden window says nothing about whether the selector
   // still works, and checking one would report a break every interval for as
   // long as Chatpane sits in the background.
-  { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true },
+  { key: "settings-button", sel: "[data-chatpane-settings-button]", needsVisible: true },
 ];
 
 export function initSelectorHealth() {

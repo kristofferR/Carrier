@@ -150,9 +150,11 @@ fn recovery_coordinator() -> &'static Mutex<RecoveryCoordinator> {
 fn rate_limit_account(value: Option<&str>) -> &str {
     value
         .filter(|value| {
-            value.strip_prefix("carrier-rate-limit:").is_some_and(|id| {
-                !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit())
-            })
+            value
+                .strip_prefix("chatpane-rate-limit:")
+                .is_some_and(|id| {
+                    !id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit())
+                })
         })
         .unwrap_or("")
 }

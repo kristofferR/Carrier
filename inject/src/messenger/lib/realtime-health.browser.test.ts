@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "unconnected worker probes and replacement identities in a real DOM",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-worker-health-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-worker-health-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const bundle = await build({

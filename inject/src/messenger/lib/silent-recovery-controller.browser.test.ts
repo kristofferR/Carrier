@@ -12,7 +12,7 @@ const chromium =
 test.skipIf(!chromium)(
   "recovery episodes respect account, wake, retry, and timeout boundaries",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-recovery-controller-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-recovery-controller-test-"));
     let server: ReturnType<typeof Bun.serve> | undefined;
     try {
       const bundle = await build({

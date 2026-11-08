@@ -201,11 +201,11 @@ export function initNotificationBridge() {
   // previous document queued, and hydration cannot replay delivered rows.
   const notificationStorage = pageReloadSafeStorage();
   const pageReceiptKey = accountScopedStorageKey(
-    "__carrier_page_notification_receipts__",
+    "__chatpane_page_notification_receipts__",
     document.cookie,
   );
   const pendingPageKey = accountScopedStorageKey(
-    "__carrier_pending_page_notifications__",
+    "__chatpane_pending_page_notifications__",
     document.cookie,
   );
   // Login/logout is a full navigation, so c_user is the document's stable

@@ -14,20 +14,15 @@
   the PR description, never in commit authorship or co-author trailers.
 
 **Naming:** the app is **Chatpane** ("Chatpane for Messenger" in stores), renamed
-from Carrier. New names, code and docs say Chatpane. A few things keep `carrier`
-on purpose, for compatibility; don't rename them:
+from Carrier. Code, CSS, storage keys, events and docs all say Chatpane; data
+saved under the old names is converted on first launch (page storage keys,
+`custom.css` and installed themes, startup entries, the Settings tab). Only
+these keep `carrier`, on purpose:
 - the bundle identifier `io.github.kristofferr.carrier` and names derived from
   it: it locates app data, logins, OS permissions and the Windows toast identity
-- the crate and binary `carrier` (deb/rpm `/usr/bin/carrier`, `carrier.exe`,
-  the Linux window class)
-- persisted page storage keys (`__carrier_settings`, the `__carrier_*__`
-  notification memory, `carrier-rate-limit`, `carrier-worker-connected`, the
-  legacy `carrier:zoom`) and the `--carrier-*` / `.carrier-*` / `data-carrier-*`
-  CSS names that themes and custom CSS target
-- OS-registered IDs: macOS notification categories `carrier.message.*`, the
-  tray IDs, conversation-export format and reveal-link names
-- code that migrates installs from the old name (autostart entries, the NSIS
-  hook, `Carrier.app` → `Chatpane.app`, cask and AUR renames)
+- the crate binary `carrier` (deb/rpm `/usr/bin/carrier`, `carrier.exe`,
+  `~/.local/bin/carrier` for debug installs, the Linux window class)
+- the code that migrates from the old name, which has to name it
 - the repo `kristofferR/Carrier` and its site URL, until they move
 
 Chatpane is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
@@ -69,7 +64,7 @@ bun run tauri build               # uses src-tauri/tauri.conf.release.json via t
 # Release signing locally: the release config embeds Chatpane's Developer ID provisioning
 # profile and signs with entitlements.release.plist (communication notifications, #366).
 # Put the profile at src-tauri/embedded.provisionprofile first (gitignored; Kris's Mac
-# keeps it in ~/.config/carrier-signing/, CI writes it from the APPLE_PROVISIONING_PROFILE
+# keeps it in ~/.config/chatpane-signing/, CI writes it from the APPLE_PROVISIONING_PROFILE
 # secret), then select the release config. Without the updater signing key, also skip
 # updater artifacts:
 bun run tauri build --config src-tauri/tauri.conf.release.json \

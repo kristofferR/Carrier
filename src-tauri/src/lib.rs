@@ -2515,7 +2515,7 @@ mod tests {
             DEFAULT_MCP_SOCKET
         ))));
         assert!(is_isolated_mcp_socket(Some(std::path::Path::new(
-            "/tmp/carrier-isolated.sock"
+            "/tmp/chatpane-isolated.sock"
         ))));
     }
 

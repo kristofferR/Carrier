@@ -45,7 +45,7 @@ pub(crate) fn rebuild_jump_list(threads: Vec<RecentThread>) {
         .fetch_add(1, Ordering::AcqRel)
         .wrapping_add(1);
     let spawned = std::thread::Builder::new()
-        .name("carrier-jump-list".into())
+        .name("chatpane-jump-list".into())
         .spawn(move || {
             let _serialized = JUMP_LIST_BUILD
                 .lock()

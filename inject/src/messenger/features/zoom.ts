@@ -30,7 +30,7 @@ function setZoomLevel(percent: number, fromSettings?: boolean) {
         : null;
     if (settings) settings.zoom = clamped;
     const cached = JSON.parse(
-      localStorage.getItem("__carrier_settings") || "null",
+      localStorage.getItem("__chatpane_settings") || "null",
     ) as ChatpaneSettings | null;
     const nextSettings =
       cached && typeof cached === "object" && !Array.isArray(cached)
@@ -40,7 +40,7 @@ function setZoomLevel(percent: number, fromSettings?: boolean) {
           : null;
     if (nextSettings) {
       nextSettings.zoom = clamped;
-      localStorage.setItem("__carrier_settings", JSON.stringify(nextSettings));
+      localStorage.setItem("__chatpane_settings", JSON.stringify(nextSettings));
     }
   } catch (_) {}
   // Report a local change (keyboard / View menu) so Rust applies and persists

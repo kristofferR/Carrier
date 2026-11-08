@@ -17,7 +17,7 @@ const chromium =
 test.skipIf(!chromium).each([480, 1000, 1600])(
   "media viewer DOM and CSS fixtures at %ipx",
   async (width) => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-viewer-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-viewer-test-"));
     try {
       const entry = fileURLToPath(new URL("../features/viewer-controls.ts", import.meta.url));
       const bundle = await build({
@@ -79,7 +79,7 @@ async function runFixtures() {
   const host = document.getElementById("fixtures")!;
   const result = document.getElementById("result")!;
   const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
-  const marked = (element: Element) => element.hasAttribute("data-carrier-media-viewer");
+  const marked = (element: Element) => element.hasAttribute("data-chatpane-media-viewer");
   const header = () =>
     getComputedStyle(document.documentElement).getPropertyValue("--header-height").trim();
   const assert = (name: string, condition: boolean) => {
@@ -139,7 +139,7 @@ async function runFixtures() {
     await settle();
     assert(
       "nested picker",
-      !marked(picker) && !picker.querySelector("[data-carrier-media-actions]") && marked(dialog),
+      !marked(picker) && !picker.querySelector("[data-chatpane-media-actions]") && marked(dialog),
     );
     picker.remove();
     for (const [attribute, value] of [
@@ -155,7 +155,7 @@ async function runFixtures() {
         `hide via ${attribute}`,
         !marked(dialog) &&
           header() === "0px" &&
-          !dialog.querySelector("[data-carrier-media-actions]"),
+          !dialog.querySelector("[data-chatpane-media-actions]"),
       );
       dialog.removeAttribute(attribute!);
       dialog.className = "viewer";
@@ -170,7 +170,7 @@ async function runFixtures() {
     await settle();
     assert(
       "replacement video with native controls",
-      marked(dialog) && !marked(old) && !old.querySelector("[data-carrier-media-actions]"),
+      marked(dialog) && !marked(old) && !old.querySelector("[data-chatpane-media-actions]"),
     );
     dialog.remove();
     await settle();
@@ -181,7 +181,7 @@ async function runFixtures() {
     );
     for (const extra of ['<div contenteditable="true"></div>', ""]) {
       dialog = make(extra);
-      if (!extra) dialog.setAttribute("data-carrier-shortcuts-overlay", "");
+      if (!extra) dialog.setAttribute("data-chatpane-shortcuts-overlay", "");
       await settle();
       assert("composer/Chatpane surface", !marked(dialog));
       dialog.remove();

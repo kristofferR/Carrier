@@ -1,6 +1,6 @@
 import { type ImageRect, intersectImageClips } from "./emoji-images";
 
-export const MEDIA_VIEWER_ATTR = "data-carrier-media-viewer";
+export const MEDIA_VIEWER_ATTR = "data-chatpane-media-viewer";
 const DIALOG = '[role="dialog"]';
 const HIDDEN = '[hidden], [aria-hidden="true"], [inert]';
 
@@ -46,7 +46,7 @@ export function isMediaViewerDialog(dialog: HTMLElement): boolean {
   const rect = dialog.getBoundingClientRect();
   if (!coversViewport(rect, viewport)) return false;
   let overlay = dialog.getAttribute("aria-modal") === "true";
-  let excluded = !!dialog.closest("[data-carrier-shortcuts-overlay]");
+  let excluded = !!dialog.closest("[data-chatpane-shortcuts-overlay]");
   for (let ancestor: HTMLElement | null = dialog; ancestor; ancestor = ancestor.parentElement) {
     const position = getComputedStyle(ancestor).position;
     if (position === "fixed" || position === "absolute") overlay = true;

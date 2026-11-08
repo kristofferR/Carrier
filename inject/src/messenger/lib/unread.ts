@@ -50,7 +50,7 @@ export const MUTED_UNREAD_CLEAR_MIN_OBSERVATIONS = 3;
 
 /** Namespace persisted unread evidence to the logged-in Facebook account. */
 export function mutedUnreadStorageKey(cookie: string): string | null {
-  return accountScopedStorageKey("__carrier_muted_unreads__", cookie);
+  return accountScopedStorageKey("__chatpane_muted_unreads__", cookie);
 }
 
 /** Retain each muted unread until that same thread is observed read or unmuted. */
@@ -77,7 +77,7 @@ export class MutedUnreadStore {
 
   constructor(
     private readonly storage: Pick<Storage, "getItem" | "setItem"> | null = null,
-    private readonly storageKey = "__carrier_muted_unreads__",
+    private readonly storageKey = "__chatpane_muted_unreads__",
   ) {
     try {
       const parsed: unknown = JSON.parse(this.storage?.getItem(this.storageKey) || "null");

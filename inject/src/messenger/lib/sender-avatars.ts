@@ -14,7 +14,7 @@
 const SENDER_AVATAR_LIMIT = 500;
 const SENDER_AVATAR_VERSION = 3;
 
-export const SENDER_AVATAR_STORAGE_KEY = "__carrier_sender_avatars__";
+export const SENDER_AVATAR_STORAGE_KEY = "__chatpane_sender_avatars__";
 
 /** Names are matched case- and whitespace-insensitively. */
 export const normalizeSenderName = (value: string): string =>

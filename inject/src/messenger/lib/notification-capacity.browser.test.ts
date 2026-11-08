@@ -13,7 +13,7 @@ const chromium =
 test.skipIf(!chromium)(
   "capacity eviction waits for thread kinds and suppresses groups in a reconnect burst",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-notification-capacity-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-notification-capacity-"));
     try {
       const bundle = await build({
         stdin: {

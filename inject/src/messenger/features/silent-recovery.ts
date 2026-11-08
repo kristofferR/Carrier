@@ -50,7 +50,7 @@ export function createSilentRecovery(options: {
   let busySince: number | undefined;
   let unverifiedSince: number | undefined;
   let outageRequests = 0;
-  const accountScope = () => accountScopedStorageKey("carrier-worker-recovery", document.cookie);
+  const accountScope = () => accountScopedStorageKey("chatpane-worker-recovery", document.cookie);
   let scope = accountScope();
   let scopeEpoch = 0;
   let offlineObserved = !navigator.onLine;

@@ -911,7 +911,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             if let Some(ref json) = settings_json {
                 let _ = window.eval(format!(
                     "window.__CHATPANE_SETTINGS__ = {json}; \
-                     try {{ localStorage.setItem('__carrier_settings', JSON.stringify(window.__CHATPANE_SETTINGS__)); }} catch (e) {{}} \
+                     try {{ localStorage.setItem('__chatpane_settings', JSON.stringify(window.__CHATPANE_SETTINGS__)); }} catch (e) {{}} \
                      window.dispatchEvent(new Event('chatpane:settings'));"
                 ));
             }
@@ -958,7 +958,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         {
             // `build()` also registers a clone in Tauri's resource table,
             // so dropping our handle alone leaves the icon visible.
-            let _ = app.remove_tray_by_id("carrier-tray");
+            let _ = app.remove_tray_by_id("chatpane-tray");
         }
         // The Linux KSNI service is owned exclusively by this handle and shuts
         // down when it drops here — outside the lock, like every other call
@@ -1522,7 +1522,7 @@ mod tests {
     #[test]
     fn v2_1_0_settings_file_loads_and_saves_without_losing_values() {
         let directory = std::env::temp_dir().join(format!(
-            "carrier-settings-v210-{}-{}",
+            "chatpane-settings-v210-{}-{}",
             std::process::id(),
             SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1541,7 +1541,7 @@ mod tests {
     #[test]
     fn settings_write_replaces_the_file_atomically() {
         let directory = std::env::temp_dir().join(format!(
-            "carrier-settings-test-{}-{}",
+            "chatpane-settings-test-{}-{}",
             std::process::id(),
             SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1570,7 +1570,7 @@ mod tests {
     #[test]
     fn stale_settings_write_does_not_replace_a_newer_snapshot() {
         let directory = std::env::temp_dir().join(format!(
-            "carrier-settings-stale-{}-{}",
+            "chatpane-settings-stale-{}-{}",
             std::process::id(),
             SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1617,7 +1617,7 @@ mod tests {
     #[test]
     fn corrupt_settings_fall_back_to_defaults() {
         let path = std::env::temp_dir().join(format!(
-            "carrier-corrupt-settings-{}-{}.json",
+            "chatpane-corrupt-settings-{}-{}.json",
             std::process::id(),
             SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
         ));

@@ -485,7 +485,7 @@ Live tests used diagnostics builds, including the affected installed session:
   is unsettled and encrypted connectivity is false. Allow new tunnels while
   leaving those three existing attempts blocked. The new guarded startup path
   invokes Messenger's close lifecycle automatically: its lifecycle record reports
-  exactly one `carrier-sync-recovery` restart, all three old tunnels close, and
+  exactly one `chatpane-sync-recovery` restart, all three old tunnels close, and
   one new encrypted-chat tunnel opens. By the 104-second observation the backend
   is ready, the worker ID has changed once, fresh state delivery and RPC reply
   confirm connectivity, and the document and DOM root are unchanged. The proxy

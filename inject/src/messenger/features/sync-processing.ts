@@ -3,7 +3,7 @@ import { SyncProcessingProgress } from "../lib/sync-processing";
 import { accountScopedStorageKey } from "../lib/threads";
 
 export const syncProcessing = new SyncProcessingProgress(
-  () => accountScopedStorageKey("carrier-sync-processing", document.cookie) ?? undefined,
+  () => accountScopedStorageKey("chatpane-sync-processing", document.cookie) ?? undefined,
 );
 
 export let syncProcessingStalled = false;

@@ -15,7 +15,7 @@ use crate::notifications::{
 };
 
 /// Reply alone, for a notification with no quick actions.
-const REPLY_CATEGORY_ID: &str = "carrier.message.reply";
+const REPLY_CATEGORY_ID: &str = "chatpane.message.reply";
 const REPLY_ACTION_ID: &str = "reply";
 
 /// The category of a notification offering Reply plus `actions`. Each entry of
@@ -25,7 +25,7 @@ fn category_id(actions: &[NotificationAction]) -> String {
         return REPLY_CATEGORY_ID.into();
     }
     let ids: Vec<&str> = actions.iter().map(|action| action.id()).collect();
-    format!("carrier.message.{}", ids.join("."))
+    format!("chatpane.message.{}", ids.join("."))
 }
 
 /// Set once the notification centre is set up; categories registered before

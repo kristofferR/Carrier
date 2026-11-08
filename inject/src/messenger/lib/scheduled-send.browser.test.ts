@@ -21,7 +21,7 @@ const chromium =
 test.skipIf(!chromium)(
   "schedule composer auto-submits, expires safely, hides for media, and quick reply waits for React",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-scheduled-send-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-scheduled-send-"));
     try {
       const bundle = await build({
         stdin: {
@@ -251,7 +251,7 @@ async function fixtures(
     clear();
     log.dataset.threadId = "456";
     await settle();
-    const icon = () => document.querySelector<HTMLButtonElement>("[data-carrier-schedule]");
+    const icon = () => document.querySelector<HTMLButtonElement>("[data-chatpane-schedule]");
     assert("empty composer has no clock", !icon());
     box.textContent = "Draft";
     await settle();
@@ -476,19 +476,22 @@ async function fixtures(
     Date.now = () => new Date(2026, 8, 23, 18, 18).getTime();
     icon()?.click();
     await settle();
-    assert("quick choices open", document.querySelectorAll(".carrier-schedule-preset").length >= 3);
+    assert(
+      "quick choices open",
+      document.querySelectorAll(".chatpane-schedule-preset").length >= 3,
+    );
     assert(
       "custom picker defaults to ten minutes ahead in 24h format",
-      document.querySelector<HTMLInputElement>(".carrier-schedule-fields input[type=text]")
+      document.querySelector<HTMLInputElement>(".chatpane-schedule-fields input[type=text]")
         ?.value === "18:28",
     );
     assert(
       "custom picker defaults to today",
-      document.querySelector<HTMLInputElement>(".carrier-schedule-fields input[type=date]")
+      document.querySelector<HTMLInputElement>(".chatpane-schedule-fields input[type=date]")
         ?.value === "2026-09-23",
     );
     Date.now = realNow;
-    const panel = document.querySelector<HTMLElement>(".carrier-schedule-panel")!;
+    const panel = document.querySelector<HTMLElement>(".chatpane-schedule-panel")!;
     assert(
       "dark popup uses primary text instead of black composer container",
       getComputedStyle(panel).color === "rgb(226, 229, 233)",
@@ -497,7 +500,7 @@ async function fixtures(
       "dark heading overrides Messenger's heading color",
       getComputedStyle(panel.querySelector("h2")!).color === "rgb(226, 229, 233)",
     );
-    const closeButton = panel.querySelector<HTMLButtonElement>(".carrier-schedule-close")!;
+    const closeButton = panel.querySelector<HTMLButtonElement>(".chatpane-schedule-close")!;
     const closeRect = closeButton.getBoundingClientRect();
     const crossRect = closeButton.querySelector("svg")!.getBoundingClientRect();
     assert(
@@ -521,7 +524,7 @@ async function fixtures(
       getComputedStyle(panel.querySelector("h2")!).color === "rgb(5, 5, 5)",
     );
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert("Escape closes", !document.querySelector(".carrier-schedule-panel"));
+    assert("Escape closes", !document.querySelector(".chatpane-schedule-panel"));
     icon()?.click();
     await settle();
     const nativeExecCommand = document.execCommand.bind(document);
@@ -532,7 +535,7 @@ async function fixtures(
       }
       return nativeExecCommand(command, showUI, value);
     };
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-preset")?.click();
     await settle(250);
     document.execCommand = nativeExecCommand;
     assert(
@@ -546,9 +549,9 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeReschedule = page.scheduleOps.length;
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
     await settle();
     assert(
       "rescheduling arms on save without touching the current draft",
@@ -559,10 +562,10 @@ async function fixtures(
     );
     icon()?.click();
     await settle();
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     page.loseSaveReply = true;
     const warningsBeforeSave = page.warnings.length;
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
     await settle();
     assert(
       "lost reschedule reply is reconciled before reporting failure",
@@ -581,9 +584,9 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeRecovered = page.scheduleOps.length;
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
     await settle();
     assert(
       "recovered draft clears before arming",
@@ -599,9 +602,9 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-item-actions button")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-item-actions button")?.click();
     const opsBeforeExpired = page.scheduleOps.length;
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-primary")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-primary")?.click();
     await settle();
     assert(
       "expired unarmed draft clears before arming",
@@ -623,7 +626,7 @@ async function fixtures(
     await settle();
     assert(
       "pending restart keeps scheduling available",
-      !!document.querySelector(".carrier-schedule-panel"),
+      !!document.querySelector(".chatpane-schedule-panel"),
     );
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     page.scheduleItems = [{ ...message(), status: "missed", due: Date.now() - 120_001 }];
@@ -700,7 +703,7 @@ async function fixtures(
     await settle();
     icon()?.click();
     await settle();
-    document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+    document.querySelector<HTMLButtonElement>(".chatpane-schedule-preset")?.click();
     await settle();
     assert(
       "lost arm reply is reconciled against the durable schedule",
@@ -729,7 +732,7 @@ async function fixtures(
           }, 50);
         return false;
       };
-      document.querySelector<HTMLButtonElement>(".carrier-schedule-preset")?.click();
+      document.querySelector<HTMLButtonElement>(".chatpane-schedule-preset")?.click();
       await settle(1_200);
       document.execCommand = nativeExecCommand;
       assert(

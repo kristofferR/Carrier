@@ -15,7 +15,7 @@ const chromium =
 test.skipIf(!chromium)(
   "chat churn avoids document sweeps while header and dialog replacements still work",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-dom-performance-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-dom-performance-"));
     try {
       const bundle = await build({
         stdin: {
@@ -94,8 +94,8 @@ async function runFixtures(
     document.body.prepend(element);
     return element;
   };
-  const gear = () => document.querySelector("[data-carrier-settings-button]");
-  const marked = (element: Element) => element.hasAttribute("data-carrier-media-viewer");
+  const gear = () => document.querySelector("[data-chatpane-settings-button]");
+  const marked = (element: Element) => element.hasAttribute("data-chatpane-media-viewer");
   try {
     let currentHeader = header();
     settings();
@@ -138,7 +138,7 @@ async function runFixtures(
     replacementHeader.querySelector("path")!.setAttribute("d", "M0 0");
     await settle();
     currentHeader
-      .querySelector("button:not([data-carrier-settings-button]) path")!
+      .querySelector("button:not([data-chatpane-settings-button]) path")!
       .setAttribute("d", "M0 0");
     replacementHeader.querySelector("path")!.setAttribute("d", "M2.25 10a1.75 1.75 0 1 1 3.5 0");
     await settle();

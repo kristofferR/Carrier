@@ -1674,7 +1674,7 @@ fn init_script(
     // Merge the cache onto the baked defaults (rather than replacing) so a stale
     // or partial cached object can't drop fields the current build expects, and
     // sanitise enum-like settings.
-    var stored = JSON.parse(localStorage.getItem('__carrier_settings') || 'null');
+    var stored = JSON.parse(localStorage.getItem('__chatpane_settings') || 'null');
     if (stored && typeof stored === 'object' && !Array.isArray(stored)) {{
       var merged = Object.assign({{}}, baked, stored);
       if (merged.badge_mode !== 'messages' && merged.badge_mode !== 'conversations' && merged.badge_mode !== 'dot') {{
@@ -1698,9 +1698,9 @@ fn init_script(
   var css = {css_literal};
   function inject() {{
     if (!document.head) return false;
-    if (document.head.querySelector('style[data-carrier]')) return true;
+    if (document.head.querySelector('style[data-chatpane]')) return true;
     var s = document.createElement('style');
-    s.setAttribute('data-carrier', '');
+    s.setAttribute('data-chatpane', '');
     s.textContent = css;
     document.head.appendChild(s);
     return true;

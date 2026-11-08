@@ -21,8 +21,8 @@
 //!
 //! A theme is CSS and nothing more: at most 2 MB, no `@import`, and no URL
 //! other than `data:`, so it can't load or send anything. Themes can set
-//! Chatpane's `--carrier-*` palette tokens, which Chatpane maps onto Messenger's
-//! own CSS variables, and key dark colors on `html[data-carrier-dark]`.
+//! Chatpane's `--chatpane-*` palette tokens, which Chatpane maps onto Messenger's
+//! own CSS variables, and key dark colors on `html[data-chatpane-dark]`.
 //!
 //! The page gets three `<style>` elements, created once in this order so later
 //! ones win: the theme, the accent color, and the font. `custom.css` still
@@ -353,7 +353,9 @@ fn read_user_theme(path: &Path) -> Option<String> {
     if !metadata.is_file() || metadata.len() > THEME_MAX_BYTES {
         return None;
     }
-    std::fs::read_to_string(path).ok()
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|css| crate::custom_css::upgrade_css_file(path, css))
 }
 
 /// The CSS for a theme id, or None for Default and for themes that are gone
@@ -376,13 +378,13 @@ fn theme_css(app: &tauri::AppHandle, id: &str) -> Option<String> {
     }
 }
 
-/// The `--carrier-*` tokens a stylesheet defines.
+/// The `--chatpane-*` tokens a stylesheet defines.
 fn defined_tokens(css: &str) -> Vec<&'static str> {
     PALETTE
         .iter()
         .map(|(token, _)| *token)
         .filter(|token| {
-            let needle = format!("--carrier-{token}");
+            let needle = format!("--chatpane-{token}");
             css.match_indices(&needle).any(|(at, _)| {
                 let rest = &css[at + needle.len()..];
                 rest.trim_start().starts_with(':')
@@ -403,7 +405,7 @@ fn palette_mapping(tokens: &[&str], chat_background: bool) -> String {
     for (token, variables) in PALETTE.iter().filter(|(t, _)| tokens.contains(t)) {
         for variable in *variables {
             map.push_str(&format!(
-                "  {variable}: var(--carrier-{token}) !important;\n"
+                "  {variable}: var(--chatpane-{token}) !important;\n"
             ));
         }
         if *token == "out" {
@@ -417,7 +419,7 @@ fn palette_mapping(tokens: &[&str], chat_background: bool) -> String {
     );
     if chat_background && tokens.contains(&"chat") {
         css.push_str(
-            "[role=\"main\"] [data-mw-file-dropzone] {\n  background-color: var(--carrier-chat) !important;\n}\n",
+            "[role=\"main\"] [data-mw-file-dropzone] {\n  background-color: var(--chatpane-chat) !important;\n}\n",
         );
     }
     css
@@ -463,7 +465,7 @@ fn accent_css(accent: &str) -> String {
     let accent = accent.to_ascii_lowercase();
     let text = text_on(&accent);
     format!(
-        ":root {{\n  --carrier-brand: {accent};\n  --carrier-out: {accent};\n  --carrier-out-text: {text};\n}}\n{}",
+        ":root {{\n  --chatpane-brand: {accent};\n  --chatpane-out: {accent};\n  --chatpane-out-text: {text};\n}}\n{}",
         palette_mapping(&["brand", "out", "out-text"], false)
     )
 }
@@ -515,15 +517,15 @@ fn appearance_script(payload: &AppearancePayload) -> String {
     if (!style) {{
       style = document.createElement('style');
       style.setAttribute(attribute, '');
-      var custom = document.querySelector('style[data-carrier-custom]');
+      var custom = document.querySelector('style[data-chatpane-custom]');
       if (custom && custom.parentNode) custom.parentNode.insertBefore(style, custom);
       else parent.appendChild(style);
     }}
     if (style.textContent !== css) style.textContent = css;
   }}
-  put('data-carrier-theme', p.theme);
-  put('data-carrier-accent', p.accent);
-  put('data-carrier-font', p.font);
+  put('data-chatpane-theme', p.theme);
+  put('data-chatpane-accent', p.accent);
+  put('data-chatpane-font', p.font);
 }})();"#
     )
 }
@@ -620,6 +622,8 @@ fn import_theme(dir: &Path, source: &Path) -> Result<String, String> {
     }
     let css =
         std::fs::read_to_string(source).map_err(|_| fail("it isn't a UTF-8 text file.".into()))?;
+    // A theme made for Carrier gets Chatpane's names in the kept copy.
+    let css = crate::custom_css::convert_legacy_css(&css).unwrap_or(css);
     let header = parse_header(&css).map_err(fail)?;
     check_css(&css).map_err(fail)?;
     let stem = source
@@ -815,11 +819,11 @@ mod tests {
 
     #[test]
     fn importing_copies_valid_themes_and_explains_invalid_ones() {
-        let dir = std::env::temp_dir().join(format!("carrier-themes-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("chatpane-themes-{}", std::process::id()));
         let source = std::env::temp_dir().join(format!("Fjord {}.css", std::process::id()));
         std::fs::write(
             &source,
-            format!("{HEADER}:root {{ --carrier-out: #5e81ac; }}"),
+            format!("{HEADER}:root {{ --chatpane-out: #5e81ac; }}"),
         )
         .unwrap();
         let id = import_theme(&dir, &source).unwrap();
@@ -841,9 +845,9 @@ mod tests {
 
     #[test]
     fn only_the_tokens_a_theme_sets_are_mapped() {
-        let css = page_theme_css(&format!("{HEADER}:root {{ --carrier-out : #5e81ac; }}"));
+        let css = page_theme_css(&format!("{HEADER}:root {{ --chatpane-out : #5e81ac; }}"));
         assert!(
-            css.contains("--chat-outgoing-message-bubble-background-color: var(--carrier-out)")
+            css.contains("--chat-outgoing-message-bubble-background-color: var(--chatpane-out)")
         );
         assert!(css.contains(".__fb-dark-mode"));
         assert!(
@@ -852,7 +856,7 @@ mod tests {
         );
         assert!(!css.contains("data-mw-file-dropzone"));
         let graphite = page_theme_css(include_str!("../themes/graphite.css"));
-        assert!(graphite.contains("background-color: var(--carrier-chat)"));
+        assert!(graphite.contains("background-color: var(--chatpane-chat)"));
     }
 
     #[test]
@@ -867,9 +871,9 @@ mod tests {
         assert!(accent_css("red; } body { x").is_empty());
         // Message text takes whichever of white or black contrasts more.
         let accent = accent_css("#0866FF");
-        assert!(accent.contains("--carrier-out: #0866ff"));
-        assert!(accent.contains("--carrier-out-text: #ffffff"));
-        assert!(accent_css("#0f9d9a").contains("--carrier-out-text: #000000"));
+        assert!(accent.contains("--chatpane-out: #0866ff"));
+        assert!(accent.contains("--chatpane-out-text: #ffffff"));
+        assert!(accent_css("#0f9d9a").contains("--chatpane-out-text: #000000"));
 
         assert!(font_css("").is_empty());
         assert!(font_css("Bad\nFont").is_empty());
