@@ -851,8 +851,8 @@
   html[data-os="windows"] .win-body .side { padding-top: 0; }
   html[data-os="windows"] .chatpane { margin-top: 48px; }
   /* Windows 11 notifications: square-ish acrylic cards, app name on top,
-     the sender's picture on the left, stacked from the bottom right */
-  html[data-os="windows"] .toast-stack { top: auto; bottom: -26px; flex-direction: column-reverse; transform-origin: bottom right !important; }
+     the sender's picture on the left. They stack top right like the Mac ones
+     (Windows really shows them bottom right, but that hides them below the hero). */
   html[data-os="windows"] .toast {
     position: relative; border-radius: 8px;
     padding: 36px 14px 13px;
