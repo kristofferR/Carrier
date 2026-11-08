@@ -1000,8 +1000,6 @@
   .shortcuts .key-row kbd { background: #fff; }
   /* bubble tails are cut out with the section colour; privacy now sits on white */
   .privacy .feature::after { background: var(--page); }
-  .privacy .feature { --bub: #f3f8ff; }
-  .privacy .feature:nth-child(even) { --bub: #e4f0ff; }
   .look-demo { background: var(--section-tint) !important; box-shadow: none !important; }
   .sched-demo {
     padding: clamp(1.4rem, 3.5vw, 2.2rem);
@@ -1195,16 +1193,19 @@
   /* compact feature cards: icon beside the text, white on the tinted band,
      darker body text for readability (the bubble tails stay) */
   .features .feat-grid { gap: clamp(.9rem, 1.8vw, 1.25rem); margin-top: 2rem; }
-  .features .feature {
+  :is(.features, .privacy) .feature {
     --bub: #ffffff;
     display: grid; grid-template-columns: 44px 1fr; grid-template-rows: auto 1fr; column-gap: 14px; align-items: start;
     padding: 1.15rem 1.25rem 1.2rem;
   }
   .features .feature:nth-child(even) { --bub: #ffffff; }
-  .features .feature .f-icon { width: 44px; height: 44px; margin: 0; grid-row: span 2; }
-  .features .feature .f-icon svg { width: 22px; height: 22px; }
-  .features .feature h3 { font-size: 1.06rem; margin: .1rem 0 .3rem; line-height: 1.25; }
-  .features .feature p { color: #33475c; font-size: .96rem; line-height: 1.5; }
+  /* privacy sits on white: one soft tint for every card */
+  .privacy .feature, .privacy .feature:nth-child(even) { --bub: #f2f7ff; }
+  .privacy .priv-grid { gap: clamp(.9rem, 1.8vw, 1.25rem); margin-top: 2rem; }
+  :is(.features, .privacy) .feature .f-icon { width: 44px; height: 44px; margin: 0; grid-row: span 2; }
+  :is(.features, .privacy) .feature .f-icon svg { width: 22px; height: 22px; }
+  :is(.features, .privacy) .feature h3 { font-size: 1.06rem; margin: .1rem 0 .3rem; line-height: 1.25; }
+  :is(.features, .privacy) .feature p { color: #33475c; font-size: .96rem; line-height: 1.5; }
 
   /* ---------- FAQ: expandable question bubbles ---------- */
   .faq-list {
