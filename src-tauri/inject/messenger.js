@@ -15558,7 +15558,9 @@ ${text}`)) {
   var ACTIONS_ATTR = "data-carrier-media-actions";
   var OFFSET = "--carrier-media-controls-offset";
   var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control2) => control2.getBoundingClientRect()).filter(
-    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && rect.top < 96 && rect.right > 0 && rect.left < window.innerWidth
+    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && // Controls sit near the top; Carrier's strip (and the offset clearing
+    // it) can move them further down, so the band grows with it.
+    rect.top < 96 + windowControlsInset() && rect.right > 0 && rect.left < window.innerWidth
   );
   var applyOffset = (element2, controlTops, attr) => {
     const currentOffset = Number.parseFloat(element2.style.getPropertyValue(OFFSET)) || 0;

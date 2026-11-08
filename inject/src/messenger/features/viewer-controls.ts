@@ -17,7 +17,9 @@ const visibleControls = (root: HTMLElement) =>
         rect.width >= 16 &&
         rect.height >= 16 &&
         rect.bottom > 0 &&
-        rect.top < 96 &&
+        // Controls sit near the top; Carrier's strip (and the offset clearing
+        // it) can move them further down, so the band grows with it.
+        rect.top < 96 + windowControlsInset() &&
         rect.right > 0 &&
         rect.left < window.innerWidth,
     );
