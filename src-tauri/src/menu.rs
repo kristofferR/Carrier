@@ -787,7 +787,7 @@ const MESSAGE_CONTEXT_MENU_LABELS: &[&str] = &[
 const COPY_TEXT_CONTEXT_MENU_LABEL: &str = "Copy text";
 /// A chat-list conversation's own menu rows, in menu order. Each is driven
 /// through the row's "More options" menu; the page sends only the ones
-/// Messenger offers, followed by the link rows.
+/// Messenger offers.
 const CHAT_ROW_CONTEXT_MENU_LABELS: &[&str] = &[
     "Mark as read",
     "Mark as unread",
@@ -886,16 +886,11 @@ fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
-/// A conversation's own rows in their fixed order, then the link rows.
+/// A conversation's own rows in their fixed order.
 fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
-    let Some(split) = items.len().checked_sub(LINK_CONTEXT_MENU_LABELS.len()) else {
-        return false;
-    };
-    let (rows, link) = items.split_at(split);
     let mut next_label = 0;
-    !rows.is_empty()
-        && matches_shape(link, LINK_CONTEXT_MENU_LABELS, 0)
-        && rows.iter().all(|item| {
+    !items.is_empty()
+        && items.iter().all(|item| {
             let Some(index) = CHAT_ROW_CONTEXT_MENU_LABELS[next_label..]
                 .iter()
                 .position(|label| *label == item.label)
@@ -909,7 +904,7 @@ fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
 
 /// A menu is one known media or link shape, a message's menu, a media shape
 /// followed by the menu of the message that holds it, or a chat-list
-/// conversation's menu followed by its link rows.
+/// conversation's menu.
 fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let media_prefix = media_context_menu_shapes()
         .into_iter()
@@ -1036,8 +1031,8 @@ pub(crate) fn show_native_context_menu(
 }
 
 /// Media rows, then (after a separator) a React submenu and the message's
-/// actions; or a conversation's rows, then the link rows. Item ids carry only
-/// the window and the opaque action token.
+/// actions; or a conversation's rows. Item ids carry only the window and the
+/// opaque action token.
 fn append_context_menu_items(
     app: &tauri::AppHandle,
     menu: &Menu<tauri::Wry>,
@@ -1565,19 +1560,12 @@ mod tests {
     }
 
     #[test]
-    fn chat_row_menus_end_with_their_link_rows() {
-        let link = |action: char| {
-            let mut copy = context_item("Copy link address", action);
-            copy.value = Some("https://www.facebook.com/messages/t/1/".into());
-            copy
-        };
+    fn chat_row_menus_take_only_their_own_rows() {
         let mut items = vec![
             context_item("Mark as unread", '1'),
             context_item("Mute notifications", '2'),
             context_item("Archive chat", '3'),
             context_item("Leave group", '4'),
-            link('5'),
-            context_item("Open link in browser", '6'),
         ];
         assert!(valid_context_menu_items(&items));
 
@@ -1599,11 +1587,12 @@ mod tests {
         }
         items[2].label = "Archive chat".into();
 
-        // The link rows must close the menu, complete.
-        items.pop();
+        // The link's rows never join them.
+        let mut copy = context_item("Copy link address", '5');
+        copy.value = Some("https://www.facebook.com/messages/t/1/".into());
+        items.push(copy);
+        items.push(context_item("Open link in browser", '6'));
         assert!(!valid_context_menu_items(&items));
-        let rows_only: Vec<_> = items.drain(..4).collect();
-        assert!(!valid_context_menu_items(&rows_only));
     }
 
     #[test]

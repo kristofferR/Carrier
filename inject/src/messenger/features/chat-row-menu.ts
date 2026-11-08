@@ -1,7 +1,7 @@
 /* ----------------------- Chat-list row menu ---------------------------- */
 // Right-clicking a conversation in the chat list offers that conversation's
-// own "More options" menu (Mark as unread, Mute, Archive, Delete, ...) above
-// the link rows. Nothing is reimplemented: Carrier opens the row's menu
+// own "More options" menu (Mark as unread, Mute, Archive, Delete, ...) in
+// place of the link's menu. Nothing is reimplemented: Carrier opens the row's menu
 // hidden (see hidden-menu.ts) to read which rows it offers, and presses the
 // same row when one is chosen. Rows are matched by their English text.
 

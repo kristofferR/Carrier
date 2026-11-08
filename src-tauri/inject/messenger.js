@@ -3800,10 +3800,10 @@ ${button.innerHTML}`)
       const img = chatRow ? null : t.closest?.("img[alt]");
       const imgSrc = img && (img.currentSrc || img.src);
       const vidSrc = video && (video.currentSrc || video.src);
-      const linkHref = anchor?.href;
+      const linkHref = chatRow ? void 0 : anchor?.href;
       const fx = contextPoint.x / Math.max(1, innerWidth);
       const fy = contextPoint.y / Math.max(1, innerHeight);
-      let items = [];
+      const items = [];
       const addItem = (item) => {
         appendOwn(items, item);
       };
@@ -3847,7 +3847,8 @@ ${button.innerHTML}`)
       const selection = getSelection();
       const selected = !selectedByClick && selection !== null && !selection.isCollapsed && selection.containsNode(t, true);
       const message = (imgSrc || vidSrc || !items.length) && !(selected && !items.length) ? messageFor(t) ?? null : null;
-      if (!items.length && !message) return;
+      const conversation = selected ? null : chatRow;
+      if (!items.length && !message && !conversation) return;
       prevent();
       if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
       const keyboardPoint = message || keyboard ? keyboardMenuPoint(
@@ -3867,20 +3868,17 @@ ${button.innerHTML}`)
           nativeReflectApply3(nativeRemoveEventListener2, document, ["keydown", abandonMenu, true]);
         }
       };
-      if (chatRow) {
-        const href = chatRow.getAttribute("href") ?? "";
-        const row = chatRow;
-        const actions = await readAbandonably(() => readChatRowActions(row));
+      if (conversation) {
+        const href = conversation.getAttribute("href") ?? "";
+        const actions = await readAbandonably(() => readChatRowActions(conversation));
         if (request !== menuRequest) return;
-        const linkItems = items;
-        items = [];
         for (let index = 0; index < actions.length; index += 1) {
           const action2 = actions[index];
           if (action2) addItem([action2, () => runChatRowAction(href, action2)]);
         }
-        for (let index = 0; index < linkItems.length; index += 1) {
-          const item = linkItems[index];
-          if (item) addItem(item);
+        if (!items.length) {
+          toast("Messenger offers no actions for this conversation");
+          return;
         }
       }
       if (message) {
@@ -3950,7 +3948,7 @@ ${button.innerHTML}`)
       nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
       nativeReflectApply3(nativeSetAttribute, menu, [
         "aria-label",
-        message ? "Message actions" : chatRow ? "Conversation actions" : "Media actions"
+        message ? "Message actions" : conversation ? "Conversation actions" : "Media actions"
       ]);
       const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
       applyStyles(menuStyle, {
@@ -3982,7 +3980,7 @@ ${button.innerHTML}`)
         const fn = item[1];
         const rowIndex = menuItems.length;
         const reaction = item[3];
-        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : chatRow && CHAT_ROW_CONTEXT_MENU_LABELS.includes(label2) ? 3 : 0;
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : conversation && CHAT_ROW_CONTEXT_MENU_LABELS.includes(label2) ? 3 : 0;
         if (previousGroup !== null && previousGroup !== group) {
           const divider = nativeReflectApply3(nativeCreateElement, document, [
             "div"

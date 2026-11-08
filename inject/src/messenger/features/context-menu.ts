@@ -3,8 +3,8 @@
 // (download / copy / copy address / open in browser), matching the original.
 // Right-click a message (or press the context-menu key on a focused one) for
 // its reactions and Messenger's own message actions, after any media actions.
-// Right-click a conversation in the chat list for its own menu, above the link
-// actions. Selected text and other links keep their usual menus.
+// Right-click a conversation in the chat list for its own menu, in place of
+// its link's. Selected text and other links keep their usual menus.
 import {
   cleanSharedUrl,
   openUrl,
@@ -402,13 +402,13 @@ export function initContextMenu() {
     const img = chatRow ? null : (t.closest?.("img[alt]") as HTMLImageElement | null);
     const imgSrc = img && (img.currentSrc || img.src);
     const vidSrc = video && (video.currentSrc || video.src);
-    const linkHref = anchor?.href;
+    const linkHref = chatRow ? undefined : anchor?.href;
 
     // Anchor for the macOS share sheet: viewport fractions survive the
     // download delay and window resizes better than raw pixels.
     const fx = contextPoint.x / Math.max(1, innerWidth);
     const fy = contextPoint.y / Math.max(1, innerHeight);
-    let items: ContextMenuItem[] = [];
+    const items: ContextMenuItem[] = [];
     const addItem = (item: ContextMenuItem) => {
       // Defining an own index bypasses numeric setters Messenger could add
       // to Array.prototype before a user opens this privileged-action menu.
@@ -480,7 +480,8 @@ export function initContextMenu() {
       (imgSrc || vidSrc || !items.length) && !(selected && !items.length)
         ? (messageFor(t) ?? null)
         : null;
-    if (!items.length && !message) return; // fall through to the native menu (text etc.)
+    const conversation = selected ? null : chatRow;
+    if (!items.length && !message && !conversation) return; // fall through to the native menu (text etc.)
     prevent();
     if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
     // The context-menu key reports no pointer on the message; pop up at it.
@@ -507,21 +508,17 @@ export function initContextMenu() {
         nativeReflectApply(nativeRemoveEventListener, document, ["keydown", abandonMenu, true]);
       }
     };
-    if (chatRow) {
-      // The conversation's own rows come first and the link rows last.
-      const href = chatRow.getAttribute("href") ?? "";
-      const row = chatRow;
-      const actions = await readAbandonably(() => readChatRowActions(row));
+    if (conversation) {
+      const href = conversation.getAttribute("href") ?? "";
+      const actions = await readAbandonably(() => readChatRowActions(conversation));
       if (request !== menuRequest) return;
-      const linkItems = items;
-      items = [];
       for (let index = 0; index < actions.length; index += 1) {
         const action = actions[index];
         if (action) addItem([action, () => runChatRowAction(href, action)]);
       }
-      for (let index = 0; index < linkItems.length; index += 1) {
-        const item = linkItems[index];
-        if (item) addItem(item);
+      if (!items.length) {
+        toast("Messenger offers no actions for this conversation");
+        return;
       }
     }
     if (message) {
@@ -634,7 +631,7 @@ export function initContextMenu() {
     nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
     nativeReflectApply(nativeSetAttribute, menu, [
       "aria-label",
-      message ? "Message actions" : chatRow ? "Conversation actions" : "Media actions",
+      message ? "Message actions" : conversation ? "Conversation actions" : "Media actions",
     ]);
     const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
     applyStyles(menuStyle, {
@@ -684,7 +681,7 @@ export function initContextMenu() {
         ? 1
         : (MESSAGE_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
           ? 2
-          : chatRow && (CHAT_ROW_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+          : conversation && (CHAT_ROW_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
             ? 3
             : 0;
       if (previousGroup !== null && previousGroup !== group) {
