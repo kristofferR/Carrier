@@ -416,7 +416,12 @@
 
       async function refresh() {
         try {
-          settings = await invoke("get_settings");
+          const fresh = await invoke("get_settings");
+          // Focusing the window runs this between a click's mousedown and
+          // mouseup; re-rendering unchanged settings would swap the clicked
+          // element out and swallow the click.
+          if (JSON.stringify(fresh) === JSON.stringify(settings)) return;
+          settings = fresh;
           render();
         } catch (e) {
           console.error(e);
