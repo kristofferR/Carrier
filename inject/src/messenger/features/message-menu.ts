@@ -4,10 +4,9 @@
 // Carrier reads what the message's hover toolbar offers and, when a row is
 // chosen, presses the same toolbar button or menu row. Messenger mounts the
 // toolbar only on hover, and its React and More menus are opened briefly while
-// hidden (data-carrier-message-menu-probe, see messenger.css) to learn which
-// reactions and actions this message has. Toolbar buttons are matched by
-// English accessible labels, reactions by their emoji, which is
-// locale-independent.
+// hidden (see hidden-menu.ts) to learn which reactions and actions this
+// message has. Toolbar buttons are matched by English accessible labels,
+// reactions by their emoji, which is locale-independent.
 
 import { diag, toast } from "../bridge";
 import {
@@ -19,28 +18,16 @@ import {
   toolbarAction,
   uniqueReactions,
 } from "../lib/message-menu";
+import { waitFor, withHiddenMenu } from "./hidden-menu";
 
 const MESSAGE = '[aria-roledescription="message"]';
-const PROBE_ATTRIBUTE = "data-carrier-message-menu-probe";
-const POLL_MS = 16;
 const TOOLBAR_WAIT_MS = 600;
-const MENU_WAIT_MS = 800;
 const MAX_REACTIONS = 12;
 
 export const messageFor = (target: Element) => target.closest<HTMLElement>(MESSAGE);
 
 const toolbarButton = (message: HTMLElement, label: "React" | "More") =>
   message.querySelector<HTMLElement>(`[role="toolbar"] [role="button"][aria-label^="${label}"]`);
-
-async function waitFor<T>(read: () => T | null | undefined, ms: number): Promise<T | null> {
-  const deadline = Date.now() + ms;
-  while (true) {
-    const value = read();
-    if (value) return value;
-    if (Date.now() >= deadline) return null;
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-  }
-}
 
 /** Mount the message's hover toolbar. A pointer right-click already hovers
  * it; a keyboard-opened menu or a later action needs a synthetic hover. */
@@ -52,49 +39,6 @@ async function ensureToolbar(message: HTMLElement): Promise<boolean> {
   message.dispatchEvent(new MouseEvent("mouseover", point));
   message.dispatchEvent(new MouseEvent("mousemove", point));
   return (await waitFor(mounted, TOOLBAR_WAIT_MS)) !== null;
-}
-
-const expanded = (button: HTMLElement) => button.getAttribute("aria-expanded") === "true";
-
-/** The newest open menu that has rows; Messenger nests a labelled menu
- * inside an unlabelled one, and the inner one comes last. */
-function openMenu(): Element | null {
-  const menus = document.querySelectorAll('[role="menu"]');
-  for (let index = menus.length - 1; index >= 0; index -= 1) {
-    const menu = menus[index];
-    if (menu?.querySelector('[role^="menuitem"]')) return menu;
-  }
-  return null;
-}
-
-/**
- * Open a toolbar menu hidden, hand it to `use`, and close it again unless
- * `use` picked a row (which closes it). Focus returns to where it was.
- */
-async function withHiddenMenu<T>(
-  button: HTMLElement,
-  use: (menu: Element) => T,
-  picks = false,
-): Promise<T | null> {
-  const root = document.documentElement;
-  const focused = document.activeElement;
-  root.setAttribute(PROBE_ATTRIBUTE, "");
-  try {
-    if (!expanded(button)) button.click();
-    const menu = await waitFor(() => (expanded(button) ? openMenu() : null), MENU_WAIT_MS);
-    if (!menu) return null;
-    const result = use(menu);
-    if (picks && result) await waitFor(() => !expanded(button), MENU_WAIT_MS);
-    return result;
-  } finally {
-    if (expanded(button)) {
-      button.click();
-      await waitFor(() => !expanded(button), MENU_WAIT_MS);
-    }
-    root.removeAttribute(PROBE_ATTRIBUTE);
-    if (!picks && focused instanceof HTMLElement && focused.isConnected)
-      focused.focus({ preventScroll: true });
-  }
 }
 
 const reactionRows = (menu: Element) =>

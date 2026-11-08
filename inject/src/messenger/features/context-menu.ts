@@ -3,7 +3,8 @@
 // (download / copy / copy address / open in browser), matching the original.
 // Right-click a message (or press the context-menu key on a focused one) for
 // its reactions and Messenger's own message actions, after any media actions.
-// Selected text and links keep their usual menus.
+// Right-click a conversation in the chat list for its own menu, in place of
+// its link's. Selected text and other links keep their usual menus.
 import {
   cleanSharedUrl,
   openUrl,
@@ -11,6 +12,7 @@ import {
   toastDownloadFailure,
   toastDownloadSaved,
 } from "../bridge";
+import { CHAT_ROW_CONTEXT_MENU_LABELS } from "../lib/chat-row-menu";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
@@ -21,6 +23,7 @@ import {
   type Reaction,
   reactionLabel,
 } from "../lib/message-menu";
+import { chatRowFor, readChatRowActions, runChatRowAction } from "./chat-row-menu";
 import {
   messageFor,
   messageTextBlock,
@@ -390,12 +393,16 @@ export function initContextMenu() {
     prevent: () => void,
     selectedByClick = false,
   ) => {
-    const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-    const img = t.closest?.("img[alt]") as HTMLImageElement | null;
     const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
+    // A chat-list conversation's menu covers its avatar and preview images.
+    const chatRow = anchor && chatRowFor(anchor);
+    const video = chatRow
+      ? null
+      : t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
+    const img = chatRow ? null : (t.closest?.("img[alt]") as HTMLImageElement | null);
     const imgSrc = img && (img.currentSrc || img.src);
     const vidSrc = video && (video.currentSrc || video.src);
-    const linkHref = anchor?.href;
+    const linkHref = chatRow ? undefined : anchor?.href;
 
     // Anchor for the macOS share sheet: viewport fractions survive the
     // download delay and window resizes better than raw pixels.
@@ -473,7 +480,8 @@ export function initContextMenu() {
       (imgSrc || vidSrc || !items.length) && !(selected && !items.length)
         ? (messageFor(t) ?? null)
         : null;
-    if (!items.length && !message) return; // fall through to the native menu (text etc.)
+    const conversation = selected ? null : chatRow;
+    if (!items.length && !message && !conversation) return; // fall through to the native menu (text etc.)
     prevent();
     if (selectedByClick && selection && !selection.isCollapsed) selection.collapseToEnd();
     // The context-menu key reports no pointer on the message; pop up at it.
@@ -490,16 +498,31 @@ export function initContextMenu() {
     // Escape in the meantime abandons this one.
     menuRequest += 1;
     const request = menuRequest;
-    if (message) {
+    const readAbandonably = async <T>(read: () => Promise<T>): Promise<T> => {
       nativeReflectApply(nativeAddEventListener, document, ["pointerdown", abandonMenu, true]);
       nativeReflectApply(nativeAddEventListener, document, ["keydown", abandonMenu, true]);
-      let offer: Awaited<ReturnType<typeof readMessageOffer>>;
       try {
-        offer = await readMessageOffer(message);
+        return await read();
       } finally {
         nativeReflectApply(nativeRemoveEventListener, document, ["pointerdown", abandonMenu, true]);
         nativeReflectApply(nativeRemoveEventListener, document, ["keydown", abandonMenu, true]);
       }
+    };
+    if (conversation) {
+      const href = conversation.getAttribute("href") ?? "";
+      const actions = await readAbandonably(() => readChatRowActions(conversation));
+      if (request !== menuRequest) return;
+      for (let index = 0; index < actions.length; index += 1) {
+        const action = actions[index];
+        if (action) addItem([action, () => runChatRowAction(href, action)]);
+      }
+      if (!items.length) {
+        toast("Messenger offers no actions for this conversation");
+        return;
+      }
+    }
+    if (message) {
+      const offer = await readAbandonably(() => readMessageOffer(message));
       if (request !== menuRequest) return;
       for (let index = 0; index < offer.reactions.length; index += 1) {
         const reaction = offer.reactions[index];
@@ -608,7 +631,7 @@ export function initContextMenu() {
     nativeReflectApply(nativeSetAttribute, menu, ["role", "menu"]);
     nativeReflectApply(nativeSetAttribute, menu, [
       "aria-label",
-      message ? "Message actions" : "Media actions",
+      message ? "Message actions" : conversation ? "Conversation actions" : "Media actions",
     ]);
     const menuStyle = nativeReflectApply(nativeGetStyle, menu, []) as CSSStyleDeclaration;
     applyStyles(menuStyle, {
@@ -624,8 +647,8 @@ export function initContextMenu() {
     const menuItems: HTMLElement[] = [];
     // Quick reactions share one row, like Messenger's own reaction bar.
     let reactionRow: HTMLDivElement | null = null;
-    // Media rows, reactions, and message actions are separated like the
-    // native menu's groups.
+    // Media rows, reactions, message actions, and conversation actions are
+    // separated like the native menu's groups.
     let previousGroup: number | null = null;
     // Filled once the menu has been laid out, index-aligned with menuItems: a
     // row whose rectangle no longer matches its entry here is not the row the
@@ -658,7 +681,9 @@ export function initContextMenu() {
         ? 1
         : (MESSAGE_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
           ? 2
-          : 0;
+          : conversation && (CHAT_ROW_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+            ? 3
+            : 0;
       if (previousGroup !== null && previousGroup !== group) {
         const divider = nativeReflectApply(nativeCreateElement, document, [
           "div",

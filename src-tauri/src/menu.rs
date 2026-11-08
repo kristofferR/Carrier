@@ -785,6 +785,24 @@ const MESSAGE_CONTEXT_MENU_LABELS: &[&str] = &[
     "Remove",
 ];
 const COPY_TEXT_CONTEXT_MENU_LABEL: &str = "Copy text";
+/// A chat-list conversation's own menu rows, in menu order. Each is driven
+/// through the row's "More options" menu; the page sends only the ones
+/// Messenger offers.
+const CHAT_ROW_CONTEXT_MENU_LABELS: &[&str] = &[
+    "Mark as read",
+    "Mark as unread",
+    "Mute notifications",
+    "Unmute notifications",
+    "View profile",
+    "Start end-to-end encrypted chat",
+    "Block",
+    "Unblock",
+    "Archive chat",
+    "Unarchive chat",
+    "Delete chat",
+    "Report",
+    "Leave group",
+];
 const REACT_CONTEXT_MENU_LABEL: &str = "React";
 const MAX_CONTEXT_MENU_REACTIONS: usize = 12;
 const MAX_CONTEXT_MENU_VALUE: usize = 64 * 1024;
@@ -800,6 +818,17 @@ pub(crate) struct NativeContextMenuItem {
     pub(crate) reaction: bool,
     #[serde(default)]
     pub(crate) checked: bool,
+}
+
+/// Whether `items` are exactly `labels`, with a value only at `value_index`.
+fn matches_shape(items: &[NativeContextMenuItem], labels: &[&str], value_index: usize) -> bool {
+    items.len() == labels.len()
+        && items.iter().enumerate().all(|(index, item)| {
+            item.label == labels[index]
+                && !item.reaction
+                && !item.checked
+                && item.value.is_some() == (index == value_index)
+        })
 }
 
 /// The media and link menus, each with the index of its copied value.
@@ -857,27 +886,35 @@ fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
-/// A menu is one known media or link shape, a message's menu, or a media
-/// shape followed by the menu of the message that holds it.
+/// A conversation's own rows in their fixed order.
+fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
+    let mut next_label = 0;
+    !items.is_empty()
+        && items.iter().all(|item| {
+            let Some(index) = CHAT_ROW_CONTEXT_MENU_LABELS[next_label..]
+                .iter()
+                .position(|label| *label == item.label)
+            else {
+                return false;
+            };
+            next_label += index + 1;
+            !item.reaction && !item.checked && item.value.is_none()
+        })
+}
+
+/// A menu is one known media or link shape, a message's menu, a media shape
+/// followed by the menu of the message that holds it, or a chat-list
+/// conversation's menu.
 fn valid_context_menu_items(items: &[NativeContextMenuItem]) -> bool {
     let media_prefix = media_context_menu_shapes()
         .into_iter()
         .find_map(|(labels, value_index)| {
             let prefix = items.get(..labels.len())?;
-            prefix
-                .iter()
-                .enumerate()
-                .all(|(index, item)| {
-                    item.label == labels[index]
-                        && !item.reaction
-                        && !item.checked
-                        && item.value.is_some() == (index == value_index)
-                })
-                .then_some(labels.len())
+            matches_shape(prefix, labels, value_index).then_some(labels.len())
         });
     let shape_valid = match media_prefix {
         Some(len) => valid_message_items(&items[len..]),
-        None => !items.is_empty() && valid_message_items(items),
+        None => (!items.is_empty() && valid_message_items(items)) || valid_chat_row_items(items),
     };
     let mut actions = std::collections::HashSet::new();
     shape_valid
@@ -994,7 +1031,8 @@ pub(crate) fn show_native_context_menu(
 }
 
 /// Media rows, then (after a separator) a React submenu and the message's
-/// actions. Item ids carry only the window and the opaque action token.
+/// actions; or a conversation's rows. Item ids carry only the window and the
+/// opaque action token.
 fn append_context_menu_items(
     app: &tauri::AppHandle,
     menu: &Menu<tauri::Wry>,
@@ -1002,12 +1040,15 @@ fn append_context_menu_items(
     items: &[NativeContextMenuItem],
 ) -> tauri::Result<()> {
     let id = |item: &NativeContextMenuItem| format!("carrier-context:{label}:{}", item.action);
-    // Media rows, the React submenu, and message actions each form a group.
+    // Media rows, the React submenu, message actions, and conversation
+    // actions each form a group.
     let group = |item: &NativeContextMenuItem| {
         if item.reaction {
             1
         } else if MESSAGE_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
             2
+        } else if CHAT_ROW_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+            3
         } else {
             0
         }
@@ -1302,10 +1343,14 @@ mod tests {
     }
 
     fn injected_context_menu_labels(name: &str) -> Vec<&'static str> {
-        let source = if name == "MESSAGE_CONTEXT_MENU_LABELS" {
-            include_str!("../../inject/src/messenger/lib/message-menu.ts")
-        } else {
-            include_str!("../../inject/src/messenger/features/context-menu.ts")
+        let source = match name {
+            "MESSAGE_CONTEXT_MENU_LABELS" => {
+                include_str!("../../inject/src/messenger/lib/message-menu.ts")
+            }
+            "CHAT_ROW_CONTEXT_MENU_LABELS" => {
+                include_str!("../../inject/src/messenger/lib/chat-row-menu.ts")
+            }
+            _ => include_str!("../../inject/src/messenger/features/context-menu.ts"),
         };
         let declaration = format!("const {name} = [");
         let body = source
@@ -1515,6 +1560,42 @@ mod tests {
     }
 
     #[test]
+    fn chat_row_menus_take_only_their_own_rows() {
+        let mut items = vec![
+            context_item("Mark as unread", '1'),
+            context_item("Mute notifications", '2'),
+            context_item("Archive chat", '3'),
+            context_item("Leave group", '4'),
+        ];
+        assert!(valid_context_menu_items(&items));
+
+        // Rows keep their fixed order, never repeat, and carry no value.
+        items.swap(0, 1);
+        assert!(!valid_context_menu_items(&items));
+        items.swap(0, 1);
+        items[1].label = "Mark as unread".into();
+        assert!(!valid_context_menu_items(&items));
+        items[1].label = "Mute notifications".into();
+        items[2].value = Some("x".into());
+        assert!(!valid_context_menu_items(&items));
+        items[2].value = None;
+
+        // Unknown rows, message actions, and calls are refused.
+        for label in ["Audio call", "Reply", "Allow microphone"] {
+            items[2].label = label.into();
+            assert!(!valid_context_menu_items(&items), "{label}");
+        }
+        items[2].label = "Archive chat".into();
+
+        // The link's rows never join them.
+        let mut copy = context_item("Copy link address", '5');
+        copy.value = Some("https://www.facebook.com/messages/t/1/".into());
+        items.push(copy);
+        items.push(context_item("Open link in browser", '6'));
+        assert!(!valid_context_menu_items(&items));
+    }
+
+    #[test]
     fn reaction_labels_are_short_emoji_only() {
         for label in ["❤", "❤️", "👍", "👍🏽", "👨‍👩‍👧", "🇳🇴"] {
             assert!(valid_reaction_label(label), "{label}");
@@ -1539,6 +1620,7 @@ mod tests {
             ("VIDEO_CONTEXT_MENU_LABELS", VIDEO_CONTEXT_MENU_LABELS),
             ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
             ("MESSAGE_CONTEXT_MENU_LABELS", MESSAGE_CONTEXT_MENU_LABELS),
+            ("CHAT_ROW_CONTEXT_MENU_LABELS", CHAT_ROW_CONTEXT_MENU_LABELS),
         ] {
             assert_eq!(injected_context_menu_labels(name), expected, "{name}");
         }
