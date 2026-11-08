@@ -111,7 +111,8 @@
       .swatch.theme-accent { background: conic-gradient(from 225deg, #2b2d31 0 50%, #d9dadd 50% 100%); }
       .swatch.custom { background: conic-gradient(#e5484d, #f27a1a, #f5c400, #2ea44f, #0f9d9a, #0866ff, #8a3ffc, #e0427a, #e5484d); }
       .look-cols select { margin-top: 10px; max-width: 100%; }
-      .icon-choices { display: flex; gap: 8px; padding: 2px 12px; }
+      .icon-choices { display: flex; align-items: center; gap: 8px; padding: 2px 12px; }
+      .icon-choices .seg { margin-left: 8px; }
       .icon-choice {
         display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 10px;
         border: 1.5px solid #dadde1; background: transparent; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
@@ -652,13 +653,8 @@
 
       function appIconSection() {
         const wrap = el("div");
-        const variant = settings.app_icon_variant || "auto";
-        wrap.append(sectionHead("App icon", labelled("Light or dark icon", segmented(
-          "Light or dark icon",
-          [["auto", "Match theme"], ["light", "Light"], ["dark", "Dark"]],
-          variant,
-          (value) => persist("app_icon_variant", value),
-        ))));
+        const variant = settings.app_icon_variant || "light";
+        wrap.append(sectionHead("App icon"));
         const dark = variant === "dark" || (variant === "auto" && pageIsDark());
         const row = el("div", "icon-choices");
         row.setAttribute("role", "radiogroup");
@@ -675,6 +671,13 @@
           b.onclick = () => persist("app_icon_style", style);
           row.append(b);
         }
+        // The tiles preview the variant, so the switch sits with them.
+        row.append(segmented(
+          "Light or dark icon",
+          [["light", "Light"], ["dark", "Dark"], ["auto", "Match theme"]],
+          variant,
+          (value) => persist("app_icon_variant", value),
+        ));
         wrap.append(row);
         wrap.append(el("div", "section-hint", IS_LINUX
           ? "Changes the window icon. Your app launcher keeps the installed icon."

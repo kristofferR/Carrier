@@ -105,7 +105,8 @@ pub(crate) struct Settings {
     pub(crate) message_font: String,
     /// App icon style: "color" or "monochrome".
     pub(crate) app_icon_style: String,
-    /// Which app icon variant: "auto" (match light/dark), "light" or "dark".
+    /// Which app icon variant: "light" (the installed icon), "dark" or "auto"
+    /// (match light/dark).
     pub(crate) app_icon_variant: String,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,
@@ -260,7 +261,7 @@ impl Settings {
             self.app_icon_style = "color".into();
         }
         if !matches!(self.app_icon_variant.as_str(), "auto" | "light" | "dark") {
-            self.app_icon_variant = "auto".into();
+            self.app_icon_variant = "light".into();
         }
         if !matches!(self.update_check_hours, 1 | 4 | 24) {
             self.update_check_hours = 4;
@@ -311,7 +312,7 @@ impl Default for Settings {
             accent_color: String::new(),
             message_font: String::new(),
             app_icon_style: "color".into(),
-            app_icon_variant: "auto".into(),
+            app_icon_variant: "light".into(),
             menu_bar_only: false,
             hide_menu_bar: false,
             title_bar: "auto".into(),
