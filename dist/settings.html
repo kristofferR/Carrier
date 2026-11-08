@@ -414,13 +414,27 @@
         return svg;
       }
 
+      // Start on System Startup as the OS reports it ("on", "off" or
+      // "needs-approval"). Reading it also corrects the stored setting.
+      let autostartStatus = null;
+      async function readAutostartStatus() {
+        try {
+          return await invoke("autostart_status");
+        } catch (e) {
+          console.error(e);
+          return null;
+        }
+      }
+
       async function refresh() {
         try {
+          const status = await readAutostartStatus();
           const fresh = await invoke("get_settings");
           // Focusing the window runs this between a click's mousedown and
           // mouseup; re-rendering unchanged settings would swap the clicked
           // element out and swallow the click.
-          if (JSON.stringify(fresh) === JSON.stringify(settings)) return;
+          if (status === autostartStatus && JSON.stringify(fresh) === JSON.stringify(settings)) return;
+          autostartStatus = status;
           settings = fresh;
           render();
         } catch (e) {
@@ -441,6 +455,7 @@
           const fresh = await invoke("get_settings");
           fresh[key] = typeof value === "function" ? value(fresh) : value;
           settings = await invoke("set_settings", { new: fresh });
+          if (key === "autostart") autostartStatus = await readAutostartStatus();
           render();
           setStatus("Saved.");
           setTimeout(() => setStatus(""), 1200);
@@ -1123,6 +1138,24 @@
         );
       }
 
+      // macOS registers the login item but opens it at login only once the
+      // user allows it in Login Items.
+      function autostartRow() {
+        const row = switchRow("autostart");
+        if (autostartStatus !== "needs-approval") return row;
+        const rows = document.createDocumentFragment();
+        rows.append(
+          row,
+          buttonRow(
+            "Waiting for Approval",
+            "Allow Carrier in System Settings → General → Login Items to start it when you log in.",
+            "Open Login Items",
+            () => invoke("open_login_items").catch(console.error),
+          ),
+        );
+        return rows;
+      }
+
       // Carrier logs warnings and page-integration failures to a file; this
       // opens its folder so the log is easy to attach to a bug report.
       function openLogsRow() {
@@ -1285,6 +1318,7 @@
         update_check_hours: updateCheckHoursRow,
         download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,
+        autostart: autostartRow,
         custom_css: customCssRow,
         open_logs: openLogsRow,
         test_notification: testNotificationRow,
@@ -1391,6 +1425,7 @@
         } catch (e) {
           console.error(e);
         }
+        autostartStatus = await readAutostartStatus();
         try {
           settings = await invoke("get_settings");
         } catch (e) {

@@ -30,7 +30,6 @@ tauri = { version = "2", features = ["image-png"] }
 # Dropping it also keeps the advisory-prone `zip` crate out of the tree.
 tauri-plugin-updater = { version = "2.14", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-opener = "2"
-tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
@@ -118,6 +117,8 @@ zbus = "5"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6"
+# Start on System Startup as an "Open at Login" item (SMAppService, macOS 13+).
+objc2-service-management = { version = "0.3.2", default-features = false, features = ["std", "SMAppService", "objc2", "objc2-foundation"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard", "NSWorkspace"] }
 # Communication notifications: the sender's face and group name (Ref #366).
 objc2-intents = { version = "0.3.2", default-features = false, features = ["std", "INSendMessageIntent", "INIntent", "INPerson", "INPersonHandle", "INImage", "INInteraction", "INSpeakableString", "INOutgoingMessageType", "INIntentResponse", "INSendMessageAttachment", "block2"] }
