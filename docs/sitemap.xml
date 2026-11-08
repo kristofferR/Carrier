@@ -1020,4 +1020,19 @@
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://kristofferr.github.io/Carrier/zh-CN/"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://kristofferr.github.io/Carrier/"/>
   </url>
+  <url>
+    <loc>https://kristofferr.github.io/Carrier/caprine-alternative/</loc>
+  </url>
+  <url>
+    <loc>https://kristofferr.github.io/Carrier/messenger-desktop-app-discontinued/</loc>
+  </url>
+  <url>
+    <loc>https://kristofferr.github.io/Carrier/messenger-for-linux/</loc>
+  </url>
+  <url>
+    <loc>https://kristofferr.github.io/Carrier/messenger-for-mac/</loc>
+  </url>
+  <url>
+    <loc>https://kristofferr.github.io/Carrier/messenger-for-windows/</loc>
+  </url>
 </urlset>
