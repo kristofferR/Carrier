@@ -653,6 +653,41 @@
     .toast .t-msg { display: none; }
   }
 
+
+  /* ---------- Windows 11 (html[data-os="windows"]) ----------
+     3.0 on Windows: no title bar. Carrier draws minimize, maximize and close
+     at the top right over a 32px strip above the conversation; the chat list
+     starts at the top (messenger.css, data-carrier-title-bar="windows"). */
+  .win-caption { display: none; position: absolute; top: 0; right: 0; z-index: 2; height: 32px; color: var(--w-text); }
+  .win-caption span { width: 46px; height: 32px; display: grid; place-items: center; }
+  .win-caption svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+  html[data-os="windows"] .win { border-radius: 8px; }
+  html[data-os="windows"] .win-bar { display: none; }
+  html[data-os="windows"] .win-caption { display: flex; }
+  html[data-os="windows"] .win-body .side { padding-top: 0; }
+  html[data-os="windows"] .chatpane { margin-top: 48px; }
+  /* Windows 11 notifications: square-ish acrylic cards, app name on top,
+     the sender's picture on the left, stacked from the bottom right */
+  html[data-os="windows"] .toast-stack { top: auto; bottom: -26px; flex-direction: column-reverse; transform-origin: bottom right !important; }
+  html[data-os="windows"] .toast {
+    position: relative; border-radius: 8px;
+    padding: 36px 14px 13px;
+    background: rgba(243, 243, 243, .9);
+    border: 1px solid rgba(0, 0, 0, .08);
+    box-shadow: 0 16px 40px rgba(0, 10, 40, .32);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  html[data-os="windows"] .toast::before {
+    content: "Carrier"; position: absolute; top: 10px; left: 38px;
+    font-size: 12px; color: rgba(0, 0, 0, .72);
+  }
+  html[data-os="windows"] .toast .t-app { position: absolute; top: 10px; left: 14px; width: 16px; height: 16px; border-radius: 4px; }
+  html[data-os="windows"] .toast .t-avatar { order: -1; width: 44px; height: 44px; }
+  html[data-os="windows"] .toast .t-now { display: none; }
+  html[data-os="windows"] .toast .t-title b { font-weight: 600; font-size: 14px; }
+  html[data-os="windows"] .toast .t-actions { padding-left: 0; gap: 8px; }
+  html[data-os="windows"] .toast .t-actions span { flex: 1; text-align: center; border-radius: 4px; padding: 6px 8px; background: rgba(255, 255, 255, .85); }
+
   /* ---------- Sections shared ---------- */
   section { padding-block: clamp(3.5rem, 8vw, 6.5rem); }
   .eyebrow {
@@ -1155,6 +1190,11 @@
           <div class="win-bar">
             <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
             <span class="win-title">Carrier</span>
+          </div>
+          <div class="win-caption">
+            <span><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></span>
+            <span><svg viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1"/></svg></span>
+            <span><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></span>
           </div>
           <div class="win-body">
             <aside class="side">
@@ -1868,6 +1908,8 @@
 
 <script>
   document.documentElement.classList.add('js');
+  // Windows visitors see the Windows 11 window and notifications.
+  if (/Windows/i.test(navigator.userAgent)) document.documentElement.setAttribute('data-os', 'windows');
 
   // ---------- i18n ----------
   // Locale dictionaries: en is complete; other locales override every key.
