@@ -1391,6 +1391,95 @@ mod tests {
         assert_eq!(settings.download_behavior, "downloads");
     }
 
+    /// A settings.json as v2.1.0 wrote it, with non-default values, plus keys
+    /// this version doesn't know.
+    const V2_1_0_SETTINGS: &str = r#"{
+        "always_on_top": false, "show_tray": true, "tray_icon_style": "symbolic",
+        "start_to_tray": false, "autostart": false, "hide_on_close": true,
+        "tray_notice_shown": true, "multi_instance": false, "spellcheck": true,
+        "unread_badge": true, "badge_mode": "conversations",
+        "ignore_muted_conversations": false, "theme": "light", "menu_bar_only": false,
+        "hide_menu_bar": true, "title_bar": "show", "hide_on_minimize": false,
+        "hide_on_focus_loss": false, "hide_taskbar_icon": false, "mute_notifications": true,
+        "automatic_update_checks": false, "notification_sound": false,
+        "hide_notification_preview": true, "group_notifications_by_conversation": false,
+        "clear_notifications_on_view": false, "attention_on_message": true,
+        "hide_names_avatars": true, "nickname_scope": "groups", "show_nicknames": false,
+        "nicknames_group_only": true, "system_emoji": true, "stop_media_autoplay": true,
+        "zoom": 125, "global_hotkey": true, "block_telemetry": false,
+        "strip_link_tracking": false, "send_with_accelerator": true,
+        "download_behavior": "ask", "hold_failures": true,
+        "some_future_key": {"nested": [1, 2]}, "removed_legacy_flag": "yes"
+    }"#;
+
+    fn assert_v2_1_0_values_kept(s: &Settings) {
+        assert_eq!(
+            (
+                s.tray_icon_style.as_str(),
+                s.badge_mode.as_str(),
+                s.theme.as_str()
+            ),
+            ("symbolic", "conversations", "light")
+        );
+        assert_eq!(
+            (s.title_bar.as_str(), s.download_behavior.as_str(), s.zoom),
+            ("show", "ask", 125)
+        );
+        assert_eq!(s.nickname_scope, Some(NicknameScope::Groups));
+        assert!(s.tray_notice_shown && s.spellcheck && s.hide_menu_bar && s.mute_notifications);
+        assert!(s.hide_notification_preview && s.attention_on_message && s.system_emoji);
+        assert!(s.stop_media_autoplay && s.global_hotkey && s.send_with_accelerator);
+        assert!(s.hold_failures && s.nicknames_group_only);
+        assert!(!s.ignore_muted_conversations && !s.automatic_update_checks);
+        assert!(!s.notification_sound && !s.group_notifications_by_conversation);
+        assert!(!s.clear_notifications_on_view && !s.block_telemetry);
+        assert!(!s.strip_link_tracking && !s.show_nicknames);
+        assert!(s.show_tray && s.hide_on_close && s.unread_badge);
+        assert!(!s.always_on_top && !s.start_to_tray && !s.autostart && !s.multi_instance);
+        assert!(!s.menu_bar_only && !s.hide_on_minimize && !s.hide_on_focus_loss);
+        assert!(!s.hide_taskbar_icon);
+        // Settings that replaced a v2.1.0 one keep deferring to it until set.
+        assert_eq!(s.muted_conversations, None);
+        assert_eq!((s.hide_names, s.hide_avatars), (None, None));
+        assert!(s.hides_names() && s.hides_avatars());
+        // Settings new since v2.1.0 start at their defaults.
+        let new = Settings::default();
+        assert_eq!(s.update_check_hours, new.update_check_hours);
+        assert_eq!(s.color_theme, new.color_theme);
+        assert_eq!(s.notification_reaction, new.notification_reaction);
+        assert_eq!(s.notify_group_chats, new.notify_group_chats);
+        assert_eq!(s.focus_composer_on_return, new.focus_composer_on_return);
+        assert_eq!(s.notifications_paused_until, None);
+        assert_eq!(
+            (s.accent_color.as_str(), s.message_font.as_str()),
+            (new.accent_color.as_str(), new.message_font.as_str())
+        );
+        assert_eq!(
+            (s.app_icon_style.as_str(), s.app_icon_variant.as_str()),
+            (new.app_icon_style.as_str(), new.app_icon_variant.as_str())
+        );
+        assert_eq!(s.block_typing_indicator, new.block_typing_indicator);
+    }
+
+    #[test]
+    fn v2_1_0_settings_file_loads_and_saves_without_losing_values() {
+        let directory = std::env::temp_dir().join(format!(
+            "carrier-settings-v210-{}-{}",
+            std::process::id(),
+            SETTINGS_WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("settings.json");
+        std::fs::write(&path, V2_1_0_SETTINGS).unwrap();
+
+        let loaded = load_settings_from_path(&path);
+        assert_v2_1_0_values_kept(&loaded);
+
+        write_settings_to_path(&path, &loaded).unwrap();
+        assert_v2_1_0_values_kept(&load_settings_from_path(&path));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn settings_write_replaces_the_file_atomically() {
         let directory = std::env::temp_dir().join(format!(
