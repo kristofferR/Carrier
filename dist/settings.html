@@ -155,6 +155,7 @@
         background: #e4e6eb; color: #1c1e21; font: inherit; font-size: 13px; font-weight: 600;
       }
       button.secondary:disabled { opacity: .55; cursor: default; }
+      .row-controls { display: flex; align-items: center; gap: 8px; }
       /* Appearance: theme gallery, accent, font, app icon. */
       .seg { display: inline-flex; background: #e4e6eb; border-radius: 8px; padding: 2px; }
       .seg button {
@@ -304,7 +305,7 @@
         ["hide_on_close", "Hide on Close", "Closing the window hides it instead of quitting."],
         ["unread_badge", "Unread Badge", "Show the unread count on the Dock / taskbar icon."],
         ["mute_notifications", "Mute Notifications", "Don't show desktop notifications for new messages."],
-        ["notification_sound", "Notification sound", "Play the system sound when a notification arrives."],
+        ["notification_sound", "Notification sound", "What notifications play. Choose file… adds a sound of your own."],
         ["notify_group_chats", "Group Chat Notifications", "Notify for messages in group chats. The unread badge counts them either way."],
         ["hide_notification_preview", "Hide Message Preview", "Notify without the sender name or message text."],
         ["group_notifications_by_conversation", "Group by Conversation", "Stack notifications from the same conversation together."],
@@ -900,6 +901,62 @@
         );
       }
 
+      // Notification sound: Off, the system default, the OS's own sounds and
+      // the ones added with Choose file… (Ref #363, #446).
+      let sounds = null; // [{ label, sound }] from the backend, read once per window
+      const soundValue = (sound) => JSON.stringify(sound);
+      function notificationSoundRow() {
+        const row = el("div", "row");
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Notification sound");
+        const current = settings.notification_sound_choice ?? (settings.notification_sound === false ? "off" : "default");
+        const options = [["off", "Off"], ["default", "System default"]];
+        for (const { label, sound } of sounds || []) options.push([sound, label]);
+        options.push(["choose", "Choose file…"]);
+        for (const [sound, label] of options) {
+          const o = document.createElement("option");
+          o.value = sound === "choose" ? "choose" : soundValue(sound);
+          o.textContent = label;
+          select.append(o);
+        }
+        // A saved sound that has gone plays the system default.
+        select.value = soundValue(current);
+        if (select.value !== soundValue(current)) select.value = soundValue("default");
+        const shown = select.value;
+        if (!sounds) {
+          sounds = [];
+          invoke("notification_sounds")
+            .then((list) => {
+              sounds = list;
+              render();
+            })
+            .catch((e) => console.error(e));
+        }
+        select.onchange = async () => {
+          if (select.value !== "choose") return persist("notification_sound_choice", JSON.parse(select.value));
+          select.value = shown;
+          try {
+            const picked = await invoke("choose_notification_sound");
+            if (!picked) return;
+            sounds = null; // list the added sound
+            await persist("notification_sound_choice", picked);
+          } catch (e) {
+            setStatus(String(e && e.message ? e.message : e));
+          }
+        };
+        const preview = el("button", "secondary", "Preview");
+        preview.type = "button";
+        preview.disabled = shown === soundValue("off");
+        preview.onclick = () =>
+          invoke("preview_notification_sound", { sound: JSON.parse(select.value) })
+            .catch((e) => setStatus(String(e && e.message ? e.message : e)));
+        const controls = el("div", "row-controls");
+        controls.append(select, preview);
+        const { label, hint } = FIELD_META.notification_sound;
+        row.append(rowText(label, hint), controls);
+        return row;
+      }
+
       // The reaction a notification's React button adds: Messenger's defaults.
       function notificationReactionRow() {
         return selectRow(
@@ -1282,6 +1339,7 @@
         badge_mode: badgeModeRow,
         muted_conversations: mutedConversationsRow,
         notification_reaction: notificationReactionRow,
+        notification_sound: notificationSoundRow,
         update_check_hours: updateCheckHoursRow,
         download_behavior: downloadBehaviorRow,
         tray_icon_style: trayIconStyleRow,

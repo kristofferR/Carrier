@@ -118,7 +118,8 @@ zbus = "5"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard", "NSWorkspace"] }
+# NSSound and NSBeep: Settings → Notification sound → Preview.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSGraphics", "NSPasteboard", "NSSound", "NSWorkspace"] }
 # Communication notifications: the sender's face and group name (Ref #366).
 objc2-intents = { version = "0.3.2", default-features = false, features = ["std", "INSendMessageIntent", "INIntent", "INPerson", "INPersonHandle", "INImage", "INInteraction", "INSpeakableString", "INOutgoingMessageType", "INIntentResponse", "INSendMessageAttachment", "block2"] }
 objc2-foundation = { version = "0.3", features = ["NSBundle", "NSData", "NSString", "NSValue", "NSObject", "NSDictionary", "NSArray", "NSSet", "NSURL", "NSError"] }
@@ -145,7 +146,9 @@ muda = "0.20"
 # NOT read — it reads AppsUseLightTheme, and the two diverge under Win11 Custom).
 # Win32_UI_HiDpi: render at the notification area's DPI when its monitor differs
 # from the one containing Carrier's window.
-windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
+# Win32_Media_Audio: PlaySound for a notification sound file chosen in Settings
+# (an unpackaged app's toast can't play one) and for Preview.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Registry", "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"] }
 # Register the carrier:// URL scheme in HKCU (per-user, no admin) so protocol
 # launches reach Carrier as argv and are parsed in one audited place by
 # actions::action_from_argv. Registration only — the plugin's JS API capability

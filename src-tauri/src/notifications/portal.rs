@@ -99,7 +99,7 @@ pub(super) fn show(
     title: &str,
     body: &str,
     image: Option<&Path>,
-    sound: bool,
+    sound: &crate::sound::LinuxSound,
     reply: bool,
     on_response: impl FnOnce(Response) + Send + 'static,
 ) -> Result<(), String> {
@@ -164,7 +164,9 @@ pub(super) fn show(
     ]);
     // Version 1 rejects unknown keys rather than ignoring them.
     if portal.version >= 2 {
-        notification.insert("sound", if sound { "default" } else { "silent" }.into());
+        // The portal plays its default sound or none; Carrier plays any other.
+        let silent = sound.hint == crate::sound::SoundHint::Silent;
+        notification.insert("sound", if silent { "silent" } else { "default" }.into());
     }
     // Bytes icons work with Ubuntu's version-1 portal and do not expose a
     // sandbox-private filename. Reuse the same bounded PNG validation as FDO.
@@ -193,6 +195,12 @@ pub(super) fn show(
             (action.handler)((LinuxNotificationResponse::Closed, None));
         }
         return Err(error.to_string());
+    }
+    // Version 1 can't silence a notification, so it keeps the desktop's sound.
+    if portal.version >= 2
+        && let Some(file) = &sound.play
+    {
+        crate::sound::play_file(file);
     }
     Ok(())
 }
