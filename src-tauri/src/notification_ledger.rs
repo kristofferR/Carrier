@@ -252,6 +252,7 @@ mod tests {
         let mut files = account_files(dir);
         files.sort();
         assert_eq!(files, vec![path.clone(), snapshot]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
