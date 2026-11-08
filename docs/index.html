@@ -1191,6 +1191,21 @@
   .key-row .sep { color: var(--muted); margin: 0 4px; font-weight: 600; }
   .key-row i { color: var(--muted); font-style: normal; }
 
+
+  /* compact feature cards: icon beside the text, white on the tinted band,
+     darker body text for readability (the bubble tails stay) */
+  .features .feat-grid { gap: clamp(.9rem, 1.8vw, 1.25rem); margin-top: 2rem; }
+  .features .feature {
+    --bub: #ffffff;
+    display: grid; grid-template-columns: 44px 1fr; column-gap: 14px; align-items: start;
+    padding: 1.15rem 1.25rem 1.2rem;
+  }
+  .features .feature:nth-child(even) { --bub: #ffffff; }
+  .features .feature .f-icon { width: 44px; height: 44px; margin: 0; grid-row: span 2; }
+  .features .feature .f-icon svg { width: 22px; height: 22px; }
+  .features .feature h3 { font-size: 1.06rem; margin: .1rem 0 .3rem; line-height: 1.25; }
+  .features .feature p { color: #33475c; font-size: .96rem; line-height: 1.5; }
+
   /* ---------- FAQ: expandable question bubbles ---------- */
   .faq-list {
     max-width: 720px; margin: 2.4rem auto 0;
