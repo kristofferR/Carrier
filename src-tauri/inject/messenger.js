@@ -2969,6 +2969,69 @@ ${button.innerHTML}`)
     }, 5e3);
   }
 
+  // inject/src/messenger/lib/chat-gradient.ts
+  var GRADIENT_VAR = "--chat-outgoing-message-background-gradient";
+  var BUBBLE_COLOUR = /^var\(--chat-outgoing-message-bubble-background-color[,)]/;
+  var SINGLE_CLASS = /^\.[\w-]+$/;
+  function collectBubbleClasses(rules, into) {
+    for (let index = 0; index < rules.length; index++) {
+      const rule = rules[index];
+      if (!rule) continue;
+      if (rule.cssRules && !rule.selectorText) {
+        collectBubbleClasses(rule.cssRules, into);
+        continue;
+      }
+      const selector = rule.selectorText ?? "";
+      if (!SINGLE_CLASS.test(selector)) continue;
+      const colour = rule.style?.getPropertyValue("background-color").replace(/\s/g, "") ?? "";
+      if (BUBBLE_COLOUR.test(colour)) into.add(selector);
+    }
+  }
+  function chatGradientCss(bubbleClasses) {
+    if (!bubbleClasses.length) return "";
+    const chat = `html[data-carrier-chats] [role="main"] [style*="${GRADIENT_VAR}"]`;
+    return `${chat} :is(${bubbleClasses.join(", ")}) {
+  background-image: var(${GRADIENT_VAR}) !important;
+  background-attachment: fixed !important;
+}
+:where(${chat}:is([style*="background-image: linear-gradient"], [style*="background-image:linear-gradient"])) {
+  background-image: none !important;
+}
+`;
+  }
+
+  // inject/src/messenger/features/chat-gradient.ts
+  var CHECK_MS = 1e3;
+  function initChatGradient() {
+    const style = document.createElement("style");
+    style.id = "carrier-chat-gradient";
+    const classes = /* @__PURE__ */ new Set();
+    const rulesRead = /* @__PURE__ */ new WeakMap();
+    const readSheets = () => {
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try {
+          rules = sheet.cssRules;
+        } catch (_) {
+          continue;
+        }
+        if (rulesRead.get(sheet) === rules.length) continue;
+        rulesRead.set(sheet, rules.length);
+        collectBubbleClasses(rules, classes);
+      }
+    };
+    let applied2 = 0;
+    window.setInterval(() => {
+      if (document.hidden) return;
+      if (!document.querySelector(`[role="main"] [style*="${GRADIENT_VAR}"]`)) return;
+      readSheets();
+      if (!classes.size || classes.size === applied2) return;
+      applied2 = classes.size;
+      style.textContent = chatGradientCss([...classes]);
+      if (!style.isConnected) document.documentElement.append(style);
+    }, CHECK_MS);
+  }
+
   // inject/src/messenger/lib/composer-focus.ts
   var EXPLICIT_ACTION_HOLD_MS = 2e3;
   var explicitActionAt = Number.NEGATIVE_INFINITY;
@@ -3089,6 +3152,240 @@ ${button.innerHTML}`)
     if (state2.isComposing || state2.compositionActive || state2.keyCode === 229) return true;
     return state2.requireAccelerator && !state2.acceleratorPressed && !state2.shiftKey;
   }
+  var VOICE_CLIP_CANCEL_ICON = "M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z";
+  var isVoiceClipCancelIcon = (path) => !!path?.startsWith(VOICE_CLIP_CANCEL_ICON);
+  function shouldEscapeCancelVoiceClip(state2) {
+    return state2.key === "Escape" && !state2.isComposing && !state2.defaultPrevented && !state2.escapeOwnedElsewhere && state2.inChat;
+  }
+
+  // inject/src/messenger/lib/media-zoom.ts
+  var MIN_SCALE = 1;
+  var MAX_SCALE = 8;
+  function wheelZoomFactor({ deltaY, deltaMode, ctrlKey, ctrlKeyHeld }) {
+    const pixels = deltaY * (deltaMode === 1 ? 40 : deltaMode === 2 ? 800 : 1);
+    if (ctrlKey && !ctrlKeyHeld && Math.abs(pixels) < 50) return Math.exp(-pixels / 100);
+    return 2 ** (-Math.min(Math.max(pixels, -120), 120) * 2e-3);
+  }
+  function zoomAround(state2, scale, x, y, rect) {
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+    if (next <= MIN_SCALE) return { scale: MIN_SCALE, tx: 0, ty: 0 };
+    const k = next / state2.scale;
+    return {
+      scale: next,
+      tx: state2.tx + (x - (rect.left + rect.width / 2)) * (1 - k),
+      ty: state2.ty + (y - (rect.top + rect.height / 2)) * (1 - k)
+    };
+  }
+
+  // inject/src/messenger/features/media-viewer.ts
+  var zoomActive = false;
+  var isMediaZoomActive = () => zoomActive;
+  function initMediaViewer() {
+    const PAN = 40;
+    let target = null;
+    let targetCssText = "";
+    let targetTabIndex = null;
+    let previousFocus = null;
+    let scale = 1;
+    let tx = 0;
+    let ty = 0;
+    let active = false;
+    let dragging = false;
+    let sx = 0;
+    let sy = 0;
+    let stx = 0;
+    let sty = 0;
+    let ctrlKeyHeld = false;
+    let pinching = false;
+    let pinchFrom = 1;
+    function pickTarget(target2) {
+      if (!(target2 instanceof Element)) return null;
+      const t = target2;
+      const video = t.closest("video") || t.closest("div")?.querySelector("video");
+      if (video) return video;
+      const img = t.closest("img[alt]");
+      if (!img) return null;
+      const src = img.currentSrc || img.src || "";
+      if (src.startsWith("data:") || src.includes("stp=dst-png_s")) return null;
+      return img;
+    }
+    function render(animated = true) {
+      if (!target) return;
+      const reset = scale === 1 && tx === 0 && ty === 0;
+      target.style.transition = !animated || dragging ? "none" : "transform .15s cubic-bezier(0,0,.2,1)";
+      target.style.transformOrigin = "center center";
+      target.style.zIndex = reset ? "" : "1000";
+      target.style.maxWidth = reset ? "" : "none";
+      target.style.maxHeight = reset ? "" : "none";
+      target.style.transform = reset ? "" : `translate(${tx}px,${ty}px) scale(${scale})`;
+      target.style.cursor = reset ? "zoom-in" : dragging ? "grabbing" : "grab";
+    }
+    function zoomTo(next, x, y, animated = true) {
+      if (!target) return;
+      ({ scale, tx, ty } = zoomAround({ scale, tx, ty }, next, x, y, target.getBoundingClientRect()));
+      render(animated);
+    }
+    function exit() {
+      if (!active) return;
+      active = false;
+      zoomActive = false;
+      pinching = false;
+      handlers.forEach(([t, f, o]) => {
+        document.removeEventListener(t, f, o);
+      });
+      const closedTarget = target;
+      if (closedTarget) {
+        closedTarget.style.cssText = targetCssText;
+        if (targetTabIndex === null) closedTarget.removeAttribute("tabindex");
+        else closedTarget.setAttribute("tabindex", targetTabIndex);
+      }
+      target = null;
+      targetCssText = "";
+      targetTabIndex = null;
+      scale = 1;
+      tx = 0;
+      ty = 0;
+      dragging = false;
+      previousFocus?.focus({ preventScroll: true });
+      previousFocus = null;
+    }
+    const onWheel = (e) => {
+      if (!target) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (pinching) return;
+      const factor = wheelZoomFactor({
+        deltaY: e.deltaY,
+        deltaMode: e.deltaMode,
+        ctrlKey: e.ctrlKey,
+        ctrlKeyHeld
+      });
+      zoomTo(scale * factor, e.clientX, e.clientY, !e.ctrlKey && Math.abs(e.deltaY) >= 50);
+    };
+    const onDown = (e) => {
+      if (e.button !== 0 || scale <= 1 || !target?.contains(e.target)) return;
+      dragging = true;
+      sx = e.clientX;
+      sy = e.clientY;
+      stx = tx;
+      sty = ty;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    const onMove = (e) => {
+      ctrlKeyHeld = e.ctrlKey;
+      if (!dragging) return;
+      tx = stx + (e.clientX - sx);
+      ty = sty + (e.clientY - sy);
+      render();
+    };
+    const onUp = () => {
+      dragging = false;
+      render();
+    };
+    const onKeyUp = (e) => {
+      ctrlKeyHeld = e.ctrlKey;
+    };
+    const onKey = (e) => {
+      ctrlKeyHeld = e.ctrlKey;
+      if (e.key === "Escape") return exit();
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        target?.focus({ preventScroll: true });
+        return;
+      }
+      const d = {
+        ArrowLeft: [PAN, 0],
+        ArrowRight: [-PAN, 0],
+        ArrowUp: [0, PAN],
+        ArrowDown: [0, -PAN]
+      }[e.key];
+      if (d && scale > 1) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        tx += d[0];
+        ty += d[1];
+        render();
+      }
+    };
+    const onClick = (e) => {
+      if (active && target && !target.contains(e.target)) exit();
+    };
+    const handlers = [
+      ["wheel", onWheel, { passive: false, capture: true }],
+      ["mousedown", onDown, { capture: true }],
+      ["mousemove", onMove, { capture: true }],
+      ["mouseup", onUp, { capture: true }],
+      ["keydown", onKey, { capture: true }],
+      ["keyup", onKeyUp, { capture: true, passive: true }],
+      ["click", onClick, { capture: true }]
+    ];
+    function enter(t) {
+      active = true;
+      zoomActive = true;
+      target = t;
+      targetCssText = t.style.cssText;
+      targetTabIndex = t.getAttribute("tabindex");
+      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      t.setAttribute("tabindex", "-1");
+      scale = 1;
+      tx = 0;
+      ty = 0;
+      t.focus({ preventScroll: true });
+      handlers.forEach(([type, f, o]) => {
+        document.addEventListener(type, f, o);
+      });
+    }
+    document.addEventListener(
+      "dblclick",
+      (e) => {
+        const t = pickTarget(e.target);
+        if (!t) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (active) return exit();
+        enter(t);
+        zoomTo(2, e.clientX, e.clientY, false);
+      },
+      { capture: true }
+    );
+    document.addEventListener(
+      "gesturestart",
+      (event) => {
+        const e = event;
+        if (!active) {
+          const t = pickTarget(e.target);
+          if (!t) return;
+          enter(t);
+        }
+        e.preventDefault();
+        pinching = true;
+        pinchFrom = scale;
+      },
+      { capture: true }
+    );
+    document.addEventListener(
+      "gesturechange",
+      (event) => {
+        if (!pinching) return;
+        const e = event;
+        e.preventDefault();
+        zoomTo(pinchFrom * e.scale, e.clientX, e.clientY, false);
+      },
+      { capture: true }
+    );
+    document.addEventListener(
+      "gestureend",
+      (event) => {
+        if (!pinching) return;
+        event.preventDefault();
+        pinching = false;
+        if (scale <= MIN_SCALE) exit();
+      },
+      { capture: true }
+    );
+  }
 
   // inject/src/messenger/features/composer-keys.ts
   var isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
@@ -3097,6 +3394,34 @@ ${button.innerHTML}`)
     if (!(target instanceof Element)) return false;
     const editor = target.closest(composerSelector);
     return !!editor?.closest('[role="main"]');
+  }
+  var isShown2 = (element2) => {
+    const rect = element2.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  function voiceClipCancelButton() {
+    return [...document.querySelectorAll('[role="main"] [role="button"]')].find(
+      (button) => isVoiceClipCancelIcon(button.querySelector("svg path")?.getAttribute("d")) && isShown2(button)
+    );
+  }
+  function onVoiceClipEscape(event) {
+    if (event.key !== "Escape") return;
+    const target = event.target;
+    const inChat = target === document.body || target === document.documentElement || target instanceof Element && !!target.closest('[role="main"]');
+    const escapeOwnedElsewhere = isMediaZoomActive() || !!document.fullscreenElement || [...document.querySelectorAll('[role="dialog"], [role="menu"]')].some(isShown2);
+    if (!shouldEscapeCancelVoiceClip({
+      key: event.key,
+      isComposing: event.isComposing,
+      defaultPrevented: event.defaultPrevented,
+      escapeOwnedElsewhere,
+      inChat
+    }))
+      return;
+    const cancel = voiceClipCancelButton();
+    if (!cancel) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancel.click();
   }
   function initComposerKeys() {
     let compositionActive = false;
@@ -3132,6 +3457,7 @@ ${button.innerHTML}`)
       },
       true
     );
+    document.addEventListener("keydown", onVoiceClipEscape, true);
   }
 
   // inject/src/messenger/lib/chat-row-menu.ts
@@ -5049,12 +5375,12 @@ ${button.innerHTML}`)
   }
   var threadContexts = /* @__PURE__ */ new WeakMap();
   function threadContext(react, runtime) {
-    let context = threadContexts.get(react);
-    if (!context && runtime.createContext) {
-      context = runtime.createContext(void 0);
-      threadContexts.set(react, context);
+    let context2 = threadContexts.get(react);
+    if (!context2 && runtime.createContext) {
+      context2 = runtime.createContext(void 0);
+      threadContexts.set(react, context2);
     }
-    return context;
+    return context2;
   }
   function patchNicknameThreadContext(value, react, isGroup) {
     if (!value || typeof value !== "object" || !react || typeof react !== "object" || typeof isGroup !== "function")
@@ -5064,8 +5390,8 @@ ${button.innerHTML}`)
     const original = exports.Provider;
     if (typeof original !== "function" || wrappedProviders.has(original) || !runtime.createElement)
       return;
-    const context = threadContext(react, runtime);
-    if (!context) return;
+    const context2 = threadContext(react, runtime);
+    if (!context2) return;
     const { createElement } = runtime;
     const provider = (props) => {
       let group;
@@ -5076,7 +5402,7 @@ ${button.innerHTML}`)
         }
       } catch (_) {
       }
-      return createElement(context.Provider, {
+      return createElement(context2.Provider, {
         value: group,
         children: createElement(original, props)
       });
@@ -5096,10 +5422,10 @@ ${button.innerHTML}`)
     if (typeof original !== "function" || wrappedProviders.has(original) || typeof runtime.createElement !== "function" || typeof runtime.useSyncExternalStore !== "function")
       return;
     const { createElement, useSyncExternalStore, useContext } = runtime;
-    const context = threadContext(react, runtime);
+    const context2 = threadContext(react, runtime);
     const provider = function CarrierNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
-      const group = context && useContext ? useContext(context) : void 0;
+      const group = context2 && useContext ? useContext(context2) : void 0;
       const enabled = showNicknames(mode, group);
       if (!enabled && props && typeof props === "object") {
         const record4 = props;
@@ -6099,6 +6425,316 @@ ${button.innerHTML}`)
     }
   }
 
+  // inject/src/messenger/lib/messenger-sounds.ts
+  function playsMessageSound(state2) {
+    if (state2.globallyMuted || state2.oldNews) return false;
+    return state2.focused || !state2.nativeSoundOn;
+  }
+
+  // inject/src/messenger/lib/mute.ts
+  var MUTE_LABEL_LIMIT = 60;
+  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
+  var UNMUTE_ACTION_RE = /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
+  var MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
+  var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
+  var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
+  var STATEFUL_MUTE_ROLES = /* @__PURE__ */ new Set(["menuitemcheckbox", "switch"]);
+  var MUTED_ROW_ICON_SHAPE = 2001357332;
+  var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
+  var MUTED_ROW_ICON_MAX_RIGHT_GAP = 64;
+  var MUTED_THREAD_LIMIT = 500;
+  var MUTE_ABSENCE_CONFIRM_MS = 1e3;
+  var MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
+  function mutedConversationPolicy(settings) {
+    const policy = settings?.muted_conversations;
+    if (policy === "ignore" || policy === "badge" || policy === "include") return policy;
+    return settings?.ignore_muted_conversations === false ? "include" : "ignore";
+  }
+  function ignoresMutedConversations(settings) {
+    return mutedConversationPolicy(settings) !== "include";
+  }
+  function badgeIgnoresMutedConversations(settings) {
+    return mutedConversationPolicy(settings) === "ignore";
+  }
+  function suppressMutedDelivery(muted, settings) {
+    return muted && ignoresMutedConversations(settings);
+  }
+  function notificationsGloballyMuted(settings, now = Date.now()) {
+    const pausedUntil = settings?.notifications_paused_until;
+    return settings?.mute_notifications === true || typeof pausedUntil === "number" && pausedUntil > now || messengerDndActive(now);
+  }
+  function suppressNotificationDelivery(muted, settings) {
+    return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
+  }
+  function conversationMuteFromLabel(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
+    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
+    return null;
+  }
+  function isExplicitUnmuteAction(value) {
+    return muteStateAfterExplicitAction(value) === false;
+  }
+  function muteStateAfterExplicitAction(value) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > MUTE_LABEL_LIMIT) return void 0;
+    if (UNMUTE_ACTION_RE.test(text)) return false;
+    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
+    return void 0;
+  }
+  function muteStateAfterControlAction(value, role, ariaChecked) {
+    const text = (value || "").replace(/\s+/g, " ").trim();
+    const normalizedRole = (role || "").toLowerCase();
+    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
+      if (ariaChecked === "true") return false;
+      if (ariaChecked === "false") return true;
+      return void 0;
+    }
+    return muteStateAfterExplicitAction(text);
+  }
+  function muteSignalFromSource(source) {
+    if (source.attribute === "alt") return null;
+    const text = (source.value || "").replace(/\s+/g, " ").trim();
+    const signal = conversationMuteFromLabel(text);
+    if (signal === null) return null;
+    const tag = source.tagName.toLowerCase();
+    const role = (source.role || "").toLowerCase();
+    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
+      if (source.ariaChecked === "true") return true;
+      if (source.ariaChecked === "false") return false;
+      return null;
+    }
+    if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
+      return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
+    }
+    if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
+      return null;
+    }
+    return tag === "svg" || role === "img" || source.containsSvg === true ? signal : null;
+  }
+  function muteSignalFromLabels(labels) {
+    let muted = false;
+    let unmuted = false;
+    for (const label2 of labels) {
+      const signal = conversationMuteFromLabel(label2);
+      if (signal === true) muted = true;
+      else if (signal === false) unmuted = true;
+    }
+    if (muted) return true;
+    if (unmuted) return false;
+    return null;
+  }
+  function isMutedRowIconShape(shape) {
+    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= MUTED_ROW_ICON_MAX_RIGHT_GAP && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
+  }
+  var svgShapeHash = (svg) => {
+    let shapeText = "";
+    for (const shape of svg.querySelectorAll("path, line, polyline, circle")) {
+      shapeText += `${shape.tagName}:${shape.getAttribute("d") || ""}:${shape.getAttribute("points") || ""}:${shape.getAttribute("cx") || ""}:${shape.getAttribute("cy") || ""};`;
+    }
+    let hash = 2166136261;
+    for (let index = 0; index < shapeText.length; index++) {
+      hash ^= shapeText.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  };
+  function hasMutedRowIcon(root) {
+    if (!(root instanceof Element)) return false;
+    const rootRect = root.getBoundingClientRect();
+    for (const svg of root.querySelectorAll("svg")) {
+      const rect = svg.getBoundingClientRect();
+      if (isMutedRowIconShape({
+        width: rect.width,
+        height: rect.height,
+        rightGap: rootRect.right - rect.right,
+        interactive: !!svg.closest(
+          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
+        ),
+        ariaHidden: svg.getAttribute("aria-hidden") === "true",
+        viewBox: svg.getAttribute("viewBox") || "",
+        pathCount: svg.querySelectorAll("path").length,
+        shapeHash: svgShapeHash(svg),
+        pathPrefixMatched: svg.querySelector("path[d]")?.getAttribute("d")?.replace(/\s+/g, " ").trim().startsWith(MUTED_ROW_ICON_PATH_PREFIX) === true
+      })) {
+        return true;
+      }
+    }
+    return false;
+  }
+  function resolveMuteObservation(labels) {
+    const signal = muteSignalFromLabels(labels);
+    if (signal !== null) return signal;
+    return void 0;
+  }
+  function collectMuteLabels(root, includeActions = true) {
+    const labels = [];
+    const seen = /* @__PURE__ */ new Set();
+    const push = (value) => {
+      const text = (value || "").replace(/\s+/g, " ").trim();
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      labels.push(text);
+    };
+    const inspect2 = (el) => {
+      for (const attr of LABEL_ATTRS) {
+        const value = el.getAttribute(attr);
+        if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
+          continue;
+        }
+        if (value) {
+          const signal = muteSignalFromSource({
+            value,
+            tagName: el.tagName,
+            role: el.getAttribute("role"),
+            attribute: attr,
+            containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
+            ariaChecked: el.getAttribute("aria-checked")
+          });
+          if (signal !== null) push(signal ? "Muted" : "Mute");
+        }
+      }
+    };
+    if (root instanceof Element) inspect2(root);
+    for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
+      inspect2(el);
+    }
+    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
+    return labels;
+  }
+  var MutedThreadStore = class {
+    constructor() {
+      __publicField(this, "states", /* @__PURE__ */ new Map());
+      __publicField(this, "rowAbsences", /* @__PURE__ */ new Map());
+    }
+    observe(id, muted) {
+      if (!id || muted === void 0) return;
+      this.rowAbsences.delete(id);
+      if (this.states.has(id)) this.states.delete(id);
+      this.states.set(id, muted);
+      if (this.states.size > MUTED_THREAD_LIMIT) {
+        const oldest = this.states.keys().next().value;
+        this.states.delete(oldest);
+        this.rowAbsences.delete(oldest);
+      }
+    }
+    observeMountedRow(id, muted, observedAt = Date.now()) {
+      if (!id) return;
+      if (muted !== void 0) {
+        this.observe(id, muted);
+        return;
+      }
+      if (!this.isMuted(id)) {
+        this.rowAbsences.delete(id);
+        return;
+      }
+      const absence = this.rowAbsences.get(id);
+      if (absence === void 0 || observedAt < absence.since) {
+        this.rowAbsences.set(id, { since: observedAt, observations: 1 });
+        return;
+      }
+      absence.observations += 1;
+      if (observedAt - absence.since >= MUTE_ABSENCE_CONFIRM_MS && absence.observations >= MUTE_ABSENCE_MIN_OBSERVATIONS) {
+        this.observe(id, false);
+      }
+    }
+    isMuted(id) {
+      return this.states.get(id) === true;
+    }
+    invalidateMute(id) {
+      if (id) this.observe(id, false);
+    }
+    knownMutedUnread(unreadIds) {
+      for (const id of unreadIds) {
+        if (this.states.get(id) === true) return true;
+      }
+      return false;
+    }
+  };
+  var mutedThreads = new MutedThreadStore();
+  var actionInvalidationStarted = false;
+  var threadIdFromActionTarget = (target) => {
+    const row = target.closest('[role="row"]');
+    const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
+    return threadIdFromHref(href) || "";
+  };
+  function resolveMuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
+    if (rowId) return rowId;
+    if (actionIsInOpenSurface && openId) return openId;
+    return recentRowId || openId;
+  }
+  function initMuteActionTracking() {
+    if (actionInvalidationStarted) return;
+    actionInvalidationStarted = true;
+    let recentRow = null;
+    const rememberRow = (target) => {
+      if (!(target instanceof Element)) return;
+      if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
+      const id = threadIdFromActionTarget(target);
+      recentRow = id ? { id, at: Date.now() } : null;
+    };
+    document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
+    document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
+    document.addEventListener("focusin", (event) => rememberRow(event.target), true);
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (!event.isTrusted) return;
+        if (!(event.target instanceof Element)) return;
+        rememberRow(event.target);
+        const action2 = event.target.closest(
+          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
+        );
+        if (!action2) return;
+        const label2 = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
+        const nextMuted = muteStateAfterControlAction(
+          label2,
+          action2.getAttribute("role"),
+          action2.getAttribute("aria-checked")
+        );
+        if (nextMuted === void 0) return;
+        const rowId = threadIdFromActionTarget(action2);
+        const openId = threadIdFromHref(location.pathname) || "";
+        const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
+        const id = resolveMuteActionThreadId(
+          rowId,
+          openId,
+          recentId,
+          !!action2.closest('[role="main"], [role="complementary"], [role="dialog"]')
+        );
+        if (id) {
+          mutedThreads.observe(id, nextMuted);
+          window.dispatchEvent(
+            new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } })
+          );
+        }
+      },
+      true
+    );
+  }
+  function observeConversationMute(id, root) {
+    mutedThreads.observeMountedRow(
+      id,
+      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false))
+    );
+    return mutedThreads.isMuted(id);
+  }
+  function observeDatabaseMute(id, muted) {
+    mutedThreads.observe(id, muted);
+    return muted;
+  }
+  function observeOpenThreadMute(id, roots) {
+    const labels = [];
+    for (const root of roots) {
+      for (const label2 of collectMuteLabels(root)) {
+        if (conversationMuteFromLabel(label2) !== null) labels.push(label2);
+      }
+    }
+    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
+    return mutedThreads.isMuted(id);
+  }
+
   // inject/src/messenger/lib/page-notifications.ts
   var CHAT_POPPER_MODULE = "useMWLSChatPopperUpper";
   var DESKTOP_NOTIFICATIONS_MODULE = "MWDesktopNotifications";
@@ -6135,6 +6771,7 @@ ${button.innerHTML}`)
   var PageMessageIndex = class {
     constructor() {
       __publicField(this, "threads", /* @__PURE__ */ new Map());
+      __publicField(this, "stale", /* @__PURE__ */ new Set());
     }
     record(messageId, threadId) {
       this.threads.delete(messageId);
@@ -6145,12 +6782,25 @@ ${button.innerHTML}`)
     threadFor(tag) {
       return typeof tag === "string" ? this.threads.get(tag) : void 0;
     }
+    /** The message is old news (see {@link isOldNews}): its notification is suppressed. */
+    markStale(messageId) {
+      this.stale.add(messageId);
+      if (this.stale.size > MESSAGE_LIMIT) this.stale.delete(this.stale.values().next().value);
+    }
+    isStale(tag) {
+      return typeof tag === "string" && this.stale.has(tag);
+    }
   };
   var pageMessages = new PageMessageIndex();
   function recordNotifiedMessage(message, load) {
     if (!message || typeof message !== "object") return;
     const row = message;
     if (typeof row.messageId !== "string" || !row.messageId) return;
+    const threadId = messageThreadId(message, load);
+    if (threadId) pageMessages.record(row.messageId, threadId);
+  }
+  function messageThreadId(message, load) {
+    if (!message || typeof message !== "object") return null;
     let i64ToString;
     try {
       const i64 = typeof load === "function" ? load("I64") : null;
@@ -6159,8 +6809,59 @@ ${button.innerHTML}`)
       }
     } catch {
     }
-    const threadId = messengerId(row.threadKey, i64ToString);
-    if (threadId) pageMessages.record(row.messageId, threadId);
+    return messengerId(message.threadKey, i64ToString);
+  }
+  var LATE_NOTIFICATION_MS = 2 * 6e4;
+  function isOldNews(sentMs, nowMs, readUpToMs) {
+    if (sentMs === null) return false;
+    if (nowMs !== null && nowMs - sentMs > LATE_NOTIFICATION_MS) return true;
+    return readUpToMs !== null && readUpToMs >= sentMs;
+  }
+  function messengerMillis(value, load) {
+    let i64ToString;
+    try {
+      const i64 = typeof load === "function" ? load("I64") : null;
+      if (typeof i64?.to_string === "function") i64ToString = i64.to_string.bind(i64);
+    } catch {
+    }
+    const digits = messengerId(value, i64ToString);
+    const millis = digits === null ? Number.NaN : Number(digits);
+    return Number.isSafeInteger(millis) ? millis : null;
+  }
+  function serverNowMs(load) {
+    try {
+      const time = typeof load === "function" ? load("ServerTime") : null;
+      const millis = time?.getMillis?.();
+      return typeof millis === "number" && Number.isFinite(millis) ? millis : null;
+    } catch {
+      return null;
+    }
+  }
+  async function readOldNews(db, message, load, timeoutMs = 750) {
+    if (!message || typeof message !== "object") return false;
+    const row = message;
+    const sentMs = messengerMillis(row.timestampMs, load);
+    if (sentMs === null) return false;
+    const nowMs = serverNowMs(load);
+    if (isOldNews(sentMs, nowMs, null)) return true;
+    const threads = db?.tables?.threads;
+    if (typeof threads?.get !== "function") return false;
+    let timer;
+    const read = async () => {
+      const thread2 = await threads.get(row.threadKey);
+      if (!thread2 || typeof thread2 !== "object") return false;
+      return isOldNews(sentMs, nowMs, messengerMillis(thread2.lastReadWatermarkTimestampMs, load));
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => false),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   function sameArity(wrapped3, original) {
     try {
@@ -6169,31 +6870,44 @@ ${button.innerHTML}`)
     }
     return wrapped3;
   }
-  function wrapDesktopNotificationsFactory(factory, load) {
-    const patch = (exports) => {
-      if (!exports || typeof exports !== "object") return false;
-      const record4 = exports;
-      const trigger = record4.triggerLocalNotification;
-      if (typeof trigger !== "function") return false;
-      record4.triggerLocalNotification = function(...args) {
-        try {
-          recordNotifiedMessage(args[1], load());
-        } catch {
-        }
-        return Reflect.apply(trigger, this, args);
-      };
-      return true;
-    };
+  function wrapFactoryExports(factory, patch) {
+    const tryPatch = (exports) => Boolean(exports) && typeof exports === "object" && patch(exports);
     return sameArity(function(...args) {
       const result = Reflect.apply(factory, this, args);
       for (const candidate of [result, ...args.slice(-2)]) {
-        if (patch(candidate)) break;
-        if (candidate && typeof candidate === "object" && patch(candidate.exports)) {
-          break;
+        try {
+          if (tryPatch(candidate)) break;
+          if (candidate && typeof candidate === "object" && tryPatch(candidate.exports)) {
+            break;
+          }
+        } catch {
         }
       }
       return result;
     }, factory);
+  }
+  function wrapDesktopNotificationsFactory(factory, load) {
+    return wrapFactoryExports(factory, (exports) => {
+      const trigger = exports.triggerLocalNotification;
+      if (typeof trigger !== "function") return false;
+      exports.triggerLocalNotification = function(...args) {
+        const notify = () => Reflect.apply(trigger, this, args);
+        let check;
+        try {
+          const page = load();
+          recordNotifiedMessage(args[1], page);
+          check = readOldNews(args[0], args[1], page);
+        } catch {
+          return notify();
+        }
+        return check.then((old) => {
+          const messageId = args[1]?.messageId;
+          if (old && typeof messageId === "string") pageMessages.markStale(messageId);
+          return notify();
+        }, notify);
+      };
+      return true;
+    });
   }
   function wrapChatPopperFactory(factory, loadRewritten2, onUnmatched) {
     let rewritten = null;
@@ -6234,6 +6948,224 @@ ${button.innerHTML}`)
       report("refused");
     };
     (doc.head ?? doc.documentElement).append(script);
+  }
+
+  // inject/src/messenger/features/messenger-sounds.ts
+  /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
+   *
+   * MIT License
+   *
+   * Copyright (c) 2026 fMess contributors
+   *
+   * Permission is hereby granted, free of charge, to any person obtaining a copy
+   * of this software and associated documentation files (the "Software"), to deal
+   * in the Software without restriction, including without limitation the rights
+   * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   * copies of the Software, and to permit persons to whom the Software is
+   * furnished to do so, subject to the following conditions:
+   *
+   * The above copyright notice and this permission notice shall be included in all
+   * copies or substantial portions of the Software.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   * SOFTWARE.
+   */
+  var SOUND_PLAYER_MODULE = "SoundPlayer";
+  var CHAT_POPPER_COMMON_MODULE = "MWLSChatPopperCommon";
+  var RESUME_WAIT_MS = 1e3;
+  var pageLoad = () => window.require;
+  var soundPlayerCalls = 0;
+  var MESSAGE_SOUND_PENDING_MS = 3e3;
+  var MESSAGE_SOUND_RING_MS = 5e3;
+  var pendingMessageSound = null;
+  var messageSound = null;
+  function messengerMessageSoundJustPlayed(thread2, messageId = "") {
+    const sound = messageSound;
+    if (!sound || Date.now() - sound.at >= MESSAGE_SOUND_RING_MS) return false;
+    if (messageId) return sound.messageId === messageId;
+    if (thread2 === null || sound.thread !== thread2) return false;
+    messageSound = null;
+    return true;
+  }
+  var context = null;
+  var sounding = 0;
+  var buffers = /* @__PURE__ */ new Map();
+  var sources = /* @__PURE__ */ new WeakMap();
+  var pauses = /* @__PURE__ */ new WeakMap();
+  var pausesOf = (element2) => pauses.get(element2) ?? 0;
+  var quieted = /* @__PURE__ */ new WeakSet();
+  var quiet = (element2) => {
+    if (element2.muted) return;
+    element2.muted = true;
+    quieted.add(element2);
+  };
+  var unquiet = (element2) => {
+    if (quieted.delete(element2)) element2.muted = false;
+  };
+  function decoded(audio, src) {
+    let buffer = buffers.get(src);
+    if (!buffer) {
+      buffer = fetch(src).then(
+        (response) => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`HTTP ${response.status}`))
+      ).then((data) => audio.decodeAudioData(data));
+      buffers.set(src, buffer);
+      buffer.catch(() => buffers.delete(src));
+    }
+    return buffer;
+  }
+  async function playThroughWebAudio(element2) {
+    const pausesAtStart = pausesOf(element2);
+    const src = element2.currentSrc || element2.src;
+    const Context = window.AudioContext;
+    if (!src || typeof Context !== "function") throw new Error("no Web Audio");
+    context ?? (context = new Context());
+    const audio = context;
+    let timer;
+    const awake = Promise.race([
+      audio.resume(),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, RESUME_WAIT_MS);
+      })
+    ]).finally(() => clearTimeout(timer));
+    const [data] = await Promise.all([decoded(audio, src), awake]);
+    if (pausesOf(element2) !== pausesAtStart) return;
+    if (audio.state !== "running") throw new Error(`audio ${audio.state}`);
+    const source = audio.createBufferSource();
+    const gain = audio.createGain();
+    source.buffer = data;
+    gain.gain.value = element2.muted && !quieted.has(element2) ? 0 : element2.volume;
+    source.connect(gain).connect(audio.destination);
+    let playing = sources.get(element2);
+    if (!playing) sources.set(element2, playing = /* @__PURE__ */ new Set());
+    playing.add(source);
+    sounding += 1;
+    source.onended = () => {
+      playing.delete(source);
+      sounding -= 1;
+      if (sounding === 0) audio.suspend().catch(() => {
+      });
+    };
+    source.start();
+  }
+  var playbackInstalled = false;
+  function installMessengerSoundPlayback() {
+    if (playbackInstalled) return;
+    playbackInstalled = true;
+    const proto = HTMLMediaElement.prototype;
+    const nativePlay = proto.play;
+    const nativePause = proto.pause;
+    proto.play = function() {
+      const isSound = soundPlayerCalls > 0 && this instanceof HTMLAudioElement && Boolean(this.src) && !this.loop && !this.srcObject;
+      if (!isSound) {
+        unquiet(this);
+        return nativePlay.call(this);
+      }
+      quiet(this);
+      if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
+      if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
+        const { thread: thread2, messageId } = pendingMessageSound;
+        messageSound = { thread: thread2, messageId, at: Date.now() };
+        pendingMessageSound = null;
+      }
+      const pausesAtStart = pausesOf(this);
+      return playThroughWebAudio(this).catch(() => {
+        diag("sound.web-audio", "Web Audio could not play a Messenger sound; using the element");
+        if (pausesOf(this) !== pausesAtStart) return void 0;
+        unquiet(this);
+        return nativePlay.call(this);
+      });
+    };
+    proto.pause = function() {
+      if (this instanceof HTMLAudioElement) {
+        pauses.set(this, pausesOf(this) + 1);
+        for (const source of sources.get(this) ?? []) {
+          try {
+            source.stop();
+          } catch (_) {
+          }
+        }
+      }
+      return nativePause.call(this);
+    };
+  }
+  function quietPreloaded(urls) {
+    const paths = /* @__PURE__ */ new Set();
+    for (const url of Array.isArray(urls) ? urls : [urls]) {
+      try {
+        paths.add(new URL(String(url), location.href).pathname);
+      } catch (_) {
+      }
+    }
+    for (const element2 of document.querySelectorAll("audio")) {
+      try {
+        if (!element2.loop && paths.has(new URL(element2.src).pathname)) quiet(element2);
+      } catch (_) {
+      }
+    }
+  }
+  function patchSoundPlayer(exports) {
+    const play = exports.play;
+    if (typeof play !== "function") return false;
+    const preload = exports.preload;
+    if (typeof preload === "function") {
+      exports.preload = function(...args) {
+        const result = Reflect.apply(preload, this, args);
+        quietPreloaded(args[0]);
+        return result;
+      };
+    }
+    exports.play = function(...args) {
+      const loop = args[1]?.loop === true;
+      if (loop) return Reflect.apply(play, this, args);
+      soundPlayerCalls += 1;
+      try {
+        return Reflect.apply(play, this, args);
+      } finally {
+        soundPlayerCalls -= 1;
+      }
+    };
+    return true;
+  }
+  function patchChatPopperCommon(exports) {
+    const playChatTabSound = exports.playChatTabSound;
+    if (typeof playChatTabSound !== "function") return false;
+    exports.playChatTabSound = function(...args) {
+      const settings = window.__CARRIER_SETTINGS__;
+      const load = pageLoad();
+      const message = args[0];
+      const plays = playsMessageSound({
+        globallyMuted: notificationsGloballyMuted(settings),
+        oldNews: isOldNews(messengerMillis(message?.timestampMs, load), serverNowMs(load), null),
+        focused: document.hasFocus(),
+        nativeSoundOn: settings?.notification_sound !== false
+      });
+      if (!plays) return void 0;
+      const thread2 = messageThreadId(message, load);
+      const messageId = typeof message?.messageId === "string" ? message.messageId : "";
+      pendingMessageSound = thread2 ? { thread: thread2, messageId, until: Date.now() + MESSAGE_SOUND_PENDING_MS } : null;
+      return Reflect.apply(playChatTabSound, this, args);
+    };
+    return true;
+  }
+  function interceptSoundModules(define) {
+    return new Proxy(define, {
+      apply(target, thisArg, args) {
+        const factory = args[2];
+        if (typeof factory === "function") {
+          if (args[0] === SOUND_PLAYER_MODULE) {
+            args[2] = wrapFactoryExports(factory, patchSoundPlayer);
+          } else if (args[0] === CHAT_POPPER_COMMON_MODULE) {
+            args[2] = wrapFactoryExports(factory, patchChatPopperCommon);
+          }
+        }
+        return Reflect.apply(target, thisArg, args);
+      }
+    });
   }
 
   // inject/src/messenger/features/page-notifications.ts
@@ -6286,6 +7218,7 @@ ${button.innerHTML}`)
       }
     };
     let pauseTimer;
+    installMessengerSoundPlayback();
     const wakeSearchIndex = () => {
       searchIndex.wake();
       if (pauseTimer !== void 0) window.clearTimeout(pauseTimer);
@@ -6314,7 +7247,9 @@ ${button.innerHTML}`)
     const wrap = (value) => {
       if (typeof value !== "function" || wrappedDefines.has(value)) return value;
       const wrapped3 = createFacebookModuleDefineInterceptor(
-        interceptNotificationModules(value),
+        interceptNotificationModules(
+          interceptSoundModules(value)
+        ),
         shouldBlockTelemetry,
         (restore2) => searchIndex.register(restore2),
         (error) => {
@@ -7868,166 +8803,6 @@ ${button.innerHTML}`)
     };
   }
 
-  // inject/src/messenger/features/media-viewer.ts
-  function initMediaViewer() {
-    const MIN = 1;
-    const MAX = 8;
-    const STEP = 1.15;
-    const PAN = 40;
-    let target = null;
-    let targetCssText = "";
-    let targetTabIndex = null;
-    let previousFocus = null;
-    let scale = 1;
-    let tx = 0;
-    let ty = 0;
-    let active = false;
-    let dragging = false;
-    let sx = 0;
-    let sy = 0;
-    let stx = 0;
-    let sty = 0;
-    function pickTarget(e) {
-      const t = e.target;
-      const video = t.closest("video") || t.closest("div")?.querySelector("video");
-      if (video) return video;
-      const img = t.closest("img[alt]");
-      if (!img) return null;
-      const src = img.currentSrc || img.src || "";
-      if (src.startsWith("data:") || src.includes("stp=dst-png_s")) return null;
-      return img;
-    }
-    function render(animated = true) {
-      if (!target) return;
-      const reset = scale === 1 && tx === 0 && ty === 0;
-      target.style.transition = !animated || dragging ? "none" : "transform .15s cubic-bezier(0,0,.2,1)";
-      target.style.transformOrigin = "center center";
-      target.style.zIndex = reset ? "" : "1000";
-      target.style.maxWidth = reset ? "" : "none";
-      target.style.maxHeight = reset ? "" : "none";
-      target.style.transform = reset ? "" : `translate(${tx}px,${ty}px) scale(${scale})`;
-      target.style.cursor = reset ? "zoom-in" : dragging ? "grabbing" : "grab";
-    }
-    function exit() {
-      if (!active) return;
-      active = false;
-      handlers.forEach(([t, f, o]) => {
-        document.removeEventListener(t, f, o);
-      });
-      const closedTarget = target;
-      if (closedTarget) {
-        closedTarget.style.cssText = targetCssText;
-        if (targetTabIndex === null) closedTarget.removeAttribute("tabindex");
-        else closedTarget.setAttribute("tabindex", targetTabIndex);
-      }
-      target = null;
-      targetCssText = "";
-      targetTabIndex = null;
-      scale = 1;
-      tx = 0;
-      ty = 0;
-      dragging = false;
-      previousFocus?.focus({ preventScroll: true });
-      previousFocus = null;
-    }
-    const onWheel = (e) => {
-      if (!target) return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      const r = target.getBoundingClientRect();
-      const prev = scale;
-      scale = e.deltaY < 0 ? Math.min(MAX, scale * STEP) : Math.max(MIN, scale / STEP);
-      if (scale <= 1) {
-        tx = 0;
-        ty = 0;
-      } else {
-        const k = scale / prev;
-        tx += (e.clientX - (r.left + r.width / 2)) * (1 - k);
-        ty += (e.clientY - (r.top + r.height / 2)) * (1 - k);
-      }
-      render();
-    };
-    const onDown = (e) => {
-      if (e.button !== 0 || scale <= 1 || !target?.contains(e.target)) return;
-      dragging = true;
-      sx = e.clientX;
-      sy = e.clientY;
-      stx = tx;
-      sty = ty;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-    };
-    const onMove = (e) => {
-      if (!dragging) return;
-      tx = stx + (e.clientX - sx);
-      ty = sty + (e.clientY - sy);
-      render();
-    };
-    const onUp = () => {
-      dragging = false;
-      render();
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") return exit();
-      if (e.key === "Tab") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        target?.focus({ preventScroll: true });
-        return;
-      }
-      const d = {
-        ArrowLeft: [PAN, 0],
-        ArrowRight: [-PAN, 0],
-        ArrowUp: [0, PAN],
-        ArrowDown: [0, -PAN]
-      }[e.key];
-      if (d && scale > 1) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        tx += d[0];
-        ty += d[1];
-        render();
-      }
-    };
-    const onClick = (e) => {
-      if (active && target && !target.contains(e.target)) exit();
-    };
-    const handlers = [
-      ["wheel", onWheel, { passive: false, capture: true }],
-      ["mousedown", onDown, { capture: true }],
-      ["mousemove", onMove, { capture: true }],
-      ["mouseup", onUp, { capture: true }],
-      ["keydown", onKey, { capture: true }],
-      ["click", onClick, { capture: true }]
-    ];
-    document.addEventListener(
-      "dblclick",
-      (e) => {
-        const t = pickTarget(e);
-        if (!t) return;
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        if (active) return exit();
-        active = true;
-        target = t;
-        targetCssText = t.style.cssText;
-        targetTabIndex = t.getAttribute("tabindex");
-        previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        t.setAttribute("tabindex", "-1");
-        const r = t.getBoundingClientRect();
-        scale = 2;
-        tx = (e.clientX - (r.left + r.width / 2)) * (1 - scale);
-        ty = (e.clientY - (r.top + r.height / 2)) * (1 - scale);
-        render(false);
-        t.focus({ preventScroll: true });
-        handlers.forEach(([type, f, o]) => {
-          document.addEventListener(type, f, o);
-        });
-      },
-      { capture: true }
-    );
-  }
-
   // inject/src/messenger/features/messenger-dnd.ts
   var REFRESH_MS = 3e4;
   function initMessengerDnd() {
@@ -8296,7 +9071,7 @@ ${button.innerHTML}`)
   function conversationTextParts(candidates, canonicalBody) {
     const values = [];
     const eligible = candidates.filter(
-      ({ text, width, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width > 1 && height > 1 && text.trim().length > 0
+      ({ text, width: width2, height, ariaHidden, inAbbreviation, hasTextChild }) => !ariaHidden && !inAbbreviation && !hasTextChild && width2 > 1 && height > 1 && text.trim().length > 0
     );
     const textNodes = new Set(eligible.map(({ node }) => node).filter(Boolean));
     for (const candidate of eligible.filter(({ node }) => {
@@ -8326,310 +9101,6 @@ ${button.innerHTML}`)
   function isUnreadConversationText(fontWeight, text) {
     const weight = typeof fontWeight === "number" ? fontWeight : Number.parseInt(fontWeight, 10) || 0;
     return weight >= 600 && text.trim().length > 1;
-  }
-
-  // inject/src/messenger/lib/mute.ts
-  var MUTE_LABEL_LIMIT = 60;
-  var MUTED_STATUS_RE = /^(?:(?:notifications?\s+)?muted(?:\s+notifications?)?|this chat is muted|notifications are (?:muted|off)|stummgeschaltet|en sourdine|silenciado|silenziata|dempet|gedempt|tystad)$/i;
-  var UNMUTE_ACTION_RE = /^(?:un(?:-)?mute(?: notifications?)?|turn on notifications|stummschaltung aufheben)$/i;
-  var MUTE_ACTION_RE = /^(?:mute(?: notifications?)?|turn off notifications)$/i;
-  var LABEL_ATTRS = ["aria-label", "title", "aria-description"];
-  var MUTE_ACTION_ROLES = /* @__PURE__ */ new Set(["button", "menuitem", "menuitemcheckbox", "switch"]);
-  var STATEFUL_MUTE_ROLES = /* @__PURE__ */ new Set(["menuitemcheckbox", "switch"]);
-  var MUTED_ROW_ICON_SHAPE = 2001357332;
-  var MUTED_ROW_ICON_PATH_PREFIX = "M2.5 6c0-.322";
-  var MUTED_ROW_ICON_MAX_RIGHT_GAP = 64;
-  var MUTED_THREAD_LIMIT = 500;
-  var MUTE_ABSENCE_CONFIRM_MS = 1e3;
-  var MUTE_ABSENCE_MIN_OBSERVATIONS = 2;
-  function mutedConversationPolicy(settings) {
-    const policy = settings?.muted_conversations;
-    if (policy === "ignore" || policy === "badge" || policy === "include") return policy;
-    return settings?.ignore_muted_conversations === false ? "include" : "ignore";
-  }
-  function ignoresMutedConversations(settings) {
-    return mutedConversationPolicy(settings) !== "include";
-  }
-  function badgeIgnoresMutedConversations(settings) {
-    return mutedConversationPolicy(settings) === "ignore";
-  }
-  function suppressMutedDelivery(muted, settings) {
-    return muted && ignoresMutedConversations(settings);
-  }
-  function notificationsGloballyMuted(settings, now = Date.now()) {
-    const pausedUntil = settings?.notifications_paused_until;
-    return settings?.mute_notifications === true || typeof pausedUntil === "number" && pausedUntil > now || messengerDndActive(now);
-  }
-  function suppressNotificationDelivery(muted, settings) {
-    return notificationsGloballyMuted(settings) || suppressMutedDelivery(muted, settings);
-  }
-  function conversationMuteFromLabel(value) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || text.length > MUTE_LABEL_LIMIT) return null;
-    if (UNMUTE_ACTION_RE.test(text) || MUTED_STATUS_RE.test(text)) return true;
-    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return false;
-    return null;
-  }
-  function isExplicitUnmuteAction(value) {
-    return muteStateAfterExplicitAction(value) === false;
-  }
-  function muteStateAfterExplicitAction(value) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    if (!text || text.length > MUTE_LABEL_LIMIT) return void 0;
-    if (UNMUTE_ACTION_RE.test(text)) return false;
-    if (MUTE_ACTION_RE.test(text) && !/\bmuted\b/i.test(text)) return true;
-    return void 0;
-  }
-  function muteStateAfterControlAction(value, role, ariaChecked) {
-    const text = (value || "").replace(/\s+/g, " ").trim();
-    const normalizedRole = (role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(normalizedRole)) {
-      if (ariaChecked === "true") return false;
-      if (ariaChecked === "false") return true;
-      return void 0;
-    }
-    return muteStateAfterExplicitAction(text);
-  }
-  function muteSignalFromSource(source) {
-    if (source.attribute === "alt") return null;
-    const text = (source.value || "").replace(/\s+/g, " ").trim();
-    const signal = conversationMuteFromLabel(text);
-    if (signal === null) return null;
-    const tag = source.tagName.toLowerCase();
-    const role = (source.role || "").toLowerCase();
-    if (MUTE_ACTION_RE.test(text) && STATEFUL_MUTE_ROLES.has(role)) {
-      if (source.ariaChecked === "true") return true;
-      if (source.ariaChecked === "false") return false;
-      return null;
-    }
-    if (UNMUTE_ACTION_RE.test(text) || MUTE_ACTION_RE.test(text)) {
-      return tag === "button" || MUTE_ACTION_ROLES.has(role) ? signal : null;
-    }
-    if (tag === "a" || tag === "img" || role === "link" || role === "row" || role === "gridcell") {
-      return null;
-    }
-    return tag === "svg" || role === "img" || source.containsSvg === true ? signal : null;
-  }
-  function muteSignalFromLabels(labels) {
-    let muted = false;
-    let unmuted = false;
-    for (const label2 of labels) {
-      const signal = conversationMuteFromLabel(label2);
-      if (signal === true) muted = true;
-      else if (signal === false) unmuted = true;
-    }
-    if (muted) return true;
-    if (unmuted) return false;
-    return null;
-  }
-  function isMutedRowIconShape(shape) {
-    return shape.width >= 14 && shape.width <= 18 && shape.height >= 14 && shape.height <= 18 && shape.rightGap >= 8 && shape.rightGap <= MUTED_ROW_ICON_MAX_RIGHT_GAP && !shape.interactive && shape.ariaHidden && shape.viewBox.replace(/\s+/g, " ").trim() === "0 0 16 16" && shape.pathCount === 1 && (shape.shapeHash === MUTED_ROW_ICON_SHAPE || shape.pathPrefixMatched);
-  }
-  var svgShapeHash = (svg) => {
-    let shapeText = "";
-    for (const shape of svg.querySelectorAll("path, line, polyline, circle")) {
-      shapeText += `${shape.tagName}:${shape.getAttribute("d") || ""}:${shape.getAttribute("points") || ""}:${shape.getAttribute("cx") || ""}:${shape.getAttribute("cy") || ""};`;
-    }
-    let hash = 2166136261;
-    for (let index = 0; index < shapeText.length; index++) {
-      hash ^= shapeText.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-    return hash >>> 0;
-  };
-  function hasMutedRowIcon(root) {
-    if (!(root instanceof Element)) return false;
-    const rootRect = root.getBoundingClientRect();
-    for (const svg of root.querySelectorAll("svg")) {
-      const rect = svg.getBoundingClientRect();
-      if (isMutedRowIconShape({
-        width: rect.width,
-        height: rect.height,
-        rightGap: rootRect.right - rect.right,
-        interactive: !!svg.closest(
-          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
-        ),
-        ariaHidden: svg.getAttribute("aria-hidden") === "true",
-        viewBox: svg.getAttribute("viewBox") || "",
-        pathCount: svg.querySelectorAll("path").length,
-        shapeHash: svgShapeHash(svg),
-        pathPrefixMatched: svg.querySelector("path[d]")?.getAttribute("d")?.replace(/\s+/g, " ").trim().startsWith(MUTED_ROW_ICON_PATH_PREFIX) === true
-      })) {
-        return true;
-      }
-    }
-    return false;
-  }
-  function resolveMuteObservation(labels) {
-    const signal = muteSignalFromLabels(labels);
-    if (signal !== null) return signal;
-    return void 0;
-  }
-  function collectMuteLabels(root, includeActions = true) {
-    const labels = [];
-    const seen = /* @__PURE__ */ new Set();
-    const push = (value) => {
-      const text = (value || "").replace(/\s+/g, " ").trim();
-      if (!text || seen.has(text)) return;
-      seen.add(text);
-      labels.push(text);
-    };
-    const inspect2 = (el) => {
-      for (const attr of LABEL_ATTRS) {
-        const value = el.getAttribute(attr);
-        if (!includeActions && value && (isExplicitUnmuteAction(value) || MUTE_ACTION_RE.test(value.replace(/\s+/g, " ").trim()))) {
-          continue;
-        }
-        if (value) {
-          const signal = muteSignalFromSource({
-            value,
-            tagName: el.tagName,
-            role: el.getAttribute("role"),
-            attribute: attr,
-            containsSvg: [...el.children].some((child) => child.tagName.toLowerCase() === "svg"),
-            ariaChecked: el.getAttribute("aria-checked")
-          });
-          if (signal !== null) push(signal ? "Muted" : "Mute");
-        }
-      }
-    };
-    if (root instanceof Element) inspect2(root);
-    for (const el of root.querySelectorAll("[aria-label], [title], [aria-description]")) {
-      inspect2(el);
-    }
-    for (const el of root.querySelectorAll("svg title, svg desc")) push(el.textContent);
-    return labels;
-  }
-  var MutedThreadStore = class {
-    constructor() {
-      __publicField(this, "states", /* @__PURE__ */ new Map());
-      __publicField(this, "rowAbsences", /* @__PURE__ */ new Map());
-    }
-    observe(id, muted) {
-      if (!id || muted === void 0) return;
-      this.rowAbsences.delete(id);
-      if (this.states.has(id)) this.states.delete(id);
-      this.states.set(id, muted);
-      if (this.states.size > MUTED_THREAD_LIMIT) {
-        const oldest = this.states.keys().next().value;
-        this.states.delete(oldest);
-        this.rowAbsences.delete(oldest);
-      }
-    }
-    observeMountedRow(id, muted, observedAt = Date.now()) {
-      if (!id) return;
-      if (muted !== void 0) {
-        this.observe(id, muted);
-        return;
-      }
-      if (!this.isMuted(id)) {
-        this.rowAbsences.delete(id);
-        return;
-      }
-      const absence = this.rowAbsences.get(id);
-      if (absence === void 0 || observedAt < absence.since) {
-        this.rowAbsences.set(id, { since: observedAt, observations: 1 });
-        return;
-      }
-      absence.observations += 1;
-      if (observedAt - absence.since >= MUTE_ABSENCE_CONFIRM_MS && absence.observations >= MUTE_ABSENCE_MIN_OBSERVATIONS) {
-        this.observe(id, false);
-      }
-    }
-    isMuted(id) {
-      return this.states.get(id) === true;
-    }
-    invalidateMute(id) {
-      if (id) this.observe(id, false);
-    }
-    knownMutedUnread(unreadIds) {
-      for (const id of unreadIds) {
-        if (this.states.get(id) === true) return true;
-      }
-      return false;
-    }
-  };
-  var mutedThreads = new MutedThreadStore();
-  var actionInvalidationStarted = false;
-  var threadIdFromActionTarget = (target) => {
-    const row = target.closest('[role="row"]');
-    const href = row?.querySelector('a[href*="/t/"]')?.getAttribute("href") || "";
-    return threadIdFromHref(href) || "";
-  };
-  function resolveMuteActionThreadId(rowId, openId, recentRowId, actionIsInOpenSurface) {
-    if (rowId) return rowId;
-    if (actionIsInOpenSurface && openId) return openId;
-    return recentRowId || openId;
-  }
-  function initMuteActionTracking() {
-    if (actionInvalidationStarted) return;
-    actionInvalidationStarted = true;
-    let recentRow = null;
-    const rememberRow = (target) => {
-      if (!(target instanceof Element)) return;
-      if (target.closest('[role="menu"], [role="menuitem"], [role="menuitemcheckbox"]')) return;
-      const id = threadIdFromActionTarget(target);
-      recentRow = id ? { id, at: Date.now() } : null;
-    };
-    document.addEventListener("pointerdown", (event) => rememberRow(event.target), true);
-    document.addEventListener("contextmenu", (event) => rememberRow(event.target), true);
-    document.addEventListener("focusin", (event) => rememberRow(event.target), true);
-    document.addEventListener(
-      "click",
-      (event) => {
-        if (!event.isTrusted) return;
-        if (!(event.target instanceof Element)) return;
-        rememberRow(event.target);
-        const action2 = event.target.closest(
-          'button, [role="button"], [role="menuitem"], [role="menuitemcheckbox"], [role="switch"]'
-        );
-        if (!action2) return;
-        const label2 = action2.getAttribute("aria-label") || action2.getAttribute("title") || action2.textContent || "";
-        const nextMuted = muteStateAfterControlAction(
-          label2,
-          action2.getAttribute("role"),
-          action2.getAttribute("aria-checked")
-        );
-        if (nextMuted === void 0) return;
-        const rowId = threadIdFromActionTarget(action2);
-        const openId = threadIdFromHref(location.pathname) || "";
-        const recentId = recentRow && Date.now() - recentRow.at <= 15e3 ? recentRow.id : "";
-        const id = resolveMuteActionThreadId(
-          rowId,
-          openId,
-          recentId,
-          !!action2.closest('[role="main"], [role="complementary"], [role="dialog"]')
-        );
-        if (id) {
-          mutedThreads.observe(id, nextMuted);
-          window.dispatchEvent(
-            new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } })
-          );
-        }
-      },
-      true
-    );
-  }
-  function observeConversationMute(id, root) {
-    mutedThreads.observeMountedRow(
-      id,
-      hasMutedRowIcon(root) ? true : resolveMuteObservation(collectMuteLabels(root, false))
-    );
-    return mutedThreads.isMuted(id);
-  }
-  function observeDatabaseMute(id, muted) {
-    mutedThreads.observe(id, muted);
-    return muted;
-  }
-  function observeOpenThreadMute(id, roots) {
-    const labels = [];
-    for (const root of roots) {
-      for (const label2 of collectMuteLabels(root)) {
-        if (conversationMuteFromLabel(label2) !== null) labels.push(label2);
-      }
-    }
-    mutedThreads.observe(id, muteSignalFromLabels(labels) ?? void 0);
-    return mutedThreads.isMuted(id);
   }
 
   // inject/src/messenger/lib/notification-fallback.ts
@@ -9676,11 +10147,11 @@ ${button.innerHTML}`)
     }
     return { title, body };
   }
-  function notificationThumbnailSize(width, height) {
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    const scale = Math.min(1, 256 / Math.max(width, height));
+  function notificationThumbnailSize(width2, height) {
+    if (!Number.isFinite(width2) || !Number.isFinite(height) || width2 <= 0 || height <= 0) return null;
+    const scale = Math.min(1, 256 / Math.max(width2, height));
     return {
-      width: Math.max(1, Math.round(width * scale)),
+      width: Math.max(1, Math.round(width2 * scale)),
       height: Math.max(1, Math.round(height * scale))
     };
   }
@@ -9708,9 +10179,9 @@ ${button.innerHTML}`)
           const canvas = document.createElement("canvas");
           canvas.width = size.width;
           canvas.height = size.height;
-          const context = canvas.getContext("2d");
-          if (!context) return finish("");
-          context.drawImage(image, 0, 0, size.width, size.height);
+          const context2 = canvas.getContext("2d");
+          if (!context2) return finish("");
+          context2.drawImage(image, 0, 0, size.width, size.height);
           finish(canvas.toDataURL("image/png"));
         } catch {
           finish("");
@@ -9769,10 +10240,10 @@ ${button.innerHTML}`)
   function notificationLinkImage(body, cards) {
     const target = linkTarget(body.trim());
     if (!target) return "";
-    const sources = new Set(
+    const sources2 = new Set(
       cards.filter((card) => linkTarget(card.href)?.key === target.key).map((card) => card.image?.currentSrc || card.image?.src || "").filter(Boolean)
     );
-    return sources.size === 1 ? [...sources][0] : "";
+    return sources2.size === 1 ? [...sources2][0] : "";
   }
   function notificationLinkBody(body, cards = []) {
     const target = linkTarget(body.trim());
@@ -10062,7 +10533,7 @@ ${button.innerHTML}`)
           const canvas = document.createElement("canvas");
           canvas.width = AVATAR_SIZE;
           canvas.height = AVATAR_SIZE;
-          const context = canvas.getContext("2d");
+          const context2 = canvas.getContext("2d");
           const paired = faces.length > 1;
           const diameter = paired ? AVATAR_SIZE * 0.68 : AVATAR_SIZE;
           const offset = AVATAR_SIZE - diameter;
@@ -10072,20 +10543,20 @@ ${button.innerHTML}`)
             const centerX = left + diameter / 2;
             const centerY = top + diameter / 2;
             if (paired) {
-              context.save();
-              context.globalCompositeOperation = "destination-out";
-              context.beginPath();
-              context.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
-              context.fill();
-              context.restore();
-              context.save();
-              context.beginPath();
-              context.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
-              context.clip();
+              context2.save();
+              context2.globalCompositeOperation = "destination-out";
+              context2.beginPath();
+              context2.arc(centerX, centerY, diameter / 2 + 2, 0, 2 * Math.PI);
+              context2.fill();
+              context2.restore();
+              context2.save();
+              context2.beginPath();
+              context2.arc(centerX, centerY, diameter / 2, 0, 2 * Math.PI);
+              context2.clip();
             }
             const scale = Math.max(diameter / face.width, diameter / face.height);
             const sourceSize = diameter / scale;
-            context.drawImage(
+            context2.drawImage(
               face,
               (face.width - sourceSize) / 2,
               (face.height - sourceSize) / 2,
@@ -10096,7 +10567,7 @@ ${button.innerHTML}`)
               diameter,
               diameter
             );
-            if (paired) context.restore();
+            if (paired) context2.restore();
           });
           return canvas.toDataURL("image/png");
         } catch (_) {
@@ -10176,7 +10647,9 @@ ${button.innerHTML}`)
           message_id: messageId,
           account: accountId(document.cookie) || "",
           row,
-          sender
+          sender,
+          // Messenger's own sound just rang for this message (see messenger-sounds).
+          silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId)
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
@@ -10303,6 +10776,8 @@ ${button.innerHTML}`)
       );
       const taggedThread = pageMessages.threadFor(opts.tag);
       if (taggedThread) diag("notify.identity", "page notification carried its exact conversation");
+      const stale = pageMessages.isStale(opts.tag);
+      if (stale) diag("notify.stale", "suppressed a notification for an old or already-read message");
       const pageMatch = markPageNotification(
         String(title || "Messenger"),
         String(opts.body || ""),
@@ -10392,7 +10867,7 @@ ${button.innerHTML}`)
           const threadPath = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
           const threadId = threadPathId(threadPath || "");
           const threadMuted = threadId ? mutedThreads.isMuted(threadId) : pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false;
-          if (suppressNotificationDelivery(threadMuted, deliverySettings) || groupSuppressed(threadId)) {
+          if (stale || suppressNotificationDelivery(threadMuted, deliverySettings) || groupSuppressed(threadId)) {
             if (signal && !signal.matched) signal.suppressedBeforeMatch = true;
             retainSuppressedDraft(id);
             const suppressed = pageMatch.deliver ?? pageMatch.signal?.pendingDelivery;
@@ -11430,6 +11905,286 @@ ${button.innerHTML}`)
     startPoll();
   }
 
+  // inject/src/messenger/lib/pane-resize.ts
+  var PANE_WIDTH_MIN = 160;
+  var PANE_WIDTH_MAX = 1600;
+  var MIN_CHAT_WIDTH = 360;
+  var MIN_DETAILS_WIDTH = 300;
+  var MIN_LIST_WIDTH = 200;
+  var width = (value) => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    return Math.min(PANE_WIDTH_MAX, Math.max(PANE_WIDTH_MIN, Math.round(value)));
+  };
+  function sanitizePaneWidths(value) {
+    const record4 = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return { list: width(record4.list), details: width(record4.details) };
+  }
+  function edgeSide(pane, other) {
+    return pane.left + pane.right <= other.left + other.right ? "right" : "left";
+  }
+  function dragWidth({ startWidth, startX, x, side, min, max }) {
+    const delta = side === "right" ? x - startX : startX - x;
+    return Math.round(Math.min(Math.max(min, max), Math.max(min, startWidth + delta)));
+  }
+  function dragBounds(pane, startWidth, chatWidth, facebookMin) {
+    const floor = pane === "list" ? MIN_LIST_WIDTH : MIN_DETAILS_WIDTH;
+    const min = Math.max(floor, Number.isFinite(facebookMin) ? facebookMin : 0);
+    const max = Math.max(min, startWidth + Math.max(0, chatWidth - MIN_CHAT_WIDTH));
+    return { min, max: Math.min(max, PANE_WIDTH_MAX) };
+  }
+  function paneCap(pane) {
+    return pane === "list" ? `calc(100% - ${MIN_CHAT_WIDTH + MIN_DETAILS_WIDTH}px)` : `calc(100% - ${MIN_CHAT_WIDTH}px)`;
+  }
+  function paneWidthCss(widths, selectors) {
+    return ["list", "details"].filter((pane) => widths[pane] !== null).map(
+      (pane) => `${selectors[pane]} { flex: 0 0 ${widths[pane]}px !important; width: ${widths[pane]}px !important; max-width: ${paneCap(pane)} !important; }`
+    ).join("\n");
+  }
+
+  // inject/src/messenger/features/pane-resize.ts
+  var PANE_ATTR = "data-carrier-pane";
+  var CHAT_ROW_ATTR = "data-carrier-chat-row";
+  var RESIZING_ATTR = "data-carrier-resizing";
+  var EDGE_CLASS = "carrier-pane-edge";
+  var SELECTORS = {
+    list: `[role="navigation"][${PANE_ATTR}="list"]`,
+    details: `[${CHAT_ROW_ATTR}] > :nth-child(2)`
+  };
+  var EDGE_CSS = `
+  [${PANE_ATTR}="list"], [${CHAT_ROW_ATTR}] > :nth-child(2) { position: relative; }
+  .${EDGE_CLASS} { position: absolute; top: 0; bottom: 0; width: 9px; z-index: 5; cursor: col-resize; touch-action: none; }
+  /* The list's edge sits half over the chat (the list's scroll bar is at its
+     own edge); the details' edge sits inside them (the chat's scroll bar is
+     at theirs). */
+  .${EDGE_CLASS}[data-pane="list"][data-side="right"] { right: -6px; }
+  .${EDGE_CLASS}[data-pane="list"][data-side="left"] { left: -6px; }
+  .${EDGE_CLASS}[data-pane="details"][data-side="left"] { left: 0; }
+  .${EDGE_CLASS}[data-pane="details"][data-side="right"] { right: 0; }
+  .${EDGE_CLASS}::after {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+    background: var(--primary-button-background, #0866ff);
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .${EDGE_CLASS}[data-pane="details"][data-side="left"]::after { left: 0; }
+  .${EDGE_CLASS}[data-pane="details"][data-side="right"]::after { left: auto; right: 0; }
+  .${EDGE_CLASS}:hover::after { opacity: 0.6; transition-delay: 0.15s; }
+  .${EDGE_CLASS}.dragging::after { opacity: 0.6; transition-delay: 0s; }
+  html[${RESIZING_ATTR}], html[${RESIZING_ATTR}] * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
+`;
+  function storedWidths() {
+    return sanitizePaneWidths(window.__CARRIER_SETTINGS__?.pane_widths);
+  }
+  function rememberLocally(widths) {
+    try {
+      const settings = window.__CARRIER_SETTINGS__;
+      if (settings && typeof settings === "object") settings.pane_widths = { ...widths };
+      const cached = JSON.parse(
+        localStorage.getItem("__carrier_settings") || "null"
+      );
+      if (cached && typeof cached === "object" && !Array.isArray(cached)) {
+        cached.pane_widths = { ...widths };
+        localStorage.setItem("__carrier_settings", JSON.stringify(cached));
+      }
+    } catch (_) {
+    }
+  }
+  function findChatRow(log, main2) {
+    for (let el = log; el && el !== main2; el = el.parentElement) {
+      const row = el.parentElement;
+      if (!row || row.children.length < 2 || row.firstElementChild !== el) continue;
+      const details = el.nextElementSibling;
+      if (!details) continue;
+      const style = getComputedStyle(row);
+      if (style.display === "flex" && style.flexDirection.startsWith("row") && Number.parseFloat(getComputedStyle(details).minWidth) >= 200) {
+        return row;
+      }
+    }
+    return null;
+  }
+  var SIZE_PROPS = ["flex", "width", "max-width"];
+  function initPaneResize() {
+    let widths = storedWidths();
+    const widthStyle = document.createElement("style");
+    widthStyle.setAttribute("data-carrier-pane-widths", "");
+    const edgeStyle = document.createElement("style");
+    edgeStyle.textContent = EDGE_CSS;
+    const showWidths = () => {
+      widthStyle.textContent = paneWidthCss(widths, SELECTORS);
+    };
+    showWidths();
+    const attachStyles = () => {
+      const root = document.documentElement;
+      if (!root) return false;
+      if (!edgeStyle.isConnected) root.append(edgeStyle);
+      if (!widthStyle.isConnected) root.append(widthStyle);
+      return true;
+    };
+    const save = () => {
+      showWidths();
+      rememberLocally(widths);
+      invoke("plugin:event|emit", {
+        event: "carrier:pane-widths",
+        payload: { list: widths.list, details: widths.details }
+      })?.catch?.(() => {
+      });
+    };
+    const followSettings = () => {
+      const next = storedWidths();
+      if (next.list === widths.list && next.details === widths.details) return;
+      widths = next;
+      showWidths();
+    };
+    window.addEventListener("carrier:settings", followSettings);
+    window.addEventListener("carrier:pane-widths", followSettings);
+    const chatRow = () => document.querySelector(`[${CHAT_ROW_ATTR}]`);
+    const chatBox = () => chatRow()?.firstElementChild ?? document.querySelector('[role="main"]') ?? null;
+    const startDrag = (event, edge) => {
+      if (event.button !== 0) return;
+      const pane = edge.dataset.pane;
+      const el = edge.parentElement;
+      const chat = chatBox();
+      if (!el || !chat) return;
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        edge.setPointerCapture(event.pointerId);
+      } catch (_) {
+      }
+      const startX = event.clientX;
+      const startWidth = el.getBoundingClientRect().width;
+      const side = edgeSide(el.getBoundingClientRect(), chat.getBoundingClientRect());
+      const { min, max } = dragBounds(
+        pane,
+        startWidth,
+        chat.getBoundingClientRect().width,
+        Number.parseFloat(getComputedStyle(el).minWidth)
+      );
+      let width2 = Math.round(startWidth);
+      let frame = 0;
+      const inline = SIZE_PROPS.map(
+        (prop) => [prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]
+      );
+      document.documentElement.setAttribute(RESIZING_ATTR, "");
+      edge.classList.add("dragging");
+      const move = (moveEvent) => {
+        width2 = dragWidth({ startWidth, startX, x: moveEvent.clientX, side, min, max });
+        frame || (frame = requestAnimationFrame(() => {
+          frame = 0;
+          el.style.setProperty("flex", `0 0 ${width2}px`, "important");
+          el.style.setProperty("width", `${width2}px`, "important");
+          el.style.setProperty("max-width", paneCap(pane), "important");
+        }));
+      };
+      const end = (endEvent) => {
+        if (endEvent.pointerId !== event.pointerId) return;
+        document.removeEventListener("pointerup", end, true);
+        document.removeEventListener("pointercancel", end, true);
+        edge.removeEventListener("pointermove", move);
+        edge.removeEventListener("lostpointercapture", end);
+        cancelAnimationFrame(frame);
+        document.documentElement.removeAttribute(RESIZING_ATTR);
+        edge.classList.remove("dragging");
+        if (width2 !== Math.round(startWidth)) {
+          widths = { ...widths, [pane]: width2 };
+          save();
+        }
+        for (const [prop, value, priority] of inline) {
+          if (value) el.style.setProperty(prop, value, priority);
+          else el.style.removeProperty(prop);
+        }
+      };
+      edge.addEventListener("pointermove", move);
+      edge.addEventListener("lostpointercapture", end);
+      document.addEventListener("pointerup", end, true);
+      document.addEventListener("pointercancel", end, true);
+    };
+    const makeEdge = (pane) => {
+      const edge = document.createElement("div");
+      edge.className = EDGE_CLASS;
+      edge.dataset.pane = pane;
+      edge.setAttribute("aria-hidden", "true");
+      edge.addEventListener("pointerdown", (event) => startDrag(event, edge));
+      edge.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (widths[pane] === null) return;
+        widths = { ...widths, [pane]: null };
+        save();
+      });
+      return edge;
+    };
+    const edges = { list: makeEdge("list"), details: makeEdge("details") };
+    const placeEdge = (pane, host, chat) => {
+      const edge = edges[pane];
+      if (!host || !chat) {
+        edge.remove();
+        return;
+      }
+      if (edge.parentElement !== host) host.append(edge);
+      const side = edgeSide(host.getBoundingClientRect(), chat.getBoundingClientRect());
+      if (edge.dataset.side !== side) edge.dataset.side = side;
+    };
+    let searchedLog = null;
+    let sidesStale = true;
+    const sync = () => {
+      if (document.hidden || !attachStyles()) return;
+      if (!isMessengerContentPath(location.pathname)) {
+        edges.list.remove();
+        edges.details.remove();
+        return;
+      }
+      const main2 = document.querySelector('[role="main"]');
+      const list = main2?.parentElement?.querySelector(':scope > [role="navigation"]') ?? null;
+      if (list && list.getAttribute(PANE_ATTR) !== "list") {
+        for (const old of document.querySelectorAll(`[${PANE_ATTR}="list"]`)) {
+          old.removeAttribute(PANE_ATTR);
+        }
+        list.setAttribute(PANE_ATTR, "list");
+        sidesStale = true;
+      }
+      const log = main2?.querySelector('[role="log"]') ?? null;
+      let row = chatRow();
+      if (main2 && log && !row?.contains(log) && log !== searchedLog) {
+        searchedLog = log;
+        const found = findChatRow(log, main2);
+        if (found && found !== row) {
+          row?.removeAttribute(CHAT_ROW_ATTR);
+          found.setAttribute(CHAT_ROW_ATTR, "");
+          row = found;
+          sidesStale = true;
+        }
+      }
+      const details = row && log && row.contains(log) && row.children.length > 1 ? row.children[1] : null;
+      const listMoved = list !== null && edges.list.parentElement !== list;
+      const detailsMoved = details !== null && edges.details.parentElement !== details;
+      if (!sidesStale && !listMoved && !detailsMoved && details !== null === edges.details.isConnected) {
+        return;
+      }
+      sidesStale = false;
+      placeEdge("list", list, main2);
+      placeEdge("details", details, row?.firstElementChild ?? null);
+    };
+    setInterval(sync, 1e3);
+    document.addEventListener(
+      "click",
+      () => {
+        searchedLog = null;
+        setTimeout(sync, 50);
+        setTimeout(sync, 400);
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener(
+      "resize",
+      () => {
+        searchedLog = null;
+        sidesStale = true;
+      },
+      { passive: true }
+    );
+    document.addEventListener("visibilitychange", sync);
+  }
+
   // inject/src/messenger/lib/quick-mute.ts
   var QUICK_MUTE_DURATION_MS = "28800000";
   function decideQuickMute(phase, snapshot, expired) {
@@ -12035,6 +12790,179 @@ ${text}`)) {
     };
   }
 
+  // inject/src/messenger/lib/read-ahead.ts
+  /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
+   *
+   * MIT License
+   *
+   * Copyright (c) 2026 fMess contributors
+   *
+   * Permission is hereby granted, free of charge, to any person obtaining a copy
+   * of this software and associated documentation files (the "Software"), to deal
+   * in the Software without restriction, including without limitation the rights
+   * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   * copies of the Software, and to permit persons to whom the Software is
+   * furnished to do so, subject to the following conditions:
+   *
+   * The above copyright notice and this permission notice shall be included in all
+   * copies or substantial portions of the Software.
+   *
+   * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   * SOFTWARE.
+   */
+  var READ_AHEAD = {
+    /** Chats read ahead per round. */
+    chats: 12,
+    /** Rows read from the thread index to find them (some are plain or archived). */
+    rowsRead: 36,
+    /** Messages per chat: a window's worth, and some to scroll up through. */
+    messages: 40,
+    /** Rounds start at most this often, however often they are asked for. */
+    minGapMs: 2e4,
+    /** Between chats; the worker reads its own store. */
+    chatGapMs: 200,
+    /** One chat's preload may take this long before the round moves on. */
+    chatTimeoutMs: 15e3
+  };
+  var AUTHORITATIVE = "80";
+  function selectReadAheadThreads(rows, types, toId, openThreadId, limit = READ_AHEAD.chats) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const row of rows) {
+      if (out.length >= limit) break;
+      if (!row || typeof row !== "object") continue;
+      const thread2 = row;
+      if (types.isMessengerOrE2EEInbox(thread2.folderName) !== true) continue;
+      if (types.isArmadilloSecure(thread2.threadType) !== true) continue;
+      if (types.isOpenOrArmadilloFnFThread(thread2) !== true) continue;
+      if (thread2.isDisappearingMode === true) continue;
+      if (toId(thread2.authorityLevel) !== AUTHORITATIVE) continue;
+      const id = toId(thread2.threadKey);
+      if (!id || !/^\d+$/.test(id) || id === openThreadId || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ id, threadKey: thread2.threadKey, authorityLevel: thread2.authorityLevel });
+    }
+    return out;
+  }
+  function readAheadWait(lastRunAt, now) {
+    return lastRunAt === null ? 0 : Math.max(0, lastRunAt + READ_AHEAD.minGapMs - now);
+  }
+
+  // inject/src/messenger/features/read-ahead.ts
+  var MODULES = [
+    "ReQL",
+    "LSDatabaseSingleton",
+    "LSMessagingThreadTypeUtil",
+    "I64",
+    "MAWPreloadSecureMessages"
+  ];
+  var pause3 = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  function initReadAhead() {
+    if (window.opener) return;
+    let unloading = false;
+    let recoveryFailed = false;
+    window.addEventListener("beforeunload", () => {
+      unloading = true;
+    });
+    window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => {
+      unloading = true;
+    });
+    window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
+      recoveryFailed = event.detail === true;
+    });
+    const allowed = () => !unloading && !recoveryFailed && navigator.onLine && !hasRateLimitEpisode() && accountId(document.cookie) !== null && isMessengerContentPath(location.pathname);
+    let reported = false;
+    const report = (detail) => {
+      if (reported) return;
+      reported = true;
+      diag("read-ahead", detail);
+    };
+    const openThreadId = () => threadIdFromHref(location.pathname);
+    let running = false;
+    const round = async () => {
+      if (running || !allowed()) return;
+      running = true;
+      try {
+        const [q, singleton, types, i64, secure] = await loadFacebookModules(
+          pageRequire(),
+          MODULES
+        );
+        const preload = secure?.preloadSecureMessages ?? defaultExport(secure)?.preloadSecureMessages;
+        const db = await singleton?.LSDatabaseSingleton;
+        if (typeof preload !== "function" || typeof q?.toArrayAsync !== "function" || typeof q.firstAsync !== "function" || typeof i64?.to_string !== "function" || typeof types?.isOpenOrArmadilloFnFThread !== "function" || typeof db?.tables?.threads?.index !== "function" || !db.tables.mi_act_mapping_table) {
+          report("Messenger's preload APIs changed");
+          return;
+        }
+        const toId = (value) => {
+          const id = i64.to_string(value);
+          return typeof id === "string" ? id : null;
+        };
+        const rows = await q.toArrayAsync(
+          q.fromTableDescending(db.tables.threads.index("lastActivityTimestampMs")).take(READ_AHEAD.rowsRead)
+        );
+        if (!Array.isArray(rows)) return report("Messenger's thread APIs changed");
+        const threads = selectReadAheadThreads(rows, types, toId, openThreadId());
+        let mappedCount = 0;
+        let loaded = 0;
+        for (const thread2 of threads) {
+          if (!allowed() || thread2.id === openThreadId()) break;
+          const mapped = await q.firstAsync(
+            q.fromTableAscending(db.tables.mi_act_mapping_table).getKeyRange(thread2.threadKey)
+          );
+          if (!mapped) continue;
+          mappedCount += 1;
+          const done = await Promise.race([
+            Promise.resolve(
+              preload(db, thread2.threadKey, READ_AHEAD.messages, thread2.authorityLevel)
+            ).then(
+              () => true,
+              () => false
+            ),
+            pause3(READ_AHEAD.chatTimeoutMs).then(() => false)
+          ]);
+          if (done) loaded += 1;
+          await pause3(READ_AHEAD.chatGapMs);
+        }
+        diag("read-ahead.round", `chats=${threads.length} mapped=${mappedCount} loaded=${loaded}`);
+      } catch (error) {
+        report(error instanceof Error ? error.message.slice(0, 200) : "round failed");
+      } finally {
+        running = false;
+      }
+    };
+    let timer = 0;
+    let lastRunAt = null;
+    const schedule = (delay) => {
+      if (timer) return;
+      timer = window.setTimeout(() => {
+        timer = 0;
+        const wait = readAheadWait(lastRunAt, Date.now());
+        if (wait > 0) return schedule(wait);
+        lastRunAt = Date.now();
+        void round();
+      }, delay);
+    };
+    const start = window.setInterval(() => {
+      if (!chatRows().length) return;
+      window.clearInterval(start);
+      schedule(8e3);
+      window.addEventListener("blur", () => schedule(2e3));
+      window.setInterval(() => schedule(0), 4 * 6e4);
+      loadFacebookModules(pageRequire(), ["ReQL", "LSDatabaseSingleton"]).then(async ([q, singleton]) => {
+        const db = await singleton?.LSDatabaseSingleton;
+        const threads = db && q.fromTableAscending(db.tables.threads);
+        if (typeof threads?.subscribe !== "function") return;
+        threads.subscribe(() => schedule(5e3));
+      }).catch(() => {
+      });
+    }, 1e3);
+  }
+
   // inject/src/messenger/lib/messenger-db.ts
   async function readMessengerDatabase(load, read, timeoutMs = 750) {
     if (typeof load !== "function") return null;
@@ -12258,7 +13186,7 @@ ${text}`)) {
   window.addEventListener("popstate", () => {
     routeChanged = true;
   });
-  var pause3 = () => new Promise((resolve) => setTimeout(resolve, 100));
+  var pause4 = () => new Promise((resolve) => setTimeout(resolve, 100));
   var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
@@ -12300,12 +13228,12 @@ ${text}`)) {
         const current = findComposer();
         if (thread() !== message.thread) {
           if (inserted) break;
-          await pause3();
+          await pause4();
           continue;
         }
         if (!current || hasComposerMedia(current)) {
           if (inserted) break;
-          await pause3();
+          await pause4();
           continue;
         }
         if (paneThread() !== message.thread) return "defer";
@@ -12315,13 +13243,13 @@ ${text}`)) {
           controls = composerControls(box);
           if (!replaceComposerText(box, message.text)) break;
           inserted = true;
-          await pause3();
+          await pause4();
           continue;
         }
         if (current !== box || composerText(current) !== message.text) break;
         const send = findSendButton(current, controls);
         if (!send) {
-          await pause3();
+          await pause4();
           continue;
         }
         if (Date.now() > message.due + SEND_GRACE_MS || account() !== message.account || !connectionReady())
@@ -12333,7 +13261,7 @@ ${text}`)) {
           if (thread() !== message.thread || account() !== message.account || !box.isConnected)
             return "uncertain";
           if (!composerText(box).trim()) return "sent";
-          await pause3();
+          await pause4();
         }
         return "uncertain";
       }
@@ -12505,7 +13433,7 @@ ${text}`)) {
           const sameComposer = () => expectedBox.isConnected && findComposer() === expectedBox && thread() === expectedThread && account() === current && !hasComposerMedia(expectedBox);
           replaceComposerText(expectedBox, "");
           for (let attempt = 0; attempt < 10; attempt++) {
-            await pause3();
+            await pause4();
             if (!sameComposer() || composerText(expectedBox) !== textToClear) break;
           }
           if (!sameComposer() || composerText(expectedBox).trim()) {
@@ -12865,6 +13793,143 @@ ${text}`)) {
     if (document.readyState === "loading")
       document.addEventListener("DOMContentLoaded", start, { once: true });
     else start();
+  }
+
+  // inject/src/messenger/lib/scrollbars.ts
+  var INDICATOR_MIN_HEIGHT = 24;
+  var INDICATOR_INSET = 9;
+  function indicatorPlace(box, scroll) {
+    const range = scroll.scrollHeight - scroll.clientHeight;
+    if (range <= 1 || box.height <= 0 || scroll.scrollHeight <= 0) return null;
+    const height = Math.min(
+      box.height,
+      Math.max(INDICATOR_MIN_HEIGHT, box.height * scroll.clientHeight / scroll.scrollHeight)
+    );
+    const progress = Math.min(1, Math.max(0, scroll.scrollTop / range));
+    return {
+      left: box.right - INDICATOR_INSET,
+      top: box.top + (box.height - height) * progress,
+      height
+    };
+  }
+
+  // inject/src/messenger/features/scrollbars.ts
+  var KIND_ATTR = "data-carrier-scrollbars";
+  var INDICATOR_ID = "carrier-scroll-indicator";
+  var CHATS_ATTR = "data-carrier-chats";
+  var COVER_CHECK_MS = 250;
+  var HIDE_AFTER_MS = 800;
+  function drawsOverlayScrollbars(root) {
+    const host = document.createElement("div");
+    host.style.cssText = "position:absolute;top:-200px;left:0;width:0;height:0;overflow:hidden;";
+    const box = document.createElement("div");
+    box.style.cssText = "width:100px;height:100px;overflow:scroll;";
+    host.attachShadow({ mode: "closed" }).append(box);
+    root.append(host);
+    const overlay = box.offsetWidth === box.clientWidth;
+    host.remove();
+    return overlay;
+  }
+  function initScrollbars() {
+    const html = document.documentElement;
+    const overlay = drawsOverlayScrollbars(html);
+    html.setAttribute(KIND_ATTR, overlay ? "overlay" : "classic");
+    if (overlay) return;
+    const indicator = document.createElement("div");
+    indicator.id = INDICATOR_ID;
+    indicator.setAttribute("aria-hidden", "true");
+    html.append(indicator);
+    let scrolled = null;
+    let frame = 0;
+    let shownHeight = 0;
+    let coverPane = null;
+    let coverCheckedAt = Number.NEGATIVE_INFINITY;
+    let covered = false;
+    let hideTimer = 0;
+    const hide = () => {
+      indicator.style.opacity = "0";
+    };
+    const draw = (now) => {
+      frame = 0;
+      const pane = scrolled;
+      scrolled = null;
+      if (!pane?.isConnected) return;
+      const rect = pane.getBoundingClientRect();
+      const place = indicatorPlace(rect, pane);
+      if (!place) return;
+      if (pane !== coverPane || now - coverCheckedAt > COVER_CHECK_MS) {
+        coverPane = pane;
+        coverCheckedAt = now;
+        const x = place.left + 3;
+        covered = [place.top + 2, place.top + place.height / 2, place.top + place.height - 2].some(
+          (y) => {
+            const hit = document.elementFromPoint(x, y);
+            return hit !== null && hit !== indicator && !pane.contains(hit);
+          }
+        );
+      }
+      window.clearTimeout(hideTimer);
+      if (covered) return hide();
+      if (place.height !== shownHeight) {
+        shownHeight = place.height;
+        indicator.style.height = `${place.height}px`;
+      }
+      indicator.style.transform = `translate(${place.left}px, ${place.top}px)`;
+      indicator.style.opacity = "1";
+      hideTimer = window.setTimeout(() => {
+        hide();
+        coverPane = null;
+      }, HIDE_AFTER_MS);
+    };
+    document.addEventListener(
+      "scroll",
+      (event) => {
+        if (!html.hasAttribute(CHATS_ATTR) || !(event.target instanceof Element)) return;
+        scrolled = event.target;
+        if (!frame) frame = requestAnimationFrame(draw);
+      },
+      { capture: true, passive: true }
+    );
+  }
+
+  // inject/src/messenger/features/selection.ts
+  var CHATS_ATTR2 = "data-carrier-chats";
+  function initSelection() {
+    const html = document.documentElement;
+    const sync = () => {
+      const onChats = isMessengerContentPath(location.pathname);
+      if (html.hasAttribute(CHATS_ATTR2) !== onChats) html.toggleAttribute(CHATS_ATTR2, onChats);
+    };
+    for (const method2 of ["pushState", "replaceState"]) {
+      const original = history[method2];
+      history[method2] = function(...args) {
+        const result = original.apply(this, args);
+        sync();
+        return result;
+      };
+    }
+    window.addEventListener("popstate", sync);
+    sync();
+    const pageSelectAll = (target) => html.hasAttribute(CHATS_ATTR2) && !html.hasAttribute("data-carrier-login") && (target === document.body || target === html);
+    document.addEventListener(
+      "selectstart",
+      (event) => {
+        if (pageSelectAll(event.target)) event.preventDefault();
+      },
+      true
+    );
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.code !== "KeyA" || event.altKey || event.shiftKey) return;
+        if (!(event.metaKey || event.ctrlKey) || event.metaKey && event.ctrlKey) return;
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && (active.isContentEditable || active.closest("input, textarea")))
+          return;
+        if (pageSelectAll(document.body)) event.preventDefault();
+      },
+      true
+    );
   }
 
   // inject/src/messenger/features/selector-health.ts
@@ -14284,9 +15349,9 @@ ${text}`)) {
   }
   function coversViewport(rect, viewport) {
     const visible = intersectImageClips(rect, viewport);
-    const width = viewport.right - viewport.left;
+    const width2 = viewport.right - viewport.left;
     const height = viewport.bottom - viewport.top;
-    return width > 0 && height > 0 && visible.right - visible.left >= width * 0.75 && visible.bottom - visible.top >= height * 0.7;
+    return width2 > 0 && height > 0 && visible.right - visible.left >= width2 * 0.75 && visible.bottom - visible.top >= height * 0.7;
   }
   function isVisible(element2) {
     if (element2.closest(HIDDEN)) return false;
@@ -14316,9 +15381,9 @@ ${text}`)) {
       if (!owns(element2) || !isVisible(element2)) return false;
       const bounds = element2.getBoundingClientRect();
       const visible = intersectImageClips(intersectImageClips(bounds, rect), viewport);
-      const width = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
+      const width2 = (visible.right - visible.left) / Math.min(rect.width, viewport.right);
       const height = (visible.bottom - visible.top) / Math.min(rect.height, viewport.bottom);
-      return width > 0 && height > 0 && (width >= 0.15 && height >= 0.15 || width >= 0.5 || height >= 0.5);
+      return width2 > 0 && height > 0 && (width2 >= 0.15 && height >= 0.15 || width2 >= 0.5 || height >= 0.5);
     });
     return isMediaViewerShape({
       rect,
@@ -14489,6 +15554,7 @@ ${text}`)) {
     initFeature("composer-keys", initComposerKeys);
     initFeature("image-paste", initImagePaste);
     initFeature("composer-focus", initComposerFocus);
+    initFeature("selection", initSelection);
     initFeature("shortcuts", initShortcuts);
     initFeature("zoom", initZoom);
     initFeature("selector-health", initSelectorHealth);
@@ -14510,15 +15576,19 @@ ${text}`)) {
     initFeature("auto-refresh", initAutoRefresh);
     initFeature("force-theme", initForceTheme);
     initFeature("theme-markers", initThemeMarkers);
+    initFeature("scrollbars", initScrollbars);
+    initFeature("chat-gradient", initChatGradient);
     initFeature("unread-badge", initUnreadBadge);
     initFeature("recent-threads", initRecentThreads);
     initFeature("thread-nav", initThreadNav);
     initFeature("conversation-export", initConversationExport);
     initFeature("quick-reply", initQuickReply);
     initFeature("quick-mute", initQuickMute);
+    initFeature("read-ahead", initReadAhead);
     initFeature("notification-actions", initNotificationActions);
     initFeature("scheduled-send", initScheduledSend);
     initFeature("hide-names", initHideNames);
+    initFeature("pane-resize", initPaneResize);
     initFeature("system-emoji", initSystemEmoji);
     initFeature("media-permissions", initMediaPermissionWarning);
     initFeature("linux-call-notice", initLinuxCallNotice);

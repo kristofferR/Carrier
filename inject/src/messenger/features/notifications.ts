@@ -64,6 +64,7 @@ import { readThreadIsGroup, suppressGroupChat, ThreadKindCache } from "../lib/th
 import { accountId, accountScopedStorageKey, threadIdFromHref, threadPathId } from "../lib/threads";
 import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
+import { messengerMessageSoundJustPlayed } from "./messenger-sounds";
 
 interface CarrierNotificationInstance {
   title?: string;
@@ -291,6 +292,8 @@ export function initNotificationBridge() {
         account: accountId(document.cookie) || "",
         row,
         sender,
+        // Messenger's own sound just rang for this message (see messenger-sounds).
+        silent: messengerMessageSoundJustPlayed(threadIdFromHref(threadPath), messageId),
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
@@ -513,6 +516,10 @@ export function initNotificationBridge() {
     // row from another conversation may claim it.
     const taggedThread = pageMessages.threadFor(opts.tag);
     if (taggedThread) diag("notify.identity", "page notification carried its exact conversation");
+    // Old news (a late catch-up after sleep, or read on another device) is
+    // suppressed like a muted conversation, so its row raises no fallback.
+    const stale = pageMessages.isStale(opts.tag);
+    if (stale) diag("notify.stale", "suppressed a notification for an old or already-read message");
     const pageMatch = markPageNotification(
       String(title || "Messenger"),
       String(opts.body || ""),
@@ -645,6 +652,7 @@ export function initNotificationBridge() {
           ? mutedThreads.isMuted(threadId)
           : (pageMatch.threadMuted ?? pageMatch.signal?.threadMuted ?? false);
         if (
+          stale ||
           suppressNotificationDelivery(threadMuted, deliverySettings) ||
           groupSuppressed(threadId)
         ) {

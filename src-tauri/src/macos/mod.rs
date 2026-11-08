@@ -8,6 +8,7 @@ pub(crate) mod dock;
 pub(crate) mod notifications;
 pub(crate) mod popup;
 pub(crate) mod power;
+pub(crate) mod scrollbars;
 pub(crate) mod share;
 pub(crate) mod share_intake;
 pub(crate) mod theme;

@@ -65,6 +65,7 @@ const MESSAGE_LIMIT = 100;
 /** Recently notified message ids and their conversations, newest last. */
 export class PageMessageIndex {
   private readonly threads = new Map<string, string>();
+  private readonly stale = new Set<string>();
 
   record(messageId: string, threadId: string): void {
     this.threads.delete(messageId);
@@ -76,6 +77,16 @@ export class PageMessageIndex {
   threadFor(tag: unknown): string | undefined {
     return typeof tag === "string" ? this.threads.get(tag) : undefined;
   }
+
+  /** The message is old news (see {@link isOldNews}): its notification is suppressed. */
+  markStale(messageId: string): void {
+    this.stale.add(messageId);
+    if (this.stale.size > MESSAGE_LIMIT) this.stale.delete(this.stale.values().next().value!);
+  }
+
+  isStale(tag: unknown): boolean {
+    return typeof tag === "string" && this.stale.has(tag);
+  }
 }
 
 /** Shared by the module hook (writer) and the Notification bridge (reader). */
@@ -86,8 +97,15 @@ type Load = (name: string) => unknown;
 /** Record a message Messenger is about to notify about. Malformed rows are ignored. */
 export function recordNotifiedMessage(message: unknown, load: unknown): void {
   if (!message || typeof message !== "object") return;
-  const row = message as { messageId?: unknown; threadKey?: unknown };
+  const row = message as { messageId?: unknown };
   if (typeof row.messageId !== "string" || !row.messageId) return;
+  const threadId = messageThreadId(message, load);
+  if (threadId) pageMessages.record(row.messageId, threadId);
+}
+
+/** The conversation id of a Messenger message row, or null. */
+export function messageThreadId(message: unknown, load: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
   let i64ToString: ((value: unknown) => unknown) | undefined;
   try {
     const i64 =
@@ -96,8 +114,97 @@ export function recordNotifiedMessage(message: unknown, load: unknown): void {
       i64ToString = i64.to_string.bind(i64) as (value: unknown) => unknown;
     }
   } catch {}
-  const threadId = messengerId(row.threadKey, i64ToString);
-  if (threadId) pageMessages.record(row.messageId, threadId);
+  return messengerId((message as { threadKey?: unknown }).threadKey, i64ToString);
+}
+
+/** A message notified this late is old news: a computer back from sleep catching up. */
+export const LATE_NOTIFICATION_MS = 2 * 60_000;
+
+/**
+ * Whether a message Messenger is about to notify about needs no notification:
+ * it was sent over {@link LATE_NOTIFICATION_MS} ago, or its conversation was
+ * already read past it (on another device). Unknown values never suppress.
+ */
+export function isOldNews(
+  sentMs: number | null,
+  nowMs: number | null,
+  readUpToMs: number | null,
+): boolean {
+  if (sentMs === null) return false;
+  if (nowMs !== null && nowMs - sentMs > LATE_NOTIFICATION_MS) return true;
+  return readUpToMs !== null && readUpToMs >= sentMs;
+}
+
+interface I64Module {
+  to_string?(value: unknown): unknown;
+}
+
+/** Milliseconds from Messenger's number or I64 value, or null. */
+export function messengerMillis(value: unknown, load: unknown): number | null {
+  let i64ToString: ((value: unknown) => unknown) | undefined;
+  try {
+    const i64 = typeof load === "function" ? ((load as Load)("I64") as I64Module) : null;
+    if (typeof i64?.to_string === "function") i64ToString = i64.to_string.bind(i64);
+  } catch {}
+  const digits = messengerId(value, i64ToString);
+  const millis = digits === null ? Number.NaN : Number(digits);
+  return Number.isSafeInteger(millis) ? millis : null;
+}
+
+/** Facebook's server clock, or null when it can't be read (never the local clock). */
+export function serverNowMs(load: unknown): number | null {
+  try {
+    const time = typeof load === "function" ? (load as Load)("ServerTime") : null;
+    const millis = (time as { getMillis?: () => unknown } | null)?.getMillis?.();
+    return typeof millis === "number" && Number.isFinite(millis) ? millis : null;
+  } catch {
+    return null;
+  }
+}
+
+interface ThreadsTable {
+  get(key: unknown): Promise<unknown>;
+}
+
+/**
+ * Whether `message` is old news, reading its conversation's read watermark
+ * from the database Messenger notifies from. False when anything is missing,
+ * fails or takes longer than `timeoutMs`: a check that can't run notifies.
+ * Adapted from fMess (github.com/toanbku/fmess, MIT): `isOldNews` in
+ * src-tauri/src/inject/14-notifications.js.
+ */
+export async function readOldNews(
+  db: unknown,
+  message: unknown,
+  load: unknown,
+  timeoutMs = 750,
+): Promise<boolean> {
+  if (!message || typeof message !== "object") return false;
+  const row = message as { timestampMs?: unknown; threadKey?: unknown };
+  const sentMs = messengerMillis(row.timestampMs, load);
+  if (sentMs === null) return false;
+  const nowMs = serverNowMs(load);
+  if (isOldNews(sentMs, nowMs, null)) return true;
+  const threads = (db as { tables?: { threads?: ThreadsTable } } | null)?.tables?.threads;
+  if (typeof threads?.get !== "function") return false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = async () => {
+    const thread = (await threads.get(row.threadKey)) as {
+      lastReadWatermarkTimestampMs?: unknown;
+    } | null;
+    if (!thread || typeof thread !== "object") return false;
+    return isOldNews(sentMs, nowMs, messengerMillis(thread.lastReadWatermarkTimestampMs, load));
+  };
+  try {
+    return await Promise.race([
+      read().catch(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 type Factory = (...args: unknown[]) => unknown;
@@ -111,38 +218,63 @@ function sameArity(wrapped: Factory, original: Factory): Factory {
 }
 
 /**
- * Wrap MWDesktopNotifications so each message it notifies about is recorded
- * first. Only the exports' own function is replaced; anything unexpected
- * leaves the module as Facebook shipped it.
+ * Wrap a Haste module factory so `patch` can adjust its exports once it has
+ * run. Haste hands exports in the last two arguments (module, exports) or
+ * returns them; `patch` returns true once it recognised them, and anything it
+ * doesn't recognise is left as Facebook shipped it.
  */
-export function wrapDesktopNotificationsFactory(factory: Factory, load: () => unknown): Factory {
-  const patch = (exports: unknown) => {
-    if (!exports || typeof exports !== "object") return false;
-    const record = exports as Record<string, unknown>;
-    const trigger = record.triggerLocalNotification;
-    if (typeof trigger !== "function") return false;
-    record.triggerLocalNotification = function (this: unknown, ...args: unknown[]) {
-      try {
-        recordNotifiedMessage(args[1], load());
-      } catch {}
-      return Reflect.apply(trigger, this, args);
-    };
-    return true;
-  };
+export function wrapFactoryExports(
+  factory: Factory,
+  patch: (exports: Record<string, unknown>) => boolean,
+): Factory {
+  const tryPatch = (exports: unknown) =>
+    Boolean(exports) && typeof exports === "object" && patch(exports as Record<string, unknown>);
   return sameArity(function (this: unknown, ...args: unknown[]) {
     const result = Reflect.apply(factory, this, args);
     for (const candidate of [result, ...args.slice(-2)]) {
-      if (patch(candidate)) break;
-      if (
-        candidate &&
-        typeof candidate === "object" &&
-        patch((candidate as { exports?: unknown }).exports)
-      ) {
-        break;
-      }
+      try {
+        if (tryPatch(candidate)) break;
+        if (
+          candidate &&
+          typeof candidate === "object" &&
+          tryPatch((candidate as { exports?: unknown }).exports)
+        ) {
+          break;
+        }
+      } catch {}
     }
     return result;
   }, factory);
+}
+
+/**
+ * Wrap MWDesktopNotifications so each message it notifies about is recorded
+ * first, and marked stale when it is old news. Messenger still notifies: the
+ * Notification bridge suppresses a stale one the way it suppresses a muted
+ * one, which also keeps its unread row from raising a fallback.
+ */
+export function wrapDesktopNotificationsFactory(factory: Factory, load: () => unknown): Factory {
+  return wrapFactoryExports(factory, (exports) => {
+    const trigger = exports.triggerLocalNotification;
+    if (typeof trigger !== "function") return false;
+    exports.triggerLocalNotification = function (this: unknown, ...args: unknown[]) {
+      const notify = () => Reflect.apply(trigger, this, args);
+      let check: Promise<boolean>;
+      try {
+        const page = load();
+        recordNotifiedMessage(args[1], page);
+        check = readOldNews(args[0], args[1], page);
+      } catch {
+        return notify();
+      }
+      return check.then((old) => {
+        const messageId = (args[1] as { messageId?: unknown } | null)?.messageId;
+        if (old && typeof messageId === "string") pageMessages.markStale(messageId);
+        return notify();
+      }, notify);
+    };
+    return true;
+  });
 }
 
 /**

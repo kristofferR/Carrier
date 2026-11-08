@@ -350,6 +350,7 @@ fn store_settings(
     app: &tauri::AppHandle,
     state: &State<AppState>,
     new: Settings,
+    reset: bool,
 ) -> Result<Settings, String> {
     let (
         prev_theme,
@@ -368,6 +369,11 @@ fn store_settings(
         )
     };
     let mut effective = new.clone().sanitized();
+    // The page owns the pane widths; the Settings window's copy may be older
+    // than a drag made while it was open.
+    if !reset {
+        effective.pane_widths = state.settings.lock().unwrap().pane_widths;
+    }
     let mut sync_errors = Vec::new();
 
     if new.autostart != prev_autostart {
@@ -425,13 +431,18 @@ fn store_settings(
     }
 }
 
-async fn store_settings_off_main(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
+/// `reset` also drops the page's pane widths, which an ordinary save keeps.
+async fn store_settings_off_main(
+    app: tauri::AppHandle,
+    new: Settings,
+    reset: bool,
+) -> Result<Settings, String> {
     let worker_app = app.clone();
     let state = app.state::<AppState>();
     let _settings_worker = state.settings_worker.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
         let state = worker_app.state::<AppState>();
-        store_settings(&worker_app, &state, new)
+        store_settings(&worker_app, &state, new, reset)
     })
     .await
     .map_err(|e| format!("settings worker failed: {e}"))?
@@ -439,13 +450,13 @@ async fn store_settings_off_main(app: tauri::AppHandle, new: Settings) -> Result
 
 #[tauri::command]
 pub(crate) async fn set_settings(app: tauri::AppHandle, new: Settings) -> Result<Settings, String> {
-    store_settings_off_main(app, new).await
+    store_settings_off_main(app, new, false).await
 }
 
 /// Reset all settings to their defaults.
 #[tauri::command]
 pub(crate) async fn reset_settings(app: tauri::AppHandle) -> Result<Settings, String> {
-    store_settings_off_main(app, Settings::default()).await
+    store_settings_off_main(app, Settings::default(), true).await
 }
 
 async fn available_update_unlocked(

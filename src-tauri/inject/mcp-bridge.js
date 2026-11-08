@@ -555,6 +555,17 @@
           reply({ started: started });
           return;
         }
+        // Pane edges, selection, scroll bars, gradient chats and post images
+        // (the fMess review features). Counts and geometry only; selection
+        // is reported by length. `:selectall` runs WebKit's Select All with
+        // nothing focused; `:drag:<pane>:<dx>` drags a pane edge by dx px.
+        var fmessProbe = /^__carrier_mcp_fmess_probe__(?::(selectall|drag:(list|details):(-?\d+)|reset:(list|details)|open:(\d+)|sound))?$/.exec(code);
+        if (fmessProbe) {
+          Promise.resolve(fmessFeatureProbe(fmessProbe)).then(reply, function (e) {
+            reply({ error: String(e) });
+          });
+          return;
+        }
         if (code === "__carrier_mcp_privacy_probe__") {
           reply(privacyProbe());
           return;
@@ -3269,6 +3280,162 @@
         bodyHeight: document.body ? document.body.scrollHeight : null,
         html: carrierAttrs(document.documentElement),
         dialogs: dialogs,
+      };
+    }
+
+    function fmessFeatureProbe(match) {
+      var html = document.documentElement;
+      var rect = function (el) {
+        if (!el) return null;
+        var r = el.getBoundingClientRect();
+        return { x: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) };
+      };
+      var userSelect = function (el) {
+        return el ? getComputedStyle(el).webkitUserSelect || getComputedStyle(el).userSelect : null;
+      };
+      var edges = function () {
+        return Array.prototype.map.call(document.querySelectorAll(".carrier-pane-edge"), function (edge) {
+          return { pane: edge.dataset.pane, side: edge.dataset.side, edge: rect(edge), host: rect(edge.parentElement) };
+        });
+      };
+      var action = null;
+      if (match[1] === "selectall") {
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        var sel = document.getSelection();
+        sel.removeAllRanges();
+        var ran = document.execCommand("selectAll");
+        action = { selectAll: ran, selectedLength: String(sel).length, ranges: sel.rangeCount };
+        sel.removeAllRanges();
+      } else if (match[2]) {
+        // `dragged` means the pane changed width during the drag. Zero-distance
+        // and boundary-clamped drags can leave the width unchanged.
+        var edge = document.querySelector('.carrier-pane-edge[data-pane="' + match[2] + '"]');
+        if (!edge) action = { dragged: false, reason: "no edge" };
+        else {
+          var host = edge.parentElement;
+          var before = host.getBoundingClientRect().width;
+          var r = edge.getBoundingClientRect();
+          var x = r.left + r.width / 2;
+          var y = r.top + r.height / 2;
+          var opts = function (cx) {
+            return { bubbles: true, cancelable: true, pointerId: 1, button: 0, buttons: 1, clientX: cx, clientY: y };
+          };
+          edge.dispatchEvent(new PointerEvent("pointerdown", opts(x)));
+          edge.dispatchEvent(new PointerEvent("pointermove", opts(x + Number(match[3]))));
+          return new Promise(function (resolve) {
+            requestAnimationFrame(function () {
+              var during = host.getBoundingClientRect().width;
+              edge.dispatchEvent(new PointerEvent("lostpointercapture", opts(x + Number(match[3]))));
+              setTimeout(function () {
+                resolve({
+                  dragged: Math.round(during) !== Math.round(before),
+                  reason: Math.round(during) === Math.round(before) ? "width unchanged" : undefined,
+                  before: Math.round(before),
+                  during: Math.round(during),
+                  after: Math.round(host.getBoundingClientRect().width),
+                  stored: window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.pane_widths,
+                });
+              }, 300);
+            });
+          });
+        }
+      } else if (match[1] === "sound") {
+        // Plays Messenger's message sound once through SoundPlayer, as
+        // Messenger does, and reports whether its <audio> element played
+        // (it shouldn't: Carrier routes the sound through Web Audio).
+        // `called` only confirms that SoundPlayer.play returned, not playback.
+        try {
+          var config = window.require("MWChatConfig");
+          var urls = [config.soundNotifOggUrl, config.soundNotifMp3Url].filter(function (url) {
+            return typeof url === "string" && url.length > 0;
+          });
+          if (!urls.length) throw new Error("no sound urls");
+          window.require("SoundPlayer").play(urls, {});
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              var elements = Array.prototype.filter.call(document.querySelectorAll("audio"), function (audio) {
+                return urls.some(function (url) {
+                  return url && audio.src && audio.src.indexOf(String(url).split("?")[0].split("/").pop()) !== -1;
+                });
+              });
+              var player = window.require("SoundPlayer");
+              resolve({
+                called: true,
+                patched: String(player && player.play).indexOf("soundPlayerCalls") !== -1,
+                contexts: typeof AudioContext,
+                elements: elements.length,
+                elementPlayed: elements.some(function (audio) {
+                  return audio.played && audio.played.length > 0;
+                }),
+              });
+            }, 1500);
+          });
+        } catch (e) {
+          action = { called: false, error: String(e).slice(0, 200) };
+        }
+      } else if (match[5]) {
+        // Opens the nth conversation that is already read (one whose row has
+        // no screen-reader-only text after the name), so no read receipt goes out.
+        var readRows = Array.prototype.filter.call(
+          document.querySelectorAll('[role="navigation"] [role="row"] a[href*="/t/"]'),
+          function (link) {
+            var walker = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+            var seenVisible = false;
+            for (var node = walker.nextNode(); node; node = walker.nextNode()) {
+              if (!node.textContent.trim() || !node.parentElement) continue;
+              var box = node.parentElement.getBoundingClientRect();
+              var shown = box.width > 1 && box.height > 1;
+              if (seenVisible && !shown) return false;
+              if (shown) seenVisible = true;
+            }
+            return seenVisible;
+          },
+        );
+        var target = readRows[Number(match[5])];
+        if (target) target.click();
+        action = { opened: !!target, readRows: readRows.length };
+      } else if (match[4]) {
+        var resetEdge = document.querySelector('.carrier-pane-edge[data-pane="' + match[4] + '"]');
+        if (resetEdge) resetEdge.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
+        action = { reset: !!resetEdge };
+      }
+      var main = document.querySelector('[role="main"]');
+      var nav = document.querySelector('[role="navigation"] [role="row"]');
+      var messageText = main && main.querySelector('[role="log"] [dir="auto"]');
+      var gradientBoxes = main ? main.querySelectorAll('[style*="--chat-outgoing-message-background-gradient"]').length : 0;
+      var postImages = main ? main.querySelectorAll('img[height="100%"][width="100%"]') : [];
+      var indicator = document.getElementById("carrier-scroll-indicator");
+      return {
+        action: action,
+        html: {
+          chats: html.hasAttribute("data-carrier-chats"),
+          login: html.hasAttribute("data-carrier-login"),
+          scrollbars: html.getAttribute("data-carrier-scrollbars"),
+          resizing: html.hasAttribute("data-carrier-resizing"),
+          scrollbarWidth: getComputedStyle(html).scrollbarWidth || null,
+        },
+        panes: {
+          edges: edges(),
+          chatRow: !!document.querySelector("[data-carrier-chat-row]"),
+          main: rect(main),
+          stored: window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.pane_widths,
+        },
+        selection: {
+          body: userSelect(document.body),
+          chatRow: userSelect(nav),
+          messageText: userSelect(messageText),
+        },
+        scroll: {
+          indicator: !!indicator,
+          indicatorOpacity: indicator ? getComputedStyle(indicator).opacity : null,
+        },
+        gradient: { boxes: gradientBoxes, styled: !!document.getElementById("carrier-chat-gradient") },
+        postImages: {
+          count: postImages.length,
+          autoHeight: Array.prototype.filter.call(postImages, function (img) {
+            return getComputedStyle(img).height !== getComputedStyle(img.parentElement).height;
+          }).length,
+        },
       };
     }
 

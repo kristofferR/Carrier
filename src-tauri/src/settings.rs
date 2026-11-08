@@ -191,6 +191,8 @@ pub(crate) struct Settings {
     pub(crate) block_typing_indicator: bool,
     /// Page zoom in percent (clamped to 30–200; 100 = no zoom).
     pub(crate) zoom: i32,
+    /// Dragged chat list and details pane widths, reported by the page.
+    pub(crate) pane_widths: crate::pane_widths::PaneWidths,
     /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
     /// anywhere. Off by default so it can't clash with other apps' shortcuts.
     pub(crate) global_hotkey: bool,
@@ -356,6 +358,7 @@ impl Default for Settings {
             focus_composer_on_return: true,
             block_typing_indicator: false,
             zoom: 100,
+            pane_widths: crate::pane_widths::PaneWidths::default(),
             global_hotkey: false,
             block_telemetry: true,
             strip_link_tracking: true,

@@ -65,6 +65,8 @@ interface CarrierSettings {
   stop_media_autoplay?: boolean;
   /** Page zoom in percent (30–200; 100 = no zoom). */
   zoom?: number;
+  /** Dragged widths of the chat list and details panes in CSS px; null is Facebook's. */
+  pane_widths?: { list?: number | null; details?: number | null } | null;
   global_hotkey?: boolean;
   block_telemetry?: boolean;
   /** Strip Facebook attribution parameters from copied and externally opened links. */

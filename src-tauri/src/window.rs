@@ -521,6 +521,8 @@ fn build_app_window_with_render_budget(
                         .unwrap()
                         .clone();
                     crate::themes::apply_appearance(&window, &settings);
+                    // The init script's settings snapshot may predate a drag.
+                    crate::pane_widths::push(&window, settings.pane_widths);
                 }
                 apply_custom_css(&window, payload.url());
             }
