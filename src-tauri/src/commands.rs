@@ -797,7 +797,7 @@ fn install_macos_dmg_update(bytes: &[u8]) -> Result<std::path::PathBuf, String> 
         let source_app = find_app_bundle(&mountpoint)?;
         let destination_app = current_app_bundle()?;
         replace_app_bundle(&source_app, &destination_app, &work_dir)?;
-        Ok(renamed_app_bundle(&destination_app))
+        Ok(destination_app)
     })();
 
     let _ = fs::remove_dir_all(&work_dir);
@@ -873,33 +873,6 @@ fn find_app_bundle(mountpoint: &std::path::Path) -> Result<std::path::PathBuf, S
         }
     }
     fallback.ok_or_else(|| "The update DMG did not contain an app bundle.".into())
-}
-
-/// The app was renamed from Carrier to Chatpane, but an update replaces the
-/// bundle in place. Rename an install still called `Carrier.app` so Finder,
-/// Launchpad and Spotlight show the new name; a rename keeps the bundle's file
-/// identity, which Dock items resolve. Keeps the old path when the folder
-/// can't be renamed, such as an /Applications that needs admin rights.
-#[cfg(target_os = "macos")]
-fn renamed_app_bundle(installed: &std::path::Path) -> std::path::PathBuf {
-    let renamed = installed.with_file_name("Chatpane.app");
-    if installed
-        .file_name()
-        .is_none_or(|name| name != "Carrier.app")
-        || renamed.exists()
-    {
-        return installed.to_path_buf();
-    }
-    match std::fs::rename(installed, &renamed) {
-        Ok(()) => {
-            log::info!("renamed Carrier.app to Chatpane.app");
-            renamed
-        }
-        Err(error) => {
-            log::warn!("couldn't rename Carrier.app to Chatpane.app: {error}");
-            installed.to_path_buf()
-        }
-    }
 }
 
 #[cfg(target_os = "macos")]

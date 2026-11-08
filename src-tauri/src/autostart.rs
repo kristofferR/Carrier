@@ -60,6 +60,8 @@ fn reconcile_blocking(app: &tauri::AppHandle) -> Option<Status> {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     platform::migrate_previous_entry(app);
     #[cfg(target_os = "macos")]
+    platform::repoint_after_bundle_rename(app);
+    #[cfg(target_os = "macos")]
     platform::migrate_legacy_agent(app);
     let observed = status(app)
         .inspect_err(|e| log::warn!("couldn't read Start on System Startup: {e}"))
@@ -280,6 +282,36 @@ mod platform {
             LegacyAgent::Disabled
         } else {
             LegacyAgent::Enabled
+        }
+    }
+
+    /// The first launch after `Carrier.app` became `Chatpane.app`: the login
+    /// item or agent still opens the old path, so register this one instead,
+    /// if Start on System Startup was on.
+    pub(super) fn repoint_after_bundle_rename(app: &tauri::AppHandle) {
+        use tauri::Manager;
+        if !crate::bundle_rename::launched_after_rename()
+            || !app
+                .state::<crate::settings::AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .autostart
+        {
+            return;
+        }
+        let result = if has_login_items() {
+            // Unregistering forgets the old path; failing it is harmless.
+            let _ = register(false);
+            register(true)
+        } else if legacy_agent(app).is_some_and(|path| path.exists()) {
+            write_legacy_agent(app)
+        } else {
+            Ok(())
+        };
+        match result {
+            Ok(()) => log::info!("Start on System Startup now opens Chatpane.app"),
+            Err(e) => log::warn!("couldn't move Start on System Startup to Chatpane.app: {e}"),
         }
     }
 

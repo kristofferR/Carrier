@@ -22,6 +22,8 @@ mod account;
 mod actions;
 mod app_icon;
 mod autostart;
+#[cfg(any(target_os = "macos", test))]
+mod bundle_rename;
 mod cli;
 mod commands;
 mod custom_css;
@@ -1019,6 +1021,11 @@ fn app_context() -> tauri::Context<tauri::Wry> {
 
 pub fn run() {
     if !debug_install::startup() {
+        return;
+    }
+    // Before anything else uses the bundle path.
+    #[cfg(target_os = "macos")]
+    if bundle_rename::rename_and_relaunch() {
         return;
     }
     // Without WebView2 nothing below can open a window, so say why instead of

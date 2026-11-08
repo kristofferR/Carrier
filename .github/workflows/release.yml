@@ -908,14 +908,15 @@ jobs:
               url :url
               strategy :github_latest
             end
-
-            auto_updates true
           end
           CASK_EOF
 
           # Strip the heredoc indentation.
           sed -i 's/^          //' /tmp/chatpane.rb
 
+          # No auto_updates: brew decides those from the installed app's own
+          # version, and existing installs still have Carrier.app, so plain
+          # `brew upgrade` would never move them to Chatpane.
           # One commit: the cask was called carrier, and Homebrew follows
           # cask_renames.json only when the new cask exists and the old one is
           # gone, so all three change together.
