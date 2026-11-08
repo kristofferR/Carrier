@@ -121,17 +121,34 @@ fn record(window: &WebviewWindow, chrome: Chrome) {
 
 pub(crate) fn forget(label: &str) {
     windows().lock().unwrap().remove(label);
+    focused_addresses().lock().unwrap().remove(label);
 }
 
-/// Follow a window's xdg-shell tiled state (not on Hyprland, see above).
+/// Hyprland: each window's address by label, learnt as the window takes focus
+/// ([`learn_address`]): Messenger windows share one title.
+fn focused_addresses() -> &'static Mutex<HashMap<String, String>> {
+    static ADDRESSES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    ADDRESSES.get_or_init(Default::default)
+}
+
+/// Follow a window's state: on Hyprland, learn its address as it takes focus;
+/// elsewhere, its xdg-shell tiled state.
 pub(crate) fn watch(window: &WebviewWindow) {
-    if !crate::linux::is_tiling_wm() || hyprland().is_some() {
+    if !crate::linux::is_tiling_wm() {
         return;
     }
     let Ok(gtk_window) = window.gtk_window() else {
         return;
     };
     let watched = window.clone();
+    if let Some(dir) = hyprland() {
+        gtk_window.connect_focus_in_event(move |_, _| {
+            let window = watched.clone();
+            std::thread::spawn(move || learn_address(&window, dir));
+            Propagation::Proceed
+        });
+        return;
+    }
     gtk_window.connect_window_state_event(move |_, event| {
         let tiled = event.new_window_state().contains(WindowState::TILED);
         let first_report = tiled && !REPORTS_TILING.swap(true, Ordering::Relaxed);
@@ -149,6 +166,35 @@ pub(crate) fn watch(window: &WebviewWindow) {
         }
         Propagation::Proceed
     });
+}
+
+/// The window that just took focus is Hyprland's active one: remember its
+/// address, and reread its state by it.
+fn learn_address(window: &WebviewWindow, dir: &Path) {
+    let Some(active) = request(dir, "j/activewindow")
+        .ok()
+        .and_then(|reply| serde_json::from_slice::<HyprClient>(&reply).ok())
+    else {
+        return;
+    };
+    let ours = active.pid == i64::from(std::process::id());
+    if !ours || window.title().ok().as_deref() != Some(active.title.as_str()) {
+        return;
+    }
+    {
+        // A window can take keyboard focus without becoming the active one
+        // (Hyprland's send_shortcut), so never take another window's address.
+        let mut addresses = focused_addresses().lock().unwrap();
+        let label = window.label();
+        if addresses
+            .iter()
+            .any(|(other, address)| other != label && *address == active.address)
+        {
+            return;
+        }
+        addresses.insert(label.to_string(), active.address);
+    }
+    refresh(window.app_handle(), dir);
 }
 
 /// The running Hyprland's socket directory.
@@ -178,6 +224,14 @@ pub(crate) fn start(app: &AppHandle) {
                         refresh(&app, dir);
                         for line in BufReader::new(events).lines() {
                             let Ok(line) = line else { break };
+                            if let Some(address) = line.strip_prefix("closewindow>>") {
+                                // Closed (or hidden): Hyprland may reuse the address.
+                                let address = format!("0x{address}");
+                                focused_addresses()
+                                    .lock()
+                                    .unwrap()
+                                    .retain(|_, learnt| *learnt != address);
+                            }
                             if changes_window_chrome(&line) {
                                 if line.starts_with("movewindowv2>>") {
                                     // Omarchy rearranges a moved window once
@@ -246,15 +300,16 @@ fn refresh(app: &AppHandle, dir: &Path) {
         }
     };
     let pid = i64::from(std::process::id());
+    let ours: Vec<&HyprClient> = clients.iter().filter(|client| client.pid == pid).collect();
+    let addresses = focused_addresses().lock().unwrap().clone();
     let bars = TitleBars::query(dir);
     for (label, window) in app.webview_windows() {
         if !crate::title_bar::has_title_bar(&label) {
             continue;
         }
         let Ok(title) = window.title() else { continue };
-        let chrome: Vec<Chrome> = clients
-            .iter()
-            .filter(|client| client.pid == pid && client.title == title)
+        let chrome: Vec<Chrome> = candidates(&ours, &title, &label, &addresses)
+            .into_iter()
             .map(|client| Chrome {
                 handled: !client.floating || bars.drawn_on(dir, client),
                 maximized: client.fullscreen.as_i64() == Some(1),
@@ -265,6 +320,25 @@ fn refresh(app: &AppHandle, dir: &Path) {
             record(&window, chrome);
         }
     }
+}
+
+/// Hyprland's windows that may be the one labelled `label`: the one at its
+/// learnt address, or else those with its title, leaving out the windows
+/// learnt to be others.
+fn candidates<'a>(
+    ours: &[&'a HyprClient],
+    title: &str,
+    label: &str,
+    addresses: &HashMap<String, String>,
+) -> Vec<&'a HyprClient> {
+    let learnt = addresses.get(label);
+    if let Some(client) = ours.iter().find(|client| Some(&client.address) == learnt) {
+        return vec![*client];
+    }
+    ours.iter()
+        .filter(|client| client.title == title && !addresses.values().any(|a| *a == client.address))
+        .copied()
+        .collect()
 }
 
 /// One window's state, or that of several same-titled ones when they agree
@@ -361,6 +435,31 @@ mod tests {
             None
         );
         assert_eq!(agreed(Vec::new()), None);
+    }
+
+    #[test]
+    fn windows_are_found_by_learnt_address_before_title() {
+        let client = |address: &str| HyprClient {
+            address: address.into(),
+            pid: 1,
+            title: "Carrier".into(),
+            floating: false,
+            fullscreen: serde_json::Value::Null,
+            tags: Vec::new(),
+        };
+        let (one, two) = (client("0x1"), client("0x2"));
+        let ours = [&one, &two];
+        let found = |label, addresses: &HashMap<String, String>| {
+            candidates(&ours, "Carrier", label, addresses)
+                .iter()
+                .map(|client| client.address.as_str())
+                .collect::<Vec<_>>()
+        };
+        let none = HashMap::new();
+        assert_eq!(found("main", &none), ["0x1", "0x2"]);
+        let learnt = HashMap::from([("win-2".to_string(), "0x2".to_string())]);
+        assert_eq!(found("win-2", &learnt), ["0x2"]);
+        assert_eq!(found("main", &learnt), ["0x1"]);
     }
 
     #[test]
