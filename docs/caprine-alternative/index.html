@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caprine Not Working? A Maintained Caprine Alternative | Carrier for Messenger</title>
+<meta name="description" content="Caprine was built for messenger.com, which closed in April 2026, and has had no release since January. What is going on, and the alternatives for Caprine users.">
+<link rel="canonical" href="https://kristofferr.github.io/Carrier/caprine-alternative/">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Carrier for Messenger">
+<meta property="og:title" content="Caprine not working? A maintained Caprine alternative">
+<meta property="og:description" content="Caprine was built for messenger.com, which closed in April 2026. What is going on, the options for Caprine users, and an honest comparison.">
+<meta property="og:url" content="https://kristofferr.github.io/Carrier/caprine-alternative/">
+<meta property="og:image" content="https://kristofferr.github.io/Carrier/social-preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Carrier desktop app showing a clean Messenger conversation window">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Caprine not working? A maintained Caprine alternative">
+<meta name="twitter:description" content="Caprine was built for messenger.com, which closed in April 2026. What is going on, the options for Caprine users, and an honest comparison.">
+<meta name="twitter:image" content="https://kristofferr.github.io/Carrier/social-preview.png">
+<link rel="icon" href="../app-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@600;700;800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/guide.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Carrier for Messenger home">
+      <img src="../app-icon.png" alt="" width="34" height="34">
+      Carrier
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a class="nav-hide-sm" href="../#features">Features</a>
+      <a class="nav-hide-sm" href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-hero" aria-labelledby="page-title">
+    <span class="orb o1" aria-hidden="true"></span>
+    <span class="orb o2" aria-hidden="true"></span>
+    <div class="hero-inner">
+      <p class="crumbs"><a href="../">Carrier for Messenger</a> / Caprine</p>
+      <p class="hero-chip">Updated November 2026</p>
+      <h1 id="page-title">Caprine not working? A maintained&nbsp;alternative</h1>
+      <p class="hero-sub">Caprine was the go-to open-source Messenger app for years. It was built for messenger.com, which Meta closed in April 2026, and it has not had a release since January 2026. Here is what is going on, and what Caprine users can switch to.</p>
+      <div class="hero-ctas">
+        <a class="btn-bubble btn-primary" href="#download">Get Carrier</a>
+        <a class="btn-bubble btn-ghost" href="#compare">Compare</a>
+      </div>
+      <p class="hero-fineprint">Free and open source · Mac, Windows and Linux</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap narrow prose">
+      <div class="answer">
+        <p class="eyebrow">The short answer</p>
+        <p>Caprine's latest release, 2.61.0, still loads messenger.com, which now redirects to Facebook. Some people report it still mostly works. Others hit missing notifications, no Dock badge, broken call buttons or sign-in errors, and a fix has not been released.</p>
+        <p>If you want a maintained replacement in the same spirit, Carrier for Messenger is free, open source under the MIT license, and built for facebook.com/messages from the start. It is unofficial and not made by Meta.</p>
+      </div>
+
+      <h2>What is going on with Caprine</h2>
+      <p>This is a summary of public information from the <a href="https://github.com/sindresorhus/caprine" rel="noopener">Caprine repository</a>, checked November 8, 2026. Caprine is not archived, and its README says the project is feature complete and welcomes fixes.</p>
+      <ul>
+        <li><strong>Built for messenger.com.</strong> Caprine wraps messenger.com. On April 16, 2026 Meta retired that site for messaging and began redirecting it to facebook.com/messages.</li>
+        <li><strong>No release since January 2026.</strong> The latest version is 2.61.0, published January 2, 2026, before that change.</li>
+        <li><strong>Open bug reports.</strong> Since April, issues report that notifications and the Dock badge stopped working (<a href="https://github.com/sindresorhus/caprine/issues/2398" rel="noopener">#2398</a>), call buttons do nothing (<a href="https://github.com/sindresorhus/caprine/issues/2393" rel="noopener">#2393</a>), sign-in shows "This page isn't available" (<a href="https://github.com/sindresorhus/caprine/issues/2395" rel="noopener">#2395</a>), and Windows users get logged out after a reboot (<a href="https://github.com/sindresorhus/caprine/issues/2392" rel="noopener">#2392</a>).</li>
+        <li><strong>A migration is waiting.</strong> A pull request to move Caprine to facebook.com/messages (<a href="https://github.com/sindresorhus/caprine/pull/2379" rel="noopener">#2379</a>) was opened in February 2026 and has not been merged.</li>
+        <li><strong>Homebrew disabled the cask.</strong> On September 1, 2026, Homebrew disabled the Caprine cask because it fails macOS's Gatekeeper check, so <code>brew install --cask caprine</code> no longer works.</li>
+      </ul>
+      <p>None of this means Caprine was bad. It served a lot of people well for years, and Meta's changes would have been hard on any client built for messenger.com.</p>
+    </div>
+  </section>
+
+  <section class="tint" aria-labelledby="options-title">
+    <div class="wrap narrow">
+      <p class="eyebrow">Your options</p>
+      <h2 id="options-title" class="sec-title">What Caprine users can do</h2>
+      <div class="options">
+        <div class="option">
+          <span class="tag">Wait</span>
+          <h3>Keep Caprine for now</h3>
+          <p>If 2.61.0 still works for you, you can keep using it and watch the repository for a release with the facebook.com migration.</p>
+          <ul>
+            <li>Issues may come and go as Facebook changes its page</li>
+          </ul>
+        </div>
+        <div class="option">
+          <span class="tag">Community fork</span>
+          <h3>A Caprine fork</h3>
+          <p>The <a href="https://github.com/bankjaneo/caprine" rel="noopener">bankjaneo/caprine</a> fork loads facebook.com/messages and has recent releases. It keeps Caprine's Electron design, menus and settings.</p>
+          <ul>
+            <li>About 100 MB or more per download, like Caprine</li>
+          </ul>
+        </div>
+        <div class="option rec">
+          <span class="tag">Recommended</span>
+          <h3>Carrier for Messenger</h3>
+          <p>A newer open-source app with the same idea: Messenger in its own window, without Facebook around it. It uses your system's web engine, so downloads are about 3 to 5 MB.</p>
+          <ul>
+            <li>Built for facebook.com/messages, with regular releases</li>
+            <li>Notifications you can reply from, tray and unread badge</li>
+            <li>MIT license, like Caprine</li>
+          </ul>
+        </div>
+        <div class="option">
+          <span class="tag">Unofficial</span>
+          <h3>Messenger Next</h3>
+          <p>Another small client for facebook.com/messages, for Mac, Windows and Linux. Unlike Caprine and Carrier, its source code is closed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare" aria-labelledby="cmp-title">
+    <div class="wrap narrow">
+      <p class="eyebrow">Compare</p>
+      <h2 id="cmp-title" class="sec-title">Caprine and the alternatives</h2>
+      <div class="cmp-scroll">
+        <table class="cmp">
+          <thead><tr><th></th><th class="us" scope="col">Carrier</th><th scope="col">Caprine 2.61.0</th><th scope="col">Caprine fork</th><th scope="col">Messenger Next</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Loads</th><td class="us">facebook.com/messages</td><td>messenger.com (now redirected)</td><td>facebook.com/messages</td><td>facebook.com/messages</td></tr>
+            <tr><th scope="row">Mac download</th><td class="us">4.1 MB</td><td>102.9 MB</td><td>126.4 MB</td><td>10.1 MB</td></tr>
+            <tr><th scope="row">Windows installer</th><td class="us">3.0 MB</td><td>82.3 MB</td><td>116.2 MB</td><td>4.1 MB</td></tr>
+            <tr><th scope="row">Linux .deb</th><td class="us">5.3 MB</td><td>77.6 MB</td><td>105.1 MB</td><td>5.2 MB</td></tr>
+            <tr><th scope="row">Built on</th><td class="us">System web engine</td><td>Electron</td><td>Electron</td><td>System web engine</td></tr>
+            <tr><th scope="row">Source code</th><td class="us">Open (MIT)</td><td>Open (MIT)</td><td>Open (MIT)</td><td>Closed</td></tr>
+            <tr><th scope="row">Latest release</th><td class="us">November 2026</td><td>January 2026</td><td>November 2026</td><td>September 2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="cmp-note">From each project's latest release on GitHub, checked November 8, 2026. Mac sizes are the Apple Silicon .dmg; Windows and Linux sizes are the 64-bit packages. The fork is bankjaneo/caprine.</p>
+    </div>
+  </section>
+
+  <section class="tint">
+    <div class="wrap narrow prose">
+      <h2>Coming from Caprine</h2>
+      <p>Most of what Caprine users rely on has a counterpart in Carrier:</p>
+      <ul>
+        <li><strong>A focused window.</strong> Facebook's Feed, Reels, Marketplace and global search are hidden, so you only see your chats.</li>
+        <li><strong>Tray and badge.</strong> A tray or menu bar icon, an unread count on the Dock or taskbar, start on login and hide on close.</li>
+        <li><strong>Keyboard shortcuts.</strong> <code>Cmd/Ctrl+1</code> to <code>9</code> jump to conversations, <code>Ctrl+Tab</code> cycles through them, <code>Cmd/Ctrl+K</code> searches, and <code>Cmd/Ctrl+Shift+N</code> starts a new conversation.</li>
+        <li><strong>Dark mode and themes.</strong> Light, dark or system appearance, nine built-in themes or your own, an accent color and a <code>custom.css</code> option.</li>
+        <li><strong>Privacy.</strong> Hide that you're typing, hide names and avatars, and block Facebook's analytics requests (on by default).</li>
+      </ul>
+      <p>On top of that, Carrier has notifications you can reply to, react to or mute; right-click menus for messages and conversations; exporting a conversation to HTML or JSON; and scheduled text messages.</p>
+      <p>To be upfront about the differences: Carrier does not block Messenger's "Seen" indicator, which Caprine offered, and it does not support several accounts at once.</p>
+      <figure class="shot">
+        <img src="../carrier-screenshot.png" alt="Carrier for Messenger on macOS: the chat list on the left, a conversation on the right, and a new message notification in the corner" width="1271" height="835" loading="lazy">
+        <figcaption>Carrier on macOS. It looks and works the same on Windows and Linux.</figcaption>
+      </figure>
+
+      <h2>Switching takes a minute</h2>
+      <ol class="steps">
+        <li>Quit Caprine. You can uninstall it later; the two apps don't share any data.</li>
+        <li>Download Carrier for your system below, or on a Mac run <code>brew install --cask kristofferR/tap/carrier</code>.</li>
+        <li>Sign in with your Facebook account. Your conversations live in your account, so they are all there. Caprine's settings don't carry over.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section aria-labelledby="faq-title">
+    <div class="wrap narrow">
+      <p class="eyebrow">FAQ</p>
+      <h2 id="faq-title" class="sec-title">Caprine questions</h2>
+      <div class="faq-list">
+        <details class="faq-item">
+          <summary><h3>Is Caprine dead?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+          <p class="faq-a">It is not archived, but there has been no release since 2.61.0 on January 2, 2026, and the facebook.com migration has not been merged. Whether it returns is up to its maintainers.</p>
+        </details>
+        <details class="faq-item">
+          <summary><h3>Why did Caprine break?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+          <p class="faq-a">Caprine was built around messenger.com. When Meta retired that site in April 2026 and moved desktop messaging to facebook.com/messages, the page Caprine loads and the markup its features depend on changed. Read <a href="../messenger-desktop-app-discontinued/">what happened to Messenger on desktop</a> for the full timeline.</p>
+        </details>
+        <details class="faq-item">
+          <summary><h3>Why can't I install Caprine with Homebrew anymore?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+          <p class="faq-a">Homebrew disabled the Caprine cask on September 1, 2026, because the app fails macOS's Gatekeeper check. Carrier's cask is <code>brew install --cask kristofferR/tap/carrier</code>, and its Mac app is signed and notarized by Apple.</p>
+        </details>
+        <details class="faq-item">
+          <summary><h3>Will my conversations carry over?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+          <p class="faq-a">Yes. Neither app stores your conversations; they live in your Messenger account. Sign in to Carrier and they appear, in sync with your phone.</p>
+        </details>
+        <details class="faq-item">
+          <summary><h3>I used Caprine without a Facebook account. Will Carrier work?</h3><span class="faq-q-mark" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></summary>
+          <p class="faq-a">Unfortunately not. Since April 2026, Meta lets Messenger-only accounts chat only in the mobile app. Every desktop client, Carrier included, loads facebook.com/messages, which needs an account that can sign in to Facebook.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <div class="download-wrap">
+    <section class="download" id="download" aria-labelledby="dl-title">
+      <span class="orb d1" aria-hidden="true"></span>
+      <span class="orb d2" aria-hidden="true"></span>
+      <h2 id="dl-title">Get Carrier for Messenger</h2>
+      <p class="dl-sub">Free and open source, for Mac, Windows and Linux. Sign in with your usual Facebook account.</p>
+      <div class="dl-grid">
+        <div class="dl-col">
+          <a class="dl" href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_mac_arm.dmg">
+            <span class="dl-ico" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="#1d2129"><path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45z"/></svg></span>
+            <span><b>Download for Mac</b><small>Apple Silicon · .dmg</small></span>
+          </a>
+          <p class="dl-alts">Older Intel Mac? <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_mac_intel.dmg">Intel&nbsp;.dmg</a></p>
+        </div>
+        <div class="dl-col">
+          <a class="dl" href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_win_x64_setup.exe">
+            <span class="dl-ico" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="#0084FF"><path d="M0 3.449 9.75 2.1v9.451H0zM10.949 1.949 24 0v11.4H10.949zM0 12.6h9.75v9.451L0 20.699zM10.949 12.6H24V24l-13.051-1.801z"/></svg></span>
+            <span><b>Download for Windows</b><small>Windows 10 &amp; 11 · .exe</small></span>
+          </a>
+          <p class="dl-alts">Also: <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_win_x64_portable.zip">portable&nbsp;.zip</a> · <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_win_arm_setup.exe">ARM&nbsp;.exe</a></p>
+        </div>
+        <div class="dl-col">
+          <a class="dl" href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.AppImage">
+            <span class="dl-ico" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24"><ellipse cx="12" cy="15" rx="6.6" ry="7.2" fill="#1d2129"/><circle cx="12" cy="7" r="4.4" fill="#1d2129"/><ellipse cx="12" cy="16.6" rx="3.7" ry="4.6" fill="#fff"/><circle cx="10.4" cy="6.3" r=".75" fill="#fff"/><circle cx="13.6" cy="6.3" r=".75" fill="#fff"/><path d="M12 7.2 10.6 8.9h2.8z" fill="#f6a623"/><ellipse cx="9.2" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/><ellipse cx="14.8" cy="21.4" rx="1.9" ry="1.1" fill="#f6a623"/></svg></span>
+            <span><b>Download for Linux</b><small>AppImage · x64</small></span>
+          </a>
+          <p class="dl-alts">Also: <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.deb">.deb</a> · <a href="https://github.com/kristofferR/carrier/releases/download/v3.0.1/Carrier_3.0.1_lin_x64.rpm">.rpm</a> · <a href="https://aur.archlinux.org/packages/carrier" rel="noopener">AUR</a></p>
+        </div>
+      </div>
+      <p class="other-versions">Every download, with checksums, is on <a href="https://github.com/kristofferR/Carrier/releases/latest" rel="noopener">GitHub</a>.</p>
+    </section>
+  </div>
+
+  <section aria-labelledby="more-title">
+    <div class="wrap narrow">
+      <h2 id="more-title" class="sec-title">More guides</h2>
+      <div class="guide-links">
+        <a href="../messenger-desktop-app-discontinued/">What happened to the desktop app<span>Timeline and FAQ</span></a>
+        <a href="../messenger-for-mac/">Messenger on Mac<span>Desktop app options for macOS</span></a>
+        <a href="../messenger-for-windows/">Messenger on Windows<span>Replacing the removed Windows app</span></a>
+        <a href="../messenger-for-linux/">Messenger on Linux<span>Desktop clients for Linux</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <a class="foot-brand" href="../"><img src="../app-icon.png" alt="" width="30" height="30">Carrier for Messenger</a>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="https://github.com/kristofferR/Carrier" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/kristofferR/Carrier/releases/latest" target="_blank" rel="noopener">All releases</a>
+      </nav>
+    </div>
+    <nav class="foot-guides" aria-label="Guides">
+      <a href="../messenger-for-mac/">Messenger on Mac</a>
+      <a href="../messenger-for-windows/">Messenger on Windows</a>
+      <a href="../messenger-for-linux/">Messenger on Linux</a>
+      <a href="../caprine-alternative/">Caprine alternative</a>
+      <a href="../messenger-desktop-app-discontinued/">What happened to the desktop app</a>
+    </nav>
+    <p class="foot-note"><strong>Free &amp; open source · MIT license.</strong></p>
+    <p class="foot-note">Carrier is an independent open-source project, not affiliated with, endorsed by or sponsored by Meta. "Facebook" and "Messenger" are trademarks of Meta Platforms, Inc.</p>
+    <p class="foot-heart">Made by Kristoffer Risanger (<a href="https://github.com/kristofferR" target="_blank" rel="noopener">@kristofferR</a>) ❤️</p>
+  </div>
+</footer>
+</body>
+</html>
