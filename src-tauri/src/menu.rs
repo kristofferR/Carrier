@@ -56,20 +56,15 @@ fn menu_item(
     builder.build(app)
 }
 
-/// Log Out and Log Out and Reset Carrier… (Ref #356); the tray has them too.
-fn log_out_items(
-    app: &tauri::AppHandle,
-) -> tauri::Result<(MenuItem<tauri::Wry>, MenuItem<tauri::Wry>)> {
-    Ok((
-        menu_item(app, "log_out", "Log Out", None)?,
-        menu_item(app, "log_out_reset", "Log Out and Reset Carrier…", None)?,
-    ))
+/// Log Out… (Ref #356); the tray has it too.
+fn log_out_item(app: &tauri::AppHandle) -> tauri::Result<MenuItem<tauri::Wry>> {
+    menu_item(app, "log_out", crate::tray::LOG_OUT_LABEL, None)
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let prefs = menu_item(app, "preferences", "Settings…", Some("CmdOrCtrl+,"))?;
-    let (log_out, log_out_reset) = log_out_items(app)?;
+    let log_out = log_out_item(app)?;
     let about = about_metadata(&app.package_info().version.to_string());
     let app_menu = SubmenuBuilder::new(app, APP_TITLE)
         .about(Some(about))
@@ -77,7 +72,6 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .item(&prefs)
         .separator()
         .item(&log_out)
-        .item(&log_out_reset)
         .separator()
         .services()
         .separator()
@@ -247,7 +241,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         None
     };
     let quit = menu_item(app, "quit", quit_label, quit_accelerator)?;
-    let (log_out, log_out_reset) = log_out_items(app)?;
+    let log_out = log_out_item(app)?;
     let file_builder = SubmenuBuilder::new(app, "File")
         .id("file")
         .item(&new_conversation)
@@ -258,8 +252,7 @@ pub(crate) fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wr
         .separator()
         .item(&close_window)
         .separator()
-        .item(&log_out)
-        .item(&log_out_reset);
+        .item(&log_out);
     #[cfg(target_os = "windows")]
     let file_builder = file_builder
         .separator()
@@ -740,7 +733,6 @@ pub(crate) fn handle_menu_event(app: &tauri::AppHandle, event: tauri::menu::Menu
         "quit" => app.exit(0),
         "clear_cache" => confirm_clear_cache(app),
         "log_out" => crate::log_out::log_out(app),
-        "log_out_reset" => crate::log_out::confirm_reset(app),
         "always_on_top" => mutate_settings(app, |s| s.always_on_top = !s.always_on_top),
         "devtools" =>
         {

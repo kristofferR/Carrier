@@ -464,7 +464,7 @@ pub(crate) const STORE_FILE: &str = "scheduled-messages.json";
 
 /// Every file the scheduled-message store keeps in `dir`: the queue, its
 /// recovery marker, and snapshots a crash left mid-save. All hold account and
-/// thread ids, and the queue holds message text (Log Out and Reset; Ref #356).
+/// thread ids, and the queue holds message text (Log Out; Ref #356).
 pub(crate) fn account_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let store = dir.join(STORE_FILE);
     let mut files = vec![Store::recovery_marker(&store), store];
