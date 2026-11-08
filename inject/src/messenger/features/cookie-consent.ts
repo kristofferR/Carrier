@@ -26,6 +26,26 @@ const visibleBox = (el: Element | null | undefined) => {
   return r;
 };
 
+// Pale blues (the illustration panels on the "Learn more" cards) score 0:
+// only a saturated blue reads as a primary button.
+const blueScore = (el: Element) => {
+  const c = rgb(getComputedStyle(el).backgroundColor);
+  if (!c || c.a < 0.35) return null;
+  const chroma = c.b - Math.max(c.r, c.g);
+  return { score: chroma < 60 ? 0 : chroma + Math.max(0, c.b - 120), opaque: c.a > 0.9 };
+};
+
+// An inner layer that fills (nearly) the whole button, like the blue layer
+// of "Allow all cookies". Smaller blue bits, like the illustrations on the
+// dialog's "Learn more" cards, don't make a button primary.
+const coversButton = (inner: Element, button: DOMRect) => {
+  const r = inner.getBoundingClientRect();
+  return r.width * r.height >= 0.7 * button.width * button.height;
+};
+
+// How strongly a button reads as the blue primary action. Facebook paints
+// the fill on the button, a wrapper, or (in the cookie dialog) an inner
+// layer, so check all three.
 const primaryBlueScore = (el: Element) => {
   let best = 0;
   for (
@@ -33,10 +53,15 @@ const primaryBlueScore = (el: Element) => {
     cur && cur !== document.documentElement;
     cur = cur.parentElement
   ) {
-    const c = rgb(getComputedStyle(cur).backgroundColor);
-    if (!c || c.a < 0.35) continue;
-    best = Math.max(best, c.b - Math.max(c.r, c.g) + Math.max(0, c.b - 120));
-    if (c.a > 0.9) break;
+    const fill = blueScore(cur);
+    if (!fill) continue;
+    best = Math.max(best, fill.score);
+    if (fill.opaque) break;
+  }
+  const box = el.getBoundingClientRect();
+  for (const inner of el.querySelectorAll("*")) {
+    const fill = blueScore(inner);
+    if (fill && coversButton(inner, box)) best = Math.max(best, fill.score);
   }
   return best;
 };

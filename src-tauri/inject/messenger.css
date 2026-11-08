@@ -173,10 +173,21 @@ html[data-carrier-login] body {
 
 html[data-carrier-login] [data-carrier-login-anc] {
   display: block !important;
-  position: static !important;
   margin: 0 !important;
   padding: 0 !important;
   transform: none !important;
+}
+
+/* While a dialog is open, Facebook pins its page (#scrollview, then hidden
+   from assistive tech) to the window, so the dialog layers that follow it
+   start at the top of the window. Unpinned, a dialog that relies on that (the
+   cookie dialog's "Learn more" pages) opened below the login form. */
+html[data-carrier-login] [data-carrier-login-anc]:not([aria-hidden="true"]) {
+  position: static !important;
+}
+
+html[data-carrier-login] [data-carrier-login-anc][aria-hidden="true"] {
+  width: 100% !important;
 }
 
 /* The login column: a normal-flow block, centred and capped to a comfortable
@@ -256,6 +267,97 @@ html[data-carrier-login] [data-carrier-login-languages] > * {
 
 html[data-carrier-login] [data-carrier-login-footer-links] {
   display: none !important;
+}
+
+/* Facebook's "f" logo above the form. Its banner is hidden with the rest of
+   Facebook's chrome (in wide windows it shares a column with the marketing
+   collage), so messenger.js copies the logo into --carrier-login-logo. */
+html[data-carrier-login][data-carrier-login-logo] [data-carrier-login-col]::before {
+  content: "";
+  display: block;
+  width: 60px;
+  height: 60px;
+  margin: 8px auto 32px;
+  background: var(--carrier-login-logo) center / contain no-repeat;
+}
+
+/* Carrier's loader while a fresh login page has no text yet: WebKitGTK can
+   hold Facebook's page for about 20 s before its text paints. messenger.js
+   removes it once the form's text has rendered, or after 15 s. ::before is the
+   backdrop with the mark and label, ::after a small bar gliding under them.
+   Only transform and opacity animate (compositor only, no paint), the loop
+   ends with the loader, and it never takes clicks. */
+html[data-carrier-login-loading]::before {
+  content: "Loading Messenger\2026";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 112px;
+  box-sizing: border-box;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #65676b;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='12 16 77 70'%3E%3Cpath d='M50.2 60.8 L45.8 84.1 L37.5 66.5 Z' fill='%23a3a7ae'/%3E%3Cpath d='M13.7 51.1 L87.2 18.1 L50.2 60.8 Z' fill='%231c1e21'/%3E%3Cpath d='M50.2 60.8 L87.2 18.1 L45.8 84.1 Z' fill='%234a4d53'/%3E%3C/svg%3E") center calc(50% - 16px) / 56px no-repeat;
+  animation: carrier-login-loader-in 300ms ease-out 400ms both;
+}
+
+html[data-carrier-login-loading]::after {
+  content: "";
+  position: fixed;
+  top: calc(50% + 82px);
+  left: calc(50% - 16px);
+  z-index: 2147483647;
+  pointer-events: none;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: #0866ff;
+  animation:
+    carrier-login-loader-in 300ms ease-out 400ms both,
+    carrier-login-loader-glide 1.1s ease-in-out 400ms infinite alternate;
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-carrier-login-loading]::before {
+    color: #a1a4a8;
+    background-color: #18191a;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='12 16 77 70'%3E%3Cpath d='M50.2 60.8 L45.8 84.1 L37.5 66.5 Z' fill='%234f5258'/%3E%3Cpath d='M13.7 51.1 L87.2 18.1 L50.2 60.8 Z' fill='%23f4f5f7'/%3E%3Cpath d='M50.2 60.8 L87.2 18.1 L45.8 84.1 Z' fill='%23b4b7bd'/%3E%3C/svg%3E");
+  }
+
+  html[data-carrier-login-loading]::after {
+    background: #4599ff;
+  }
+}
+
+html[data-carrier-login-loading="done"]::before,
+html[data-carrier-login-loading="done"]::after {
+  animation: carrier-login-loader-out 250ms ease-in both;
+}
+
+@keyframes carrier-login-loader-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes carrier-login-loader-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes carrier-login-loader-glide {
+  from { transform: translateX(-40px); }
+  to { transform: translateX(40px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-carrier-login-loading]::before,
+  html[data-carrier-login-loading]::after {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* Facebook's newer login layout defines its own light palette inside the
