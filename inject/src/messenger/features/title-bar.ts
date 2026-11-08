@@ -121,7 +121,7 @@ function apply(next: TitleBarState) {
   }
   if (!controls) controls = buildControls();
   if (!strip) strip = buildStrip();
-  if (!controls.isConnected) root.append(strip, controls);
+  if (!strip.isConnected || !controls.isConnected) root.append(strip, controls);
   const maximize = controls.querySelector<HTMLButtonElement>('[data-control="maximize"]');
   const minimize = controls.querySelector<HTMLButtonElement>('[data-control="minimize"]');
   const close = controls.querySelector<HTMLButtonElement>('[data-control="close"]');

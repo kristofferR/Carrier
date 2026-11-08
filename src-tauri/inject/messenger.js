@@ -15008,7 +15008,7 @@ ${text}`)) {
     }
     if (!controls) controls = buildControls();
     if (!strip) strip = buildStrip();
-    if (!controls.isConnected) root.append(strip, controls);
+    if (!strip.isConnected || !controls.isConnected) root.append(strip, controls);
     const maximize = controls.querySelector('[data-control="maximize"]');
     const minimize = controls.querySelector('[data-control="minimize"]');
     const close = controls.querySelector('[data-control="close"]');
