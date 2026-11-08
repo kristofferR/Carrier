@@ -1269,8 +1269,7 @@ pub fn run() {
             apply_settings(app.handle(), &settings);
             // Show whether Carrier will really start at login: the user can
             // switch it off in the OS (Ref #443).
-            let h = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || autostart::reconcile(&h));
+            tauri::async_runtime::spawn(autostart::reconcile(app.handle().clone()));
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();

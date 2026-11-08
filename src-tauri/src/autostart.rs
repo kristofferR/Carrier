@@ -31,18 +31,32 @@ pub(crate) enum Status {
 }
 
 /// The stored setting after reading the OS: the OS wins, and an unreadable
-/// state keeps what was stored. Waiting for approval counts as on, since the
-/// item is registered and Settings offers the way to approve it.
+/// state keeps what was stored. Waiting for approval counts as off: macOS
+/// won't open Carrier at login until the user allows it, and switching it off
+/// in Login Items reports the same state. Settings shows the way to approve.
 fn reconciled(stored: bool, observed: Option<Status>) -> bool {
-    observed.map_or(stored, |status| status != Status::Off)
+    observed.map_or(stored, |status| status == Status::On)
 }
 
 /// Read the OS registration (migrating an old macOS LaunchAgent first) and
 /// store it as the Start on System Startup setting. Returns what it read.
-pub(crate) fn reconcile(app: &tauri::AppHandle) -> Option<Status> {
+/// Runs on the settings worker, so a save in flight can't be overwritten by a
+/// reading taken before it.
+pub(crate) async fn reconcile(app: tauri::AppHandle) -> Option<Status> {
     if is_snap() {
         return None;
     }
+    let state = app.state::<AppState>();
+    let _settings_worker = state.settings_worker.lock().await;
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || reconcile_blocking(&worker_app))
+        .await
+        .inspect_err(|e| log::warn!("Start on System Startup check failed: {e}"))
+        .ok()
+        .flatten()
+}
+
+fn reconcile_blocking(app: &tauri::AppHandle) -> Option<Status> {
     #[cfg(target_os = "macos")]
     platform::migrate_legacy_agent(app);
     let observed = status(app)
@@ -103,32 +117,47 @@ fn same_program(a: &std::path::Path, b: &std::path::Path) -> bool {
 
 // ---------------------------------------------------------------- macOS ---
 
+/// The LaunchAgent plist an older Carrier wrote.
+#[cfg(any(test, target_os = "macos"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyAgent {
+    Missing,
+    /// It starts Carrier at login.
+    Enabled,
+    /// macOS 13+: the user switched it off under "Allow in the Background";
+    /// the plist stays but doesn't run.
+    Disabled,
+}
+
 /// macOS 13+: what to do with a LaunchAgent an older Carrier installed.
 #[cfg(any(test, target_os = "macos"))]
 #[derive(Debug, PartialEq, Eq)]
 enum LegacyAgentPlan {
     Nothing,
-    /// The login item already exists; the agent would launch Carrier twice.
+    /// The login item already starts Carrier, or the user switched the agent
+    /// off and removing it keeps it off.
     Remove,
-    /// Keep starting at login as a login item. The agent stays if registering
-    /// fails, so Carrier still starts.
-    RegisterThenRemove,
+    /// Register the login item, and remove the agent once the login item is
+    /// enabled. Until then the agent keeps starting Carrier.
+    Register,
 }
 
 #[cfg(any(test, target_os = "macos"))]
-fn legacy_agent_plan(agent_exists: bool, service: Status) -> LegacyAgentPlan {
-    match (agent_exists, service) {
-        (false, _) => LegacyAgentPlan::Nothing,
-        (true, Status::Off) => LegacyAgentPlan::RegisterThenRemove,
-        (true, Status::On | Status::NeedsApproval) => LegacyAgentPlan::Remove,
+fn legacy_agent_plan(agent: LegacyAgent, service: Status) -> LegacyAgentPlan {
+    match (agent, service) {
+        (LegacyAgent::Missing, _) => LegacyAgentPlan::Nothing,
+        (LegacyAgent::Disabled, _) | (LegacyAgent::Enabled, Status::On) => LegacyAgentPlan::Remove,
+        (LegacyAgent::Enabled, Status::Off) => LegacyAgentPlan::Register,
+        // A registered login item waiting for approval: the agent still works.
+        (LegacyAgent::Enabled, Status::NeedsApproval) => LegacyAgentPlan::Nothing,
     }
 }
 
-/// macOS 13+: a LaunchAgent left behind because registering failed still
-/// starts Carrier.
+/// macOS 13+: an agent kept while the login item can't run still starts
+/// Carrier.
 #[cfg(any(test, target_os = "macos"))]
-fn macos_status(service: Status, legacy_agent: bool) -> Status {
-    if service == Status::Off && legacy_agent {
+fn macos_status(service: Status, agent: LegacyAgent) -> Status {
+    if agent == LegacyAgent::Enabled {
         Status::On
     } else {
         service
@@ -141,7 +170,11 @@ mod platform {
 
     use objc2_service_management::{SMAppService, SMAppServiceStatus};
 
-    use super::{LegacyAgentPlan, Status, entry_name, legacy_agent_plan, macos_status};
+    use objc2_foundation::NSURL;
+
+    use super::{
+        LegacyAgent, LegacyAgentPlan, Status, entry_name, legacy_agent_plan, macos_status,
+    };
 
     fn has_login_items() -> bool {
         objc2::available!(macos = 13.0)
@@ -194,30 +227,51 @@ mod platform {
         }
     }
 
+    /// Whether the agent exists and, on macOS 13+, whether the user allows it.
+    /// Only an explicit "requires approval" counts as switched off, so an
+    /// unclear answer never removes an agent that still works.
+    fn legacy_agent_state(app: &tauri::AppHandle) -> LegacyAgent {
+        let Some(path) = legacy_agent(app).filter(|path| path.exists()) else {
+            return LegacyAgent::Missing;
+        };
+        if !has_login_items() {
+            return LegacyAgent::Enabled;
+        }
+        let url = NSURL::from_file_path(&path);
+        // SAFETY: SMAppService exists on macOS 13+, checked above.
+        let status = url.map(|url| unsafe { SMAppService::statusForLegacyURL(&url) });
+        if status == Some(SMAppServiceStatus::RequiresApproval) {
+            LegacyAgent::Disabled
+        } else {
+            LegacyAgent::Enabled
+        }
+    }
+
     pub(super) fn migrate_legacy_agent(app: &tauri::AppHandle) {
         if !has_login_items() {
             return;
         }
-        let exists = legacy_agent(app).is_some_and(|path| path.exists());
-        let plan = legacy_agent_plan(exists, service_status());
-        if plan == LegacyAgentPlan::RegisterThenRemove
-            && let Err(e) = register(true)
-        {
-            log::warn!("couldn't move Start on System Startup to Login Items: {e}");
-            return;
-        }
-        if plan != LegacyAgentPlan::Nothing
-            && let Err(e) = remove_legacy_agent(app)
-        {
+        let remove = match legacy_agent_plan(legacy_agent_state(app), service_status()) {
+            LegacyAgentPlan::Nothing => false,
+            LegacyAgentPlan::Remove => true,
+            LegacyAgentPlan::Register => match register(true) {
+                Ok(()) => service_status() == Status::On,
+                Err(e) => {
+                    log::warn!("couldn't move Start on System Startup to Login Items: {e}");
+                    false
+                }
+            },
+        };
+        if remove && let Err(e) = remove_legacy_agent(app) {
             log::warn!("{e}");
         }
     }
 
     pub(super) fn status(app: &tauri::AppHandle) -> Result<Status, String> {
-        let agent = legacy_agent(app).is_some_and(|path| path.exists());
+        let agent = legacy_agent_state(app);
         Ok(if has_login_items() {
             macos_status(service_status(), agent)
-        } else if agent {
+        } else if agent == LegacyAgent::Enabled {
             Status::On
         } else {
             Status::Off
@@ -232,11 +286,25 @@ mod platform {
                 remove_legacy_agent(app)
             };
         }
-        // Registering twice, or unregistering what isn't registered, fails.
-        if enabled != (service_status() != Status::Off) {
-            register(enabled)?;
+        let service = service_status();
+        if !enabled {
+            // Unregistering what isn't registered fails.
+            if service != Status::Off {
+                register(false)?;
+            }
+            return remove_legacy_agent(app);
         }
-        remove_legacy_agent(app)
+        if service == Status::Off {
+            register(true)?;
+        }
+        match service_status() {
+            Status::On => remove_legacy_agent(app),
+            Status::NeedsApproval => Err(
+                "Allow Carrier in System Settings → General → Login Items to start it when you log in."
+                    .into(),
+            ),
+            Status::Off => Err("macOS didn't add Carrier to Login Items.".into()),
+        }
     }
 
     /// macOS 10.15 to 12: a LaunchAgent that runs Carrier once at login.
@@ -590,31 +658,42 @@ mod tests {
     fn the_os_state_wins_unless_unreadable() {
         assert!(!reconciled(true, Some(Status::Off)));
         assert!(reconciled(false, Some(Status::On)));
-        assert!(reconciled(false, Some(Status::NeedsApproval)));
+        assert!(!reconciled(true, Some(Status::NeedsApproval)));
         assert!(reconciled(true, None));
         assert!(!reconciled(false, None));
     }
 
     #[test]
-    fn a_legacy_agent_moves_to_login_items_once() {
+    fn a_legacy_agent_moves_to_login_items_without_a_gap() {
+        use LegacyAgent::{Disabled, Enabled, Missing};
         assert_eq!(
-            legacy_agent_plan(false, Status::Off),
+            legacy_agent_plan(Missing, Status::Off),
             LegacyAgentPlan::Nothing
         );
         assert_eq!(
-            legacy_agent_plan(true, Status::Off),
-            LegacyAgentPlan::RegisterThenRemove
+            legacy_agent_plan(Enabled, Status::Off),
+            LegacyAgentPlan::Register
         );
-        assert_eq!(legacy_agent_plan(true, Status::On), LegacyAgentPlan::Remove);
         assert_eq!(
-            legacy_agent_plan(true, Status::NeedsApproval),
+            legacy_agent_plan(Enabled, Status::On),
             LegacyAgentPlan::Remove
         );
-        // An agent left after a failed migration still starts Carrier.
-        assert_eq!(macos_status(Status::Off, true), Status::On);
-        assert_eq!(macos_status(Status::Off, false), Status::Off);
+        // The agent keeps working until the login item is allowed.
         assert_eq!(
-            macos_status(Status::NeedsApproval, true),
+            legacy_agent_plan(Enabled, Status::NeedsApproval),
+            LegacyAgentPlan::Nothing
+        );
+        // An agent the user switched off is never turned into a login item.
+        assert_eq!(
+            legacy_agent_plan(Disabled, Status::Off),
+            LegacyAgentPlan::Remove
+        );
+
+        assert_eq!(macos_status(Status::Off, Enabled), Status::On);
+        assert_eq!(macos_status(Status::NeedsApproval, Enabled), Status::On);
+        assert_eq!(macos_status(Status::Off, Disabled), Status::Off);
+        assert_eq!(
+            macos_status(Status::NeedsApproval, Missing),
             Status::NeedsApproval
         );
     }

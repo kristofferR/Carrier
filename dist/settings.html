@@ -455,7 +455,11 @@
           const fresh = await invoke("get_settings");
           fresh[key] = typeof value === "function" ? value(fresh) : value;
           settings = await invoke("set_settings", { new: fresh });
-          if (key === "autostart") autostartStatus = await readAutostartStatus();
+          if (key === "autostart") {
+            // Reading the OS state can correct the stored setting.
+            autostartStatus = await readAutostartStatus();
+            settings = await invoke("get_settings");
+          }
           render();
           setStatus("Saved.");
           setTimeout(() => setStatus(""), 1200);
