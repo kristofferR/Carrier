@@ -3,8 +3,8 @@
 // (download / copy / copy address / open in browser), matching the original.
 // Right-click a message (or press the context-menu key on a focused one) for
 // its reactions and Messenger's own message actions, after any media actions.
-// Right-click a conversation in the chat list for its own menu, in place of
-// its link's. Selected text and other links keep their usual menus.
+// Right-click a conversation in the chat list for its own menu, plus export,
+// in place of its link's. Selected text and other links keep their usual menus.
 import {
   cleanSharedUrl,
   openUrl,
@@ -12,7 +12,10 @@ import {
   toastDownloadFailure,
   toastDownloadSaved,
 } from "../bridge";
-import { CHAT_ROW_CONTEXT_MENU_LABELS } from "../lib/chat-row-menu";
+import {
+  CHAT_EXPORT_CONTEXT_MENU_LABELS,
+  CHAT_ROW_CONTEXT_MENU_LABELS,
+} from "../lib/chat-row-menu";
 import { waitForNativeDownload } from "../lib/download-completion";
 import { filenameFromUrl, friendlyDownloadName } from "../lib/downloads";
 import { cssPropertyName, type MenuRect, pointerActivationIsSound } from "../lib/menu-integrity";
@@ -23,7 +26,9 @@ import {
   type Reaction,
   reactionLabel,
 } from "../lib/message-menu";
+import { threadIdFromHref } from "../lib/threads";
 import { chatRowFor, readChatRowActions, runChatRowAction } from "./chat-row-menu";
+import { startConversationExport } from "./conversation-export";
 import {
   messageFor,
   messageTextBlock,
@@ -516,6 +521,17 @@ export function initContextMenu() {
         const action = actions[index];
         if (action) addItem([action, () => runChatRowAction(href, action)]);
       }
+      const threadId = threadIdFromHref(href);
+      if (threadId) {
+        addItem([
+          CHAT_EXPORT_CONTEXT_MENU_LABELS[0],
+          () => startConversationExport("html", threadId),
+        ]);
+        addItem([
+          CHAT_EXPORT_CONTEXT_MENU_LABELS[1],
+          () => startConversationExport("json", threadId),
+        ]);
+      }
       if (!items.length) {
         toast("Messenger offers no actions for this conversation");
         return;
@@ -683,7 +699,9 @@ export function initContextMenu() {
           ? 2
           : conversation && (CHAT_ROW_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
             ? 3
-            : 0;
+            : conversation && (CHAT_EXPORT_CONTEXT_MENU_LABELS as readonly string[]).includes(label)
+              ? 4
+              : 0;
       if (previousGroup !== null && previousGroup !== group) {
         const divider = nativeReflectApply(nativeCreateElement, document, [
           "div",

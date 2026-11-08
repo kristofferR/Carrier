@@ -800,6 +800,10 @@ const CHAT_ROW_CONTEXT_MENU_LABELS: &[&str] = &[
     "Report",
     "Leave group",
 ];
+/// Carrier's own conversation rows, after Messenger's: export the chat. The
+/// native menu shows them as an "Export chat" submenu of formats.
+const CHAT_EXPORT_CONTEXT_MENU_LABELS: &[&str] = &["Export chat as HTML…", "Export chat as JSON…"];
+const CHAT_EXPORT_SUBMENU_LABEL: &str = "Export chat";
 const REACT_CONTEXT_MENU_LABEL: &str = "React";
 const MAX_CONTEXT_MENU_REACTIONS: usize = 12;
 const MAX_CONTEXT_MENU_VALUE: usize = 64 * 1024;
@@ -883,12 +887,17 @@ fn valid_message_items(items: &[NativeContextMenuItem]) -> bool {
         })
 }
 
-/// A conversation's own rows in their fixed order.
+/// A conversation's own rows, then its export rows, in their fixed order.
 fn valid_chat_row_items(items: &[NativeContextMenuItem]) -> bool {
+    let labels: Vec<&str> = CHAT_ROW_CONTEXT_MENU_LABELS
+        .iter()
+        .chain(CHAT_EXPORT_CONTEXT_MENU_LABELS)
+        .copied()
+        .collect();
     let mut next_label = 0;
     !items.is_empty()
         && items.iter().all(|item| {
-            let Some(index) = CHAT_ROW_CONTEXT_MENU_LABELS[next_label..]
+            let Some(index) = labels[next_label..]
                 .iter()
                 .position(|label| *label == item.label)
             else {
@@ -1037,8 +1046,8 @@ fn append_context_menu_items(
     items: &[NativeContextMenuItem],
 ) -> tauri::Result<()> {
     let id = |item: &NativeContextMenuItem| format!("carrier-context:{label}:{}", item.action);
-    // Media rows, the React submenu, message actions, and conversation
-    // actions each form a group.
+    // Media rows, the React submenu, message actions, conversation actions,
+    // and conversation export each form a group.
     let group = |item: &NativeContextMenuItem| {
         if item.reaction {
             1
@@ -1046,28 +1055,35 @@ fn append_context_menu_items(
             2
         } else if CHAT_ROW_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
             3
+        } else if CHAT_EXPORT_CONTEXT_MENU_LABELS.contains(&item.label.as_str()) {
+            4
         } else {
             0
         }
     };
     let mut reactions: Option<tauri::menu::Submenu<tauri::Wry>> = None;
+    let mut exports: Option<tauri::menu::Submenu<tauri::Wry>> = None;
+    // The group's submenu, created on its first row.
+    let submenu = |slot: &mut Option<tauri::menu::Submenu<tauri::Wry>>, title: &str| {
+        if let Some(submenu) = slot {
+            return Ok(submenu.clone());
+        }
+        let submenu = SubmenuBuilder::new(app, title).build()?;
+        menu.append(&submenu)?;
+        *slot = Some(submenu.clone());
+        tauri::Result::Ok(submenu)
+    };
     let mut previous = None;
     for item in items {
         if previous.is_some_and(|previous| previous != group(item)) {
             menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?)?;
         }
         previous = Some(group(item));
-        if item.reaction {
-            let submenu = match &reactions {
-                Some(submenu) => submenu.clone(),
-                None => {
-                    let submenu = SubmenuBuilder::new(app, REACT_CONTEXT_MENU_LABEL).build()?;
-                    menu.append(&submenu)?;
-                    reactions = Some(submenu.clone());
-                    submenu
-                }
-            };
-            submenu.append(
+        if let Some(format) = item.label.strip_prefix("Export chat as ") {
+            submenu(&mut exports, CHAT_EXPORT_SUBMENU_LABEL)?
+                .append(&MenuItemBuilder::new(format).id(id(item)).build(app)?)?;
+        } else if item.reaction {
+            submenu(&mut reactions, REACT_CONTEXT_MENU_LABEL)?.append(
                 &tauri::menu::CheckMenuItemBuilder::new(&item.label)
                     .id(id(item))
                     .checked(item.checked)
@@ -1344,7 +1360,7 @@ mod tests {
             "MESSAGE_CONTEXT_MENU_LABELS" => {
                 include_str!("../../inject/src/messenger/lib/message-menu.ts")
             }
-            "CHAT_ROW_CONTEXT_MENU_LABELS" => {
+            "CHAT_ROW_CONTEXT_MENU_LABELS" | "CHAT_EXPORT_CONTEXT_MENU_LABELS" => {
                 include_str!("../../inject/src/messenger/lib/chat-row-menu.ts")
             }
             _ => include_str!("../../inject/src/messenger/features/context-menu.ts"),
@@ -1566,6 +1582,16 @@ mod tests {
         ];
         assert!(valid_context_menu_items(&items));
 
+        // Export rows follow Messenger's, never precede them.
+        items.push(context_item("Export chat as HTML…", '7'));
+        items.push(context_item("Export chat as JSON…", '8'));
+        assert!(valid_context_menu_items(&items));
+        assert!(valid_context_menu_items(&items[4..]));
+        items.swap(0, 4);
+        assert!(!valid_context_menu_items(&items));
+        items.swap(0, 4);
+        items.truncate(4);
+
         // Rows keep their fixed order, never repeat, and carry no value.
         items.swap(0, 1);
         assert!(!valid_context_menu_items(&items));
@@ -1618,6 +1644,10 @@ mod tests {
             ("LINK_CONTEXT_MENU_LABELS", LINK_CONTEXT_MENU_LABELS),
             ("MESSAGE_CONTEXT_MENU_LABELS", MESSAGE_CONTEXT_MENU_LABELS),
             ("CHAT_ROW_CONTEXT_MENU_LABELS", CHAT_ROW_CONTEXT_MENU_LABELS),
+            (
+                "CHAT_EXPORT_CONTEXT_MENU_LABELS",
+                CHAT_EXPORT_CONTEXT_MENU_LABELS,
+            ),
         ] {
             assert_eq!(injected_context_menu_labels(name), expected, "{name}");
         }

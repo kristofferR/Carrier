@@ -141,7 +141,7 @@ global shortcuts, and cryptographically verified updates.
 - Right-click a message to react, reply, copy text, edit, forward, pin or unsend
 - Right-click a conversation for its own menu: mark as read or unread, mute,
   view profile, archive, delete, block, report or leave a group
-- Export a conversation to HTML or JSON from the File menu; nothing is uploaded
+- Export a conversation to HTML or JSON by right-clicking it in the chat list (or from the File menu); nothing is uploaded
 - [Schedule text messages](docs/scheduled-sending.md) with quick delays or a 24-hour date/time picker
 - Drag the edge of the chat list or details pane to resize it; double-click to reset
 - Recent encrypted chats open faster: their newest messages are preloaded on this computer
