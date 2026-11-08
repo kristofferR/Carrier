@@ -787,7 +787,7 @@
      app icon left, sender avatar thumbnail right. The stack receives live
      simulated messages from Alex (see script). */
   .toast-stack {
-    position: absolute; top: -20px; right: -16px; z-index: 4;
+    position: absolute; top: 14px; right: -16px; z-index: 4; /* below the theme switcher, over the window */
     display: flex; flex-direction: column; gap: 8px;
     width: 336px;
     pointer-events: none;
@@ -829,7 +829,7 @@
   /* the whole window scales uniformly via the fit script - only the (1:1)
      notification stack needs responsive help */
   @media (max-width: 760px) {
-    .toast-stack { right: 6px; top: -16px; }
+    .toast-stack { right: 6px; top: 10px; }
   }
   @media (max-width: 420px) {
     .toast-stack { width: 240px; }
