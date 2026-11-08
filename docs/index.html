@@ -888,6 +888,47 @@
   html[data-os="windows"] .toast .t-actions { padding-left: 0; gap: 8px; }
   html[data-os="windows"] .toast .t-actions span { flex: 1; text-align: center; border-radius: 4px; padding: 6px 8px; background: rgba(255, 255, 255, .85); }
 
+
+  /* ---------- Linux (html[data-os="linux"]) ----------
+     3.0 on floating Linux desktops (KDE Plasma, GNOME): no title bar, Carrier
+     draws round minimize, maximize and close buttons at the top right over a
+     32px strip above the conversation (messenger.css, data-carrier-title-bar="linux"). */
+  html[data-os="linux"] .win { border-radius: 8px; }
+  html[data-os="linux"] .win-bar { display: none; }
+  html[data-os="linux"] .win-caption { display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+  html[data-os="linux"] .win-caption span { width: 24px; height: 24px; border-radius: 50%; background: rgba(127, 127, 127, .18); }
+  html[data-os="linux"] .win-caption svg { width: 9px; height: 9px; stroke-width: 1.4; }
+  html[data-os="linux"] .win-body .side { padding-top: 0; }
+  html[data-os="linux"] .chatpane { margin-top: 48px; }
+  html[data-os="linux"] .toast-stack { top: 40px; }
+  /* KDE Plasma notifications: Breeze card, app name and close button on top,
+     the sender's picture on the right, actions as buttons underneath */
+  html[data-os="linux"] .toast {
+    position: relative; align-items: flex-start; border-radius: 8px;
+    padding: 36px 14px 13px;
+    background: #fcfcfc; border: 1px solid rgba(0, 0, 0, .12);
+    box-shadow: 0 12px 34px rgba(0, 10, 40, .3);
+    font-family: "Noto Sans", "Inter", system-ui, sans-serif; color: #232629;
+  }
+  html[data-os="linux"] .toast::before {
+    content: "Carrier"; position: absolute; top: 10px; left: 36px;
+    font-size: 12px; color: rgba(35, 38, 41, .7);
+  }
+  html[data-os="linux"] .toast::after {
+    content: "×"; position: absolute; top: 5px; right: 11px;
+    font-size: 17px; line-height: 1; color: rgba(35, 38, 41, .6);
+  }
+  html[data-os="linux"] .toast .t-app { position: absolute; top: 10px; left: 13px; width: 16px; height: 16px; border-radius: 4px; }
+  html[data-os="linux"] .toast .t-avatar { width: 44px; height: 44px; }
+  html[data-os="linux"] .toast .t-now { display: none; }
+  html[data-os="linux"] .toast .t-title b { font-weight: 700; font-size: 14px; }
+  html[data-os="linux"] .toast .t-msg { color: #232629; }
+  html[data-os="linux"] .toast .t-actions { padding-left: 0; gap: 6px; margin-top: 10px; }
+  html[data-os="linux"] .toast .t-actions span {
+    flex: 1; text-align: center; border-radius: 4px; padding: 5px 8px;
+    background: #fcfcfc; border: 1px solid rgba(35, 38, 41, .25); color: #232629; font-weight: 400;
+  }
+
   /* ---------- Sections shared ---------- */
   section { padding-block: clamp(2.75rem, 6vw, 4.75rem); }
   .eyebrow {
@@ -1133,35 +1174,35 @@
   /* macOS 3.0: communication notifications. The sender's face (or the group's
      picture) on the left with a small Carrier badge, actions behind the
      Options button that appears on hover. */
-  html:not([data-os="windows"]) .toast { position: relative; align-items: flex-start; padding: 12px 14px 12px 12px; border-radius: 24px; }
-  html:not([data-os="windows"]) .toast .t-avatar { order: -1; width: 38px; height: 38px; }
-  html:not([data-os="windows"]) .toast .t-app { position: absolute; left: 34px; top: 34px; width: 18px; height: 18px; border-radius: 5px; z-index: 1; box-shadow: 0 0 0 1.5px rgba(247, 247, 249, .9); }
-  html:not([data-os="windows"]) .toast .t-body { padding-top: 1px; }
-  html:not([data-os="windows"]) .toast .t-actions { display: none; }
+  html:not([data-os]) .toast { position: relative; align-items: flex-start; padding: 12px 14px 12px 12px; border-radius: 24px; }
+  html:not([data-os]) .toast .t-avatar { order: -1; width: 38px; height: 38px; }
+  html:not([data-os]) .toast .t-app { position: absolute; left: 34px; top: 34px; width: 18px; height: 18px; border-radius: 5px; z-index: 1; box-shadow: 0 0 0 1.5px rgba(247, 247, 249, .9); }
+  html:not([data-os]) .toast .t-body { padding-top: 1px; }
+  html:not([data-os]) .toast .t-actions { display: none; }
   .toast .t-close, .toast .t-options, .toast .t-menu { display: none; }
-  html:not([data-os="windows"]) .notif-demo .toast.has-actions { padding-right: 112px; }
-  html:not([data-os="windows"]) .notif-demo .toast.has-actions .t-now { display: none; }
-  html:not([data-os="windows"]) .toast .t-close {
+  html:not([data-os]) .notif-demo .toast.has-actions { padding-right: 112px; }
+  html:not([data-os]) .notif-demo .toast.has-actions .t-now { display: none; }
+  html:not([data-os]) .toast .t-close {
     display: grid; place-items: center; position: absolute; top: -7px; left: -7px;
     width: 20px; height: 20px; border-radius: 50%; font-size: 14px; line-height: 1;
     background: rgba(246, 246, 248, .96); color: rgba(0, 0, 0, .6);
     box-shadow: 0 1px 4px rgba(0, 0, 0, .25);
   }
-  html:not([data-os="windows"]) .toast .t-options {
+  html:not([data-os]) .toast .t-options {
     display: inline-flex; align-items: center; gap: 3px; position: absolute; top: 50%; right: 12px; transform: translateY(-50%);
     padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
     background: rgba(0, 0, 0, .07); color: #1d1d1f;
   }
-  html:not([data-os="windows"]) .toast .t-options .chev { font-size: 11px; transform: translateY(-2px); }
-  html:not([data-os="windows"]) .toast .t-menu {
+  html:not([data-os]) .toast .t-options .chev { font-size: 11px; transform: translateY(-2px); }
+  html:not([data-os]) .toast .t-menu {
     display: flex; flex-direction: column; position: absolute; top: calc(50% + 18px); right: 6px; z-index: 3;
     min-width: 150px; padding: 5px;
     background: rgba(246, 246, 248, .96); border: .5px solid rgba(0, 0, 0, .12); border-radius: 10px;
     box-shadow: 0 16px 36px -10px rgba(0, 10, 40, .45);
     font-size: 13.5px; color: #1d1d1f;
   }
-  html:not([data-os="windows"]) .toast .t-menu span { padding: 4px 10px; border-radius: 5px; }
-  html:not([data-os="windows"]) .toast .t-menu span:first-child { background: #0a63e0; color: #fff; }
+  html:not([data-os]) .toast .t-menu span { padding: 4px 10px; border-radius: 5px; }
+  html:not([data-os]) .toast .t-menu span:first-child { background: #0a63e0; color: #fff; }
   .notif-demo { overflow: visible; }
   .notif-demo .toast.has-actions { z-index: 5; } /* its Options menu opens over the notifications below */
 
@@ -2289,6 +2330,7 @@
   });
   // Windows visitors see the Windows 11 window and notifications.
   if (/Windows/i.test(navigator.userAgent)) document.documentElement.setAttribute('data-os', 'windows');
+  else if (/Linux|X11/i.test(navigator.userAgent) && !/Android|CrOS/i.test(navigator.userAgent)) document.documentElement.setAttribute('data-os', 'linux');
 
   // ---------- i18n ----------
   // Locale dictionaries: en is complete; other locales override every key.
