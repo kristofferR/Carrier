@@ -18,6 +18,7 @@ use sha2::Sha256;
 use tauri::{Listener, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+mod account;
 mod actions;
 mod app_icon;
 mod cli;
@@ -1190,6 +1191,8 @@ pub fn run() {
             commands::open_log_folder,
             commands::open_custom_css,
             commands::send_test_notification,
+            account::messenger_account,
+            account::set_messenger_account,
             themes::list_themes,
             themes::add_theme,
             themes::remove_theme,
@@ -1204,6 +1207,7 @@ pub fn run() {
             app.add_capability(include_str!("../dev-capabilities/mcp.json"))?;
 
             clear_pending_webview_data(app.handle());
+            account::install(app.handle());
 
             // Portable zips have no installer to register the scheme, and a moved
             // portable folder must re-point the handler at the new exe. Writing

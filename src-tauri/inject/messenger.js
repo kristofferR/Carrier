@@ -187,6 +187,301 @@
     toast(message, action2, { warning: true });
   };
 
+  // inject/src/messenger/lib/facebook-loader.ts
+  function pageRequire() {
+    const load = window.require;
+    return typeof load === "function" ? load : null;
+  }
+  function defaultExport(module) {
+    if (module && typeof module === "object" && "default" in module) {
+      return module.default;
+    }
+    return module;
+  }
+  function loadFacebookModules(load, names2, timeoutMs = 1e4) {
+    return new Promise((resolve, reject) => {
+      let bootloader;
+      try {
+        bootloader = load?.("Bootloader");
+      } catch (_) {
+      }
+      if (!load || typeof bootloader?.loadModules !== "function") {
+        reject(new Error("Messenger's module loader is unavailable"));
+        return;
+      }
+      const timer = setTimeout(
+        () => reject(new Error(`Messenger did not load ${names2.join(", ")}`)),
+        timeoutMs
+      );
+      try {
+        bootloader.loadModules(
+          names2,
+          () => {
+            clearTimeout(timer);
+            try {
+              resolve(names2.map((name) => load(name)));
+            } catch (error) {
+              reject(error);
+            }
+          },
+          "carrier"
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  }
+
+  // inject/src/messenger/lib/messenger-dnd.ts
+  var muteUntilSeconds = null;
+  function setMessengerDndUntil(seconds) {
+    muteUntilSeconds = seconds;
+  }
+  function messengerDndActive(nowMs = Date.now()) {
+    const until = muteUntilSeconds;
+    if (until === null) return false;
+    return until < 0 || until * 1e3 > nowMs;
+  }
+  function muteUntilFromDatabase(raw, i64ToString) {
+    let text = raw;
+    if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
+    if (typeof raw === "bigint") text = raw.toString();
+    else if (typeof raw !== "string" && raw != null && i64ToString) text = i64ToString(raw);
+    if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
+    const seconds = Number(text);
+    return Number.isSafeInteger(seconds) ? seconds : null;
+  }
+  async function readMessengerDndUntil(account2, load, timeoutMs = 750) {
+    if (!/^\d+$/.test(account2) || typeof load !== "function") return null;
+    let timer;
+    const read = async () => {
+      const singleton = load("LSDatabaseSingleton");
+      const db = await singleton.LSDatabaseSingleton;
+      const i64 = load("I64");
+      const table = db?.tables?.notification_settings;
+      if (typeof table?.get !== "function" || typeof i64?.of_string !== "function") return null;
+      const row = await table.get(i64.of_string(account2));
+      if (!row || typeof row !== "object") return 0;
+      return muteUntilFromDatabase(
+        row.globalMuteUntil,
+        i64.to_string?.bind(i64)
+      );
+    };
+    try {
+      return await Promise.race([
+        read().catch(() => null),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // inject/src/messenger/lib/messenger-account.ts
+  var flag = (value) => typeof value === "boolean" ? value : null;
+  function stateFromViewer(viewer, resolveActiveStatus, dndUntil) {
+    if (!viewer) return { activeStatus: null, sounds: null, dndUntil };
+    const active = resolveActiveStatus(
+      flag(viewer.chat_visibility),
+      flag(viewer.chat_visibility_on_messenger),
+      flag(viewer.chat_visibility_on_facebook)
+    );
+    return { activeStatus: flag(active), sounds: flag(viewer.chat_sounds_on), dndUntil };
+  }
+  function dndUntilFor(minutes, nowMs) {
+    if (minutes === 0 || minutes === -1) return minutes;
+    return Math.floor(nowMs / 1e3) + minutes * 60;
+  }
+  async function loadPreferencesCode(load) {
+    const loadRoot = async (entrypoint) => {
+      const root = defaultExport(entrypoint).root;
+      if (typeof root?.load !== "function") throw new Error("Messenger's Preferences changed.");
+      await root.load();
+    };
+    const [dialog] = await loadFacebookModules(load, ["MWInboxSettingsDialog.entrypoint"]);
+    await loadRoot(dialog);
+    const [presence] = await loadFacebookModules(load, ["MWInboxSettingsPresenceDialog.entrypoint"]);
+    await loadRoot(presence);
+  }
+  async function readMessengerAccount(load, account2) {
+    await loadPreferencesCode(load);
+    const [environment, relay, query, resolve] = await loadFacebookModules(load, [
+      "CometRelayEnvironment",
+      "relay-runtime",
+      "useCometHomeChatSettingsQuery.graphql",
+      "resolveActiveStatus"
+    ]);
+    const data = await relay.fetchQuery(defaultExport(environment), query, {}, { fetchPolicy: "network-only" }).toPromise();
+    if (!data?.viewer) throw new Error("Messenger didn't report its settings.");
+    const dndUntil = await readMessengerDndUntil(account2, load, 3e3);
+    return stateFromViewer(
+      data.viewer,
+      defaultExport(resolve),
+      dndUntil
+    );
+  }
+  async function changeMessengerAccount(load, account2, change) {
+    await loadPreferencesCode(load);
+    if (change.setting === "sounds") {
+      const [environment, mutation] = await loadFacebookModules(load, [
+        "CometRelayEnvironment",
+        "MWChatChangeSoundsSettingMutation"
+      ]);
+      await mutation.commit(
+        defaultExport(environment),
+        { sounds_on: change.value }
+      );
+    } else if (change.setting === "activeStatus") {
+      await setActiveStatus(load, change.value);
+    } else {
+      await setDoNotDisturb(load, account2, change.value);
+    }
+    for (let attempt = 0; ; attempt++) {
+      const state2 = await readMessengerAccount(load, account2);
+      if (applied(state2, change)) return state2;
+      if (attempt === 3) throw new Error("Messenger didn't apply the change.");
+      await new Promise((resolve) => setTimeout(resolve, 1e3));
+    }
+  }
+  function applied(state2, change) {
+    switch (change.setting) {
+      case "activeStatus":
+        return state2.activeStatus === change.value;
+      case "sounds":
+        return state2.sounds === change.value;
+      case "doNotDisturb": {
+        if (change.value <= 0) return state2.dndUntil === change.value;
+        const expected = dndUntilFor(change.value, Date.now());
+        return state2.dndUntil !== null && Math.abs(state2.dndUntil - expected) <= 120;
+      }
+    }
+  }
+  async function setDoNotDisturb(load, account2, minutes) {
+    const [i64, serverTime, database2, factory, writer, update] = await loadFacebookModules(load, [
+      "I64",
+      "ServerTime",
+      "LSDatabaseSingleton",
+      "LSFactory",
+      "MessengerNotificationsWriter",
+      "LSOptimisticallyUpdateGlobalMuteUntilStoredProcedure"
+    ]);
+    const seconds = dndUntilFor(minutes, serverTime.getMillis());
+    const until = seconds === 0 ? i64.zero : seconds < 0 ? i64.neg_one : i64.of_float(seconds);
+    const db = await database2.LSDatabaseSingleton;
+    const makeFactory = defaultExport(factory);
+    const run = defaultExport(update);
+    await db.runInTransaction((tx) => run(makeFactory(tx), { globalMuteUntil: until }), "readwrite");
+    writer.updateMute(account2, seconds === 0 ? 0 : i64.to_float(until));
+  }
+  async function setActiveStatus(load, on2) {
+    const [environment, relay, mutation, report, database2, gkx, qex] = await loadFacebookModules(
+      load,
+      [
+        "CometRelayEnvironment",
+        "CometRelay",
+        "UpdatePresenceSettingsMutation.graphql",
+        "MWPReportActiveSetting",
+        "LSDatabaseSingleton",
+        "gkx",
+        "qex"
+      ]
+    );
+    const messenger = defaultExport(gkx)("23433");
+    const experiments = defaultExport(qex);
+    const withPlatform = experiments._(messenger ? "998" : "5461") !== false;
+    const input = on2 ? { online_policy: "BLOCKLIST", web_allowlist: null, web_blocklist: null, web_visibility: true } : { online_policy: "ALLOWLIST", web_allowlist: [], web_visibility: false };
+    if (withPlatform) input.platform = messenger ? "MESSENGER" : "FACEBOOK";
+    const saved = new Promise(
+      (resolve, reject) => (
+        // CometRelay's commit adds the actor and mutation ids Facebook requires.
+        relay.commitMutation(
+          defaultExport(environment),
+          {
+            mutation,
+            variables: { input },
+            onCompleted: (_response, errors) => errors?.length ? reject(new Error(errors[0]?.message || "Facebook refused the change.")) : resolve(),
+            onError: reject
+          }
+        )
+      )
+    );
+    const reported = withPlatform ? Promise.resolve() : new Promise(
+      (resolve, reject) => report.reportActiveSetting(
+        database2.LSDatabaseSingleton,
+        on2,
+        resolve,
+        reject
+      )
+    );
+    await Promise.all([saved, reported]);
+  }
+
+  // inject/src/messenger/lib/threads.ts
+  function threadIdFromHref(href) {
+    const m = (href || "").match(/\/t\/(\d+)/);
+    return m ? m[1] : null;
+  }
+  function threadPathId(href) {
+    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
+    return m ? m[1] : null;
+  }
+  function accountId(cookie) {
+    return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
+  }
+  function accountScopedStorageKey(baseKey, cookie) {
+    const account2 = accountId(cookie);
+    return account2 ? `${baseKey}:${account2}` : null;
+  }
+  function isMessengerContentPath(pathname) {
+    const path = String(pathname || "");
+    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
+  }
+  var SEPARATOR_RE = /^[·•.,\s]+$/;
+
+  // inject/src/messenger/features/account-requests.ts
+  function initAccountRequests() {
+    if (!window.__TAURI_INTERNALS__) return;
+    const signedIn = () => {
+      const account2 = accountId(document.cookie);
+      if (!account2) throw new Error("Log in to Messenger first.");
+      return account2;
+    };
+    const actions = {
+      read: () => readMessengerAccount(pageRequire(), signedIn()),
+      "set-active-status": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
+        setting: "activeStatus",
+        value: value === true
+      }),
+      "set-sounds": (value) => changeMessengerAccount(pageRequire(), signedIn(), {
+        setting: "sounds",
+        value: value === true
+      }),
+      "set-dnd": async (value) => {
+        const state2 = await changeMessengerAccount(pageRequire(), signedIn(), {
+          setting: "doNotDisturb",
+          value: Number(value)
+        });
+        setMessengerDndUntil(state2.dndUntil);
+        return state2;
+      }
+    };
+    const reply = (request, payload) => invoke("plugin:event|emit", {
+      event: "carrier:account-result",
+      payload: { request, ...payload }
+    });
+    window.__carrierAccount = (request, action2, value) => {
+      const run = actions[action2];
+      (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state2) => reply(request, { ok: true, state: state2 })).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        diag(`account.${action2}`, message.slice(0, 200));
+        return reply(request, { ok: false, error: message });
+      });
+    };
+  }
+
   // inject/src/messenger/lib/auto-refresh.ts
   function nativeRealtimeStatus(status, transportConfirmed, silentRecoveryFailed, workerMutationPending) {
     if (status === "ok" && !transportConfirmed) return "pending";
@@ -754,28 +1049,6 @@ ${button.innerHTML}`)
     else setComposerBusy(true);
     return runComposerDelivery(run);
   }
-
-  // inject/src/messenger/lib/threads.ts
-  function threadIdFromHref(href) {
-    const m = (href || "").match(/\/t\/(\d+)/);
-    return m ? m[1] : null;
-  }
-  function threadPathId(href) {
-    const m = String(href || "").match(/^\/t\/(\d+)\/?$/);
-    return m ? m[1] : null;
-  }
-  function accountId(cookie) {
-    return (cookie || "").match(/(?:^|;\s*)c_user=(\d{1,32})(?:;|$)/)?.[1] ?? null;
-  }
-  function accountScopedStorageKey(baseKey, cookie) {
-    const account2 = accountId(cookie);
-    return account2 ? `${baseKey}:${account2}` : null;
-  }
-  function isMessengerContentPath(pathname) {
-    const path = String(pathname || "");
-    return path === "/messages" || path.startsWith("/messages/") || threadPathId(path) !== null;
-  }
-  var SEPARATOR_RE = /^[·•.,\s]+$/;
 
   // inject/src/messenger/lib/worker-recovery.ts
   function record(value) {
@@ -7613,53 +7886,6 @@ ${button.innerHTML}`)
     );
   }
 
-  // inject/src/messenger/lib/messenger-dnd.ts
-  var muteUntilSeconds = null;
-  function setMessengerDndUntil(seconds) {
-    muteUntilSeconds = seconds;
-  }
-  function messengerDndActive(nowMs = Date.now()) {
-    const until = muteUntilSeconds;
-    if (until === null) return false;
-    return until < 0 || until * 1e3 > nowMs;
-  }
-  function muteUntilFromDatabase(raw, i64ToString) {
-    let text = raw;
-    if (typeof raw === "number") return Number.isFinite(raw) ? Math.trunc(raw) : null;
-    if (typeof raw === "bigint") text = raw.toString();
-    else if (typeof raw !== "string" && raw != null && i64ToString) text = i64ToString(raw);
-    if (typeof text !== "string" || !/^-?\d+$/.test(text)) return null;
-    const seconds = Number(text);
-    return Number.isSafeInteger(seconds) ? seconds : null;
-  }
-  async function readMessengerDndUntil(account2, load, timeoutMs = 750) {
-    if (!/^\d+$/.test(account2) || typeof load !== "function") return null;
-    let timer;
-    const read = async () => {
-      const singleton = load("LSDatabaseSingleton");
-      const db = await singleton.LSDatabaseSingleton;
-      const i64 = load("I64");
-      const table = db?.tables?.notification_settings;
-      if (typeof table?.get !== "function" || typeof i64?.of_string !== "function") return null;
-      const row = await table.get(i64.of_string(account2));
-      if (!row || typeof row !== "object") return 0;
-      return muteUntilFromDatabase(
-        row.globalMuteUntil,
-        i64.to_string?.bind(i64)
-      );
-    };
-    try {
-      return await Promise.race([
-        read().catch(() => null),
-        new Promise((resolve) => {
-          timer = setTimeout(() => resolve(null), timeoutMs);
-        })
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   // inject/src/messenger/features/messenger-dnd.ts
   var REFRESH_MS = 3e4;
   function initMessengerDnd() {
@@ -14135,6 +14361,7 @@ ${text}`)) {
     initFeature("media-autoplay", initMediaAutoplay);
     initFeature("mute-action-tracking", initMuteActionTracking);
     initFeature("messenger-dnd", initMessengerDnd);
+    initFeature("account-requests", initAccountRequests);
     initFeature("notifications", initNotificationBridge);
     initFeature("share-intake", initShareIntake);
     initFeature("sync-health", initSyncHealth);
