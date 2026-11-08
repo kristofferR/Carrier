@@ -45,13 +45,13 @@ const THEME_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const BUILT_IN: &[(&str, &str)] = &[
     (DEFAULT_THEME, ""),
     ("oled-black", include_str!("../themes/oled-black.css")),
+    ("terminal", include_str!("../themes/terminal.css")),
     ("graphite", include_str!("../themes/graphite.css")),
     ("warm", include_str!("../themes/warm.css")),
     ("pink", include_str!("../themes/pink.css")),
     ("lavender", include_str!("../themes/lavender.css")),
     ("sage", include_str!("../themes/sage.css")),
     ("slate", include_str!("../themes/slate.css")),
-    ("terminal", include_str!("../themes/terminal.css")),
 ];
 
 /// Carrier's palette tokens and the Messenger variables each one sets.
