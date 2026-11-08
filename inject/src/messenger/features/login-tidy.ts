@@ -27,6 +27,8 @@ const LANGUAGES = "data-carrier-login-languages";
 const LANGUAGE_LINK = "data-carrier-login-language-link";
 const LOGO = "data-carrier-login-logo";
 const LOGIN_REDIRECT = "carrier:login-redirect";
+const LOADING = "data-carrier-login-loading";
+const LOADER_LIMIT_MS = 15_000;
 
 type LoginRecoveryState = "idle" | "pending" | "settled";
 
@@ -73,7 +75,43 @@ function returnToMessengerAfterLogin(): LoginRecoveryState {
   return "settled";
 }
 
+// Carrier's mark over a fresh login page until its text has rendered
+// (messenger.css). WebKitGTK can hold Facebook's page for about 20 s, so this
+// starts at document start, before the first paint.
+function showLoaderUntilLoginRenders() {
+  if (!onFacebookHost() || /(?:^|;\s*)c_user=/.test(document.cookie)) return;
+  if (!/^\/(?:login(?:\.php)?\/?)?$/i.test(location.pathname)) return;
+  const html = document.documentElement;
+  html.setAttribute(LOADING, "");
+  const started = performance.now();
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    // Not faded in yet (400 ms delay + 300 ms fade): just remove it.
+    if (performance.now() - started < 700) {
+      html.removeAttribute(LOADING);
+      return;
+    }
+    html.setAttribute(LOADING, "done");
+    setTimeout(() => html.removeAttribute(LOADING), 300);
+  };
+  setTimeout(finish, LOADER_LIMIT_MS);
+  // The form's text paints in the first frame after its fonts load; the
+  // frame after that one means it reached the screen.
+  const whenRendered = () => {
+    if (done) return;
+    if (!document.querySelector('input[name="pass"]')) {
+      requestAnimationFrame(whenRendered);
+      return;
+    }
+    document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
+  };
+  requestAnimationFrame(whenRendered);
+}
+
 export function initLoginTidy() {
+  showLoaderUntilLoginRenders();
   let scheduled = false;
   let tidyObserver: MutationObserver | null = null;
 

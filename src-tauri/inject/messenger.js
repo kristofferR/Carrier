@@ -6739,6 +6739,8 @@ ${button.innerHTML}`)
   var LANGUAGE_LINK = "data-carrier-login-language-link";
   var LOGO = "data-carrier-login-logo";
   var LOGIN_REDIRECT = "carrier:login-redirect";
+  var LOADING = "data-carrier-login-loading";
+  var LOADER_LIMIT_MS = 15e3;
   function returnToMessengerAfterLogin() {
     if (!onFacebookHost()) return "idle";
     const signedIn = /(?:^|;\s*)c_user=[^;]+/.test(document.cookie);
@@ -6765,7 +6767,36 @@ ${button.innerHTML}`)
     location.replace("https://www.facebook.com/messages");
     return "settled";
   }
+  function showLoaderUntilLoginRenders() {
+    if (!onFacebookHost() || /(?:^|;\s*)c_user=/.test(document.cookie)) return;
+    if (!/^\/(?:login(?:\.php)?\/?)?$/i.test(location.pathname)) return;
+    const html = document.documentElement;
+    html.setAttribute(LOADING, "");
+    const started = performance.now();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (performance.now() - started < 700) {
+        html.removeAttribute(LOADING);
+        return;
+      }
+      html.setAttribute(LOADING, "done");
+      setTimeout(() => html.removeAttribute(LOADING), 300);
+    };
+    setTimeout(finish, LOADER_LIMIT_MS);
+    const whenRendered = () => {
+      if (done) return;
+      if (!document.querySelector('input[name="pass"]')) {
+        requestAnimationFrame(whenRendered);
+        return;
+      }
+      document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)));
+    };
+    requestAnimationFrame(whenRendered);
+  }
   function initLoginTidy() {
+    showLoaderUntilLoginRenders();
     let scheduled = false;
     let tidyObserver = null;
     const prefersDark = () => !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
