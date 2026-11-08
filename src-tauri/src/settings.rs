@@ -103,11 +103,18 @@ pub(crate) struct Settings {
     pub(crate) accent_color: String,
     /// Font family for messages and the conversation list; empty = default.
     pub(crate) message_font: String,
-    /// App icon style: "color" or "monochrome".
-    pub(crate) app_icon_style: String,
-    /// Which app icon variant: "light" (the installed icon), "dark" or "auto"
-    /// (match light/dark).
-    pub(crate) app_icon_variant: String,
+    /// The app icon: one of [`crate::app_icon::APP_ICONS`]. "color-light" is
+    /// the installed icon.
+    pub(crate) app_icon: String,
+    /// The app icon while Messenger is dark, from the same set; empty uses
+    /// `app_icon` in both.
+    pub(crate) app_icon_dark: String,
+    /// Before `app_icon`, a style ("color" or "monochrome") and a variant
+    /// ("light", "dark" or "auto"). Read once, migrated by `sanitized`.
+    #[serde(skip_serializing)]
+    pub(crate) app_icon_style: Option<String>,
+    #[serde(skip_serializing)]
+    pub(crate) app_icon_variant: Option<String>,
     /// macOS: run as a menu-bar app with no Dock icon (requires the tray).
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
@@ -257,11 +264,17 @@ impl Settings {
         if self.message_font.len() > 100 || self.message_font.chars().any(char::is_control) {
             self.message_font = String::new();
         }
-        if !matches!(self.app_icon_style.as_str(), "color" | "monochrome") {
-            self.app_icon_style = "color".into();
+        if self.app_icon_style.is_some() || self.app_icon_variant.is_some() {
+            (self.app_icon, self.app_icon_dark) = crate::app_icon::migrate_style_and_variant(
+                self.app_icon_style.take().as_deref(),
+                self.app_icon_variant.take().as_deref(),
+            );
         }
-        if !matches!(self.app_icon_variant.as_str(), "auto" | "light" | "dark") {
-            self.app_icon_variant = "light".into();
+        if !crate::app_icon::APP_ICONS.contains(&self.app_icon.as_str()) {
+            self.app_icon = crate::app_icon::DEFAULT_APP_ICON.into();
+        }
+        if !crate::app_icon::APP_ICONS.contains(&self.app_icon_dark.as_str()) {
+            self.app_icon_dark = String::new();
         }
         if !matches!(self.update_check_hours, 1 | 4 | 24) {
             self.update_check_hours = 4;
@@ -311,8 +324,10 @@ impl Default for Settings {
             color_theme: crate::themes::DEFAULT_THEME.into(),
             accent_color: String::new(),
             message_font: String::new(),
-            app_icon_style: "color".into(),
-            app_icon_variant: "light".into(),
+            app_icon: crate::app_icon::DEFAULT_APP_ICON.into(),
+            app_icon_dark: String::new(),
+            app_icon_style: None,
+            app_icon_variant: None,
             menu_bar_only: false,
             hide_menu_bar: false,
             title_bar: "auto".into(),
@@ -1274,6 +1289,36 @@ mod tests {
     }
 
     #[test]
+    fn app_icon_style_and_variant_migrate_on_load_and_are_not_saved() {
+        let s: Settings =
+            serde_json::from_str(r#"{"app_icon_style":"monochrome","app_icon_variant":"auto"}"#)
+                .unwrap();
+        let s = s.sanitized();
+        assert_eq!(
+            (s.app_icon.as_str(), s.app_icon_dark.as_str()),
+            ("mono-light", "mono-dark")
+        );
+        let saved = serde_json::to_value(&s).unwrap();
+        assert!(saved.get("app_icon_style").is_none() && saved.get("app_icon_variant").is_none());
+
+        // Saved settings carry only the new keys, which stay as chosen.
+        let again: Settings = serde_json::from_value(saved).unwrap();
+        let again = again.sanitized();
+        assert_eq!(
+            (again.app_icon.as_str(), again.app_icon_dark.as_str()),
+            ("mono-light", "mono-dark")
+        );
+
+        let unknown: Settings =
+            serde_json::from_str(r#"{"app_icon":"neon","app_icon_dark":"neon-dark"}"#).unwrap();
+        let unknown = unknown.sanitized();
+        assert_eq!(
+            (unknown.app_icon.as_str(), unknown.app_icon_dark.as_str()),
+            ("color-light", "")
+        );
+    }
+
+    #[test]
     fn hide_names_and_avatars_split_keeps_the_legacy_switch_until_set() {
         let legacy: Settings = serde_json::from_str(r#"{"hide_names_avatars":true}"#).unwrap();
         assert!(legacy.hides_names() && legacy.hides_avatars());
@@ -1452,8 +1497,8 @@ mod tests {
             (new.accent_color.as_str(), new.message_font.as_str())
         );
         assert_eq!(
-            (s.app_icon_style.as_str(), s.app_icon_variant.as_str()),
-            (new.app_icon_style.as_str(), new.app_icon_variant.as_str())
+            (s.app_icon.as_str(), s.app_icon_dark.as_str()),
+            (new.app_icon.as_str(), new.app_icon_dark.as_str())
         );
         assert_eq!(s.block_typing_indicator, new.block_typing_indicator);
     }

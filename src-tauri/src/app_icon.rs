@@ -1,5 +1,5 @@
-//! Settings → Appearance → App icon: a style (Color or Monochrome) and a
-//! variant (match light/dark, or always light or dark).
+//! Settings → Appearance → App icon: one of four icons, and optionally a
+//! different one while Messenger is dark.
 //!
 //! macOS swaps the running Dock icon (`NSApplication.applicationIconImage`);
 //! the installed bundle icon is never rewritten, so updates can't leave a
@@ -20,28 +20,53 @@ const COLOR_DARK: &[u8] = include_bytes!("../icons/app-icon/color-dark.png");
 const MONO_LIGHT: &[u8] = include_bytes!("../icons/app-icon/mono-light.png");
 const MONO_DARK: &[u8] = include_bytes!("../icons/app-icon/mono-dark.png");
 
-/// Whether the dark variant should show for these settings.
-fn wants_dark(s: &Settings, system_dark: impl FnOnce(&Settings) -> bool) -> bool {
-    match s.app_icon_variant.as_str() {
-        "light" => false,
-        "dark" => true,
-        _ => system_dark(s),
+/// The icons Settings offers, as stored in `app_icon` and `app_icon_dark`.
+pub(crate) const APP_ICONS: [&str; 4] = ["color-light", "color-dark", "mono-light", "mono-dark"];
+/// The installed icon.
+pub(crate) const DEFAULT_APP_ICON: &str = "color-light";
+
+/// `app_icon` and `app_icon_dark` for a settings file from before they
+/// existed: a style ("color" or "monochrome") and a variant ("light", "dark"
+/// or "auto", which matched light/dark).
+pub(crate) fn migrate_style_and_variant(
+    style: Option<&str>,
+    variant: Option<&str>,
+) -> (String, String) {
+    let style = if style == Some("monochrome") {
+        "mono"
+    } else {
+        "color"
+    };
+    match variant {
+        Some("dark") => (format!("{style}-dark"), String::new()),
+        Some("auto") => (format!("{style}-light"), format!("{style}-dark")),
+        _ => (format!("{style}-light"), String::new()),
     }
 }
 
-/// The PNG for these settings, or None when it is the installed icon (Color,
-/// light), so the platform's own bundle icon can show at every size.
-fn icon_png(style: &str, dark: bool) -> Option<&'static [u8]> {
-    match (style, dark) {
-        ("monochrome", false) => Some(MONO_LIGHT),
-        ("monochrome", true) => Some(MONO_DARK),
-        (_, true) => Some(COLOR_DARK),
-        (_, false) => None,
+/// The icon for these settings. `dark` is only asked when a dark-mode icon
+/// is set.
+fn chosen_icon(s: &Settings, dark: impl FnOnce(&Settings) -> bool) -> &str {
+    if !s.app_icon_dark.is_empty() && dark(s) {
+        &s.app_icon_dark
+    } else {
+        &s.app_icon
+    }
+}
+
+/// The PNG for an icon, or None for the installed icon (Color, light), so the
+/// platform's own bundle icon can show at every size.
+fn icon_png(icon: &str) -> Option<&'static [u8]> {
+    match icon {
+        "color-dark" => Some(COLOR_DARK),
+        "mono-light" => Some(MONO_LIGHT),
+        "mono-dark" => Some(MONO_DARK),
+        _ => None,
     }
 }
 
 fn chosen_png(s: &Settings) -> Option<&'static [u8]> {
-    icon_png(&s.app_icon_style, wants_dark(s, is_dark))
+    icon_png(chosen_icon(s, is_dark))
 }
 
 /// Give one window the chosen icon. Windows and Linux only; on macOS the
@@ -79,7 +104,7 @@ pub(crate) fn apply_app_icon(app: &tauri::AppHandle, s: &Settings) {
     }
 }
 
-/// Re-apply after the system switches light/dark, for "Match theme".
+/// Re-apply after the system switches light/dark, for a dark-mode icon.
 pub(crate) fn apply_app_icon_from_state(app: &tauri::AppHandle) {
     let settings = app
         .state::<crate::settings::AppState>()
@@ -127,34 +152,59 @@ fn set_dock_icon(png: Option<&'static [u8]>) {
 mod tests {
     use super::*;
 
-    fn with(style: &str, variant: &str) -> Settings {
+    fn with(light: &str, dark: &str) -> Settings {
         Settings {
-            app_icon_style: style.into(),
-            app_icon_variant: variant.into(),
+            app_icon: light.into(),
+            app_icon_dark: dark.into(),
             ..Settings::default()
         }
     }
 
     #[test]
-    fn match_theme_follows_light_and_dark() {
-        let auto = with("color", "auto");
-        assert!(wants_dark(&auto, |_| true));
-        assert!(!wants_dark(&auto, |_| false));
-        assert!(wants_dark(&with("color", "dark"), |_| false));
-        assert!(!wants_dark(&with("color", "light"), |_| true));
+    fn a_dark_mode_icon_shows_only_while_dark() {
+        let pair = with("color-light", "mono-dark");
+        assert_eq!(chosen_icon(&pair, |_| true), "mono-dark");
+        assert_eq!(chosen_icon(&pair, |_| false), "color-light");
     }
 
     #[test]
-    fn the_light_icon_is_the_default_even_in_dark_mode() {
-        assert!(!wants_dark(&Settings::default(), |_| true));
+    fn without_a_dark_mode_icon_one_icon_shows_always() {
+        let one = with("mono-dark", "");
+        assert_eq!(chosen_icon(&one, |_| false), "mono-dark");
+        assert_eq!(
+            chosen_icon(&one, |_| panic!("light/dark not needed")),
+            "mono-dark"
+        );
+        assert_eq!(chosen_icon(&Settings::default(), |_| true), "color-light");
+    }
+
+    #[test]
+    fn style_and_variant_settings_migrate() {
+        let migrated = |style, variant| {
+            let (light, dark) = migrate_style_and_variant(style, variant);
+            format!("{light}|{dark}")
+        };
+        assert_eq!(migrated(Some("color"), Some("light")), "color-light|");
+        assert_eq!(migrated(Some("monochrome"), Some("dark")), "mono-dark|");
+        assert_eq!(
+            migrated(Some("monochrome"), Some("auto")),
+            "mono-light|mono-dark"
+        );
+        assert_eq!(
+            migrated(Some("color"), Some("auto")),
+            "color-light|color-dark"
+        );
+        // Either key alone takes the other's old default.
+        assert_eq!(migrated(None, Some("dark")), "color-dark|");
+        assert_eq!(migrated(Some("monochrome"), None), "mono-light|");
     }
 
     #[test]
     fn the_light_color_icon_is_the_installed_one() {
-        assert_eq!(icon_png("color", false), None);
-        assert_eq!(icon_png("color", true), Some(COLOR_DARK));
-        assert_eq!(icon_png("monochrome", false), Some(MONO_LIGHT));
-        assert_eq!(icon_png("monochrome", true), Some(MONO_DARK));
+        assert_eq!(icon_png("color-light"), None);
+        assert_eq!(icon_png("color-dark"), Some(COLOR_DARK));
+        assert_eq!(icon_png("mono-light"), Some(MONO_LIGHT));
+        assert_eq!(icon_png("mono-dark"), Some(MONO_DARK));
     }
 
     #[test]

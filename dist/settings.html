@@ -149,14 +149,21 @@
       .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1c1e21; }
       .swatch.theme-accent { background: conic-gradient(from 225deg, #2b2d31 0 50%, #d9dadd 50% 100%); }
       .swatch.custom { background: conic-gradient(#e5484d, #f27a1a, #f5c400, #2ea44f, #0f9d9a, #0866ff, #8a3ffc, #e0427a, #e5484d); }
-      .icon-choices { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; }
-      .icon-choices .seg { margin-left: 8px; }
-      .icon-choice {
-        display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 6px; border-radius: 10px;
-        border: 1.5px solid #dadde1; background: transparent; font: inherit; font-size: 13px; color: inherit; cursor: pointer;
+      /* App icon: the title and the dark-mode switch on the left, the icons
+         as tiles on the right (one row, or one per mode). */
+      .icon-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 14px 0; }
+      .icon-switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; cursor: pointer; }
+      .icon-rows { display: grid; grid-template-columns: auto auto; align-items: center; gap: 10px 12px; }
+      .icon-rows .mode { font-size: 12.5px; font-weight: 600; color: #65676b; text-align: right; }
+      .icon-tiles { display: flex; gap: 8px; grid-column: 2; }
+      .icon-tile {
+        display: flex; flex-direction: column; align-items: center; gap: 6px; width: 92px;
+        padding: 10px 4px 8px; border: 1.5px solid #dadde1; border-radius: 10px; background: transparent;
+        font: inherit; font-size: 12px; color: inherit; cursor: pointer;
       }
-      .icon-choice img { width: 30px; height: 30px; }
-      .icon-choice[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
+      .icon-tile img { width: 52px; height: 52px; }
+      .icon-tile[aria-checked="true"] { border-color: #0866ff; background: #e7f0ff; }
+      .icon-tile:focus-visible { outline: 2px solid #0866ff; outline-offset: 2px; }
       .section-hint { color: #65676b; font-size: 12px; padding: 0 0 12px; }
       #update-notes { margin: 4px 0; font-size: 12px; max-width: 420px; }
       #update-notes summary { cursor: pointer; }
@@ -198,8 +205,9 @@
         .notice.error { background: #3a2422; border-color: #6b3530; }
         .notice.ok { background: #1e3326; border-color: #2f5a3d; }
         .swatch[aria-checked="true"] { box-shadow: 0 0 0 2px #242526, 0 0 0 4px #e4e6eb; }
-        .icon-choice { border-color: #3a3b3c; }
-        .icon-choice[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
+        .icon-tile { border-color: #3a3b3c; }
+        .icon-tile[aria-checked="true"] { border-color: #5b9bff; background: #263a59; }
+        .icon-rows .mode { color: #b0b3b8; }
       }
     </style>
   </head>
@@ -730,37 +738,61 @@
         return box;
       }
 
-      function appIconSection() {
-        const wrap = titledCard("App icon");
-        const variant = settings.app_icon_variant || "light";
-        const dark = variant === "dark" || (variant === "auto" && pageIsDark());
-        const row = el("div", "icon-choices");
-        row.setAttribute("role", "radiogroup");
-        row.setAttribute("aria-label", "App icon");
-        for (const [style, name] of [["color", "Color"], ["monochrome", "Monochrome"]]) {
-          const b = el("button", "icon-choice");
-          b.type = "button";
-          b.setAttribute("role", "radio");
-          b.setAttribute("aria-checked", String((settings.app_icon_style || "color") === style));
+      const APP_ICONS = [
+        ["color-light", "Color"], ["color-dark", "Color dark"],
+        ["mono-light", "Mono"], ["mono-dark", "Mono dark"],
+      ];
+
+      // One row of icon tiles; picking one saves it to `key`.
+      function iconTiles(key, label) {
+        const tiles = el("div", "icon-tiles");
+        tiles.setAttribute("role", "radiogroup");
+        tiles.setAttribute("aria-label", label);
+        for (const [icon, name] of APP_ICONS) {
+          const tile = el("button", "icon-tile");
+          tile.type = "button";
+          tile.setAttribute("role", "radio");
+          tile.setAttribute("aria-checked", String(settings[key] === icon));
           const img = document.createElement("img");
-          img.src = `app-icons/${style === "color" ? "color" : "mono"}-${dark ? "dark" : "light"}.png`;
+          img.src = `app-icons/${icon}.png`;
           img.alt = "";
-          b.append(img, el("span", "", name));
-          b.onclick = () => persist("app_icon_style", style);
-          row.append(b);
+          tile.append(img, el("span", "", name));
+          tile.onclick = () => persist(key, icon);
+          tiles.append(tile);
         }
-        // The tiles preview the variant, so the switch sits with them.
-        row.append(segmented(
-          "Light or dark icon",
-          [["light", "Light"], ["dark", "Dark"], ["auto", "Match theme"]],
-          variant,
-          (value) => persist("app_icon_variant", value),
-        ));
-        wrap.append(row);
-        wrap.append(el("div", "section-hint", IS_LINUX
-          ? "Changes the window icon. Your app launcher keeps the installed icon."
-          : "The unread badge shows on every icon."));
-        return wrap;
+        return tiles;
+      }
+
+      // The icon you pick is the icon you get. With a different icon in dark
+      // mode, each mode has its own row; any pair works.
+      function appIconSection() {
+        const card = el("section", "card");
+        const body = el("div", "icon-card");
+        const left = el("div");
+        const title = el("h2", "card-title", "App icon");
+        title.style.margin = "0";
+        const toggle = el("label", "icon-switch");
+        const perMode = !!settings.app_icon_dark;
+        const input = switchInput(perMode);
+        // Turning it on starts dark mode at the picked icon's dark version.
+        input.onchange = () => persist("app_icon_dark", (fresh) =>
+          input.checked ? (fresh.app_icon || "color-light").replace("-light", "-dark") : "");
+        toggle.append(input, el("span", "", "Different icon in dark mode"));
+        left.append(title, toggle);
+
+        const rows = el("div", "icon-rows");
+        if (perMode) {
+          rows.append(el("div", "mode", "Light mode"), iconTiles("app_icon", "App icon in light mode"));
+          rows.append(el("div", "mode", "Dark mode"), iconTiles("app_icon_dark", "App icon in dark mode"));
+        } else {
+          rows.append(iconTiles("app_icon", "App icon"));
+        }
+        body.append(left, rows);
+        card.append(body);
+        if (IS_LINUX) {
+          card.append(el("div", "section-hint", "Changes the window icon. Your app launcher keeps the installed icon."));
+        }
+        return card;
       }
 
       // Page zoom — the same 10% steps as the Cmd/Ctrl+−/=/0 keyboard zoom
