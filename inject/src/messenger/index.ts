@@ -11,6 +11,7 @@
  * in registration order, so this order is part of the behaviour.
  */
 import { diag } from "./bridge";
+import { initAccountRequests } from "./features/account-requests";
 import { initAutoRefresh } from "./features/auto-refresh";
 import { initComposerFocus } from "./features/composer-focus";
 import { initComposerKeys } from "./features/composer-keys";
@@ -90,6 +91,7 @@ function main() {
   initFeature("media-autoplay", initMediaAutoplay);
   initFeature("mute-action-tracking", initMuteActionTracking);
   initFeature("messenger-dnd", initMessengerDnd);
+  initFeature("account-requests", initAccountRequests);
   initFeature("notifications", initNotificationBridge);
   initFeature("share-intake", initShareIntake);
   initFeature("sync-health", initSyncHealth);

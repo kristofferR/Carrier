@@ -540,6 +540,21 @@
           reply(loginLayoutProbe());
           return;
         }
+        // Runs an account request (Settings → Account) without the
+        // Settings window; the answer is logged natively.
+        var accountCall = /^__carrier_mcp_account__:([a-z-]+)(?::(.*))?$/.exec(code);
+        if (accountCall) {
+          var started = typeof window.__carrierAccount === "function";
+          if (started) {
+            window.__carrierAccount(
+              "0000000000000000000000000000mcp0",
+              accountCall[1],
+              accountCall[2] === undefined ? null : JSON.parse(accountCall[2]),
+            );
+          }
+          reply({ started: started });
+          return;
+        }
         if (code === "__carrier_mcp_privacy_probe__") {
           reply(privacyProbe());
           return;

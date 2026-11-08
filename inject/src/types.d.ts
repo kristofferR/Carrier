@@ -190,6 +190,8 @@ interface Window {
   __carrierZoomReset?: () => void;
   __carrierShortcuts?: Record<string, () => unknown>;
   __carrierToggleInfo?: () => boolean;
+  /** Native → page account requests; answered on `carrier:account-result`. */
+  __carrierAccount?: (request: string, action: string, value: unknown) => void;
   /** File ▸ Export Conversation as HTML/JSON… */
   __carrierExportConversation?: (format: unknown) => void;
   __carrierOpenThread?: (href: string) => boolean;

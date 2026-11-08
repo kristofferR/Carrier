@@ -227,6 +227,8 @@
           '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
         privacy:
           '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+        account:
+          '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
         advanced:
           '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
       };
@@ -265,6 +267,7 @@
                    "unread_badge", "muted_conversations", "badge_mode", "test_notification"] },
         { id: "privacy", label: "Privacy", icon: ICONS.privacy,
           fields: ["block_typing_indicator", "hide_names", "hide_avatars", "block_telemetry", "strip_link_tracking"] },
+        { id: "account", label: "Account", icon: ICONS.account, fields: ["messenger_account"] },
         { id: "advanced", label: "Advanced", icon: ICONS.advanced,
           fields: ["automatic_update_checks", "update_check_hours", "hold_failures", "send_with_accelerator", "multi_instance", "custom_css", "open_logs"] },
       ];
@@ -1019,6 +1022,129 @@
         return row;
       }
 
+      // ----- Account: Messenger's own account settings (Ref #358) -----
+      // Read and changed through the Messenger page, which reports the state
+      // Messenger has afterwards.
+      const messengerAccount = { state: null, error: "", loading: false };
+
+      async function loadMessengerAccount(change) {
+        if (messengerAccount.loading) return;
+        messengerAccount.loading = true;
+        messengerAccount.error = "";
+        if (activeTab === "account") renderBody();
+        try {
+          messengerAccount.state = change
+            ? await invoke("set_messenger_account", { change })
+            : await invoke("messenger_account");
+        } catch (e) {
+          messengerAccount.error = String(e && e.message ? e.message : e);
+        } finally {
+          messengerAccount.loading = false;
+          if (activeTab === "account") renderBody();
+        }
+      }
+
+      function accountToggleRow(setting, label, hint, value) {
+        const row = el("label", "row");
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = value === true;
+        cb.disabled = value === null || messengerAccount.loading;
+        cb.onchange = () => loadMessengerAccount({ setting, value: cb.checked });
+        const text = el("div");
+        text.append(
+          el("div", "label", label),
+          el("div", "hint", value === null ? "Messenger didn't report this setting." : hint),
+        );
+        row.append(cb, text);
+        return row;
+      }
+
+      function dndRow(until) {
+        const row = el("label", "row");
+        const sel = document.createElement("select");
+        const options = [
+          ["0", "Off"],
+          ["60", "For 1 hour"],
+          ["480", "For 8 hours"],
+          ["1440", "For 24 hours"],
+          ["-1", "Until I turn it off"],
+        ];
+        let current = until === -1 ? "-1" : "0";
+        let hint = "Turn off Messenger's notifications for a while, on all your devices. Carrier stays quiet too.";
+        if (until === null) {
+          hint = "Messenger didn't report Do Not Disturb.";
+        } else if (until === -1) {
+          hint = "On until you turn it off.";
+        } else if (until * 1000 > Date.now()) {
+          const end = new Date(until * 1000);
+          const time = end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+          const day = end.toDateString() === new Date().toDateString() ? "" : `${end.toLocaleDateString([], { weekday: "short" })} `;
+          current = "on";
+          options.unshift(["on", `On until ${day}${time}`]);
+          hint = "On until the time shown.";
+        }
+        for (const [value, text] of options) {
+          const option = el("option", "", text);
+          option.value = value;
+          option.selected = value === current;
+          option.hidden = value === "on";
+          sel.append(option);
+        }
+        sel.disabled = until === null || messengerAccount.loading;
+        sel.onchange = () => {
+          if (sel.value !== "on") loadMessengerAccount({ setting: "doNotDisturb", value: Number(sel.value) });
+        };
+        const text = el("div");
+        text.append(el("div", "label", "Do Not Disturb"), el("div", "hint", hint));
+        row.append(sel, text);
+        return row;
+      }
+
+      function messengerAccountSection() {
+        const wrap = el("div");
+        wrap.append(
+          sectionHead("Messenger account"),
+          el(
+            "div",
+            "section-hint",
+            "Your Facebook account's own Messenger settings. Changes apply wherever you use Messenger, including your phone. Carrier's own notification settings are on the Notifications tab.",
+          ),
+        );
+        const { state, error, loading } = messengerAccount;
+        if (error) {
+          const notice = el("div", "notice error");
+          notice.setAttribute("role", "alert");
+          notice.append(el("span", "", error));
+          const retry = el("button", "link-button", "Try Again");
+          retry.type = "button";
+          retry.onclick = () => loadMessengerAccount();
+          notice.append(retry);
+          wrap.append(notice);
+        }
+        if (!state) {
+          if (loading) wrap.append(el("div", "section-hint", "Reading Messenger's settings…"));
+          else if (!error) queueMicrotask(() => loadMessengerAccount());
+          return wrap;
+        }
+        wrap.append(
+          accountToggleRow(
+            "activeStatus",
+            "Active Status",
+            "Show people when you're active or recently active.",
+            state.activeStatus,
+          ),
+          accountToggleRow(
+            "sounds",
+            "Message Sounds",
+            "Messenger's own sounds for new messages. Carrier's notification sound is separate.",
+            state.sounds,
+          ),
+          dndRow(state.dndUntil),
+        );
+        return wrap;
+      }
+
       // Pseudo-fields are <select> rows;
       // everything else is a checkbox.
       const CUSTOM_ROWS = {
@@ -1037,6 +1163,7 @@
         open_logs: openLogsRow,
         test_notification: testNotificationRow,
         nickname_scope: nicknameRows,
+        messenger_account: messengerAccountSection,
       };
 
       function renderBody() {
@@ -1070,6 +1197,10 @@
 
       // Pick up changes made elsewhere (e.g. the View menu) when refocused.
       window.addEventListener("focus", refresh);
+      // And Messenger account changes made on another device.
+      window.addEventListener("focus", () => {
+        if (activeTab === "account" && messengerAccount.state) loadMessengerAccount();
+      });
       // A newer discovery may have replaced or cleared the offered update.
       window.addEventListener("focus", () => {
         updateController.refresh().catch(() => {});
