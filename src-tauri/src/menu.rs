@@ -444,6 +444,13 @@ pub(crate) fn target_window(app: &tauri::AppHandle) -> Option<WebviewWindow> {
         .or_else(|| app.get_webview_window("main"))
 }
 
+/// The window a native dialog attaches to, if it is on screen. Tray actions
+/// run while Carrier is hidden, and a hidden window has no Wayland surface:
+/// tao aborts building its handle. Without a parent the dialog opens on its own.
+pub(crate) fn dialog_parent(app: &tauri::AppHandle) -> Option<WebviewWindow> {
+    target_window(app).filter(|window| window.is_visible().unwrap_or(false))
+}
+
 /// The window that owns keyboard focus, including Settings and call popups.
 /// Window controls and editing commands follow focus; fall back to the main
 /// Messenger window when the platform does not report one.
@@ -564,7 +571,7 @@ fn confirm_clear_cache(app: &tauri::AppHandle) {
             "Clear and Restart".into(),
             "Cancel".into(),
         ));
-    if let Some(window) = target_window(app) {
+    if let Some(window) = dialog_parent(app) {
         dialog = dialog.parent(&window);
     }
     dialog.show(move |confirmed| {
@@ -603,7 +610,7 @@ fn request_new_window(app: &tauri::AppHandle) {
                 "Open Window".into(),
                 "Cancel".into(),
             ));
-        if let Some(window) = target_window(app) {
+        if let Some(window) = dialog_parent(app) {
             dialog = dialog.parent(&window);
         }
         dialog.show(move |confirmed| {

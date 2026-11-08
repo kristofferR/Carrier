@@ -46,7 +46,7 @@ pub(crate) fn confirm_reset(app: &tauri::AppHandle) {
             "Log Out and Reset".into(),
             "Cancel".into(),
         ));
-    if let Some(window) = crate::menu::target_window(app) {
+    if let Some(window) = crate::menu::dialog_parent(app) {
         dialog = dialog.parent(&window);
     }
     dialog.show(move |confirmed| {
@@ -140,7 +140,7 @@ fn message(app: &tauri::AppHandle, title: &str, text: &str) {
         .message(text)
         .title(title)
         .kind(MessageDialogKind::Warning);
-    if let Some(window) = crate::menu::target_window(app) {
+    if let Some(window) = crate::menu::dialog_parent(app) {
         dialog = dialog.parent(&window);
     }
     dialog.show(|_| {});
