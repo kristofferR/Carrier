@@ -104,8 +104,8 @@ pub(crate) fn show_title_bar(s: &Settings) -> bool {
 }
 
 /// Linux: whether a Messenger or Settings window keeps the GTK header bar. Only "show"
-/// does: on floating desktops "auto" draws Carrier's own controls instead
-/// (crate::title_bar), and tiling window managers need none.
+/// does: "auto" draws Carrier's own controls instead, in windows the
+/// compositor doesn't tile (crate::title_bar).
 #[cfg(target_os = "linux")]
 pub(crate) fn native_decorations(s: &Settings) -> bool {
     show_title_bar(s) && crate::title_bar::controls(s).is_none()
@@ -1259,6 +1259,8 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
 
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();
+            #[cfg(target_os = "linux")]
+            crate::linux_tiling::watch(&window);
 
             #[cfg(target_os = "windows")]
             {

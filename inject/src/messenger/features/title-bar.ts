@@ -7,8 +7,8 @@
 // - macOS: the native window buttons float over the top of the chat list,
 //   which keeps the strip free under them (messenger.css). The photo viewer is
 //   reported, as it gets a title bar of its own while it's open.
-// - Windows, and Linux on floating desktops: Carrier draws minimize, maximize
-//   and close at the top right, over a strip above the chat that drags the
+// - Windows, and Linux windows the compositor doesn't tile: Carrier draws
+//   minimize, maximize and close at the top right, over a strip above the chat that drags the
 //   window: natively on Windows (WebView2 app-region), through the native side
 //   on Linux. The chat list starts at the top.
 import { diag } from "../bridge";

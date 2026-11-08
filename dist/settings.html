@@ -936,14 +936,14 @@
         );
       }
 
-      // Linux: tiling WMs manage windows themselves, so Automatic drops the
-      // redundant title bar there and keeps it on floating desktops.
+      // Linux: tiling WMs manage tiled windows themselves, so Automatic drops
+      // the redundant title bar from those and keeps it on floating ones.
       function titleBarRow() {
         return selectRow(
           "title_bar", "auto",
           [["auto", "Automatic"], ["show", "Shown"], ["hide", "Hidden"]],
           "Title Bar",
-          "Automatic hides it on tiling window managers.",
+          "Automatic hides it on tiled windows.",
           false,
         );
       }
