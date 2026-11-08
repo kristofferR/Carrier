@@ -3154,8 +3154,8 @@ ${button.innerHTML}`)
   }
   var VOICE_CLIP_CANCEL_ICON = "M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z";
   var isVoiceClipCancelIcon = (path) => !!path?.startsWith(VOICE_CLIP_CANCEL_ICON);
-  function shouldEscapeCancelVoiceClip(state2) {
-    return state2.key === "Escape" && !state2.isComposing && !state2.defaultPrevented && !state2.escapeOwnedElsewhere && state2.inChat;
+  function shouldEscapeCancelVoiceClip(state3) {
+    return state3.key === "Escape" && !state3.isComposing && !state3.defaultPrevented && !state3.escapeOwnedElsewhere && state3.inChat;
   }
 
   // inject/src/messenger/lib/media-zoom.ts
@@ -3166,14 +3166,14 @@ ${button.innerHTML}`)
     if (ctrlKey && !ctrlKeyHeld && Math.abs(pixels) < 50) return Math.exp(-pixels / 100);
     return 2 ** (-Math.min(Math.max(pixels, -120), 120) * 2e-3);
   }
-  function zoomAround(state2, scale, x, y, rect) {
+  function zoomAround(state3, scale, x, y, rect) {
     const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
     if (next <= MIN_SCALE) return { scale: MIN_SCALE, tx: 0, ty: 0 };
-    const k = next / state2.scale;
+    const k = next / state3.scale;
     return {
       scale: next,
-      tx: state2.tx + (x - (rect.left + rect.width / 2)) * (1 - k),
-      ty: state2.ty + (y - (rect.top + rect.height / 2)) * (1 - k)
+      tx: state3.tx + (x - (rect.left + rect.width / 2)) * (1 - k),
+      ty: state3.ty + (y - (rect.top + rect.height / 2)) * (1 - k)
     };
   }
 
@@ -6426,9 +6426,9 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/messenger-sounds.ts
-  function playsMessageSound(state2) {
-    if (state2.globallyMuted || state2.oldNews) return false;
-    return state2.focused || !state2.nativeSoundOn;
+  function playsMessageSound(state3) {
+    if (state3.globallyMuted || state3.oldNews) return false;
+    return state3.focused || !state3.nativeSoundOn;
   }
 
   // inject/src/messenger/lib/mute.ts
@@ -14923,7 +14923,7 @@ ${text}`)) {
 
   // inject/src/messenger/features/title-bar.ts
   var INSET_VAR = "--carrier-title-bar-inset";
-  var KIND_ATTR = "data-carrier-title-bar";
+  var KIND_ATTR2 = "data-carrier-title-bar";
   var STRIP_ID = "carrier-title-strip";
   var CONTROLS_ID = "carrier-window-controls";
   var state2 = null;
@@ -14996,8 +14996,8 @@ ${text}`)) {
     if (!root) return;
     root.style.setProperty(INSET_VAR, `${next.inset}px`);
     const kind = next.inset > 0 ? next.controls ?? "macos" : null;
-    if (kind) root.setAttribute(KIND_ATTR, kind);
-    else root.removeAttribute(KIND_ATTR);
+    if (kind) root.setAttribute(KIND_ATTR2, kind);
+    else root.removeAttribute(KIND_ATTR2);
     const drawn = next.controls && next.inset > 0;
     let controls = document.getElementById(CONTROLS_ID);
     let strip = document.getElementById(STRIP_ID);
@@ -15036,7 +15036,7 @@ ${text}`)) {
     const root = document.documentElement;
     if (root) {
       root.style.setProperty(INSET_VAR, `${initial.inset}px`);
-      if (initial.inset > 0) root.setAttribute(KIND_ATTR, initial.controls ?? "macos");
+      if (initial.inset > 0) root.setAttribute(KIND_ATTR2, initial.controls ?? "macos");
     }
     const start = () => apply(state2 ?? initial);
     if (document.readyState === "loading") {
