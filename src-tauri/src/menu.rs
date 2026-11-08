@@ -28,7 +28,7 @@ use crate::settings::{
 #[cfg(not(target_os = "macos"))]
 use crate::tray::build_tray_menu;
 use crate::tray::show_main;
-use crate::window::{recreate_on_theme_change, show_settings_window};
+use crate::window::show_settings_window;
 
 fn about_metadata(version: &str) -> AboutMetadata<'static> {
     AboutMetadata {
@@ -484,9 +484,6 @@ pub(crate) fn mutate_settings(
                 Ok(SaveOutcome::Written) => {
                     *state.settings.lock().unwrap() = s.clone();
                     apply_settings(&worker_app, &s);
-                    // macOS needs a window rebuild to re-theme the title bar;
-                    // other platforms already re-themed the chrome live.
-                    recreate_on_theme_change(&worker_app, &previous.theme, &s.theme);
                 }
                 Ok(SaveOutcome::Superseded) => {
                     let current = state.settings.lock().unwrap().clone();

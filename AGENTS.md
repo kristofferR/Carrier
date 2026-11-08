@@ -176,8 +176,11 @@ These traps are already worked around in code — don't redo them:
   the window background is set directly via objc.
 - WKWebView is **opaque white** on macOS and bleeds through the title bar / login
   surround — it's forced transparent via a private API.
-- The **title bar only themes at window creation**, so a theme switch **recreates
-  the windows** (the page reloads; the login session survives via cookies).
+- The **title bar only themes at window creation**. Messenger and Settings
+  windows therefore have **no separate title bar**: the window buttons float
+  over the page (`macos/title_bar.rs`), so a theme switch applies live and
+  nothing is rebuilt. The photo viewer's temporary title bar is drawn from the
+  window background, which is repainted on every switch.
 - The login page is light-only; its dark mode is applied by JS off the forced theme.
 
 ---

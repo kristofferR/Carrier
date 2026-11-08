@@ -861,20 +861,6 @@ fn install_app_window_runtime_handler(app: &tauri::AppHandle, window: &WebviewWi
     });
 }
 
-/// On macOS the window/title-bar theme is fixed at creation, so a live theme
-/// change needs a full window rebuild; other platforms re-theme the chrome live
-/// in `apply_settings`, so this is a no-op there (rebuilding would needlessly
-/// reload Messenger and drop in-progress UI state).
-#[cfg(target_os = "macos")]
-pub(crate) fn recreate_on_theme_change(app: &tauri::AppHandle, prev: &str, next: &str) {
-    if prev != next {
-        recreate_themed_windows(app);
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn recreate_on_theme_change(_app: &tauri::AppHandle, _prev: &str, _next: &str) {}
-
 fn persist_tray_notice_shown(app: &tauri::AppHandle) {
     const MAX_ATTEMPTS: usize = 3;
     let state = app.state::<AppState>();
@@ -1203,75 +1189,6 @@ pub(crate) fn recreate_messenger_window(
     true
 }
 
-/// Rebuild every Messenger window (not the Settings dialog) with the current
-/// settings. The macOS title bar's theme is fixed at window creation — no
-/// runtime call repaints it — so a live theme switch is reflected by recreating
-/// the window. Each rebuilt window keeps its place and size; the page reloads
-/// (the login session is preserved by the persisted cookies). Runs off the
-/// event-loop handler and destroys before rebuilding so the label is free.
-#[cfg(target_os = "macos")]
-pub(crate) fn recreate_themed_windows(app: &tauri::AppHandle) {
-    use std::sync::atomic::Ordering;
-    // Claim the "recreating" flag synchronously: if a rebuild is already in
-    // flight, skip this one. Setting it inside the spawned task would let two
-    // rapid theme switches overlap, and the second could clear the flag mid-way
-    // through the first's zero-window window — letting the app exit.
-    if app
-        .state::<AppState>()
-        .recreating
-        .swap(true, Ordering::SeqCst)
-    {
-        return;
-    }
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        // Snapshot label + geometry, then destroy (not close — close would just
-        // hide it), so we can rebuild each window where it was. A call window
-        // keeps its call.
-        let targets: Vec<(String, _)> = app
-            .webview_windows()
-            .into_iter()
-            .filter(|(label, _)| is_messenger_window_label(label))
-            .filter_map(|(label, window)| {
-                let geometry = window.outer_position().ok().zip(window.inner_size().ok());
-                crate::webview_watchdog::realtime_window_replacing(&label);
-                if let Err(error) = window.destroy() {
-                    crate::webview_watchdog::realtime_window_replacement_failed(&label);
-                    log::warn!(
-                        "failed to destroy Messenger webview {label} for theme change: {error}"
-                    );
-                    return None;
-                }
-                Some((label, geometry))
-            })
-            .collect();
-        if !targets.is_empty() {
-            // Let the event loop finish destroying so the labels are free again.
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            // Read settings after the wait so a theme change during it is honoured.
-            let settings = app.state::<AppState>().settings.lock().unwrap().clone();
-            for (label, geometry) in targets {
-                if let Ok(window) = build_app_window(&app, &label, &settings) {
-                    // The rebuilt main window must re-acquire the close-to-tray
-                    // handler startup installed on the original.
-                    if label == "main" {
-                        install_main_close_handler(&app, &window);
-                    }
-                    if let Some((pos, size)) = geometry {
-                        let _ = window.set_position(tauri::Position::Physical(pos));
-                        let _ = window.set_size(tauri::Size::Physical(size));
-                    }
-                } else {
-                    crate::webview_watchdog::realtime_window_rebuild_failed(&label);
-                }
-            }
-        }
-        app.state::<AppState>()
-            .recreating
-            .store(false, Ordering::SeqCst);
-    });
-}
-
 /// Open (or focus) the dedicated settings window (a small local page, separate
 /// from the Messenger view).
 pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
@@ -1297,6 +1214,12 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
             .minimizable(false)
             .always_on_top(aot)
             .theme(theme);
+    // macOS: the window buttons float over the tab bar, as in the Messenger
+    // windows (see macos::title_bar), so a theme change needs no rebuild.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     // Linux: the dialog carries the same redundant header bar on tiling WMs.
     #[cfg(target_os = "linux")]
     let builder = builder.decorations({
@@ -1312,7 +1235,10 @@ pub(crate) fn show_settings_window(app: &tauri::AppHandle) {
                 crate::app_icon::apply_window_icon(&window, &s);
             }
             #[cfg(target_os = "macos")]
-            drop(window);
+            {
+                crate::macos::title_bar::install(&window);
+                drop(window);
+            }
 
             #[cfg(not(target_os = "macos"))]
             let _ = window.remove_menu();

@@ -12,7 +12,6 @@ use crate::preflight::{MessengerLoadStatus, MessengerPreflightError, messenger_d
 use crate::settings::{
     AppState, SaveOutcome, Settings, apply_settings, save_settings, sync_autostart,
 };
-use crate::window::recreate_on_theme_change;
 use crate::{HOME_URL, MESSENGER_DNS_TIMEOUT};
 
 #[cfg(any(target_os = "linux", test))]
@@ -352,16 +351,9 @@ fn store_settings(
     new: Settings,
     reset: bool,
 ) -> Result<Settings, String> {
-    let (
-        prev_theme,
-        prev_autostart,
-        prev_global_hotkey,
-        prev_automatic_update_checks,
-        prev_update_check_hours,
-    ) = {
+    let (prev_autostart, prev_global_hotkey, prev_automatic_update_checks, prev_update_check_hours) = {
         let prev = state.settings.lock().unwrap();
         (
-            prev.theme.clone(),
             prev.autostart,
             prev.global_hotkey,
             prev.automatic_update_checks,
@@ -421,9 +413,6 @@ fn store_settings(
     {
         state.update_check_wake.notify_one();
     }
-    // macOS needs a window rebuild to re-theme the title bar; other platforms
-    // already re-themed the chrome live in apply_settings.
-    recreate_on_theme_change(app, &prev_theme, &effective.theme);
     if sync_errors.is_empty() {
         Ok(effective)
     } else {

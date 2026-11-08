@@ -4,8 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Carrier Settings</title>
+    <script>
+      // Before the first paint, so the tab bar doesn't move.
+      if (/Mac/.test(navigator.platform || "")) document.documentElement.classList.add("mac-title-bar");
+    </script>
     <style>
       :root { color-scheme: light dark; }
+      /* macOS: the window buttons float over the tab bar (no separate title
+         bar), so the bar keeps a 28pt strip free for them. */
+      html.mac-title-bar .tabs { padding-top: 40px; }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body {
