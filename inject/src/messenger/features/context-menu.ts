@@ -393,13 +393,16 @@ export function initContextMenu() {
     prevent: () => void,
     selectedByClick = false,
   ) => {
-    const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-    const img = t.closest?.("img[alt]") as HTMLImageElement | null;
     const anchor = t.closest?.("a[href]") as HTMLAnchorElement | null;
+    // A chat-list conversation's menu covers its avatar and preview images.
+    const chatRow = anchor && chatRowFor(anchor);
+    const video = chatRow
+      ? null
+      : t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
+    const img = chatRow ? null : (t.closest?.("img[alt]") as HTMLImageElement | null);
     const imgSrc = img && (img.currentSrc || img.src);
     const vidSrc = video && (video.currentSrc || video.src);
     const linkHref = anchor?.href;
-    let chatRow: HTMLAnchorElement | null = null;
 
     // Anchor for the macOS share sheet: viewport fractions survive the
     // download delay and window resizes better than raw pixels.
@@ -460,7 +463,6 @@ export function initContextMenu() {
       }
       addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
     } else if (linkHref && !linkHref.startsWith("javascript:")) {
-      chatRow = anchor && chatRowFor(anchor);
       addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
       addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
     }

@@ -3794,13 +3794,13 @@ ${button.innerHTML}`)
       menuRequest += 1;
     };
     const openContextMenu = async (t, contextPoint, keyboard, prevent, selectedByClick = false) => {
-      const video = t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
-      const img = t.closest?.("img[alt]");
       const anchor = t.closest?.("a[href]");
+      const chatRow = anchor && chatRowFor(anchor);
+      const video = chatRow ? null : t.closest?.("video") || (t.closest?.("div")?.querySelector?.("video") ?? null);
+      const img = chatRow ? null : t.closest?.("img[alt]");
       const imgSrc = img && (img.currentSrc || img.src);
       const vidSrc = video && (video.currentSrc || video.src);
       const linkHref = anchor?.href;
-      let chatRow = null;
       const fx = contextPoint.x / Math.max(1, innerWidth);
       const fy = contextPoint.y / Math.max(1, innerHeight);
       let items = [];
@@ -3841,7 +3841,6 @@ ${button.innerHTML}`)
         }
         addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
-        chatRow = anchor && chatRowFor(anchor);
         addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
