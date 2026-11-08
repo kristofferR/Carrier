@@ -39,7 +39,7 @@ async function exportConversation(threadId: string, format: ExportFormat) {
   }
   const reveal = `carrier-export:${randomHex()}`;
   try {
-    await carrierExportConversation({ format, conversation, reveal });
+    await chatpaneExportConversation({ format, conversation, reveal });
   } catch (error) {
     if (error instanceof Error && error.message === "export cancelled") {
       toast("Export cancelled");
@@ -84,7 +84,7 @@ export function startConversationExport(
 }
 
 export function initConversationExport() {
-  window.__carrierExportConversation = (format: unknown) => {
+  window.__chatpaneExportConversation = (format: unknown) => {
     if (format === "html" || format === "json") startConversationExport(format);
   };
 }

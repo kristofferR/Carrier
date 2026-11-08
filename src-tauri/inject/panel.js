@@ -102,10 +102,10 @@
       if (!action || !canActivateToastAction(event.isTrusted, navigator.userActivation?.isActive === true)) {
         return;
       }
-      if (action.kind === "reveal-download") carrierRevealDownload(action.url)?.catch?.(() => {
+      if (action.kind === "reveal-download") chatpaneRevealDownload(action.url)?.catch?.(() => {
       });
       else if (action.kind === "open-download-privacy")
-        carrierOpenDownloadPrivacy()?.catch?.(() => {
+        chatpaneOpenDownloadPrivacy()?.catch?.(() => {
         });
     });
     const showToast = (msg, nextAction, options) => {
@@ -143,7 +143,7 @@
         options?.warning ? 8e3 : action ? 6e3 : 2600
       );
     };
-    Object.defineProperty(window, "__carrierToast", {
+    Object.defineProperty(window, "__chatpaneToast", {
       value: showToast,
       writable: false,
       configurable: false
@@ -163,12 +163,12 @@
   });
   function main() {
     installToast();
-    window.__carrierCheckUpdates = () => {
-      window.__carrierToast?.("Opening Settings to check for updates…");
-      emit("carrier:open-settings");
+    window.__chatpaneCheckUpdates = () => {
+      window.__chatpaneToast?.("Opening Settings to check for updates…");
+      emit("chatpane:open-settings");
     };
-    window.__carrierToggleSettings = () => {
-      emit("carrier:open-settings");
+    window.__chatpaneToggleSettings = () => {
+      emit("chatpane:open-settings");
     };
     const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
     let shortcutOverlay = null;
@@ -319,7 +319,7 @@
       document.body.append(overlay);
       close.focus({ preventScroll: true });
     };
-    window.__carrierToggleShortcuts = () => {
+    window.__chatpaneToggleShortcuts = () => {
       if (shortcutOverlay) closeShortcuts();
       else openShortcuts();
     };

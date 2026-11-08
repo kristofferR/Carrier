@@ -67,7 +67,7 @@ export function registerAddedNodeSweep(fn: (root: Element) => void) {
 
 export function initDownloadAnchors() {
   sweepDlAnchors(document.documentElement);
-  watchDeniedDownloads(window, carrierVerifyResult, toastDownloadAccessDenied);
+  watchDeniedDownloads(window, chatpaneVerifyResult, toastDownloadAccessDenied);
 
   if (!document.hidden) observeSweeps();
   document.addEventListener("visibilitychange", () => {

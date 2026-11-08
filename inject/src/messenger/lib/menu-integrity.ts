@@ -1,5 +1,5 @@
 /**
- * Geometry checks that keep a trusted click on Carrier's context menu from
+ * Geometry checks that keep a trusted click on Chatpane's context menu from
  * being harvested for the wrong action.
  *
  * The menu is rendered into a closed shadow root, so page script cannot move

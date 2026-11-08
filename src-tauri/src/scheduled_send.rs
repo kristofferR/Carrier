@@ -11,7 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Listener, Manager};
 
-const EVENT: &str = "carrier:scheduled-send";
+const EVENT: &str = "chatpane:scheduled-send";
 const GRACE_MS: u64 = 120_000;
 const MAX_ITEMS: usize = 100;
 

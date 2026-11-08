@@ -9,7 +9,7 @@ they are no longer reasons to periodically reload the page.
 
 The fatal “Sorry, something went wrong” dialog asking to close and re-open the
 browser instead uses native error recovery, even if the worker still reports
-healthy. Carrier recognizes error code `1357004` on the mounted
+healthy. Chatpane recognizes error code `1357004` on the mounted
 `FDSCometExceptionDialogImpl.react` component behind a visible dialog, independent
 of its language. The code and component identity were confirmed on the affected
 Mac. No message text, translated labels, or error descriptions are read. After
@@ -41,7 +41,7 @@ cannot erase its deadline. Definitive completion/failure or a new account/worker
 boundary clears that observation.
 Recovery waits another 15 seconds for fresh probes, including after wake.
 
-Carrier uses Messenger's existing worker lifecycle:
+Chatpane uses Messenger's existing worker lifecycle:
 
 - If the page has a worker ID, invoke its registered watchdog recovery callback
   with that exact ID. This closes and reattaches the page's bridge. If encrypted
@@ -51,7 +51,7 @@ Carrier uses Messenger's existing worker lifecycle:
   Messenger window, multi-instance mode off, an unchanged account, worker ID,
   setup promise and replay closure, and a settled backend. It is used at most
   once per unhealthy episode. Messenger's own close listener rebuilds the
-  backend in the same document; Carrier does not race it with a second setup call.
+  backend in the same document; Chatpane does not race it with a second setup call.
 - A shared-worker bootstrap still pending after 90 seconds can use that same
   shutdown route once the recovery controller has also observed 30 seconds
   of busy state. It requires a captured same-account setup, a known shared-worker
@@ -61,7 +61,7 @@ Carrier uses Messenger's existing worker lifecycle:
   identity, bridge promise, setup closure, and pending/disconnected state are
   rechecked after inspection. The sole-window and other protection gates still
   apply, and this spends the episode's one shared restart. Messenger's own close
-  listener owns replacement; Carrier never rejects or replays the pending setup.
+  listener owns replacement; Chatpane never rejects or replays the pending setup.
   A pending page bridge, unassigned worker ID, unknown
   connection state, or multiple windows retains manual recovery.
 - If startup failed before assigning an ID and no shared worker exists, replay
@@ -90,11 +90,11 @@ Carrier uses Messenger's existing worker lifecycle:
   restart; it does not require sole-window ownership because the dedicated
   Worker belongs to this page.
 - A setup call that replaces the captured replay closure while an asynchronous
-  worker-status check or dedicated termination is pending wins the race; Carrier
+  worker-status check or dedicated termination is pending wins the race; Chatpane
   will not replay either the old or new closure on that attempt.
 - Unknown module signatures, unsupported worker kinds, and account changes fail
   open. An unknown setup invocation discards any older captured replay closure.
-  Carrier never manually resets an unsettled initialization.
+  Chatpane never manually resets an unsettled initialization.
 
 There is at most one recovery invocation in flight. A recovery episode allows
 three attempts with 30-second observation windows and 15/60-second backoff.
@@ -102,7 +102,7 @@ Transient worker-status or callback failures spend one attempt and retain the
 remaining retries; missing or incompatible APIs stop automatic mutation.
 Read-only worker-status and native-window queries each have an eight-second
 deadline using timers captured before Facebook wraps page scheduling APIs.
-Expiry abandons the observation and releases Carrier's recovery
+Expiry abandons the observation and releases Chatpane's recovery
 invocation for its remaining bounded retries. Late query results cannot reach a
 mutation, and elapsed time is checked again on response in case suspension
 delayed the timeout task. This deadline is deliberately not applied to
@@ -122,7 +122,7 @@ not a potentially delayed RPC reply. Account, worker ID, and state-manager
 identity must still match when the result is used.
 
 A real browser offline-to-online transition gives Messenger's own reconnect
-loop 15 seconds before Carrier considers another worker repair. If the normal
+loop 15 seconds before Chatpane considers another worker repair. If the normal
 episode is exhausted and encrypted health is still unverified, that transition
 grants **one** additional attempt. Further network flaps cannot add attempts
 until 60 seconds of verified health resets the episode. Focus, wake, and a
@@ -211,12 +211,12 @@ successful encrypted-worker setup. The candidate also remained healthy across
 a subsequent reload. This supports an HTTP/2-path workaround; it does not
 identify the exact upstream defect.
 
-Carrier therefore defaults its Linux WebKit processes to HTTP/1.1 before startup.
+Chatpane therefore defaults its Linux WebKit processes to HTTP/1.1 before startup.
 TLS, cookies, proxy configuration, and WebSockets remain in WebKit's normal
 network stack. The tradeoff is losing HTTP/2 multiplexing. macOS and Windows are
 unaffected. Existing `SOUP_FORCE_HTTP1` values are preserved. To test an updated
 system library with HTTP/2, unset that variable and launch with
-`CARRIER_LINUX_HTTP2=1`. Note that libsoup treats even `SOUP_FORCE_HTTP1=0` as
+`CHATPANE_LINUX_HTTP2=1`. Note that libsoup treats even `SOUP_FORCE_HTTP1=0` as
 enabled because it checks the variable's presence.
 
 Do not remove the workaround solely because a version number increased. Repeat
@@ -227,7 +227,7 @@ verified against this incident. The environment switch is implemented in
 [libsoup's connection manager](https://github.com/GNOME/libsoup/blob/3.6.6/libsoup/soup-connection-manager.c).
 
 Killing only the network helper restored HTTP in an early experiment but did
-not reliably restore the existing document's worker/storage state. Carrier does
+not reliably restore the existing document's worker/storage state. Chatpane does
 not automate this. WebKit has also documented [IndexedDB connection problems
 after network-process crashes](https://bugs.webkit.org/show_bug.cgi?id=309386).
 
@@ -247,7 +247,7 @@ timeouts, retry backoff, and foreground-reset controls. Schemas and strings do
 The current web worker already implements much of this. Inspection of its
 served static bundles on 2026-09-22 found:
 
-| Layer | Existing Messenger behavior | Carrier's responsibility |
+| Layer | Existing Messenger behavior | Chatpane's responsibility |
 | --- | --- | --- |
 | Encrypted network | `WAComms.sendPing` matches a response to both socket and stanza IDs. Its configured dead-socket timer is 20 seconds; idle health checks use a randomized 20–40 second interval. | Do not mistake the page's worker heartbeat for this server ping. |
 | Socket retries | A Fibonacci retry loop starts at 10 seconds, caps at 60 seconds, and includes jitter. The worker has reset, abort, and close/resume methods. | Let the worker own its socket retries; avoid competing periodic reconnects. |
@@ -257,7 +257,7 @@ served static bundles on 2026-09-22 found:
 The normal page-to-worker RPC routes inspected do not expose the server-ping,
 force-reconnect, or last-inbound timestamp methods. Reattaching a bridge to an
 already initialized shared worker does not restart its encrypted socket. Calling
-a page-local copy of `WAComms` would not control that worker. Carrier does not
+a page-local copy of `WAComms` would not control that worker. Chatpane does not
 turn on Meta's gated development bridge, inject replacement worker scripts, or
 bind to native Messenger's private binaries to cross this boundary.
 
@@ -274,7 +274,7 @@ ignored cancellation, matching the inspected Messenger-specific opener's lack of
 signal consumption. This proves the cancellation/generation gap in those code
 paths, not that this race occurred in the user's live session.
 
-Carrier consequently bounds only its read-only inspection waits and uses the
+Chatpane consequently bounds only its read-only inspection waits and uses the
 guarded worker lifecycle above to replace a failed transport. Implementing a
 socket-level opening/handshake deadline still requires a worker-owned route that
 actually closes pending transports and fences late completions; none was found
@@ -289,11 +289,11 @@ verification and bounded recovery, not an assertion of end-to-end freshness.
 
 Only static application code, symbols, and sanitized state were inspected.
 Native binaries and extracted web modules remain in the private investigation
-archive, outside the repository; no proprietary code is incorporated into Carrier.
+archive, outside the repository; no proprietary code is incorporated into Chatpane.
 
 ## macOS worker process lifetime
 
-Carrier selects Messenger's existing dedicated-worker backend on macOS before
+Chatpane selects Messenger's existing dedicated-worker backend on macOS before
 Messenger reads its worker-selection gate. Other platforms retain Messenger's
 choice. This keeps the encrypted backend with the page's WebContent process
 instead of a separate shared-worker process that WebKit can discard under memory
@@ -321,18 +321,18 @@ all OS resource reclamation; validate it on the affected Mac after installation.
 Facebook lets only one dedicated-worker engine hold the encrypted session at a
 time (`MAWAppMutex`, a localStorage lock under `armadillo_msgr_mutex`). A tab
 that starts writes `armadillo_msgr_local_takeover`, and the previous holder
-terminates its worker and goes idle. With two dedicated windows, Carrier's
+terminates its worker and goes idle. With two dedicated windows, Chatpane's
 recovery saw the idle window as a dead transport and reloaded it, which took the
 session back: the windows reloaded each other every few minutes indefinitely.
 
 So the first extra window moves the whole session onto Facebook's shared engine,
-which skips that lock. Carrier destroys every open Messenger window, and its
+which skips that lock. Chatpane destroys every open Messenger window, and its
 engine with it, then rebuilds each in place with the choice in its init script
 before it builds the new window. If a window cannot be destroyed or does not
 close in time, no new window opens and the session stays on per-window engines.
-After a successful move the session keeps the shared engine until Carrier
+After a successful move the session keeps the shared engine until Chatpane
 restarts, so the two engine kinds never run against the same encrypted store.
-If the rebuild would interrupt a call or an unsent message, Carrier asks first.
+If the rebuild would interrupt a call or an unsent message, Chatpane asks first.
 The shared engine brings back the memory-pressure exposure described above, but
 only while more than one window has been open.
 
@@ -341,25 +341,25 @@ only while more than one window has been open.
 Messenger restarts shared workers in place, but registers no restart for a
 dedicated worker: that backend is meant to live as long as its page. On
 October 18 a seven-minute network outage left the Mac's dedicated worker
-disconnected after the network returned. Carrier's in-place repair replaced it.
+disconnected after the network returned. Chatpane's in-place repair replaced it.
 The replacement's encrypted connection verified as healthy within five seconds,
 yet the page never showed a newly received message, and two queued sends stayed
 at "Sending…". A reload restored both. Reading Messenger's page-side setup code
 did not reveal which state stayed attached to the old worker.
 
-Carrier therefore never replaces a dedicated worker whose backend setup
+Chatpane therefore never replaces a dedicated worker whose backend setup
 succeeded. The old worker can still reconnect by itself: Messenger retries its
 socket with backoff capped at 60 seconds, and on October 17 one outage healed
 that way after 25 minutes. So the page waits while Facebook is unreachable, and
 probes it at most every 30 seconds with a `HEAD /favicon.ico` request; any HTTP
 answer counts. Once Facebook has answered for two minutes and the worker is
-still stuck, Carrier logs `sync.worker-stuck` and reloads. After ten stuck
+still stuck, Chatpane logs `sync.worker-stuck` and reloads. After ten stuck
 minutes it reloads even without a successful probe, so a probe fault cannot
 strand the page. Startups that never succeeded are still repaired in place.
 
 Any other second dedicated worker, created after an earlier one completed
 backend setup (for example by Messenger's own bad-state reboot), is likewise
-treated as proof the page is unhealthy: Carrier logs `sync.worker-replaced` and
+treated as proof the page is unhealthy: Chatpane logs `sync.worker-replaced` and
 reloads. Both reloads use the usual draft, call, sleep, offline, rate-limit, and
 Hold Failures guards. Shared-worker restarts are unaffected. There is
 deliberately no reload cap or backoff across documents: each new document must
@@ -369,7 +369,7 @@ and a page left stale after the outage ends is the worse failure.
 ## Message-processing diagnostics
 
 An encrypted connection and a responsive bridge do not prove that message batches
-committed to the page's database. Carrier observes the existing
+committed to the page's database. Chatpane observes the existing
 `MAWBridgeUIEventQueueQPLLogger` transaction boundaries without inspecting their
 payloads. Recovery snapshots include pending, completed, failed, and omitted
 counts plus the oldest pending batch's active time. A failed batch or one still
@@ -404,9 +404,9 @@ never reached `close()`.
 
 This proves a control-flow limitation, not that closed browser ports normally
 throw or that it caused the original outage. Neither the notification nor lock
-release alone is a safe restart barrier. Carrier therefore never treats the
+release alone is a safe restart barrier. Chatpane therefore never treats the
 shutdown request as proof of recovery or starts a competing setup itself.
-Messenger's existing close listener owns the replacement, and Carrier requires
+Messenger's existing close listener owns the replacement, and Chatpane requires
 fresh encrypted state from the resulting worker before crediting health.
 
 The automatic escalation is restricted to a fresh native inventory with one
@@ -440,7 +440,7 @@ Live tests used diagnostics builds, including the affected installed session:
 - Reject `MAWWebWorkerSingleton.createWorkerIfNone` during startup and Messenger's
   own fallback, allowing only the `bridgeRecovery` retry. The actual document-start
   hook captures the failed setup. Three initial calls fail (`t2init`, `mawInit`,
-  `backendSetupFailure`); Carrier's fourth call succeeds in the same document.
+  `backendSetupFailure`); Chatpane's fourth call succeeds in the same document.
   Fault injection is confined to a local test binary and is not shipped.
 - Run the compiled state monitor in the live diagnostics page. Drop only the
   connection-state delivery handler for one probe: the cached state remains true,
@@ -455,7 +455,7 @@ Live tests used diagnostics builds, including the affected installed session:
   No delivered/read receipt was observed. The separate send-report callback
   probe received no event, so it supplies no additional acknowledgement proof.
   All temporary hooks were restored and the composer was left empty.
-- Run the extracted transaction handler against Carrier's actual processing
+- Run the extracted transaction handler against Chatpane's actual processing
   collector with a synthetic database. Successful, rejected, and indefinitely
   pending transactions produce the corresponding counters; a database-readiness
   promise that never settles remains unobserved, as expected from the coverage
@@ -496,7 +496,7 @@ Live tests used diagnostics builds, including the affected installed session:
 - Repeat the CONNECT blackhole with Messenger's dedicated-worker selection
   enabled only in the candidate page. Three real encrypted TLS attempts stay
   blocked while backend setup is pending. Permit new connections without
-  releasing those attempts. By the 93-second observation Carrier has invoked
+  releasing those attempts. By the 93-second observation Chatpane has invoked
   exactly one native lifecycle restart, all three blocked tunnels have closed,
   and a new tunnel has connected. The dedicated bridge promise has changed,
   backend setup is ready, and fresh connection-state delivery plus RPC reply
@@ -520,4 +520,4 @@ incoming-message catch-up after every outage, or uninterrupted active calls.
 Messenger's private APIs can change; unsupported shapes must keep the page usable
 and offer manual recovery. A browser-engine failure or server-side outage can
 still require a reload or restart. Private logs and the original matching binary
-are archived outside the repository under CarrierDebug's investigations directory.
+are archived outside the repository under ChatpaneDebug's investigations directory.

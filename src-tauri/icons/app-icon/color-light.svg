@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Carrier app icon, Color style, light: brand gradient tile, white folded plane -->
+  <!-- Chatpane app icon, Color style, light: brand gradient tile, white folded plane -->
   <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7160ff"/><stop offset="1" stop-color="#1995ff"/></linearGradient></defs>
   <g transform="translate(56 56) scale(9.08)">
     <rect width="100" height="100" rx="22.5" fill="url(#tile)"/>

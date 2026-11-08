@@ -183,7 +183,7 @@ async function runFixtures() {
       dialog = make(extra);
       if (!extra) dialog.setAttribute("data-carrier-shortcuts-overlay", "");
       await settle();
-      assert("composer/Carrier surface", !marked(dialog));
+      assert("composer/Chatpane surface", !marked(dialog));
       dialog.remove();
     }
     const ancestor = document.createElement("section");

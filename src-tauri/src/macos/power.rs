@@ -33,7 +33,7 @@ objc2::define_class!(
     struct PowerObserver;
 
     impl PowerObserver {
-        #[unsafe(method(carrierWorkspaceWillSleep:))]
+        #[unsafe(method(chatpaneWorkspaceWillSleep:))]
         fn workspace_will_sleep(&self, _notification: &objc2_foundation::NSNotification) {
             use objc2::DefinedClass;
 
@@ -42,7 +42,7 @@ objc2::define_class!(
             dispatch_power_state(&self.ivars().app);
         }
 
-        #[unsafe(method(carrierWorkspaceScreensDidWake:))]
+        #[unsafe(method(chatpaneWorkspaceScreensDidWake:))]
         fn workspace_screens_did_wake(&self, _notification: &objc2_foundation::NSNotification) {
             use objc2::DefinedClass;
 
@@ -82,7 +82,7 @@ fn dispatch_power_state(app: &tauri::AppHandle) {
 pub(crate) fn sync_power_state(window: &tauri::WebviewWindow) {
     let state = *POWER_STATE.lock().unwrap();
     let _ = window.eval(format!(
-        "window.dispatchEvent(new CustomEvent('carrier:power-state', {{detail: {}}}));",
+        "window.dispatchEvent(new CustomEvent('chatpane:power-state', {{detail: {}}}));",
         serde_json::to_string(&state).expect("power state serialises")
     ));
 }
@@ -99,7 +99,7 @@ pub(crate) fn resume_generation() -> u64 {
 ///
 /// `NSWorkspaceDidWakeNotification` also fires for maintenance dark-wakes, so
 /// it is intentionally not used. `NSWorkspaceScreensDidWakeNotification` is
-/// the user-visible wake boundary Carrier needs.
+/// the user-visible wake boundary Chatpane needs.
 pub(crate) fn observe_system_sleep(app: &tauri::AppHandle) {
     use objc2::rc::Retained;
     use objc2::{AllocAnyThread, sel};
@@ -116,13 +116,13 @@ pub(crate) fn observe_system_sleep(app: &tauri::AppHandle) {
     unsafe {
         center.addObserver_selector_name_object(
             &observer,
-            sel!(carrierWorkspaceWillSleep:),
+            sel!(chatpaneWorkspaceWillSleep:),
             Some(NSWorkspaceWillSleepNotification),
             None,
         );
         center.addObserver_selector_name_object(
             &observer,
-            sel!(carrierWorkspaceScreensDidWake:),
+            sel!(chatpaneWorkspaceScreensDidWake:),
             Some(NSWorkspaceScreensDidWakeNotification),
             None,
         );

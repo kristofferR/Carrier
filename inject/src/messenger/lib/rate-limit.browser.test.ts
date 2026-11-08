@@ -115,10 +115,10 @@ async function runFixtures(
     report("graphql-1675004", 120_000);
     const syncAlerts: string[] = [];
     Object.assign(window, {
-      __CARRIER_HEARTBEAT_ID__: 42,
+      __CHATPANE_HEARTBEAT_ID__: 42,
       __TAURI_INTERNALS__: {
         invoke: async (_command: string, args: { event?: string; payload?: { kind?: string } }) => {
-          if (args?.event === "carrier:sync-alert" && args.payload?.kind)
+          if (args?.event === "chatpane:sync-alert" && args.payload?.kind)
             syncAlerts.push(args.payload.kind);
         },
       },
@@ -195,11 +195,13 @@ async function runFixtures(
     );
     assert("acknowledged manual retry disables button", button.disabled);
     window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: true, resume_generation: 0 } }),
+      new CustomEvent("chatpane:power-state", { detail: { sleeping: true, resume_generation: 0 } }),
     );
     assert("cancelled manual retry re-enables button", !button.disabled);
     window.dispatchEvent(
-      new CustomEvent("carrier:power-state", { detail: { sleeping: false, resume_generation: 1 } }),
+      new CustomEvent("chatpane:power-state", {
+        detail: { sleeping: false, resume_generation: 1 },
+      }),
     );
     banner()!.remove();
     tick();
@@ -262,7 +264,7 @@ async function runFixtures(
           _command: string,
           args: { event?: string; payload?: { rate_limit_retry?: boolean } },
         ) => {
-          if (args?.event === "carrier:webview-heartbeat" && args.payload?.rate_limit_retry)
+          if (args?.event === "chatpane:webview-heartbeat" && args.payload?.rate_limit_retry)
             probeRequests.push(true);
         },
       },
@@ -282,13 +284,13 @@ async function runFixtures(
     tick();
     runTimer(1000);
     assert("automatic retry requests native coordination", probeRequests.length === 1);
-    window.__carrierRateLimitRetry?.(42, Date.now() - 1);
+    window.__chatpaneRateLimitRetry?.(42, Date.now() - 1);
     assert(
       "stale grants leave the request queued",
       [...timers.values()].some((t) => t.delay === 8000),
     );
     draft.textContent = "new draft";
-    window.__carrierRateLimitRetry?.(42, Date.now() + 5000);
+    window.__chatpaneRateLimitRetry?.(42, Date.now() + 5000);
     assert(
       "grant rechecks draft protection",
       [...timers.values()].some((t) => t.delay === 8000),
@@ -307,7 +309,7 @@ async function runFixtures(
     tick();
     runTimer(1000);
     assert("new cooldown invalidates the previous grant", probeRequests.length === 2);
-    window.__CARRIER_SETTINGS__ = { hold_failures: true };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: true };
     const probesBeforeHold = probeRequests.length;
     report("graphql-1675004", 1000);
     now += 1001;
@@ -317,7 +319,7 @@ async function runFixtures(
       probeRequests.length === probesBeforeHold &&
         ![...timers.values()].some((t) => t.delay === 1000),
     );
-    window.__CARRIER_SETTINGS__ = { hold_failures: false };
+    window.__CHATPANE_SETTINGS__ = { hold_failures: false };
     tick();
     runTimer(1000);
     assert("releasing hold resumes queued retry", probeRequests.length === probesBeforeHold + 1);

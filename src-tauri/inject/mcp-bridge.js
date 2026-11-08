@@ -6,12 +6,12 @@
  * (`execute-js`, `got-dom-content`, …) and waiting for a correlated
  * `*-response-<uuid>` event back. The responder that listens for those events
  * ships in the plugin's `guest-js`, which a normal Tauri app imports into its
- * frontend bundle. Carrier's main window is a REMOTE origin (facebook.com), so
+ * frontend bundle. Chatpane's main window is a REMOTE origin (facebook.com), so
  * it never loads that guest-js — which is why every round-trip MCP command
  * (execute_js, get_dom) times out with "Timeout waiting for … response".
  *
  * This file is the missing responder, hand-rolled against the low-level
- * `__TAURI_INTERNALS__` API so it works without `withGlobalTauri` (Carrier keeps
+ * `__TAURI_INTERNALS__` API so it works without `withGlobalTauri` (Chatpane keeps
  * that off so Facebook can't see `window.__TAURI__`). It is injected only in
  * `mcp`/debug builds, so release builds never expose a JS-eval responder.
  *
@@ -24,7 +24,7 @@
  *     reaches the Rust `app.once(...)` listener (target Any).
  */
 (function () {
-  if (window.__CARRIER_MCP_BRIDGE__) return;
+  if (window.__CHATPANE_MCP_BRIDGE__) return;
 
   function safeStringify(v) {
     try {
@@ -38,12 +38,12 @@
     }
   }
 
-  var DEBUG_PROFILE_KEY = "__carrier_mcp_network_profile__";
-  var COMPONENT_NULL_KEY = "__carrier_mcp_component_null__";
-  var COMPONENT_PASSTHROUGH_KEY = "__carrier_mcp_component_passthrough__";
-  var REACT_PROFILE_KEY = "__carrier_mcp_react_profile__";
+  var DEBUG_PROFILE_KEY = "__chatpane_mcp_network_profile__";
+  var COMPONENT_NULL_KEY = "__chatpane_mcp_component_null__";
+  var COMPONENT_PASSTHROUGH_KEY = "__chatpane_mcp_component_passthrough__";
+  var REACT_PROFILE_KEY = "__chatpane_mcp_react_profile__";
   function installModuleRuntimeInstrumentation() {
-    if (window.__CARRIER_MCP_MODULE_RUNTIME__) return;
+    if (window.__CHATPANE_MCP_MODULE_RUNTIME__) return;
     var families = [
       [
         "telemetry",
@@ -106,7 +106,7 @@
         }
       })(),
     };
-    window.__CARRIER_MCP_MODULE_RUNTIME__ = state;
+    window.__CHATPANE_MCP_MODULE_RUNTIME__ = state;
 
     function matchedFamilies(name) {
       var matches = [];
@@ -117,7 +117,7 @@
     }
 
     function wrapDefine(nativeDefine) {
-      if (typeof nativeDefine !== "function" || nativeDefine.__carrierWrapped) return nativeDefine;
+      if (typeof nativeDefine !== "function" || nativeDefine.__chatpaneWrapped) return nativeDefine;
       function wrappedDefine(name, dependencies, factory) {
         var args = Array.prototype.slice.call(arguments);
         var safeName =
@@ -340,7 +340,7 @@
         }
         return nativeDefine.apply(this, args);
       }
-      wrappedDefine.__carrierWrapped = true;
+      wrappedDefine.__chatpaneWrapped = true;
       return wrappedDefine;
     }
 
@@ -388,7 +388,7 @@
       profile = sessionStorage.getItem(DEBUG_PROFILE_KEY) || "";
     } catch (_) {}
     var state = { name: profile || "none", blocked: 0 };
-    window.__CARRIER_MCP_NETWORK_PROFILE__ = state;
+    window.__CHATPANE_MCP_NETWORK_PROFILE__ = state;
     if (profile !== "block-route-definitions") return;
 
     function shouldBlock(raw) {
@@ -412,7 +412,7 @@
         window.fetch = function (input) {
           if (shouldBlock(input)) {
             state.blocked++;
-            return Promise.reject(new TypeError("Carrier debug blocked route definitions"));
+            return Promise.reject(new TypeError("Chatpane debug blocked route definitions"));
           }
           return nativeFetch.apply(this, arguments);
         };
@@ -536,17 +536,17 @@
         // emit_and_wait wraps a non-object payload (the code string) as _payload.
         var code = p && p._payload !== undefined ? p._payload : p;
         // CSP-safe, sanitized selector probe for Hide Names & Avatars work.
-        if (code === "__carrier_mcp_login_layout_probe__") {
+        if (code === "__chatpane_mcp_login_layout_probe__") {
           reply(loginLayoutProbe());
           return;
         }
         // Runs an account request (Settings → Account, Log Out) without the
         // Settings window; the answer is logged natively.
-        var accountCall = /^__carrier_mcp_account__:([a-z-]+)(?::(.*))?$/.exec(code);
+        var accountCall = /^__chatpane_mcp_account__:([a-z-]+)(?::(.*))?$/.exec(code);
         if (accountCall) {
-          var started = typeof window.__carrierAccount === "function";
+          var started = typeof window.__chatpaneAccount === "function";
           if (started) {
-            window.__carrierAccount(
+            window.__chatpaneAccount(
               "0000000000000000000000000000mcp0",
               accountCall[1],
               accountCall[2] === undefined ? null : JSON.parse(accountCall[2]),
@@ -559,38 +559,38 @@
         // (the fMess review features). Counts and geometry only; selection
         // is reported by length. `:selectall` runs WebKit's Select All with
         // nothing focused; `:drag:<pane>:<dx>` drags a pane edge by dx px.
-        var fmessProbe = /^__carrier_mcp_fmess_probe__(?::(selectall|drag:(list|details):(-?\d+)|reset:(list|details)|open:(\d+)|sound))?$/.exec(code);
+        var fmessProbe = /^__chatpane_mcp_fmess_probe__(?::(selectall|drag:(list|details):(-?\d+)|reset:(list|details)|open:(\d+)|sound))?$/.exec(code);
         if (fmessProbe) {
           Promise.resolve(fmessFeatureProbe(fmessProbe)).then(reply, function (e) {
             reply({ error: String(e) });
           });
           return;
         }
-        if (code === "__carrier_mcp_privacy_probe__") {
+        if (code === "__chatpane_mcp_privacy_probe__") {
           reply(privacyProbe());
           return;
         }
         // Sanitized state of the notification sender-avatar cache: how many
         // name/face pairings the injected harvest has stored, and why the
         // avatars rendered right now would or would not qualify.
-        if (code === "__carrier_mcp_sender_avatar_probe__") {
+        if (code === "__chatpane_mcp_sender_avatar_probe__") {
           reply(senderAvatarProbe());
           return;
         }
         // CSP-safe, sanitized shape of conversation rows for notification work.
-        if (code === "__carrier_mcp_notification_row_probe__") {
+        if (code === "__chatpane_mcp_notification_row_probe__") {
           reply(notificationRowProbe());
           return;
         }
-        if (code === "__carrier_mcp_notification_info_toggle__") {
+        if (code === "__chatpane_mcp_notification_info_toggle__") {
           reply({
             applied:
-              typeof window.__carrierToggleInfo === "function" &&
-              window.__carrierToggleInfo() === true,
+              typeof window.__chatpaneToggleInfo === "function" &&
+              window.__chatpaneToggleInfo() === true,
           });
           return;
         }
-        if (code === "__carrier_mcp_notification_open_muted_row__") {
+        if (code === "__chatpane_mcp_notification_open_muted_row__") {
           var mutedRow = null;
           document.querySelectorAll(NOTIFY_ROW_SEL).forEach(function (row) {
             if (mutedRow || !visible(row)) return;
@@ -602,17 +602,17 @@
           return;
         }
         var notificationRowsScroll =
-          /^__carrier_mcp_notification_rows_scroll__:(next|reset)$/.exec(code);
+          /^__chatpane_mcp_notification_rows_scroll__:(next|reset)$/.exec(code);
         if (notificationRowsScroll) {
           reply(scrollNotificationRows(notificationRowsScroll[1]));
           return;
         }
         // Media-capture plumbing checks for call/screen-share verification.
-        if (code === "__carrier_mcp_media_capture_probe__") {
+        if (code === "__chatpane_mcp_media_capture_probe__") {
           reply(mediaCaptureProbe());
           return;
         }
-        if (code === "__carrier_mcp_mic_capture_probe__") {
+        if (code === "__chatpane_mcp_mic_capture_probe__") {
           micCaptureProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -622,7 +622,7 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_camera_capture_probe__") {
+        if (code === "__chatpane_mcp_camera_capture_probe__") {
           cameraCaptureProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -632,7 +632,7 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_video_call_capture_probe__") {
+        if (code === "__chatpane_mcp_video_call_capture_probe__") {
           videoCallCaptureProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -642,7 +642,7 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_capture_permission_state__") {
+        if (code === "__chatpane_mcp_capture_permission_state__") {
           capturePermissionStateProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -652,15 +652,15 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_display_capture_arm__") {
+        if (code === "__chatpane_mcp_display_capture_arm__") {
           reply(armDisplayCaptureProbe());
           return;
         }
-        if (code === "__carrier_mcp_display_capture_result__") {
+        if (code === "__chatpane_mcp_display_capture_result__") {
           reply(displayCaptureResultProbe());
           return;
         }
-        if (code === "__carrier_mcp_display_capture_now__") {
+        if (code === "__chatpane_mcp_display_capture_now__") {
           displayCaptureNowProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -671,16 +671,16 @@
           return;
         }
         // Sanitized network-traffic aggregates for telemetry-blocking work.
-        if (code === "__carrier_mcp_network_probe__") {
+        if (code === "__chatpane_mcp_network_probe__") {
           reply(networkProbe());
           return;
         }
         // Content-blind runtime profiling for resource-usage investigations.
-        if (code === "__carrier_mcp_performance_probe__") {
+        if (code === "__chatpane_mcp_performance_probe__") {
           reply(performanceProbe());
           return;
         }
-        if (code === "__carrier_mcp_activity_probe__") {
+        if (code === "__chatpane_mcp_activity_probe__") {
           activityProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -690,7 +690,7 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_source_probe__") {
+        if (code === "__chatpane_mcp_source_probe__") {
           sourceProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -700,7 +700,7 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_timer_sources_probe__") {
+        if (code === "__chatpane_mcp_timer_sources_probe__") {
           timerSourcesProbe().then(reply, function (e) {
             respond("execute-js-response", cid, {
               result: null,
@@ -710,24 +710,24 @@
           });
           return;
         }
-        if (code === "__carrier_mcp_modules_probe__") {
+        if (code === "__chatpane_mcp_modules_probe__") {
           reply(moduleProbe());
           return;
         }
-        if (code === "__carrier_mcp_hidden_probe__") {
+        if (code === "__chatpane_mcp_hidden_probe__") {
           reply(hiddenProbe());
           return;
         }
-        if (code === "__carrier_mcp_module_runtime_probe__") {
+        if (code === "__chatpane_mcp_module_runtime_probe__") {
           reply(moduleRuntimeProbe());
           return;
         }
-        if (code === "__carrier_mcp_component_experiment_probe__") {
+        if (code === "__chatpane_mcp_component_experiment_probe__") {
           reply(componentExperimentProbe());
           return;
         }
-        if (code === "__carrier_mcp_static_bundle_test_probe__") {
-          var perfState = window.__CARRIER_MCP_PERF__ || {};
+        if (code === "__chatpane_mcp_static_bundle_test_probe__") {
+          var perfState = window.__CHATPANE_MCP_PERF__ || {};
           reply(
             typeof perfState.staticBundleProbe === "function"
               ? perfState.staticBundleProbe([
@@ -756,19 +756,19 @@
           );
           return;
         }
-        var reactProfile = /^__carrier_mcp_react_profile__:(on|clear)$/.exec(code);
+        var reactProfile = /^__chatpane_mcp_react_profile__:(on|clear)$/.exec(code);
         if (reactProfile) {
           reply(setSessionExperiment(reactProfile[1], REACT_PROFILE_KEY, "reactProfile"));
           return;
         }
         var componentNull =
-          /^__carrier_mcp_component_null__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(code);
+          /^__chatpane_mcp_component_null__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(code);
         if (componentNull) {
           reply(setSessionExperiment(componentNull[1], COMPONENT_NULL_KEY, "component"));
           return;
         }
         var componentPassthrough =
-          /^__carrier_mcp_component_passthrough__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(
+          /^__chatpane_mcp_component_passthrough__:([A-Za-z0-9_$.:/-]{1,160}|clear)$/.exec(
             code,
           );
         if (componentPassthrough) {
@@ -781,7 +781,7 @@
           );
           return;
         }
-        var debugProfile = /^__carrier_mcp_profile__:(block-route-definitions|stub-top-nav|replace-top-nav|replace-global-nav|replace-global-nav-stop-fts|disable-hyperion|replace-global-nav-disable-hyperion|replace-notification-badge|replace-global-nav-notifications|replace-global-nav-badge|replace-global-chrome|clear)$/.exec(code);
+        var debugProfile = /^__chatpane_mcp_profile__:(block-route-definitions|stub-top-nav|replace-top-nav|replace-global-nav|replace-global-nav-stop-fts|disable-hyperion|replace-global-nav-disable-hyperion|replace-notification-badge|replace-global-nav-notifications|replace-global-nav-badge|replace-global-chrome|clear)$/.exec(code);
         if (debugProfile) {
           try {
             if (debugProfile[1] === "clear") sessionStorage.removeItem(DEBUG_PROFILE_KEY);
@@ -793,7 +793,7 @@
           return;
         }
         var performanceExperiment =
-          /^__carrier_mcp_performance_experiment__:(trace-scheduler|stop-fts-search-restore|stop-fts-media-restore|resume-fts-search-restore|mute-telemetry|mute-banzai|mute-ods|terminate-media-worker|terminate-responsiveness-worker|close-rpsignaling-socket|close-streamcontroller-socket|remove-maw-proxy-frame|remove-hidden-banner)$/.exec(
+          /^__chatpane_mcp_performance_experiment__:(trace-scheduler|stop-fts-search-restore|stop-fts-media-restore|resume-fts-search-restore|mute-telemetry|mute-banzai|mute-ods|terminate-media-worker|terminate-responsiveness-worker|close-rpsignaling-socket|close-streamcontroller-socket|remove-maw-proxy-frame|remove-hidden-banner)$/.exec(
             code,
           );
         if (performanceExperiment) {
@@ -801,8 +801,8 @@
           return;
         }
         // Hover the chat header's voice call button with a synthetic pointer
-        // event and report whether Carrier's Linux call notice opened (#345).
-        if (code === "__carrier_mcp_call_button_hover__") {
+        // event and report whether Chatpane's Linux call notice opened (#345).
+        if (code === "__chatpane_mcp_call_button_hover__") {
           var callButton = document.querySelector(
             '[role="button"][aria-label="Voice calling is not supported on this browser"], [role="button"][aria-label="Start a voice call"]',
           );
@@ -826,16 +826,16 @@
           return;
         }
         // CSP-safe control probe for keyboard-shortcut selector work (#18/#30).
-        if (code === "__carrier_mcp_shortcut_probe__") {
+        if (code === "__chatpane_mcp_shortcut_probe__") {
           reply(shortcutProbe());
           return;
         }
         var shortcutAction =
-          /^__carrier_mcp_shortcut_action__:(next|previous|focus-composer|focus-search|conversation-search)$/.exec(
+          /^__chatpane_mcp_shortcut_action__:(next|previous|focus-composer|focus-search|conversation-search)$/.exec(
             code,
           );
         if (shortcutAction) {
-          var shortcutRegistry = window.__carrierShortcuts || {};
+          var shortcutRegistry = window.__chatpaneShortcuts || {};
           var shortcutMethods = {
             next: "nextConversation",
             previous: "prevConversation",
@@ -852,25 +852,25 @@
           }
           return;
         }
-        if (code === "__carrier_mcp_media_probe__") {
+        if (code === "__chatpane_mcp_media_probe__") {
           reply(mediaProbe());
           return;
         }
         // Sanitized message-bubble shape and hover-toolbar / menu labels for the
         // message context menu. Index counts back from the newest bubble.
         var messageProbe =
-          /^__carrier_mcp_message_probe__:(\d{1,2}):(shape|hover|more|react|escape)$/.exec(code);
+          /^__chatpane_mcp_message_probe__:(\d{1,2}):(shape|hover|more|react|escape)$/.exec(code);
         if (messageProbe) {
           reply(messageBubbleProbe(Number(messageProbe[1]), messageProbe[2]));
           return;
         }
         var chatRowProbe =
-          /^__carrier_mcp_chat_row_probe__:(\d{1,2}|t\d{5,20}):(shape|open|close)$/.exec(code);
+          /^__chatpane_mcp_chat_row_probe__:(\d{1,2}|t\d{5,20}):(shape|open|close)$/.exec(code);
         if (chatRowProbe) {
           reply(chatRowMenuProbe(chatRowProbe[1], chatRowProbe[2]));
           return;
         }
-        var mediaAction = /^__carrier_mcp_media_action__:(scroll-first|click-first|close)$/.exec(code);
+        var mediaAction = /^__chatpane_mcp_media_action__:(scroll-first|click-first|close)$/.exec(code);
         if (mediaAction) {
           if (mediaAction[1] === "close") {
             document.dispatchEvent(
@@ -896,7 +896,7 @@
           }
           return;
         }
-        if (code === "__carrier_mcp_search_test__") {
+        if (code === "__chatpane_mcp_search_test__") {
           var searchInputs = document.querySelectorAll('input[aria-label], input[type="search"]');
           var searchInput = null;
           for (var searchIndex = 0; searchIndex < searchInputs.length; searchIndex++) {
@@ -934,25 +934,25 @@
         }
         // Sanitized layout/palette probe for design-replica work (landing
         // page): geometry plus computed styles sampled under both themes.
-        if (code === "__carrier_mcp_design_probe__") {
+        if (code === "__chatpane_mcp_design_probe__") {
           reply(designProbe());
           return;
         }
         // UI icon glyphs for design-replica work: serialized <svg> markup
         // from the nav/main chrome, with identity-bearing svgs skipped.
-        if (code === "__carrier_mcp_icon_probe__") {
+        if (code === "__chatpane_mcp_icon_probe__") {
           reply(iconProbe());
           return;
         }
         // How the composer's like/send control is rendered (inline svg vs
         // sprite/mask). Raster sources are reported as "[image]" only.
-        if (code === "__carrier_mcp_like_probe__") {
+        if (code === "__chatpane_mcp_like_probe__") {
           reply(likeProbe());
           return;
         }
-        // Force a page theme through Carrier's own force-theme machinery so
+        // Force a page theme through Chatpane's own force-theme machinery so
         // screenshots can be taken in either mode; ":system" restores.
-        var themeSet = /^__carrier_mcp_theme_set__:(dark|light|system)$/.exec(code);
+        var themeSet = /^__chatpane_mcp_theme_set__:(dark|light|system)$/.exec(code);
         if (themeSet) {
           reply(setThemeForScreenshot(themeSet[1]));
           return;
@@ -961,7 +961,7 @@
         // Facebook re-renders with it from document-start (a live class flip
         // does not restyle already-rendered components). ":restore" puts the
         // stashed original back. Page-local only; Rust settings are untouched.
-        var themePersist = /^__carrier_mcp_theme_persist__:(dark|light|restore)$/.exec(code);
+        var themePersist = /^__chatpane_mcp_theme_persist__:(dark|light|restore)$/.exec(code);
         if (themePersist) {
           reply(persistThemeAndReload(themePersist[1]));
           return;
@@ -970,14 +970,14 @@
         // through the (shimmed) constructor so the full page → Rust →
         // Notification Center pipeline runs without waiting for a real
         // message. Reports the shim/permission state alongside.
-        if (code === "__carrier_mcp_notify_test__") {
+        if (code === "__chatpane_mcp_notify_test__") {
           var N = window.Notification;
           if (typeof N !== "function") {
             reply({ error: "window.Notification is not a function: " + typeof N });
             return;
           }
-          var settings = window.__CARRIER_SETTINGS__ || {};
-          new N("Carrier test", { body: "tauri-mcp pipeline test" });
+          var settings = window.__CHATPANE_SETTINGS__ || {};
+          new N("Chatpane test", { body: "tauri-mcp pipeline test" });
           reply({
             constructed: true,
             // The shim is plain JS; the native constructor stringifies with
@@ -992,10 +992,10 @@
         }
         // CSP-safe invoker for the page's own shortcut helpers (Facebook's CSP
         // blocks new Function, so `execute_js` can't reach them otherwise).
-        // Restricted to the __carrierShortcuts registry — no arbitrary globals.
-        var call = /^__carrier_mcp_call__:([\w$]+)$/.exec(code);
+        // Restricted to the __chatpaneShortcuts registry — no arbitrary globals.
+        var call = /^__chatpane_mcp_call__:([\w$]+)$/.exec(code);
         if (call) {
-          var registry = window.__carrierShortcuts || {};
+          var registry = window.__chatpaneShortcuts || {};
           var helper = registry[call[1]];
           reply(
             typeof helper === "function"
@@ -1223,7 +1223,7 @@
           return b.count - a.count;
         });
       return {
-        blockTelemetry: !!(window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.block_telemetry),
+        blockTelemetry: !!(window.__CHATPANE_SETTINGS__ && window.__CHATPANE_SETTINGS__.block_telemetry),
         totalEntries: entries.length,
         buckets: rows.slice(0, 80),
       };
@@ -1233,7 +1233,7 @@
     // scripts run and records aggregate scheduling/churn, never callback args,
     // DOM content, request URLs, or socket payloads.
     function installPerformanceInstrumentation() {
-      if (window.__CARRIER_MCP_PERF__) return window.__CARRIER_MCP_PERF__;
+      if (window.__CHATPANE_MCP_PERF__) return window.__CHATPANE_MCP_PERF__;
       var state = {
         installedAt: performance.now(),
         mutation: {
@@ -1269,7 +1269,7 @@
         },
         scheduler: { calls: {}, sources: {}, locations: {}, patched: [] },
       };
-      window.__CARRIER_MCP_PERF__ = state;
+      window.__CHATPANE_MCP_PERF__ = state;
       state.workerRefs = [];
       state.socketRefs = [];
 
@@ -1588,7 +1588,7 @@
     }
 
     function copyCounters() {
-      var state = window.__CARRIER_MCP_PERF__ || {};
+      var state = window.__CHATPANE_MCP_PERF__ || {};
       return JSON.parse(
         safeStringify({
           mutation: state.mutation || {},
@@ -1759,14 +1759,14 @@
         frames: { total: frames.length, hosts: frameHosts },
         animations: { total: animations.length, states: animationStates },
         resources: resourceTotals(),
-        debugProfile: window.__CARRIER_MCP_NETWORK_PROFILE__ || { name: "none", blocked: 0 },
+        debugProfile: window.__CHATPANE_MCP_NETWORK_PROFILE__ || { name: "none", blocked: 0 },
         instrumentation: copyCounters(),
       };
     }
 
     function activityProbe() {
       var duration = 15000;
-      var state = window.__CARRIER_MCP_PERF__ || {};
+      var state = window.__CHATPANE_MCP_PERF__ || {};
       var beforeCounters = copyCounters();
       var beforeResources = resourceTotals();
       var beforeNodes = document.querySelectorAll("*").length;
@@ -1893,7 +1893,7 @@
     // Resolve the highest-volume timer stack bundle names back to Haste module
     // names. The response contains no source text, request URLs, or page data.
     function timerSourcesProbe() {
-      var state = window.__CARRIER_MCP_PERF__ || {};
+      var state = window.__CHATPANE_MCP_PERF__ || {};
       var timerSourceCounts = (state.timers && state.timers.sources) || {};
       var schedulerSourceCounts = (state.scheduler && state.scheduler.sources) || {};
       var sourceCounts = {};
@@ -2050,7 +2050,7 @@
     }
 
     function moduleRuntimeProbe() {
-      var state = window.__CARRIER_MCP_MODULE_RUNTIME__ || {};
+      var state = window.__CHATPANE_MCP_MODULE_RUNTIME__ || {};
       var modules = Object.keys(state.modules || {})
         .map(function (name) {
           var module = state.modules[name];
@@ -2113,7 +2113,7 @@
     }
 
     function componentExperimentProbe() {
-      var state = window.__CARRIER_MCP_MODULE_RUNTIME__ || {};
+      var state = window.__CHATPANE_MCP_MODULE_RUNTIME__ || {};
       var performanceSummary = performanceProbe();
       var counters = performanceSummary.instrumentation || {};
       return {
@@ -2149,8 +2149,8 @@
               : 0,
           socketsCreated: (counters.sockets && counters.sockets.created) || 0,
           responsivenessWorkersStopped:
-            (window.__CARRIER_WORKER_OPTIMIZATION__ &&
-              window.__CARRIER_WORKER_OPTIMIZATION__.responsivenessWorkersStopped) ||
+            (window.__CHATPANE_WORKER_OPTIMIZATION__ &&
+              window.__CHATPANE_WORKER_OPTIMIZATION__.responsivenessWorkersStopped) ||
             0,
         },
       };
@@ -2220,7 +2220,7 @@
     }
 
     function runPerformanceExperiment(name) {
-      var state = window.__CARRIER_MCP_PERF__ || {};
+      var state = window.__CHATPANE_MCP_PERF__ || {};
       if (name === "trace-scheduler") {
         var schedulerLoader = typeof window.require === "function" ? window.require : null;
         if (!schedulerLoader) return { applied: false, reason: "no module loader" };
@@ -2239,7 +2239,7 @@
           ];
           methods.forEach(function (method) {
             var nativeMethod = scheduler && scheduler[method];
-            if (typeof nativeMethod !== "function" || nativeMethod.__carrierTraced) return;
+            if (typeof nativeMethod !== "function" || nativeMethod.__chatpaneTraced) return;
             var traced = function () {
               schedulerState.calls[method] = (schedulerState.calls[method] || 0) + 1;
               var origin = typeof capture === "function" ? capture() : { source: "unknown" };
@@ -2253,7 +2253,7 @@
               }
               return nativeMethod.apply(this, arguments);
             };
-            traced.__carrierTraced = true;
+            traced.__chatpaneTraced = true;
             scheduler[method] = traced;
             schedulerState.patched.push(method);
           });
@@ -2359,7 +2359,7 @@
         for (var socketIndex = 0; socketIndex < socketRefs.length; socketIndex++) {
           if (!endpointPattern.test(socketRefs[socketIndex].endpoint)) continue;
           try {
-            socketRefs[socketIndex].socket.close(1000, "Carrier debug experiment");
+            socketRefs[socketIndex].socket.close(1000, "Chatpane debug experiment");
             closed++;
           } catch (_) {}
         }
@@ -2722,11 +2722,11 @@
     // DOM; falls back to the persisted view when the hook is absent.
     function liveSenderAvatarResolve(cache, row, sender) {
       try {
-        if (window.__carrierSenderAvatarStats) {
+        if (window.__chatpaneSenderAvatarStats) {
           var name = notifyNorm(sender);
           if (!name) return "no-sender";
           if (senderAvatarLookupKind(cache, row, name) === "not-a-group") return "not-a-group";
-          return window.__carrierSenderAvatarStats(threadIdOf(row), name).resolves;
+          return window.__chatpaneSenderAvatarStats(threadIdOf(row), name).resolves;
         }
       } catch (_) {}
       return senderAvatarLookupKind(cache, row, sender);
@@ -2735,7 +2735,7 @@
     // Counts straight from the injected store, which is what production reads.
     function liveSenderAvatarStats() {
       try {
-        var stats = window.__carrierSenderAvatarStats && window.__carrierSenderAvatarStats();
+        var stats = window.__chatpaneSenderAvatarStats && window.__chatpaneSenderAvatarStats();
         return stats
           ? { avatars: stats.avatars, groups: stats.groups, retired: stats.retired }
           : { available: false };
@@ -2864,10 +2864,10 @@
         rowLookups: rowLookups,
         paneIdentity: paneIdentity(),
         injected: {
-          notificationBridge: typeof window.__carrierNotifyClick === "function",
-          openThread: typeof window.__carrierOpenThread === "function",
+          notificationBridge: typeof window.__chatpaneNotifyClick === "function",
+          openThread: typeof window.__chatpaneOpenThread === "function",
           notificationPatched: String(window.Notification && window.Notification.name),
-          settings: !!window.__CARRIER_SETTINGS__,
+          settings: !!window.__CHATPANE_SETTINGS__,
         },
         hidden: document.hidden,
       };
@@ -3181,7 +3181,7 @@
         var r = el.getBoundingClientRect();
         return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
       };
-      var carrierAttrs = function (el) {
+      var chatpaneAttrs = function (el) {
         return Array.prototype.filter
           .call(el.attributes || [], function (a) {
             return a.name.indexOf("data-carrier") === 0;
@@ -3212,7 +3212,7 @@
               overflowY: cs.overflowY,
               margin: cs.margin,
               padding: cs.padding,
-              carrier: carrierAttrs(el),
+              carrier: chatpaneAttrs(el),
             });
           }
           var buttons = Array.prototype.map.call(
@@ -3278,7 +3278,7 @@
         scroll: [Math.round(scrollX), Math.round(scrollY)],
         documentHeight: document.documentElement.scrollHeight,
         bodyHeight: document.body ? document.body.scrollHeight : null,
-        html: carrierAttrs(document.documentElement),
+        html: chatpaneAttrs(document.documentElement),
         dialogs: dialogs,
       };
     }
@@ -3333,7 +3333,7 @@
                   before: Math.round(before),
                   during: Math.round(during),
                   after: Math.round(host.getBoundingClientRect().width),
-                  stored: window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.pane_widths,
+                  stored: window.__CHATPANE_SETTINGS__ && window.__CHATPANE_SETTINGS__.pane_widths,
                 });
               }, 300);
             });
@@ -3342,7 +3342,7 @@
       } else if (match[1] === "sound") {
         // Plays Messenger's message sound once through SoundPlayer, as
         // Messenger does, and reports whether its <audio> element played
-        // (it shouldn't: Carrier routes the sound through Web Audio).
+        // (it shouldn't: Chatpane routes the sound through Web Audio).
         // `called` only confirms that SoundPlayer.play returned, not playback.
         try {
           var config = window.require("MWChatConfig");
@@ -3418,7 +3418,7 @@
           edges: edges(),
           chatRow: !!document.querySelector("[data-carrier-chat-row]"),
           main: rect(main),
-          stored: window.__CARRIER_SETTINGS__ && window.__CARRIER_SETTINGS__.pane_widths,
+          stored: window.__CHATPANE_SETTINGS__ && window.__CHATPANE_SETTINGS__.pane_widths,
         },
         selection: {
           body: userSelect(document.body),
@@ -3479,9 +3479,9 @@
             aria: n.getAttribute("aria-label") ? "[present]" : "",
             style: n.getAttribute("style") ? "[present]" : "",
             className: n.getAttribute("class") ? "[present]" : "",
-            carrierIdentity: n.hasAttribute("data-carrier-private-identity"),
-            carrierAvatar: n.hasAttribute("data-carrier-private-avatar"),
-            carrierWrapper: n.hasAttribute("data-carrier-private-wrapper"),
+            chatpaneIdentity: n.hasAttribute("data-carrier-private-identity"),
+            chatpaneAvatar: n.hasAttribute("data-carrier-private-avatar"),
+            chatpaneWrapper: n.hasAttribute("data-carrier-private-wrapper"),
             rect: rect(n),
           });
         }
@@ -3510,11 +3510,11 @@
             hasReplyPhrase: /\breplied to\b/i.test(text),
             previewNamePattern: PREVIEW_NAME_RE.test(text),
             previewEventPattern: PREVIEW_EVENT_RE.test(text),
-            carrierIdentity: el.hasAttribute("data-carrier-private-identity"),
-            carrierAvatar: el.hasAttribute("data-carrier-private-avatar"),
-            carrierIdentityAncestor: !!el.closest(IDENTITY_SEL),
-            carrierWrapper: el.hasAttribute("data-carrier-private-wrapper"),
-            carrierWrapperAncestor: !!el.closest(WRAPPER_SEL),
+            chatpaneIdentity: el.hasAttribute("data-carrier-private-identity"),
+            chatpaneAvatar: el.hasAttribute("data-carrier-private-avatar"),
+            chatpaneIdentityAncestor: !!el.closest(IDENTITY_SEL),
+            chatpaneWrapper: el.hasAttribute("data-carrier-private-wrapper"),
+            chatpaneWrapperAncestor: !!el.closest(WRAPPER_SEL),
           },
         };
       }
@@ -3678,7 +3678,7 @@
           complementary: landmark('[role="complementary"]'),
           main: landmark('[role="main"]'),
         },
-        helpers: Object.keys(window.__carrierShortcuts || {}),
+        helpers: Object.keys(window.__chatpaneShortcuts || {}),
       };
     }
 
@@ -3929,17 +3929,17 @@
     // Force the page theme through force-theme's own settings path (in-memory
     // only; nothing is persisted). ":system" restores the original setting.
     function setThemeForScreenshot(mode) {
-      var settings = window.__CARRIER_SETTINGS__ || (window.__CARRIER_SETTINGS__ = {});
-      if (!window.__CARRIER_MCP_ORIG_THEME__) {
-        window.__CARRIER_MCP_ORIG_THEME__ = { theme: settings.theme };
+      var settings = window.__CHATPANE_SETTINGS__ || (window.__CHATPANE_SETTINGS__ = {});
+      if (!window.__CHATPANE_MCP_ORIG_THEME__) {
+        window.__CHATPANE_MCP_ORIG_THEME__ = { theme: settings.theme };
       }
       if (mode === "system") {
-        settings.theme = window.__CARRIER_MCP_ORIG_THEME__.theme;
-        delete window.__CARRIER_MCP_ORIG_THEME__;
+        settings.theme = window.__CHATPANE_MCP_ORIG_THEME__.theme;
+        delete window.__CHATPANE_MCP_ORIG_THEME__;
       } else {
         settings.theme = mode;
       }
-      window.dispatchEvent(new Event("carrier:settings"));
+      window.dispatchEvent(new Event("chatpane:settings"));
       return {
         theme: settings.theme || "(system)",
         htmlClasses: document.documentElement.className.match(/__fb-\w+-mode/g) || [],
@@ -3953,7 +3953,7 @@
     // key if it did not exist.
     function persistThemeAndReload(mode) {
       var CACHE = "__carrier_settings";
-      var STASH = "__carrier_mcp_theme_stash";
+      var STASH = "__chatpane_mcp_theme_stash";
       var raw = localStorage.getItem(CACHE);
       if (mode === "restore") {
         var stash = localStorage.getItem(STASH);
@@ -3975,7 +3975,7 @@
           settings = null;
         }
         if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
-          settings = Object.assign({}, window.__CARRIER_SETTINGS__ || {});
+          settings = Object.assign({}, window.__CHATPANE_SETTINGS__ || {});
         }
         settings.theme = mode;
         localStorage.setItem(CACHE, JSON.stringify(settings));
@@ -4387,7 +4387,7 @@
     });
 
     // --- get-page-map : compact semantic DOM map (no eval; CSP-safe) ----------
-    // The upstream guest bundle normally supplies this serializer. Carrier's
+    // The upstream guest bundle normally supplies this serializer. Chatpane's
     // remote page cannot import that bundle, so keep a deliberately compact
     // equivalent here: semantic and interactive nodes, bounded text, no form
     // values, and digit-masked hrefs.
@@ -4581,9 +4581,9 @@
       respond("got-dom-content-response", cid, dom);
     });
 
-    window.__CARRIER_MCP_BRIDGE__ = true;
+    window.__CHATPANE_MCP_BRIDGE__ = true;
     try {
-      console.log("[carrier] tauri-mcp guest bridge ready on window '" + label + "'");
+      console.log("[chatpane] tauri-mcp guest bridge ready on window '" + label + "'");
     } catch (_) {}
     return true;
   }

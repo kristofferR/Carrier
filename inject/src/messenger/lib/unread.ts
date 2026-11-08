@@ -67,7 +67,7 @@ export function reconcileMutedUnreadIds(
 }
 
 /**
- * Keeps positive muted-unread evidence across Carrier's periodic page reloads.
+ * Keeps positive muted-unread evidence across Chatpane's periodic page reloads.
  * Missing virtualized rows are inconclusive; a stored id is removed only when
  * that same thread is rendered stably read or unmuted, or the account changes.
  */

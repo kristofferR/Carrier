@@ -1,4 +1,4 @@
-//! Share-into-Carrier intake (Ref #213): the share extension serializes the
+//! Share-into-Chatpane intake (Ref #213): the share extension serializes the
 //! shared files onto a one-time, unguessable named pasteboard and opens a
 //! capability URL; this module validates that handoff and delivers the files
 //! to the page.
@@ -45,7 +45,7 @@ struct SharedFile {
     data: String,
 }
 
-/// Whether this open is the share handoff (the only `chatpane://` URL Carrier
+/// Whether this open is the share handoff (the only `chatpane://` URL Chatpane
 /// answers).
 fn pasteboard_name_for_handoff(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
@@ -235,7 +235,7 @@ pub(crate) fn deliver_pending(app: &tauri::AppHandle, preferred: Option<tauri::W
     let Some(share) = pending.take() else {
         return;
     };
-    let script = format!("window.__carrierShareMedia?.({});", share.payload);
+    let script = format!("window.__chatpaneShareMedia?.({});", share.payload);
     if window.eval(&script).is_err() {
         // The webview died mid-flight; keep the share for the next page load.
         *pending = Some(share);

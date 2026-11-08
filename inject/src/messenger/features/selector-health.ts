@@ -19,7 +19,7 @@ const WATCHED_SELECTORS = [
   // Mounted from a requestAnimationFrame callback, which a hidden webview
   // never runs — so a hidden window says nothing about whether the selector
   // still works, and checking one would report a break every interval for as
-  // long as Carrier sits in the background.
+  // long as Chatpane sits in the background.
   { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true },
 ];
 

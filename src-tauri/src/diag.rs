@@ -1,10 +1,10 @@
-//! Page diagnostics: the `carrier:diag` payload from the injected script,
+//! Page diagnostics: the `chatpane:diag` payload from the injected script,
 //! its sanitisation, and the per-session/log-size caps.
 
 use serde::Deserialize;
 
-/// A diagnostic report from the injected page script (`carrier:diag`): which
-/// feature broke and a short description. The page only ever sends Carrier's
+/// A diagnostic report from the injected page script (`chatpane:diag`): which
+/// feature broke and a short description. The page only ever sends Chatpane's
 /// own strings (selector names, failure kinds) — never page content.
 #[derive(Deserialize)]
 pub(crate) struct DiagMsg {

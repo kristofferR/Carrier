@@ -1,6 +1,6 @@
-/* ------------------- Share-into-Carrier delivery ---------------------- */
+/* ------------------- Share-into-Chatpane delivery ---------------------- */
 // The native side delivers a validated share-extension payload through
-// `window.__carrierShareMedia` (Ref #214). The files are reconstructed and
+// `window.__chatpaneShareMedia` (Ref #214). The files are reconstructed and
 // pasted into the open conversation's composer; with no conversation open,
 // the share waits until one is, and expires quietly after two minutes.
 //
@@ -91,7 +91,7 @@ export function initShareIntake() {
     }
   };
 
-  Object.defineProperty(window, "__carrierShareMedia", {
+  Object.defineProperty(window, "__chatpaneShareMedia", {
     value: (payload: unknown) => {
       const entries = sanitizeSharedFiles(payload);
       const { files, failures } = decodeSharedFiles(entries);

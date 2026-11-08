@@ -75,7 +75,7 @@ function returnToMessengerAfterLogin(): LoginRecoveryState {
   return "settled";
 }
 
-// Carrier's mark over a fresh login page until its text has rendered
+// Chatpane's mark over a fresh login page until its text has rendered
 // (messenger.css). WebKitGTK can hold Facebook's page for about 20 s, so this
 // starts at document start, before the first paint.
 function showLoaderUntilLoginRenders() {
@@ -119,7 +119,7 @@ export function initLoginTidy() {
   // Follow the forced theme (Settings → Theme) when set, else the system. FB's
   // login page ships only a light theme, so this drives our scoped login palette.
   const wantDark = () => {
-    const t = window.__CARRIER_SETTINGS__?.theme;
+    const t = window.__CHATPANE_SETTINGS__?.theme;
     if (t === "dark") return true;
     if (t === "light") return false;
     return prefersDark();
@@ -448,7 +448,7 @@ export function initLoginTidy() {
   schedule();
   tidyObserver = new MutationObserver(schedule);
   tidyObserver.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener("carrier:settings", schedule);
+  window.addEventListener("chatpane:settings", schedule);
   // The language strip can mount slightly after our first pass, so re-run on
   // resize and a couple of short delays after load (cheap; tidy() no-ops off
   // the login page).

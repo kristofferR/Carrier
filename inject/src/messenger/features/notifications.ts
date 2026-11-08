@@ -1,6 +1,6 @@
 /* --------------------- Native message notifications ------------------- */
 // Bridge the page's Web Notification API to native OS notifications so new
-// messages notify you even when Carrier is in the background.
+// messages notify you even when Chatpane is in the background.
 
 import { diag, invoke } from "../bridge";
 import { noteExplicitAction } from "../lib/composer-focus";
@@ -66,7 +66,7 @@ import { unreadCountFromTitle } from "../lib/unread";
 import { chatRows } from "./conversation-actions";
 import { messengerMessageSoundJustPlayed } from "./messenger-sounds";
 
-interface CarrierNotificationInstance {
+interface ChatpaneNotificationInstance {
   title?: string;
   onclick: ((e: Event) => unknown) | null;
   close: () => void;
@@ -212,11 +212,11 @@ export function initNotificationBridge() {
   // account boundary. On auth/checkpoint pages no receipt is persisted.
   const pageNotificationReceipts = new PageNotificationReceiptStore(
     pageReceiptKey ? notificationStorage : null,
-    pageReceiptKey || "__carrier_page_notification_receipts_anonymous__",
+    pageReceiptKey || "__chatpane_page_notification_receipts_anonymous__",
   );
   const pendingPageNotifications = new PendingPageNotificationStore(
     pendingPageKey ? notificationStorage : null,
-    pendingPageKey || "__carrier_pending_page_notifications_anonymous__",
+    pendingPageKey || "__chatpane_pending_page_notifications_anonymous__",
   );
 
   // Clicking a native notification routes back here by id: bring the
@@ -228,7 +228,7 @@ export function initNotificationBridge() {
   let notifySeq = Date.now() * 1000 + Math.floor(Math.random() * 1000);
   const notifyHandlers = new Map<number, () => void>();
   const deliveryHandlers = new Map<number, (delivery: NativeNotificationDelivery) => void>();
-  window.__carrierNotifyClick = (id: number) => {
+  window.__chatpaneNotifyClick = (id: number) => {
     noteExplicitAction();
     const handler = notifyHandlers.get(id);
     notifyHandlers.delete(id);
@@ -241,7 +241,7 @@ export function initNotificationBridge() {
     return handler !== undefined;
   };
 
-  window.__carrierNotifyResult = (id, delivery) => {
+  window.__chatpaneNotifyResult = (id, delivery) => {
     if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
     pageNotificationReceipts.recordDelivery(id, delivery);
     const handler = deliveryHandlers.get(id);
@@ -276,7 +276,7 @@ export function initNotificationBridge() {
       }
     }
     invoke("plugin:event|emit", {
-      event: "carrier:notify",
+      event: "chatpane:notify",
       payload: {
         id,
         title,
@@ -297,7 +297,7 @@ export function initNotificationBridge() {
       },
     })?.catch?.(() => {
       deliveryHandlers.delete(id);
-      diag("notify.emit", "carrier:notify emit failed");
+      diag("notify.emit", "chatpane:notify emit failed");
     });
   };
 
@@ -308,9 +308,9 @@ export function initNotificationBridge() {
   // in-page handler map.
   const updateNotificationRoute = (id: number, threadPath: string) => {
     invoke("plugin:event|emit", {
-      event: "carrier:notify-route",
+      event: "chatpane:notify-route",
       payload: { id, thread_path: threadPath },
-    })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
+    })?.catch?.(() => diag("notify.route", "chatpane:notify-route emit failed"));
   };
 
   // Persist delivered fingerprints so hydration after a reload cannot replay
@@ -324,7 +324,7 @@ export function initNotificationBridge() {
   const markNotified = (key: string, fingerprint: string, bodyHash?: string) => {
     notifiedStore.markNotified(key, fingerprint, bodyHash);
     invoke("plugin:event|emit", {
-      event: "carrier:notify-handled",
+      event: "chatpane:notify-handled",
       payload: {
         account: accountId(document.cookie) || "",
         thread: key,
@@ -341,9 +341,9 @@ export function initNotificationBridge() {
   const threadKinds = new ThreadKindCache((thread) =>
     readThreadIsGroup(thread, (window as unknown as { require?: unknown }).require),
   );
-  const groupFiltering = () => window.__CARRIER_SETTINGS__?.notify_group_chats === false;
+  const groupFiltering = () => window.__CHATPANE_SETTINGS__?.notify_group_chats === false;
   const groupSuppressed = (thread: string | null | undefined) =>
-    !!thread && suppressGroupChat(window.__CARRIER_SETTINGS__, threadKinds.isGroup(thread));
+    !!thread && suppressGroupChat(window.__CHATPANE_SETTINGS__, threadKinds.isGroup(thread));
   const learnThreadKind = (thread: string | null | undefined) =>
     groupFiltering() && thread ? threadKinds.ensure(thread).then(() => {}) : Promise.resolve();
   const conversationNames = (threadId: string) =>
@@ -366,7 +366,7 @@ export function initNotificationBridge() {
   // For the dev-only MCP probe: cache sizes, or the verdict for a sender the
   // probe already read from the DOM. Nothing but counts and classifications
   // crosses this boundary — no names, no URLs.
-  window.__carrierSenderAvatarStats = (thread?: string, sender?: string) =>
+  window.__chatpaneSenderAvatarStats = (thread?: string, sender?: string) =>
     thread === undefined
       ? senderAvatars.stats
       : { resolves: senderAvatars.describe(thread, sender || "") };
@@ -410,18 +410,18 @@ export function initNotificationBridge() {
     const cancel = new AbortController();
     const cancelWhenFilteringIsDisabled = () => {
       // Identity is needed while either filter (muted or group chats) is on.
-      if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__) && !groupFiltering()) {
+      if (!ignoresMutedConversations(window.__CHATPANE_SETTINGS__) && !groupFiltering()) {
         cancel.abort();
       }
     };
-    window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+    window.addEventListener("chatpane:settings", cancelWhenFilteringIsDisabled);
     cancelWhenFilteringIsDisabled();
     return waitForPageNotificationMatch(
       signal,
       PAGE_NOTIFICATION_RECOVERY_MS,
       cancel.signal,
     ).finally(() => {
-      window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+      window.removeEventListener("chatpane:settings", cancelWhenFilteringIsDisabled);
     });
   };
 
@@ -497,13 +497,13 @@ export function initNotificationBridge() {
     };
   };
 
-  function CarrierNotification(
-    this: CarrierNotificationInstance,
+  function ChatpaneNotification(
+    this: ChatpaneNotificationInstance,
     title?: string,
     options: { icon?: string; image?: string; body?: string; tag?: string } | null = {},
   ) {
     const opts = options || {};
-    const s = window.__CARRIER_SETTINGS__ || {};
+    const s = window.__CHATPANE_SETTINGS__ || {};
     // Content-free breadcrumb: proves Facebook fired a Notification at all
     // (the unread badge rides a separate path, so "badge but no banner"
     // reports need this to split page-side from native-side failures).
@@ -541,7 +541,7 @@ export function initNotificationBridge() {
       cancelFallbackForDraftReceipt(threadId, String(opts.body || ""));
     };
     // Surface every new-message notification Facebook fires — even while
-    // Carrier is focused (the native side presents it as a banner regardless of
+    // Chatpane is focused (the native side presents it as a banner regardless of
     // focus) — unless notifications are muted. (The auto-refresh nudge below
     // still runs when muted so the window keeps catching up.)
     if (!notificationsGloballyMuted(s)) {
@@ -581,7 +581,7 @@ export function initNotificationBridge() {
           ? waitForPageNotificationMatch(pageMatch.signal, 1000)
           : Promise.resolve();
       const names = Promise.all([matchWait, identityMatchWait]).then(() =>
-        hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview
+        hidePreviewAtConstruction || window.__CHATPANE_SETTINGS__?.hide_notification_preview
           ? null
           : conversationNames(
               threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || "",
@@ -595,7 +595,7 @@ export function initNotificationBridge() {
         : Promise.all([matchWait, identityMatchWait]).then(() => {
             if (
               hidePreviewAtConstruction ||
-              window.__CARRIER_SETTINGS__?.hide_notification_preview
+              window.__CHATPANE_SETTINGS__?.hide_notification_preview
             ) {
               return "";
             }
@@ -621,7 +621,7 @@ export function initNotificationBridge() {
       ]).then(([icon, , image, group, picture]) => {
         const signal = pageMatch.signal;
         const unresolvedIdentity = signal !== undefined && !signal.matched && !signal.threadPath;
-        const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
         // A delivery-boundary global mute is final for this logical page
         // notification. Do not let its cross-reload receipt revive it after
         // notifications are enabled again.
@@ -629,7 +629,7 @@ export function initNotificationBridge() {
           pendingPageNotifications.remove(id);
         }
         if (unresolvedIdentity && ignoresMutedConversations(deliverySettings)) {
-          // The page gives Carrier content but no trustworthy thread id. An
+          // The page gives Chatpane content but no trustworthy thread id. An
           // unresolved banner cannot be retracted if a later row proves it
           // muted, so fail closed while muted filtering is enabled. A later
           // row mutation still takes the ordinary routed fallback path.
@@ -805,7 +805,7 @@ export function initNotificationBridge() {
     // Recheck transport and processing after new-message activity. Receiving a
     // notification alone does not prove a stalled view or justify a reload.
     try {
-      window.__carrierOnNotification?.();
+      window.__chatpaneOnNotification?.();
     } catch (_) {}
     // A page Notification can precede any observable row mutation. Reconcile
     // against the current list as soon as this constructor returns so an
@@ -815,14 +815,14 @@ export function initNotificationBridge() {
     this.onclick = null;
     this.close = () => {};
   }
-  CarrierNotification.permission = "granted";
-  CarrierNotification.requestPermission = (cb?: (permission: string) => void) => {
+  ChatpaneNotification.permission = "granted";
+  ChatpaneNotification.requestPermission = (cb?: (permission: string) => void) => {
     if (cb) cb("granted");
     return Promise.resolve("granted");
   };
   try {
     Object.defineProperty(window, "Notification", {
-      value: CarrierNotification,
+      value: ChatpaneNotification,
       writable: true,
       configurable: true,
     });
@@ -831,7 +831,7 @@ export function initNotificationBridge() {
   // Meta no longer reliably constructs Web Notifications for Messenger. Use
   // the conversation list as the source of truth: prime existing unread rows,
   // then notify only when an unread conversation's preview signature changes.
-  // This is the modern Caprine/Wheemer strategy, adapted to Carrier's stable
+  // This is the modern Caprine/Wheemer strategy, adapted to Chatpane's stable
   // role/link selectors and kept as a delayed fallback to the page bridge.
   const conversationTracker = new ConversationNotificationTracker();
 
@@ -954,11 +954,11 @@ export function initNotificationBridge() {
     const shown = paneShowsThread(rowTitles.get(openThread) || "", leaving);
     if (shown !== "yes") {
       // Retry while the render is plausibly still coming; the attempt limit
-      // stops a title that can never be verified from waking Carrier twice a
+      // stops a title that can never be verified from waking Chatpane twice a
       // second forever. This deliberately runs while hidden: the harvest feeds
       // notifications, which are read precisely when nobody is looking at the
       // window, and gating it on visibility left group senders unharvested for
-      // as long as Carrier stayed in the background.
+      // as long as Chatpane stayed in the background.
       if (settleAttempts < SETTLE_ATTEMPT_LIMIT) {
         settleAttempts++;
         scheduleHarvest(500);
@@ -1014,7 +1014,7 @@ export function initNotificationBridge() {
   // closed between polls, so watch the harvested surfaces too. This runs while
   // hidden as well: the faces feed notifications, which matter precisely when
   // nobody is watching the window, and the throttle above is what keeps an
-  // unfocused Carrier off the CPU.
+  // unfocused Chatpane off the CPU.
   let harvestScheduled = false;
   const scheduleHarvest = (delay = 300) => {
     if (harvestScheduled) return;
@@ -1179,7 +1179,7 @@ export function initNotificationBridge() {
       updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
     }
     if (
-      suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__) ||
+      suppressMutedDelivery(pageSignal.threadMuted, window.__CHATPANE_SETTINGS__) ||
       groupSuppressed(conversation.key)
     ) {
       notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
@@ -1228,7 +1228,7 @@ export function initNotificationBridge() {
     if (!fallback.deliverable) return;
     // A burst can displace this row before the scan's kind prefetch settles.
     if (groupFiltering()) await learnThreadKind(fallback.key);
-    const settings = window.__CARRIER_SETTINGS__ || {};
+    const settings = window.__CHATPANE_SETTINGS__ || {};
     if (
       suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) ||
       groupSuppressed(fallback.key)
@@ -1257,7 +1257,7 @@ export function initNotificationBridge() {
       hidePreview ? "New message" : fallback.displayBody,
       "",
       fallback.dedupeKey,
-      () => window.__carrierOpenThread?.(fallback.threadPath),
+      () => window.__chatpaneOpenThread?.(fallback.threadPath),
       fallback.threadPath,
       undefined,
       "",
@@ -1303,7 +1303,7 @@ export function initNotificationBridge() {
       return;
 
     if (
-      suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__) ||
+      suppressMutedDelivery(conversation.muted, window.__CHATPANE_SETTINGS__) ||
       groupSuppressed(conversation.key)
     ) {
       notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
@@ -1345,7 +1345,7 @@ export function initNotificationBridge() {
     const senderIcon = conversation.isGroup
       ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body))
       : "";
-    const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
+    const hiddenAtConstruction = window.__CHATPANE_SETTINGS__?.hide_notification_preview === true;
     const names = hiddenAtConstruction
       ? Promise.resolve(null)
       : conversationNames(conversation.key);
@@ -1372,7 +1372,7 @@ export function initNotificationBridge() {
       await learnThreadKind(conversation.key);
       // A newer preview may own this conversation now; it decides, not us.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
-      const settings = window.__CARRIER_SETTINGS__ || {};
+      const settings = window.__CHATPANE_SETTINGS__ || {};
       if (
         suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) ||
         groupSuppressed(conversation.key)
@@ -1407,7 +1407,7 @@ export function initNotificationBridge() {
       // late page Notification must still win instead of producing a second
       // native notification while this fallback is in flight.
       if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
-      const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+      const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
       const hidePreview = deliverySettings.hide_notification_preview === true;
       if (
         suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings) ||
@@ -1466,7 +1466,7 @@ export function initNotificationBridge() {
         hidePreview ? "" : icon,
         dedupeKey,
         () => {
-          window.__carrierOpenThread?.(conversation.threadPath);
+          window.__chatpaneOpenThread?.(conversation.threadPath);
         },
         conversation.threadPath,
         undefined,
@@ -1575,7 +1575,7 @@ export function initNotificationBridge() {
           conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft,
       );
       for (const conversation of conversations) void learnThreadKind(conversation.key);
-      const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const ignoreMuted = ignoresMutedConversations(window.__CHATPANE_SETTINGS__);
       // Known suppressed group chats count like muted ones: never notified, and
       // their unread-count increases are never attributed to another chat.
       const silenced = (conversation: { key: string; muted: boolean }) =>
@@ -1680,7 +1680,7 @@ export function initNotificationBridge() {
       // it started rendering read: an identical message is news again.
       if (confirmedReads.length > 0) {
         invoke("plugin:event|emit", {
-          event: "carrier:notify-read",
+          event: "chatpane:notify-read",
           payload: { account: accountId(document.cookie) || "", reads: confirmedReads },
         })?.catch?.(() => {});
       }
@@ -2001,7 +2001,7 @@ export function initNotificationBridge() {
       // re-triggers it.
       if ([...changed].every((key) => stale.has(key) || unhydrated.has(key))) return;
       try {
-        window.__carrierOnNotification?.();
+        window.__chatpaneOnNotification?.();
       } catch (_) {}
       for (const conversation of conversations) {
         if (
@@ -2113,7 +2113,7 @@ export function initNotificationBridge() {
   }
 
   // Mutations drive the fast path. This slow safety poll also re-attaches when
-  // React replaces the grid element, and backs off while Carrier is hidden.
+  // React replaces the grid element, and backs off while Chatpane is hidden.
   let pollTimer: number | undefined;
   const poll = () => {
     attachScanner();

@@ -1,6 +1,6 @@
 /* ------------------------------ Scroll bars ----------------------------- */
 // Thin scroll bars that stay out of the way. Where the engine draws overlay
-// scroll bars (macOS, where Carrier asks AppKit for them, and GTK's overlay
+// scroll bars (macOS, where Chatpane asks AppKit for them, and GTK's overlay
 // scrolling), messenger.css only makes them thin, and the engine keeps moving
 // them on its scrolling thread. Where it draws classic always-on tracks
 // (Windows), they take room from the panes, so in the chats they are hidden

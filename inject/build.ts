@@ -42,7 +42,7 @@ for (const [entry, out, source] of [
 await build({
   bundle: true,
   format: "iife",
-  globalName: "CarrierSettingsUpdate",
+  globalName: "ChatpaneSettingsUpdate",
   target: "es2020",
   charset: "utf8",
   legalComments: "none",

@@ -314,7 +314,7 @@ pub(crate) fn try_deliver_notification_windows(
     show_toast(app, &opts).map_err(|error| format!("Windows refused the notification: {error}"))
 }
 
-/// Why Windows would not show Carrier's toasts, from its notification
+/// Why Windows would not show Chatpane's toasts, from its notification
 /// settings (Ref #259). None when they are allowed or unreadable.
 #[cfg(target_os = "windows")]
 pub(crate) fn notification_blocker(app: &tauri::AppHandle) -> Option<String> {
@@ -430,7 +430,7 @@ fn show_toast(app: &tauri::AppHandle, opts: &WindowsToastOptions) -> WinResult<(
     log_notifications_disabled_once(&notifier);
     notifier.Show(&toast)?;
     // An unpackaged app's toast can't play a file, so the toast is silent and
-    // Carrier plays it, unless Windows turned Carrier's toasts off.
+    // Chatpane plays it, unless Windows turned Chatpane's toasts off.
     if let crate::sound::Sound::File(path) = &opts.sound
         && notifier
             .Setting()
@@ -575,7 +575,7 @@ pub(crate) fn clear_thread_group(app: &tauri::AppHandle, thread_id: &str) {
     crate::notifications::take_routed_notification_ids_for_thread(&format!("/t/{thread_id}/"));
 }
 
-/// Clear every Carrier toast from Action Center (Log Out; Ref #356).
+/// Clear every Chatpane toast from Action Center (Log Out; Ref #356).
 #[cfg(target_os = "windows")]
 pub(crate) fn clear_all(app: &tauri::AppHandle) {
     match ToastNotificationManager::History() {
@@ -590,7 +590,7 @@ pub(crate) fn clear_all(app: &tauri::AppHandle) {
     }
 }
 
-/// Register Carrier's dedicated toast AppUserModelID in
+/// Register Chatpane's dedicated toast AppUserModelID in
 /// `HKCU\Software\Classes\AppUserModelId\<aumid>` with its display assets.
 /// This works independently of the installed shortcut, so installed and
 /// portable builds follow the same path. Idempotent, per-user, no admin.

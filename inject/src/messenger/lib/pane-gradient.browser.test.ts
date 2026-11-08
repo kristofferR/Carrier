@@ -90,7 +90,7 @@ async function runFixtures(gradient: () => void, panes: () => void) {
     Object.assign(window, {
       __TAURI_INTERNALS__: {
         invoke: async (_command: string, args: { event: string }) => {
-          if (args.event === "carrier:pane-widths") saves++;
+          if (args.event === "chatpane:pane-widths") saves++;
         },
       },
     });

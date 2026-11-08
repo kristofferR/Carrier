@@ -84,7 +84,7 @@ export function patchNicknameReplies(
     );
     return request;
   };
-  const hook = function useCarrierReplyAttribution(this: unknown, ...args: unknown[]) {
+  const hook = function useChatpaneReplyAttribution(this: unknown, ...args: unknown[]) {
     const text: unknown = Reflect.apply(original, this, args);
     const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
     const [names, setNames] = useState<{

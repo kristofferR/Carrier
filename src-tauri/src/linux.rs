@@ -293,7 +293,7 @@ async fn watch_portal_color_scheme(app: tauri::AppHandle) {
                 log::warn!("desktop color-scheme portal stream ended; reconnecting");
             }
             Err(error) => {
-                // Some minimal Linux sessions have no portal. Keep Carrier
+                // Some minimal Linux sessions have no portal. Keep Chatpane
                 // running and retry in case the desktop service starts later,
                 // but do not write the same warning to disk every 30 seconds.
                 let message = error.to_string();
@@ -340,7 +340,7 @@ fn light_theme_name(name: &str) -> Option<&str> {
 }
 
 thread_local! {
-    /// The desktop's GTK theme name while Carrier has swapped it for its
+    /// The desktop's GTK theme name while Chatpane has swapped it for its
     /// light variant; `None` when the desktop's own name is in place.
     static SWAPPED_GTK_THEME: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
@@ -368,7 +368,7 @@ pub(crate) fn apply_gtk_theme_name(app: &tauri::AppHandle, theme: Option<tauri::
                     *swapped = desktop;
                 }
             } else if swapped.take().is_some() {
-                // Drop Carrier's override rather than setting the old name
+                // Drop Chatpane's override rather than setting the old name
                 // again, which would be a new override: the desktop's value,
                 // and its later changes, apply once more.
                 settings.reset_property("gtk-theme-name");

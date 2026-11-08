@@ -1,4 +1,4 @@
-//! New-message notifications: the `carrier:notify` payload, the image
+//! New-message notifications: the `chatpane:notify` payload, the image
 //! temp-PNG cache, and the platform delivery paths (macOS goes through
 //! `UNUserNotificationCenter` in [`crate::macos::notifications`]; Linux uses
 //! the notification portal in Snap and freedesktop D-Bus elsewhere; Windows
@@ -70,7 +70,7 @@ impl NotifySender {
     }
 }
 
-/// A new-message notification request from the page (the `carrier:notify` event).
+/// A new-message notification request from the page (the `chatpane:notify` event).
 /// Facebook hands its in-page `Notification` the sender (`title`), the message
 /// preview (`body`), and the sender's avatar URL; the injected bridge forwards
 /// them here, rendering the avatar to a PNG data URL (`icon`, best-effort) so the
@@ -920,7 +920,7 @@ impl NotifyMsg {
 }
 
 /// A late route update for an already-emitted notification (the
-/// `carrier:notify-route` event). Sent when a page `Notification` fired before
+/// `chatpane:notify-route` event). Sent when a page `Notification` fired before
 /// its conversation row was known: the row-driven pairing later supplies the
 /// route so a click still opens the conversation after a page reload.
 #[derive(Debug, Default, Deserialize)]
@@ -976,7 +976,7 @@ const MAX_AVATAR_BYTES: usize = 1 << 20; // 1 MiB decoded
 /// Decode an avatar or media thumbnail into a private PNG for native delivery.
 /// Images are best-effort: invalid input returns `None`.
 fn avatar_to_temp_png(data_url: &str) -> Option<PathBuf> {
-    // `carrier:notify` crosses from the remote page, so validate the shape
+    // `chatpane:notify` crosses from the remote page, so validate the shape
     // before decoding or writing. Our injected bridge always builds the image
     // with `canvas.toDataURL("image/png")`, so require exactly a base64 PNG data
     // URL rather than trusting an arbitrary `image/*` type from the page.
@@ -1863,21 +1863,21 @@ fn quick_reply_script(
     let budget = remaining.saturating_sub(PAGE_ACTION_ACK_MARGIN).as_millis();
     Ok(match mode {
         PendingReplyMode::Send => {
-            format!("window.__carrierQuickReply?.({path}, {text}, {id}, {attempt});")
+            format!("window.__chatpaneQuickReply?.({path}, {text}, {id}, {attempt});")
         }
         PendingReplyMode::Draft => {
-            format!("window.__carrierQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
+            format!("window.__chatpaneQuickReplyDraft?.({path}, {text}, {id}, {attempt});")
         }
         PendingReplyMode::Mute => format!(
-            "window.__carrierQuickMute?.({path}, {}, {id}, {attempt}, {budget});",
+            "window.__chatpaneQuickMute?.({path}, {}, {id}, {attempt}, {budget});",
             target()?
         ),
         PendingReplyMode::React => format!(
-            "window.__carrierQuickReact?.({path}, {}, {id}, {attempt}, {budget});",
+            "window.__chatpaneQuickReact?.({path}, {}, {id}, {attempt}, {budget});",
             target()?
         ),
         PendingReplyMode::MarkRead => format!(
-            "window.__carrierMarkRead?.({path}, {}, {id}, {attempt}, {budget});",
+            "window.__chatpaneMarkRead?.({path}, {}, {id}, {attempt}, {budget});",
             target()?
         ),
     })
@@ -2465,7 +2465,7 @@ fn request_attention_if_unfocused(app: &tauri::AppHandle, attention_on_message: 
 }
 
 /// Show a native OS notification for a new message and, if it's clicked, bring
-/// Carrier forward and open the conversation. The avatar is attached where the
+/// Chatpane forward and open the conversation. The avatar is attached where the
 /// platform allows (a thumbnail on macOS — the app icon always owns the main
 /// slot there — and the notification icon on Linux/Windows).
 ///
@@ -2494,7 +2494,7 @@ pub(crate) fn show_message_notification(
 ) -> NativeNotificationDelivery {
     // Re-enforce the privacy settings here on the trusted side. The page-side
     // checks in messenger.js run in the remote facebook.com origin, so a page
-    // bug (or a hostile script emitting carrier:notify directly) must not be
+    // bug (or a hostile script emitting chatpane:notify directly) must not be
     // able to bypass mute or leak sender/message content past hide-preview.
     let (sound, muted, hide_preview, hide_avatars, group_by_conversation, attention_on_message) = {
         let state = app.state::<AppState>();
@@ -2515,7 +2515,7 @@ pub(crate) fn show_message_notification(
     MESSENGER_ENGLISH_UI.store(msg.english_ui, Ordering::Relaxed);
     if muted {
         log::info!(
-            "carrier:notify suppressed: notifications muted, paused or in a call (id {})",
+            "chatpane:notify suppressed: notifications muted, paused or in a call (id {})",
             msg.id
         );
         return NativeNotificationDelivery::Suppressed;
@@ -2531,7 +2531,7 @@ pub(crate) fn show_message_notification(
         && crate::notification_ledger::already_handled(message, *read_at)
     {
         log::info!(
-            "carrier:notify replayed an already announced preview (id {})",
+            "chatpane:notify replayed an already announced preview (id {})",
             msg.id
         );
         return NativeNotificationDelivery::Duplicate;
@@ -2571,7 +2571,7 @@ pub(crate) fn show_message_notification(
                 hide_preview,
             );
         }
-        log::info!("duplicate carrier:notify suppressed (id {})", msg.id);
+        log::info!("duplicate chatpane:notify suppressed (id {})", msg.id);
         return NativeNotificationDelivery::Duplicate;
     }
 
@@ -2581,7 +2581,7 @@ pub(crate) fn show_message_notification(
         .unwrap()
         .classify(Instant::now());
     if rate_decision == RateLimitDecision::SuppressAndLog {
-        log::warn!("carrier:notify suppressed by native rate limit");
+        log::warn!("chatpane:notify suppressed by native rate limit");
     }
     if rate_decision != RateLimitDecision::Allow {
         // No banner: an identical emit must not count as its duplicate, and
@@ -2675,7 +2675,7 @@ pub(crate) fn show_message_notification(
         // asynchronously by the OS, so leave it for the next startup's
         // `clear_avatar_cache()` rather than racing it with a delete.
         // A resolved sender becomes a communication notification (their face
-        // replaces Carrier's icon), except with hidden previews.
+        // replaces Chatpane's icon), except with hidden previews.
         let sender_identifier = msg
             .sender
             .as_ref()
@@ -2808,7 +2808,7 @@ pub(crate) fn show_message_notification(
 /* ---------------------------- Sync alerts ----------------------------- */
 
 /// Health notice from the injected page: Messenger's data sync degraded or
-/// recovered (the `carrier:sync-alert` event). Distinct from message
+/// recovered (the `chatpane:sync-alert` event). Distinct from message
 /// notifications — fixed strings only (the event comes from the remote
 /// facebook.com origin, so its text is never rendered), no dedupe or route
 /// machinery, and its own episode gate.
@@ -2881,7 +2881,7 @@ pub(crate) fn show_sync_alert(app: tauri::AppHandle, source: SyncAlertSource, ki
         // The watchdog reports Recovered on every healthy heartbeat; only a
         // suppressed problem is worth a log line.
         if !matches!(kind, SyncAlertKind::Recovered) {
-            log::info!("carrier:sync-alert suppressed: notifications muted or paused ({kind:?})");
+            log::info!("chatpane:sync-alert suppressed: notifications muted or paused ({kind:?})");
         }
         return;
     }
@@ -3004,7 +3004,7 @@ fn activate_notification(
     let _ = app.clone().run_on_main_thread(move || {
         show_main_with_activation_token(&app, activation_token.as_deref());
         if let (Some(w), Some(page_id)) = (app.get_webview_window("main"), page_id) {
-            let script = format!("window.__carrierNotifyClick?.({page_id});");
+            let script = format!("window.__chatpaneNotifyClick?.({page_id});");
             let _ = w.eval(script);
         }
     });
@@ -3021,7 +3021,7 @@ pub(crate) fn show_scheduled_send_warning(app: &tauri::AppHandle) {
     );
 }
 
-/// A plain notice from Carrier itself: no avatar, sound, actions or thread.
+/// A plain notice from Chatpane itself: no avatar, sound, actions or thread.
 /// Clicking it only surfaces the window. Its own ID keeps it from replacing
 /// another notice that is still unread.
 #[cfg(feature = "diagnostics")]
@@ -3059,7 +3059,7 @@ pub(crate) fn macos_blocker_message(status: isize, alert: isize) -> Option<Strin
 
 /// Settings → Send Test Notification (Ref #259): explain an OS-level block
 /// first, otherwise deliver a plain notice through the real native path,
-/// ignoring Carrier's own mute and pause.
+/// ignoring Chatpane's own mute and pause.
 pub(crate) fn send_test_notification(app: &tauri::AppHandle) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     if let Some(reason) = crate::macos::notifications::notification_blocker() {
@@ -3385,7 +3385,7 @@ mod tests {
 
     #[test]
     fn notify_msg_parses_the_page_payload() {
-        // The shape the injected bridge emits on `carrier:notify`.
+        // The shape the injected bridge emits on `chatpane:notify`.
         let msg: NotifyMsg = serde_json::from_str(
             r#"{"id":7,"title":"Jane","body":"hi there","icon":"data:image/png;base64,aGk=","dedupe_key":"0123456789abcdef","thread_path":"/t/123/"}"#,
         )
@@ -3690,11 +3690,11 @@ mod tests {
         assert_eq!(
             script(PendingReplyMode::Mute, Duration::from_secs(20)),
             // Re-serialized through a map, so keys come out sorted.
-            r#"window.__carrierQuickMute?.("/t/1/", {"account":"1","message":"mid.$1","reaction":"👍"}, 7, 3, 18000);"#
+            r#"window.__chatpaneQuickMute?.("/t/1/", {"account":"1","message":"mid.$1","reaction":"👍"}, 7, 3, 18000);"#
         );
         assert!(
             script(PendingReplyMode::MarkRead, Duration::from_secs(20))
-                .starts_with("window.__carrierMarkRead?.(\"/t/1/\", {")
+                .starts_with("window.__chatpaneMarkRead?.(\"/t/1/\", {")
         );
         // A resume after most of the wait has passed leaves the page no time.
         assert!(script(PendingReplyMode::React, Duration::from_secs(1)).ends_with(", 3, 0);"));

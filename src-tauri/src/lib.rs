@@ -1,4 +1,4 @@
-//! Carrier — a tiny, distraction-free desktop client for Facebook Messenger.
+//! Chatpane — a tiny, distraction-free desktop client for Facebook Messenger.
 //!
 //! Opens a WebView window pointed at the Messenger web app, injects a stylesheet
 //! that hides Facebook's surrounding chrome, and adds quality-of-life features:
@@ -207,7 +207,7 @@ fn refresh_windows_tray_icon(app: &tauri::AppHandle) {
     }
 }
 
-/// Watch the notification area's own DPI independently of Carrier windows.
+/// Watch the notification area's own DPI independently of Chatpane windows.
 /// Windows does not send a window scale event when only another monitor's
 /// scaling changes, including the monitor that owns the taskbar.
 #[cfg(target_os = "windows")]
@@ -363,8 +363,8 @@ const SIGNED_ACTION_LARGE_MESSAGE_COOLDOWN: Duration = Duration::from_secs(1);
 
 fn signed_action_message_limit(event: &str) -> usize {
     match event {
-        "carrier:context-menu" => SIGNED_ACTION_CONTEXT_MENU_MESSAGE_MAX,
-        "carrier:copy-image" => SIGNED_ACTION_COPY_IMAGE_MESSAGE_MAX,
+        "chatpane:context-menu" => SIGNED_ACTION_CONTEXT_MENU_MESSAGE_MAX,
+        "chatpane:copy-image" => SIGNED_ACTION_COPY_IMAGE_MESSAGE_MAX,
         export::EVENT => export::MESSAGE_MAX,
         _ => SIGNED_ACTION_CONTROL_MESSAGE_MAX,
     }
@@ -374,7 +374,7 @@ fn signed_action_message_limit(event: &str) -> usize {
 // must not be able to touch the cooldown state and starve genuine copy-image
 // actions. Keyed per window so one window's burst never blocks another.
 fn claim_large_signed_action(event: &str, message_len: usize, label: &str) -> bool {
-    if event != "carrier:copy-image" || message_len <= SIGNED_ACTION_LARGE_MESSAGE_THRESHOLD {
+    if event != "chatpane:copy-image" || message_len <= SIGNED_ACTION_LARGE_MESSAGE_THRESHOLD {
         return true;
     }
     static LAST_LARGE_MESSAGE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
@@ -472,7 +472,7 @@ pub(crate) fn download_finished_signature(
 
     result_signature(
         secret,
-        "carrier:download-finished",
+        "chatpane:download-finished",
         &DownloadFinished {
             id,
             url,
@@ -488,7 +488,7 @@ pub(crate) fn context_action_signature(secret: &str, action: &str) -> Option<Str
         action: &'a str,
     }
 
-    result_signature(secret, "carrier:context-action", &ContextAction { action })
+    result_signature(secret, "chatpane:context-action", &ContextAction { action })
 }
 
 /// The signed `{ request, <field> }` payload of a boolean native result. The
@@ -557,7 +557,7 @@ fn context_menu_result_signature(
 
     result_signature(
         secret,
-        "carrier:context-menu-result",
+        "chatpane:context-menu-result",
         &ContextMenuResult {
             request,
             shown,
@@ -582,7 +582,7 @@ fn choose_download_result_signature(
 
     result_signature(
         secret,
-        "carrier:choose-download-result",
+        "chatpane:choose-download-result",
         &ChooseDownloadResult {
             request,
             chosen: choice.chosen(),
@@ -603,7 +603,7 @@ fn send_media_permission_status(app: &tauri::AppHandle, label: &str, request: &s
         request,
         permissions: media_permissions::snapshot(),
     };
-    let event = "carrier:media-permission-status-result";
+    let event = "chatpane:media-permission-status-result";
     let signature = {
         let state = app.state::<AppState>();
         let tokens = state.download_reveal_tokens.lock().unwrap();
@@ -663,7 +663,7 @@ fn send_native_result(
 
 #[cfg(target_os = "macos")]
 fn send_copy_image_result(app: &tauri::AppHandle, label: &str, request: &str, copied: bool) {
-    send_native_result(app, label, "carrier:copy-image", "copied", request, copied);
+    send_native_result(app, label, "chatpane:copy-image", "copied", request, copied);
 }
 
 #[cfg(target_os = "macos")]
@@ -671,7 +671,7 @@ fn send_share_download_result(app: &tauri::AppHandle, label: &str, request: &str
     send_native_result(
         app,
         label,
-        "carrier:share-download",
+        "chatpane:share-download",
         "shown",
         request,
         shown,
@@ -686,7 +686,7 @@ fn send_context_menu_result(
     phase: NativeResultPhase,
 ) {
     if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        log::warn!("carrier:context-menu result had an invalid request token");
+        log::warn!("chatpane:context-menu result had an invalid request token");
         return;
     }
     let signature = {
@@ -697,19 +697,19 @@ fn send_context_menu_result(
             .and_then(|secret| context_menu_result_signature(secret, request, shown, phase))
     };
     let Some(signature) = signature else {
-        log::warn!("failed to authenticate carrier:context-menu-result");
+        log::warn!("failed to authenticate chatpane:context-menu-result");
         return;
     };
     let request = serde_json::to_string(request).expect("request serializes");
     let phase = serde_json::to_string(&phase).expect("phase serializes");
     let signature = serde_json::to_string(&signature).expect("signature serializes");
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, phase: {phase}, signature: {signature} }} }}));"
+        "window.dispatchEvent(new CustomEvent('chatpane:context-menu-result', {{ detail: {{ request: {request}, shown: {shown}, phase: {phase}, signature: {signature} }} }}));"
     );
     if let Some(window) = app.get_webview_window(label)
         && let Err(error) = window.eval(&script)
     {
-        log::warn!("failed to report carrier:context-menu-result: {error}");
+        log::warn!("failed to report chatpane:context-menu-result: {error}");
     }
 }
 
@@ -721,7 +721,7 @@ fn send_choose_download_result(
     phase: NativeResultPhase,
 ) {
     if request.len() != 32 || !request.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        log::warn!("carrier:choose-download result had an invalid request token");
+        log::warn!("chatpane:choose-download result had an invalid request token");
         return;
     }
     let signature = {
@@ -732,7 +732,7 @@ fn send_choose_download_result(
             .and_then(|secret| choose_download_result_signature(secret, request, choice, phase))
     };
     let Some(signature) = signature else {
-        log::warn!("failed to authenticate carrier:choose-download-result");
+        log::warn!("failed to authenticate chatpane:choose-download-result");
         return;
     };
     let request = serde_json::to_string(request).expect("request serializes");
@@ -741,12 +741,12 @@ fn send_choose_download_result(
     let chosen = choice.chosen();
     let cancelled = choice.cancelled();
     let script = format!(
-        "window.dispatchEvent(new CustomEvent('carrier:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, cancelled: {cancelled}, signature: {signature} }} }}));"
+        "window.dispatchEvent(new CustomEvent('chatpane:choose-download-result', {{ detail: {{ request: {request}, chosen: {chosen}, phase: {phase}, cancelled: {cancelled}, signature: {signature} }} }}));"
     );
     if let Some(window) = app.get_webview_window(label)
         && let Err(error) = window.eval(&script)
     {
-        log::warn!("failed to report carrier:choose-download-result: {error}");
+        log::warn!("failed to report chatpane:choose-download-result: {error}");
     }
 }
 
@@ -1045,7 +1045,7 @@ pub fn run() {
     // contend for /tmp/tauri-mcp.sock.
     #[cfg(all(feature = "mcp", debug_assertions))]
     let mcp_socket_override = select_mcp_socket_override(
-        std::env::var_os("CARRIER_MCP_SOCKET_PATH"),
+        std::env::var_os("CHATPANE_MCP_SOCKET_PATH"),
         std::env::var_os("TAURI_MCP_IPC_PATH"),
     );
     #[cfg(not(all(feature = "mcp", debug_assertions)))]
@@ -1066,7 +1066,7 @@ pub fn run() {
     }
 
     // Register the chatpane:// URL scheme (HKCU, no admin) so protocol launches
-    // reach Carrier as argv, parsed in the one audited place (action_from_argv).
+    // reach Chatpane as argv, parsed in the one audited place (action_from_argv).
     // Registration only — no JS capability, no single-instance deep-link feature.
     #[cfg(target_os = "windows")]
     {
@@ -1114,7 +1114,7 @@ pub fn run() {
         )
         // Warnings and errors land in a file under the app log dir (surfaced
         // via Settings → Advanced → Open log folder) besides stderr. Global
-        // level Warn keeps dependency noise out; Carrier's own info lines
+        // level Warn keeps dependency noise out; Chatpane's own info lines
         // still make it through.
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -1125,7 +1125,7 @@ pub fn run() {
                     }),
                 ])
                 .level(log::LevelFilter::Warn)
-                .level_for("carrier_lib", log::LevelFilter::Info)
+                .level_for("chatpane_lib", log::LevelFilter::Info)
                 .max_file_size(LOG_FILE_MAX_BYTES)
                 .rotation_strategy(if cfg!(debug_assertions) {
                     tauri_plugin_log::RotationStrategy::KeepSome(5)
@@ -1271,7 +1271,7 @@ pub fn run() {
                 *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
             }
             apply_settings(app.handle(), &settings);
-            // Show whether Carrier will really start at login: the user can
+            // Show whether Chatpane will really start at login: the user can
             // switch it off in the OS (Ref #443).
             tauri::async_runtime::spawn(autostart::reconcile(app.handle().clone()));
 
@@ -1285,16 +1285,16 @@ pub fn run() {
                 actions::run_app_action(app.handle(), actions::AppAction::Settings);
             }
 
-            // The Facebook page is a remote origin and can't call Carrier's own
+            // The Facebook page is a remote origin and can't call Chatpane's own
             // commands, so the F3 shortcut emits an event that we handle here.
             let h = app.handle().clone();
-            app.listen_any("carrier:open-settings", move |_| {
+            app.listen_any("chatpane:open-settings", move |_| {
                 let h = h.clone();
                 tauri::async_runtime::spawn(async move { show_settings_window(&h) });
             });
 
             let permission_handle = app.handle().clone();
-            app.listen_any("carrier:media-permission-status", move |event| {
+            app.listen_any("chatpane:media-permission-status", move |event| {
                 #[derive(serde::Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct StatusRequest {
@@ -1302,7 +1302,7 @@ pub fn run() {
                     device: Option<media_permissions::MediaDevice>,
                 }
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else { return; };
-                let Some(label) = signed_action_window(&permission_handle, "carrier:media-permission-status", &signed) else { return; };
+                let Some(label) = signed_action_window(&permission_handle, "chatpane:media-permission-status", &signed) else { return; };
                 let Ok(message) = serde_json::from_str::<StatusRequest>(&signed.message) else { return; };
                 if message.request.len() != 32 || !message.request.bytes().all(|byte| byte.is_ascii_hexdigit()) { return; }
                 let h = permission_handle.clone();
@@ -1316,7 +1316,7 @@ pub fn run() {
             });
 
             let privacy_handle = app.handle().clone();
-            app.listen_any("carrier:open-media-privacy", move |event| {
+            app.listen_any("chatpane:open-media-privacy", move |event| {
                 #[derive(serde::Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct PrivacyRequest {
@@ -1326,7 +1326,7 @@ pub fn run() {
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                     return;
                 };
-                let Some(label) = signed_action_window(&privacy_handle, "carrier:open-media-privacy", &signed) else {
+                let Some(label) = signed_action_window(&privacy_handle, "chatpane:open-media-privacy", &signed) else {
                     return;
                 };
                 let Ok(message) = serde_json::from_str::<PrivacyRequest>(&signed.message) else {
@@ -1336,7 +1336,7 @@ pub fn run() {
                 tauri::async_runtime::spawn_blocking(move || {
                     let opened = media_permissions::privacy_url(std::env::consts::OS, message.device)
                         .is_some_and(|url| handle.opener().open_url(url, None::<&str>).is_ok());
-                    send_native_result(&handle, &label, "carrier:open-media-privacy", "opened", &message.request, opened);
+                    send_native_result(&handle, &label, "chatpane:open-media-privacy", "opened", &message.request, opened);
                 });
             });
 
@@ -1346,28 +1346,28 @@ pub fn run() {
             // the trusted map populated by `on_download`; a page-supplied
             // filesystem path is never accepted.
             let reveal_handle = app.handle().clone();
-            app.listen_any("carrier:reveal-download", move |event| {
+            app.listen_any("chatpane:reveal-download", move |event| {
                 #[derive(serde::Deserialize)]
                 struct RevealDownloadMsg {
                     url: String,
                 }
 
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                    log::warn!("carrier:reveal-download payload did not parse");
+                    log::warn!("chatpane:reveal-download payload did not parse");
                     return;
                 };
-                if signed_action_window(&reveal_handle, "carrier:reveal-download", &signed)
+                if signed_action_window(&reveal_handle, "chatpane:reveal-download", &signed)
                     .is_none()
                 {
-                    log::warn!("carrier:reveal-download was not authorized by a trusted click");
+                    log::warn!("chatpane:reveal-download was not authorized by a trusted click");
                     return;
                 }
                 let Ok(msg) = serde_json::from_str::<RevealDownloadMsg>(&signed.message) else {
-                    log::warn!("carrier:reveal-download message did not parse");
+                    log::warn!("chatpane:reveal-download message did not parse");
                     return;
                 };
                 let Some(path) = lookup_download(&msg.url) else {
-                    log::warn!("carrier:reveal-download had no recent matching download");
+                    log::warn!("chatpane:reveal-download had no recent matching download");
                     return;
                 };
                 let h = reveal_handle.clone();
@@ -1381,18 +1381,18 @@ pub fn run() {
             // The download-access toast's trusted button opens the OS pane where
             // folder access is granted. It takes no page-supplied URL.
             let download_privacy_handle = app.handle().clone();
-            app.listen_any("carrier:open-download-privacy", move |event| {
+            app.listen_any("chatpane:open-download-privacy", move |event| {
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                     return;
                 };
                 if signed_action_window(
                     &download_privacy_handle,
-                    "carrier:open-download-privacy",
+                    "chatpane:open-download-privacy",
                     &signed,
                 )
                 .is_none()
                 {
-                    log::warn!("carrier:open-download-privacy was not authorized");
+                    log::warn!("chatpane:open-download-privacy was not authorized");
                     return;
                 }
                 let Some(url) = crate::download::folder_privacy_url(std::env::consts::OS) else {
@@ -1411,7 +1411,7 @@ pub fn run() {
             // key returns to the page; the selected path stays in AppState until
             // `on_download` consumes it.
             let choose_download_handle = app.handle().clone();
-            app.listen_any("carrier:choose-download", move |event| {
+            app.listen_any("chatpane:choose-download", move |event| {
                 #[derive(serde::Deserialize)]
                 struct ChooseDownloadMsg {
                     url: String,
@@ -1420,19 +1420,19 @@ pub fn run() {
                 }
 
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                    log::warn!("carrier:choose-download payload did not parse");
+                    log::warn!("chatpane:choose-download payload did not parse");
                     return;
                 };
                 let Some(label) = signed_action_window(
                     &choose_download_handle,
-                    "carrier:choose-download",
+                    "chatpane:choose-download",
                     &signed,
                 ) else {
-                    log::warn!("carrier:choose-download was not authorized");
+                    log::warn!("chatpane:choose-download was not authorized");
                     return;
                 };
                 let Ok(msg) = serde_json::from_str::<ChooseDownloadMsg>(&signed.message) else {
-                    log::warn!("carrier:choose-download message did not parse");
+                    log::warn!("chatpane:choose-download message did not parse");
                     return;
                 };
                 let asks = choose_download_handle
@@ -1449,7 +1449,7 @@ pub fn run() {
                     .is_some_and(|url| is_allowed_download(url, &name))
                     && !is_unsafe_download(&name);
                 let Some(window) = choose_download_handle.get_webview_window(&label) else {
-                    log::warn!("carrier:choose-download window was no longer available");
+                    log::warn!("chatpane:choose-download window was no longer available");
                     send_choose_download_result(
                         &choose_download_handle,
                         &label,
@@ -1461,7 +1461,7 @@ pub fn run() {
                 };
                 if !asks || !allowed {
                     log::warn!(
-                        "carrier:choose-download rejected (ask mode: {asks}, allowed download: {allowed})"
+                        "chatpane:choose-download rejected (ask mode: {asks}, allowed download: {allowed})"
                     );
                     send_choose_download_result(
                         &choose_download_handle,
@@ -1493,7 +1493,7 @@ pub fn run() {
                         Some(path) => match path.into_path() {
                             Err(_) => {
                                 log::warn!(
-                                    "carrier:choose-download selection was not a filesystem path"
+                                    "chatpane:choose-download selection was not a filesystem path"
                                 );
                                 DownloadChoice::Rejected
                             }
@@ -1501,7 +1501,7 @@ pub fn run() {
                                 if !is_allowed_download_path(&result_parsed_url, &path) =>
                             {
                                 log::warn!(
-                                    "carrier:choose-download selection failed the download policy"
+                                    "chatpane:choose-download selection failed the download policy"
                                 );
                                 DownloadChoice::Rejected
                             }
@@ -1515,7 +1515,7 @@ pub fn run() {
                                     DownloadChoice::Chosen
                                 } else {
                                     log::warn!(
-                                        "carrier:choose-download reservation cap was reached"
+                                        "chatpane:choose-download reservation cap was reached"
                                     );
                                     DownloadChoice::Rejected
                                 }
@@ -1543,7 +1543,7 @@ pub fn run() {
 
             // Show a native context menu only for an authorized Messenger window.
             let context_menu_handle = app.handle().clone();
-            app.listen_any("carrier:context-menu", move |event| {
+            app.listen_any("chatpane:context-menu", move |event| {
                 #[derive(serde::Deserialize)]
                 struct ContextMenuMsg {
                     items: Vec<menu::NativeContextMenuItem>,
@@ -1554,23 +1554,23 @@ pub fn run() {
                 }
 
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                    log::warn!("carrier:context-menu payload did not parse");
+                    log::warn!("chatpane:context-menu payload did not parse");
                     return;
                 };
                 let Some(label) =
-                    signed_action_window(&context_menu_handle, "carrier:context-menu", &signed)
+                    signed_action_window(&context_menu_handle, "chatpane:context-menu", &signed)
                 else {
-                    log::warn!("carrier:context-menu was not authorized by a trusted click");
+                    log::warn!("chatpane:context-menu was not authorized by a trusted click");
                     return;
                 };
                 let Ok(msg) = serde_json::from_str::<ContextMenuMsg>(&signed.message) else {
-                    log::warn!("carrier:context-menu message did not parse");
+                    log::warn!("chatpane:context-menu message did not parse");
                     return;
                 };
                 if msg.request.len() != 32
                     || !msg.request.bytes().all(|byte| byte.is_ascii_hexdigit())
                 {
-                    log::warn!("carrier:context-menu request token was invalid");
+                    log::warn!("chatpane:context-menu request token was invalid");
                     return;
                 }
                 // Popping up a native menu requires the main thread on macOS;
@@ -1630,36 +1630,36 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let claim_handle = app.handle().clone();
-                app.listen_any("carrier:claim-context-action", move |event| {
+                app.listen_any("chatpane:claim-context-action", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ClaimContextActionMsg {
                         action: String,
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                        log::warn!("carrier:claim-context-action payload did not parse");
+                        log::warn!("chatpane:claim-context-action payload did not parse");
                         return;
                     };
                     let Some(label) = signed_action_window(
                         &claim_handle,
-                        "carrier:claim-context-action",
+                        "chatpane:claim-context-action",
                         &signed,
                     ) else {
-                        log::warn!("carrier:claim-context-action was not authorized");
+                        log::warn!("chatpane:claim-context-action was not authorized");
                         return;
                     };
                     let Ok(msg) = serde_json::from_str::<ClaimContextActionMsg>(&signed.message)
                     else {
-                        log::warn!("carrier:claim-context-action message did not parse");
+                        log::warn!("chatpane:claim-context-action message did not parse");
                         return;
                     };
                     if !claim_context_activation(&claim_handle, &label, &msg.action) {
-                        log::warn!("carrier:claim-context-action had no fresh menu selection");
+                        log::warn!("chatpane:claim-context-action had no fresh menu selection");
                     }
                 });
 
                 let prepare_handle = app.handle().clone();
-                app.listen_any("carrier:prepare-download", move |event| {
+                app.listen_any("chatpane:prepare-download", move |event| {
                     #[derive(serde::Deserialize)]
                     struct PrepareDownloadMsg {
                         action: String,
@@ -1667,31 +1667,31 @@ pub fn run() {
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                        log::warn!("carrier:prepare-download payload did not parse");
+                        log::warn!("chatpane:prepare-download payload did not parse");
                         return;
                     };
                     let Some(label) =
-                        signed_action_window(&prepare_handle, "carrier:prepare-download", &signed)
+                        signed_action_window(&prepare_handle, "chatpane:prepare-download", &signed)
                     else {
-                        log::warn!("carrier:prepare-download was not authorized");
+                        log::warn!("chatpane:prepare-download was not authorized");
                         return;
                     };
                     let Ok(msg) = serde_json::from_str::<PrepareDownloadMsg>(&signed.message)
                     else {
-                        log::warn!("carrier:prepare-download message did not parse");
+                        log::warn!("chatpane:prepare-download message did not parse");
                         return;
                     };
                     if !prepare_context_download(&prepare_handle, &label, &msg.action, &msg.url) {
-                        log::warn!("carrier:prepare-download had no unbound share action");
+                        log::warn!("chatpane:prepare-download had no unbound share action");
                     }
                 });
 
                 // Share a just-downloaded media file via the macOS share sheet.
-                // Same trust model as carrier:reveal-download: the per-window
+                // Same trust model as chatpane:reveal-download: the per-window
                 // credential authorizes it and the file path only ever comes from
                 // the trusted download map, never from the page.
                 let share_handle = app.handle().clone();
-                app.listen_any("carrier:share-download", move |event| {
+                app.listen_any("chatpane:share-download", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ShareDownloadMsg {
                         download_id: String,
@@ -1702,17 +1702,17 @@ pub fn run() {
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                        log::warn!("carrier:share-download payload did not parse");
+                        log::warn!("chatpane:share-download payload did not parse");
                         return;
                     };
                     let Some(label) =
-                        signed_action_window(&share_handle, "carrier:share-download", &signed)
+                        signed_action_window(&share_handle, "chatpane:share-download", &signed)
                     else {
-                        log::warn!("carrier:share-download was not authorized by a trusted click");
+                        log::warn!("chatpane:share-download was not authorized by a trusted click");
                         return;
                     };
                     let Ok(msg) = serde_json::from_str::<ShareDownloadMsg>(&signed.message) else {
-                        log::warn!("carrier:share-download message did not parse");
+                        log::warn!("chatpane:share-download message did not parse");
                         return;
                     };
                     if !consume_context_activation(
@@ -1721,12 +1721,12 @@ pub fn run() {
                         &msg.action,
                         Some(&msg.download_id),
                     ) {
-                        log::warn!("carrier:share-download had no selected native menu action");
+                        log::warn!("chatpane:share-download had no selected native menu action");
                         send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
                     }
                     let Some(path) = lookup_download_id(&msg.download_id) else {
-                        log::warn!("carrier:share-download had no recent matching download");
+                        log::warn!("chatpane:share-download had no recent matching download");
                         send_share_download_result(&share_handle, &label, &msg.request, false);
                         return;
                     };
@@ -1754,7 +1754,7 @@ pub fn run() {
                 });
 
                 let copy_handle = app.handle().clone();
-                app.listen_any("carrier:copy-image", move |event| {
+                app.listen_any("chatpane:copy-image", move |event| {
                     use base64::Engine;
 
                     #[derive(serde::Deserialize)]
@@ -1765,26 +1765,26 @@ pub fn run() {
                     }
 
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                        log::warn!("carrier:copy-image payload did not parse");
+                        log::warn!("chatpane:copy-image payload did not parse");
                         return;
                     };
                     let Some(label) =
-                        signed_action_window(&copy_handle, "carrier:copy-image", &signed)
+                        signed_action_window(&copy_handle, "chatpane:copy-image", &signed)
                     else {
-                        log::warn!("carrier:copy-image was not authorized by trusted code");
+                        log::warn!("chatpane:copy-image was not authorized by trusted code");
                         return;
                     };
                     let Ok(msg) = serde_json::from_str::<CopyImageMsg>(&signed.message) else {
-                        log::warn!("carrier:copy-image message did not parse");
+                        log::warn!("chatpane:copy-image message did not parse");
                         return;
                     };
                     if !consume_context_activation(&copy_handle, &label, &msg.action, None) {
-                        log::warn!("carrier:copy-image had no selected native menu action");
+                        log::warn!("chatpane:copy-image had no selected native menu action");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
                     let Some((header, encoded)) = msg.data_url.split_once(',') else {
-                        log::warn!("carrier:copy-image data URL did not parse");
+                        log::warn!("chatpane:copy-image data URL did not parse");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     };
@@ -1792,18 +1792,18 @@ pub fn run() {
                         || !header.ends_with(";base64")
                         || encoded.len() > 44 * 1024 * 1024
                     {
-                        log::warn!("carrier:copy-image data URL was invalid or too large");
+                        log::warn!("chatpane:copy-image data URL was invalid or too large");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
                     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded)
                     else {
-                        log::warn!("carrier:copy-image base64 did not decode");
+                        log::warn!("chatpane:copy-image base64 did not decode");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     };
                     if bytes.len() > 32 * 1024 * 1024 {
-                        log::warn!("carrier:copy-image exceeded the clipboard size cap");
+                        log::warn!("chatpane:copy-image exceeded the clipboard size cap");
                         send_copy_image_result(&copy_handle, &label, &msg.request, false);
                         return;
                     }
@@ -1814,7 +1814,7 @@ pub fn run() {
 
             // Unread count from the page → every native platform indicator.
             let h = app.handle().clone();
-            app.listen_any("carrier:unread", move |event| {
+            app.listen_any("chatpane:unread", move |event| {
                 let n: i64 = event.payload().trim().parse().unwrap_or(0).max(0);
                 let state = h.state::<AppState>();
                 state.unread_count.store(n, Ordering::Release);
@@ -1823,10 +1823,10 @@ pub fn run() {
             });
 
             // Windows and Linux: the minimize, maximize and close buttons and the
-            // drag strip Carrier draws in the page (see title_bar).
+            // drag strip Chatpane draws in the page (see title_bar).
             {
                 let h = app.handle().clone();
-                app.listen_any("carrier:window-control", move |event| {
+                app.listen_any("chatpane:window-control", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ControlMsg {
                         action: crate::title_bar::Action,
@@ -1836,9 +1836,9 @@ pub fn run() {
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                         return;
                     };
-                    let Some(label) = signed_action_window(&h, "carrier:window-control", &signed)
+                    let Some(label) = signed_action_window(&h, "chatpane:window-control", &signed)
                     else {
-                        log::warn!("carrier:window-control was not authorized");
+                        log::warn!("chatpane:window-control was not authorized");
                         return;
                     };
                     let Ok(msg) = serde_json::from_str::<ControlMsg>(&signed.message) else {
@@ -1856,7 +1856,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let h = app.handle().clone();
-                app.listen_any("carrier:media-viewer", move |event| {
+                app.listen_any("chatpane:media-viewer", move |event| {
                     #[derive(serde::Deserialize)]
                     struct ViewerMsg {
                         open: bool,
@@ -1864,7 +1864,7 @@ pub fn run() {
                     let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
                         return;
                     };
-                    let Some(label) = signed_action_window(&h, "carrier:media-viewer", &signed)
+                    let Some(label) = signed_action_window(&h, "chatpane:media-viewer", &signed)
                     else {
                         return;
                     };
@@ -1882,7 +1882,7 @@ pub fn run() {
             // it up. The payload comes from the remote-origin page, so treat it
             // as untrusted: parse, clamp, and ignore junk.
             let h = app.handle().clone();
-            app.listen_any("carrier:zoom", move |event| {
+            app.listen_any("chatpane:zoom", move |event| {
                 let Ok(zoom) = event.payload().trim().parse::<i32>() else {
                     return;
                 };
@@ -1945,7 +1945,7 @@ pub fn run() {
             // macOS Dock menu / tray menu. Kept in memory only; the menus are
             // rebuilt on the main thread (menu APIs require it on macOS).
             let h = app.handle().clone();
-            app.listen_any("carrier:recent-threads", move |event| {
+            app.listen_any("chatpane:recent-threads", move |event| {
                 let Ok(threads) = serde_json::from_str::<Vec<RecentThread>>(event.payload()) else {
                     return;
                 };
@@ -1964,7 +1964,7 @@ pub fn run() {
 
             // New-message notifications: the page's `Notification` bridge sends
             // sender/preview/avatar here; we render them natively (with the
-            // avatar), notify you while Carrier is in the background, and open the
+            // avatar), notify you while Chatpane is in the background, and open the
             // conversation on click. See `show_message_notification`.
             clear_avatar_cache();
             #[cfg(target_os = "macos")]
@@ -1974,13 +1974,13 @@ pub fn run() {
             // app is ready), so there's no per-process registration to do here.
             notification_ledger::init(app.handle());
             let notify_handle = app.handle().clone();
-            app.listen_any("carrier:notify", move |event| {
+            app.listen_any("chatpane:notify", move |event| {
                 // Content-free receipt breadcrumb: with the page-side
                 // `notify.fired` diag and the macOS delivery logging, every
                 // hop of the notification pipeline is visible in the log.
                 match serde_json::from_str::<NotifyMsg>(event.payload()) {
                     Ok(msg) => {
-                        log::info!("carrier:notify received (id {})", msg.id());
+                        log::info!("chatpane:notify received (id {})", msg.id());
                         let id = msg.id();
                         let delivery = show_message_notification(notify_handle.clone(), msg);
                         let delivery = serde_json::to_string(&delivery)
@@ -1992,26 +1992,26 @@ pub fn run() {
                                 continue;
                             }
                             if let Err(e) = window
-                                .eval(format!("window.__carrierNotifyResult?.({id}, {delivery});"))
+                                .eval(format!("window.__chatpaneNotifyResult?.({id}, {delivery});"))
                             {
-                                log::warn!("carrier:notify result callback failed: {e}");
+                                log::warn!("chatpane:notify result callback failed: {e}");
                             }
                         }
                     }
-                    Err(e) => log::warn!("carrier:notify payload did not parse: {e}"),
+                    Err(e) => log::warn!("chatpane:notify payload did not parse: {e}"),
                 }
             });
 
             // The page's other deliveries (banners it paired with a row after
             // showing them) and its confirmed reads keep the ledger in step
             // with what each conversation has announced.
-            app.listen_any("carrier:notify-handled", |event| {
+            app.listen_any("chatpane:notify-handled", |event| {
                 match serde_json::from_str::<notification_ledger::HandledMessage>(event.payload()) {
                     Ok(message) => notification_ledger::record(&message),
-                    Err(e) => log::warn!("carrier:notify-handled payload did not parse: {e}"),
+                    Err(e) => log::warn!("chatpane:notify-handled payload did not parse: {e}"),
                 }
             });
-            app.listen_any("carrier:notify-read", |event| {
+            app.listen_any("chatpane:notify-read", |event| {
                 #[derive(serde::Deserialize)]
                 struct ConfirmedRead {
                     thread: String,
@@ -2033,7 +2033,7 @@ pub fn run() {
                             );
                         }
                     }
-                    Err(e) => log::warn!("carrier:notify-read payload did not parse: {e}"),
+                    Err(e) => log::warn!("chatpane:notify-read payload did not parse: {e}"),
                 }
             });
 
@@ -2043,7 +2043,7 @@ pub fn run() {
             #[cfg(all(feature = "mcp", debug_assertions))]
             {
                 let debug_action_handle = app.handle().clone();
-                app.listen_any("carrier:debug-notification-action", move |event| {
+                app.listen_any("chatpane:debug-notification-action", move |event| {
                     #[derive(serde::Deserialize)]
                     struct DebugAction {
                         action: String,
@@ -2104,7 +2104,7 @@ pub fn run() {
             // when Messenger's data sync degrades while the app looks fine.
             // Fixed strings only — the remote page's text is never rendered.
             let sync_alert_handle = app.handle().clone();
-            app.listen_any("carrier:sync-alert", move |event| {
+            app.listen_any("chatpane:sync-alert", move |event| {
                 #[derive(serde::Deserialize)]
                 struct SyncAlertMsg {
                     kind: SyncAlertKind,
@@ -2113,7 +2113,7 @@ pub fn run() {
                     Ok(msg) => {
                         show_sync_alert(sync_alert_handle.clone(), SyncAlertSource::Page, msg.kind);
                     }
-                    Err(e) => log::warn!("carrier:sync-alert payload did not parse: {e}"),
+                    Err(e) => log::warn!("chatpane:sync-alert payload did not parse: {e}"),
                 }
             });
 
@@ -2122,17 +2122,17 @@ pub fn run() {
             // conversation after the native notification had already fired.
             let notify_route_handle = app.handle().clone();
             app.listen_any(
-                "carrier:notify-route",
+                "chatpane:notify-route",
                 move |event| match serde_json::from_str::<NotifyRouteMsg>(event.payload()) {
                     Ok(msg) => update_notification_route(&notify_route_handle, &msg),
-                    Err(e) => log::warn!("carrier:notify-route payload did not parse: {e}"),
+                    Err(e) => log::warn!("chatpane:notify-route payload did not parse: {e}"),
                 },
             );
 
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let thread_viewed_handle = app.handle().clone();
-                app.listen_any("carrier:thread-viewed", move |event| {
+                app.listen_any("chatpane:thread-viewed", move |event| {
                     if !thread_viewed_handle
                         .state::<AppState>()
                         .settings
@@ -2143,12 +2143,12 @@ pub fn run() {
                         return;
                     }
                     let Some(thread_id) = parse_thread_viewed_payload(event.payload()) else {
-                        log::warn!("carrier:thread-viewed payload did not parse");
+                        log::warn!("chatpane:thread-viewed payload did not parse");
                         return;
                     };
                     if !focused_messenger_window_shows_thread(&thread_viewed_handle, &thread_id) {
                         log::warn!(
-                            "carrier:thread-viewed did not match the focused Messenger window"
+                            "chatpane:thread-viewed did not match the focused Messenger window"
                         );
                         return;
                     }
@@ -2194,16 +2194,16 @@ pub fn run() {
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             let reply_result_handle = app.handle().clone();
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            app.listen_any("carrier:reply-result", move |event| {
+            app.listen_any("chatpane:reply-result", move |event| {
                 let Ok(signed) = serde_json::from_str::<SignedAction>(event.payload()) else {
-                    log::warn!("carrier:reply-result payload did not parse");
+                    log::warn!("chatpane:reply-result payload did not parse");
                     return;
                 };
-                if signed_action_window(&reply_result_handle, "carrier:reply-result", &signed)
+                if signed_action_window(&reply_result_handle, "chatpane:reply-result", &signed)
                     .as_deref()
                     != Some("main")
                 {
-                    log::warn!("carrier:reply-result was not authorized by the main window");
+                    log::warn!("chatpane:reply-result was not authorized by the main window");
                     return;
                 }
                 handle_reply_result(&signed.message);
@@ -2213,7 +2213,7 @@ pub fn run() {
             // IPC failures from the injected script, routed into the log file
             // so field breakage of the page features is visible in bug reports.
             let diag_count = std::sync::Arc::new(AtomicUsize::new(0));
-            app.listen_any("carrier:diag", move |event| {
+            app.listen_any("chatpane:diag", move |event| {
                 let n = diag_count.fetch_add(1, Ordering::Relaxed);
                 if n >= DIAG_SESSION_CAP as usize {
                     if n == DIAG_SESSION_CAP as usize {
@@ -2358,7 +2358,7 @@ pub fn run() {
             // windows; don't let the momentary zero-window state quit the app.
             // The same last-window-destroyed event (code: None) also fires on
             // macOS after the traffic light closes the window, so Hide on Close
-            // must prevent that exit. Cmd+Q / Carrier menu Quit use NSApp
+            // must prevent that exit. Cmd+Q / Chatpane menu Quit use NSApp
             // terminate: and never reach this handler.
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
                 let state = app.state::<AppState>();
@@ -2524,13 +2524,13 @@ mod tests {
         assert_eq!(
             native_result_signature(
                 "test-secret",
-                "carrier:copy-image-result",
+                "chatpane:copy-image-result",
                 "copied",
                 "0123456789abcdef0123456789abcdef",
                 true
             )
             .as_deref(),
-            Some("5e39e1320822a514ce4a811d2a6c6b9b72f0d63a1a8b59601d20fd8644872007")
+            Some("ab2b254009078e7465f39618fb075004585f5698397c847a54a980f8c287d733")
         );
     }
 
@@ -2539,13 +2539,13 @@ mod tests {
         assert_eq!(
             native_result_signature(
                 "test-secret",
-                "carrier:share-download-result",
+                "chatpane:share-download-result",
                 "shown",
                 "0123456789abcdef0123456789abcdef",
                 true
             )
             .as_deref(),
-            Some("a24b608a14250d52d4c6d33458b54d275966b1dfdfd7f41c029a16e3df0476de")
+            Some("1c8fc17733c1722aafdb9bcd705a3cef9387db4a8f3df724f1f628bd6e77132d")
         );
     }
 
@@ -2559,7 +2559,7 @@ mod tests {
             download_finished_signature("test-secret", "download-1", "blob:one", false, true);
         assert_eq!(
             first.as_deref(),
-            Some("4e10ddd7757d5bc423b46b743848740acfdd19a13f30bc08cd8f5f8f5b65191d")
+            Some("8da7b4a5f6830e7abbcc1e4de5ea8ade55a6e8505203518f50c426c3993b6a98")
         );
         assert_ne!(first, second);
         assert_ne!(first, denied);
@@ -2582,11 +2582,11 @@ mod tests {
 
         assert_eq!(
             presented.as_deref(),
-            Some("118b9fcd3ff51202672942c2e667275c3ed6f07a63e1c02efb23c2fac82f4f7f")
+            Some("52d000961bc9b53a632aad178c75c79b2f871e30467a8df6dab1dddbc0753b4a")
         );
         assert_eq!(
             complete.as_deref(),
-            Some("41ecbdff8974add7ab0bd2ff1d7a97815a2f3eb709a706d41955bfd6f63abee8")
+            Some("fb720347db29f040dda7a0614897ecd55eb88c3070abbb33bef7b79692a33ed9")
         );
     }
 
@@ -2607,11 +2607,11 @@ mod tests {
 
         assert_eq!(
             presented.as_deref(),
-            Some("c2b68bde1b166f3d29ed8237b2cd1e70a3895525384d19191737b56cd4adb401")
+            Some("7733c0118a842c1ef173c5900443b7d9a6a0304943810a1635f676cbc3d379e1")
         );
         assert_eq!(
             complete.as_deref(),
-            Some("6052d1952b4519524cbbd131ecc552829dae1faacfb0cb4725f49185df1881bf")
+            Some("4362c317979bb0d39412593021f639bc08daba7a6b676037a5680dde77b0a094")
         );
     }
 
@@ -2619,7 +2619,7 @@ mod tests {
     fn context_actions_are_authenticated_with_the_window_secret() {
         assert_eq!(
             context_action_signature("test-secret", "0123456789abcdef0123456789abcdef").as_deref(),
-            Some("8a8291c9903534471b568cec36bea453a618639499d975abca0f2e8afcb34a2d")
+            Some("60d8c126782d9bede73f743258be03ce3a40816260f9fba9ceb96884675c0d45")
         );
     }
 
@@ -2629,13 +2629,13 @@ mod tests {
             ("main".to_string(), "main-secret".to_string()),
             ("win-2".to_string(), "second-secret".to_string()),
         ]);
-        let event = "carrier:share-download";
+        let event = "chatpane:share-download";
         let message = r#"{"url":"blob:test","action":"abc"}"#;
         let nonce = "0123456789abcdef0123456789abcdef";
         let signed = signed_action("second-secret", event, message, nonce, timestamp_now());
         let mut used = HashMap::new();
         assert_eq!(
-            authorize_signed_action(&tokens, &mut used, "carrier:context-menu", &signed),
+            authorize_signed_action(&tokens, &mut used, "chatpane:context-menu", &signed),
             None
         );
         assert_eq!(
@@ -2661,7 +2661,7 @@ mod tests {
             authorize_signed_action(
                 &tokens,
                 &mut HashMap::new(),
-                "carrier:context-menu",
+                "chatpane:context-menu",
                 &signed
             ),
             None
@@ -2671,7 +2671,7 @@ mod tests {
     #[test]
     fn signed_actions_expire_and_nonce_retention_is_bounded() {
         let tokens = HashMap::from([("main".to_string(), "main-secret".to_string())]);
-        let event = "carrier:context-menu";
+        let event = "chatpane:context-menu";
         let message = "[]";
         let timestamp = timestamp_now();
         let nonce = "0123456789abcdef0123456789abcdef";

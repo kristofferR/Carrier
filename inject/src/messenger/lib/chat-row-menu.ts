@@ -1,5 +1,5 @@
 // Pure logic for the chat-list row menu: which rows of a conversation's own
-// "More options" menu Carrier repeats on right-click, and in what order. The
+// "More options" menu Chatpane repeats on right-click, and in what order. The
 // DOM driving lives in features/chat-row-menu.ts.
 
 // Keep in sync with CHAT_ROW_CONTEXT_MENU_LABELS in src-tauri/src/menu.rs; a
@@ -30,13 +30,13 @@ export function chatRowAction(text: string): ChatRowAction | null {
   return CHAT_ROW_CONTEXT_MENU_LABELS.find((action) => action === normalized) ?? null;
 }
 
-/** The known actions among a menu's row texts, in Carrier's menu order. */
+/** The known actions among a menu's row texts, in Chatpane's menu order. */
 export function chatRowActions(texts: string[]): ChatRowAction[] {
   const offered = new Set(texts.map(chatRowAction));
   return CHAT_ROW_CONTEXT_MENU_LABELS.filter((action) => offered.has(action));
 }
 
-// Carrier's own rows, after Messenger's: export that conversation (Ref #371).
+// Chatpane's own rows, after Messenger's: export that conversation (Ref #371).
 // Keep in sync with CHAT_EXPORT_CONTEXT_MENU_LABELS in src-tauri/src/menu.rs.
 export const CHAT_EXPORT_CONTEXT_MENU_LABELS = [
   "Export chat as HTML…",

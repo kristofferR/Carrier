@@ -15,7 +15,7 @@ export const workerRecovery = new FacebookWorkerRecovery(
   () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? undefined,
   async () => {
     if (
-      window.__CARRIER_SETTINGS__?.multi_instance !== false ||
+      window.__CHATPANE_SETTINGS__?.multi_instance !== false ||
       typeof window.BroadcastChannel !== "function"
     ) {
       return false;
@@ -23,7 +23,7 @@ export const workerRecovery = new FacebookWorkerRecovery(
     try {
       const windows = await invoke("plugin:window|get_all_windows");
       return (
-        window.__CARRIER_SETTINGS__?.multi_instance === false &&
+        window.__CHATPANE_SETTINGS__?.multi_instance === false &&
         typeof window.BroadcastChannel === "function" &&
         hasSoleMessengerWindow(windows)
       );

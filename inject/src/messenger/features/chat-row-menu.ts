@@ -1,7 +1,7 @@
 /* ----------------------- Chat-list row menu ---------------------------- */
 // Right-clicking a conversation in the chat list offers that conversation's
 // own "More options" menu (Mark as unread, Mute, Archive, Delete, ...) in
-// place of the link's menu. Nothing is reimplemented: Carrier opens the row's menu
+// place of the link's menu. Nothing is reimplemented: Chatpane opens the row's menu
 // hidden (see hidden-menu.ts) to read which rows it offers, and presses the
 // same row when one is chosen. Rows are matched by their English text.
 
@@ -22,7 +22,7 @@ export function chatRowFor(anchor: HTMLAnchorElement): HTMLAnchorElement | null 
 
 const menuRows = (menu: Element) => [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
 
-/** What the row's menu offers right now, in Carrier's menu order. */
+/** What the row's menu offers right now, in Chatpane's menu order. */
 export async function readChatRowActions(link: HTMLAnchorElement): Promise<ChatRowAction[]> {
   const button = rowMenuButton(link);
   if (!button) return [];

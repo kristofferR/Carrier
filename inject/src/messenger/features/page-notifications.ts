@@ -1,5 +1,5 @@
 /* ------------------ Messenger's own notifications (#351) ------------------ */
-// Enable Messenger's own new-message notifications inside Carrier and record
+// Enable Messenger's own new-message notifications inside Chatpane and record
 // the exact conversation of each one. See lib/page-notifications.ts.
 import { diag } from "../bridge";
 import {

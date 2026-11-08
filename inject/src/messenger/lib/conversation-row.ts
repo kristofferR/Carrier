@@ -20,7 +20,7 @@ export function conversationNodeText(node: ConversationTextNode | null | undefin
   if (!node) return "";
   if (node.nodeType === 3) return node.nodeValue || "";
   if (node.nodeType !== 1) return "";
-  // Skip Carrier's own System emoji glyphs: the sprite they sit next to
+  // Skip Chatpane's own System emoji glyphs: the sprite they sit next to
   // contributes the same character below, so counting both would double it.
   if (node.getAttribute?.(SYSTEM_EMOJI_GLYPH_ATTR) != null) return "";
   if ((node.tagName || "").toUpperCase() === "IMG") {
@@ -46,7 +46,7 @@ function plainNodeText(node: ConversationTextNode): string {
 
 /**
  * Whether a child element carries text of its own — that is, this node is a
- * wrapper whose text belongs to a deeper candidate. Carrier's own System emoji
+ * wrapper whose text belongs to a deeper candidate. Chatpane's own System emoji
  * glyphs never count: they sit beside a sprite *inside* the leaf, and reading
  * one as nested text would discard the whole preview (the sprite is not a
  * candidate itself, so nothing else would report that text).

@@ -61,7 +61,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     env:
-      CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
+      CHATPANE_BUILD_REVISION: ${{ needs.source.outputs.revision }}
     # MCP's screenshot dependencies require newer PipeWire headers than Jammy provides.
     runs-on: ubuntu-24.04
     steps:
@@ -88,24 +88,24 @@ jobs:
         run: |
           bun run tauri build --debug --features diagnostics --no-bundle --ci
           readelf -S src-tauri/target/debug/carrier | grep -q .debug_info
-          tar -czf Carrier-debug-linux.tar.gz -C src-tauri/target/debug carrier
+          tar -czf Chatpane-debug-linux.tar.gz -C src-tauri/target/debug carrier
           cp scripts/debug/{update,policy}.ts .
-          bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Carrier-debug-linux.tar.gz update.ts policy.ts
+          bun scripts/debug/manifest.ts src-tauri/target/debug/carrier Chatpane-debug-linux.tar.gz update.ts policy.ts
       - name: Attest Linux debug artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
-            Carrier-debug-linux.tar.gz
+            Chatpane-debug-linux.tar.gz
             build.json
       - name: Test the debug installer end to end
         env:
-          CARRIER_TEST_BINARY: src-tauri/target/debug/carrier
+          CHATPANE_TEST_BINARY: src-tauri/target/debug/carrier
         run: bun test scripts/debug/install.test.ts
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: carrier-debug-linux-x86_64
+          name: chatpane-debug-linux-x86_64
           path: |
-            Carrier-debug-linux.tar.gz
+            Chatpane-debug-linux.tar.gz
             build.json
             update.ts
             policy.ts
@@ -120,7 +120,7 @@ jobs:
       attestations: write
       artifact-metadata: write
     env:
-      CARRIER_BUILD_REVISION: ${{ needs.source.outputs.revision }}
+      CHATPANE_BUILD_REVISION: ${{ needs.source.outputs.revision }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -135,7 +135,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Communication notifications (Ref #366) need Carrier's Developer ID
+      # Communication notifications (Ref #366) need Chatpane's Developer ID
       # provisioning profile in the bundle; tauri.conf.release.json embeds it.
       - name: Install the provisioning profile
         env:
@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$APPLE_PROVISIONING_PROFILE" ]; then
-            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Carrier's Developer ID provisioning profile)."
+            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Chatpane's Developer ID provisioning profile)."
             exit 1
           fi
           printf '%s' "$APPLE_PROVISIONING_PROFILE" | /usr/bin/base64 -D > src-tauri/embedded.provisionprofile
@@ -208,9 +208,9 @@ jobs:
             exit 1
           fi
           PLIST="$APP/Contents/Info.plist"
-          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
-          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
-            echo "The Carrier Share extension is missing from $APP." >&2
+          APPEX="$APP/Contents/PlugIns/Chatpane Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Chatpane Share" ]; then
+            echo "The Chatpane Share extension is missing from $APP." >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$APP"
@@ -218,7 +218,7 @@ jobs:
           sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
             | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
           if [ "$sandbox" != "true" ]; then
-            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            echo "The Chatpane Share extension is missing its sandbox entitlement." >&2
             exit 1
           fi
           app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
@@ -230,11 +230,7 @@ jobs:
           fi
           spctl --assess --type execute --verbose=2 "$APP"
           xcrun stapler validate "$APP"
-          # Installed debug builds expect Carrier.app in the archive; the
-          # bundle's folder name isn't part of its signature.
-          mkdir -p debug-stage
-          ditto "$APP" debug-stage/Carrier.app
-          ditto -c -k --sequesterRsrc --keepParent debug-stage/Carrier.app Carrier-debug-macos.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Chatpane-debug-macos.zip
           symbols=src-tauri/target/debug/carrier.dSYM
           app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
           symbols_uuid=$(xcrun dwarfdump --uuid "$symbols" | awk '{print $2}')
@@ -242,12 +238,12 @@ jobs:
             echo "Debug symbols do not match the signed app." >&2
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$symbols" Carrier-debug-symbols.zip
+          ditto -c -k --sequesterRsrc --keepParent "$symbols" Chatpane-debug-symbols.zip
 
       - name: Record debug identity and checksums
         run: |
           cp scripts/debug/{update,policy}.ts .
-          bun scripts/debug/manifest.ts debug-stage/Carrier.app/Contents/MacOS/carrier Carrier-debug-macos.zip Carrier-debug-symbols.zip update.ts policy.ts
+          bun scripts/debug/manifest.ts src-tauri/target/debug/bundle/macos/Chatpane.app/Contents/MacOS/carrier Chatpane-debug-macos.zip Chatpane-debug-symbols.zip update.ts policy.ts
 
       - name: Attest macOS debug manifest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -257,10 +253,10 @@ jobs:
       - name: Upload notarized debug app
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: carrier-debug-macos-aarch64
+          name: chatpane-debug-macos-aarch64
           path: |
-            Carrier-debug-macos.zip
-            Carrier-debug-symbols.zip
+            Chatpane-debug-macos.zip
+            Chatpane-debug-symbols.zip
             build.json
             update.ts
             policy.ts
@@ -285,9 +281,9 @@ jobs:
       DEBUG_REVISION: ${{ needs.source.outputs.revision }}
     steps:
       - name: Download Linux debug build
-        run: gh run download "$GITHUB_RUN_ID" --name carrier-debug-linux-x86_64 --dir linux
+        run: gh run download "$GITHUB_RUN_ID" --name chatpane-debug-linux-x86_64 --dir linux
       - name: Download macOS debug build
-        run: gh run download "$GITHUB_RUN_ID" --name carrier-debug-macos-aarch64 --dir macos
+        run: gh run download "$GITHUB_RUN_ID" --name chatpane-debug-macos-aarch64 --dir macos
       - name: Prepare the personal draft and attach verified builds
         run: |
           set -euo pipefail
@@ -295,26 +291,26 @@ jobs:
           [[ "$DEBUG_TAG" == debug-v* ]]
           if gh release view "$DEBUG_TAG" --json isDraft,body > existing.json 2>/dev/null; then
             test "$(jq -r .isDraft existing.json)" = true
-            if jq -e --arg commit "$DEBUG_REVISION" '.body == ("Carrier debug ready\nCommit: " + $commit)' existing.json >/dev/null; then
+            if jq -e --arg commit "$DEBUG_REVISION" '.body == ("Chatpane debug ready\nCommit: " + $commit)' existing.json >/dev/null; then
               echo "This commit already has a complete debug draft."
               exit 0
             fi
           else
             printf 'Preparing personal debug builds.\nCommit: %s\n' "$DEBUG_REVISION" > notes.txt
             gh release create "$DEBUG_TAG" --draft --prerelease --target "$DEBUG_REVISION" \
-              --title "Carrier $DEBUG_VERSION debug (${DEBUG_REVISION:0:12})" --notes-file notes.txt
+              --title "Chatpane $DEBUG_VERSION debug (${DEBUG_REVISION:0:12})" --notes-file notes.txt
           fi
           mv linux/build.json linux/build-linux-x86_64.json
           mv macos/build.json macos/build-macos-aarch64.json
           cmp linux/update.ts macos/update.ts
           cmp linux/policy.ts macos/policy.ts
           gh release upload "$DEBUG_TAG" --clobber \
-            linux/Carrier-debug-linux.tar.gz linux/build-linux-x86_64.json \
-            macos/Carrier-debug-macos.zip macos/Carrier-debug-symbols.zip macos/build-macos-aarch64.json \
+            linux/Chatpane-debug-linux.tar.gz linux/build-linux-x86_64.json \
+            macos/Chatpane-debug-macos.zip macos/Chatpane-debug-symbols.zip macos/build-macos-aarch64.json \
             linux/update.ts linux/policy.ts
           # Readiness is committed only after both platforms and symbols exist.
           # Keep this a draft forever; never use --draft=false here.
-          printf 'Carrier debug ready\nCommit: %s' "$DEBUG_REVISION" > notes.txt
+          printf 'Chatpane debug ready\nCommit: %s' "$DEBUG_REVISION" > notes.txt
           gh release edit "$DEBUG_TAG" --draft --notes-file notes.txt
       - name: Keep the newest two completed debug drafts
         run: |
@@ -323,7 +319,7 @@ jobs:
           gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
             jq -sr '[.[][] | select(.draft and .prerelease and
               (.tag_name | test("^debug-v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{12}$")) and
-              ((.body // "") | test("^Carrier debug ready\\nCommit: [0-9a-f]{40}$")))] |
+              ((.body // "") | test("^Chatpane debug ready\\nCommit: [0-9a-f]{40}$")))] |
               sort_by(.id) | reverse | .[2:] | .[].tag_name' |
             while IFS= read -r tag; do
               gh release delete "$tag" --yes

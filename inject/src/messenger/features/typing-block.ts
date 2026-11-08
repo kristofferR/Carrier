@@ -6,7 +6,7 @@
 import { diag } from "../bridge";
 import { clearTypingInFrame, idleChatStates } from "../lib/typing-block";
 
-const on = () => window.__CARRIER_SETTINGS__?.block_typing_indicator === true;
+const on = () => window.__CHATPANE_SETTINGS__?.block_typing_indicator === true;
 
 function bytesOf(data: unknown): Uint8Array | null {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);

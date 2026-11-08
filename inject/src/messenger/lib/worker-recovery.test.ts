@@ -231,7 +231,7 @@ describe("recovery inspection deadlines", () => {
     expect(await f.recovery.recover(() => true, true)).toBe("busy");
     advance(1);
     expect(await f.recovery.recover(() => true, true)).toBe("started");
-    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "carrier_recovery"]]);
+    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "chatpane_recovery"]]);
     expect(f.terminationCalls).toHaveLength(0);
     expect(f.sharedShutdownCalls).toHaveLength(0);
     expect(f.setupCalls).toHaveLength(1);
@@ -261,7 +261,7 @@ describe("recovery inspection deadlines", () => {
     expect(await f.recovery.recover(() => true, true)).toBe("busy");
     advance(1);
     expect(await f.recovery.recover(() => true, true)).toBe("started");
-    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "carrier_recovery"]]);
+    expect(calls).toEqual([["carrier-sync-recovery", "dedicated", "chatpane_recovery"]]);
     expect(f.setupCalls).toHaveLength(2);
     expect(f.terminationCalls).toHaveLength(1);
   });

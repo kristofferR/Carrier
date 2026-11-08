@@ -9,7 +9,7 @@ const MAX_OFFSET = 64;
 export function viewerControlOffset(
   controlTops: number[],
   appliedOffset = 0,
-  // Extra room at the top: Carrier's window controls on Windows and Linux.
+  // Extra room at the top: Chatpane's window controls on Windows and Linux.
   reserved = 0,
 ): number {
   const naturalTops = controlTops

@@ -51,7 +51,7 @@ window.addEventListener("popstate", () => {
 });
 const pause = () => new Promise<void>((resolve) => setTimeout(resolve, 100));
 const ready = () =>
-  scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
+  scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__chatpaneInCall;
 const activeTextInput = () =>
   document.hasFocus() &&
   document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
@@ -221,7 +221,7 @@ export function initScheduledSend() {
   ): Promise<ScheduleResponse> => {
     const current = account();
     if (!current) throw new Error("Sign in to schedule a message.");
-    const response = await carrierScheduledSend({ ...operation, account: current });
+    const response = await chatpaneScheduledSend({ ...operation, account: current });
     if (account() !== current) throw new Error("The signed-in account changed.");
     if (response.error) throw new Error(response.error);
     owner = current;
@@ -235,7 +235,7 @@ export function initScheduledSend() {
     diag("scheduled-send.action", "schedule operation failed");
   };
   const warning = async () => {
-    if (document.hidden || !window.__carrierToast) return;
+    if (document.hidden || !window.__chatpaneToast) return;
     const missed = rows.filter(
       (row) =>
         (row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain") &&
@@ -568,7 +568,7 @@ export function initScheduledSend() {
       close(true);
       return;
     }
-    if (window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false) {
+    if (window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false) {
       toast("Scheduled sending is unavailable with multiple app instances enabled.");
       return;
     }
@@ -665,7 +665,7 @@ export function initScheduledSend() {
     syncColors();
   }
   const poll = async () => {
-    if (polling || busy || !account() || window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false)
+    if (polling || busy || !account() || window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false)
       return;
     polling = true;
     try {
@@ -771,7 +771,7 @@ export function initScheduledSend() {
     document.addEventListener("visibilitychange", () => {
       void poll();
     });
-    window.addEventListener("carrier:settings", scheduleMount);
+    window.addEventListener("chatpane:settings", scheduleMount);
     new MutationObserver(scheduleMount).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["class", "style"],

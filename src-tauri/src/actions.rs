@@ -14,7 +14,7 @@ use crate::tray::show_main_with_activation_token;
 use crate::window::show_settings_window;
 
 pub(crate) const NEW_CONVERSATION_JS: &str =
-    "window.__carrierShortcuts && window.__carrierShortcuts.newConversation()";
+    "window.__chatpaneShortcuts && window.__chatpaneShortcuts.newConversation()";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum AppAction {
@@ -116,7 +116,7 @@ where
 fn page_action_script(action: &AppAction) -> Option<String> {
     let invoke = match action {
         AppAction::NewConversation => r#"
-    var shortcuts = window.__carrierShortcuts;
+    var shortcuts = window.__chatpaneShortcuts;
     if (shortcuts && typeof shortcuts.newConversation === "function") {
       shortcuts.newConversation();
       return;
@@ -127,8 +127,8 @@ fn page_action_script(action: &AppAction) -> Option<String> {
             let path = serde_json::to_string(&path).ok()?;
             format!(
                 r#"
-    if (typeof window.__carrierOpenThread === "function") {{
-      window.__carrierOpenThread({path});
+    if (typeof window.__chatpaneOpenThread === "function") {{
+      window.__chatpaneOpenThread({path});
       return;
     }}"#
             )
@@ -138,9 +138,9 @@ fn page_action_script(action: &AppAction) -> Option<String> {
 
     Some(format!(
         r#"
-(function retryCarrierAction(remaining) {{{invoke}
+(function retryChatpaneAction(remaining) {{{invoke}
   if (remaining > 1) {{
-    setTimeout(function () {{ retryCarrierAction(remaining - 1); }}, 500);
+    setTimeout(function () {{ retryChatpaneAction(remaining - 1); }}, 500);
   }}
 }})(20);
 "#
@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_canonical_carrier_actions() {
+    fn parses_canonical_chatpane_actions() {
         assert_eq!(
             parse("chatpane://compose"),
             Some(AppAction::NewConversation)
@@ -256,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_noncanonical_or_annotated_carrier_urls() {
+    fn rejects_noncanonical_or_annotated_chatpane_urls() {
         for value in [
             "chatpane://compose/",
             "chatpane://settings/",

@@ -10,10 +10,10 @@ if (!mac && process.platform !== "linux") throw new Error("Unsupported platform"
 const home = homedir();
 const root = join(
   home,
-  mac ? "Library/Application Support/CarrierDebug" : ".local/share/carrier-debug",
+  mac ? "Library/Application Support/ChatpaneDebug" : ".local/share/chatpane-debug",
 );
 const binary = mac
-  ? "/Applications/Carrier.app/Contents/MacOS/carrier"
+  ? "/Applications/Chatpane.app/Contents/MacOS/carrier"
   : join(home, ".local/bin/carrier");
 const config = mac
   ? join(home, "Library/Application Support")
@@ -27,7 +27,7 @@ async function loadSettings() {
   });
   const settings: unknown = JSON.parse(original);
   if (!settings || typeof settings !== "object" || Array.isArray(settings))
-    throw new Error("Invalid Carrier settings");
+    throw new Error("Invalid Chatpane settings");
   return { original, settings };
 }
 const installed = buildInfo(JSON.parse(await readFile(join(root, "installed.json"), "utf8")));
@@ -96,13 +96,13 @@ if (mac) {
     s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
   const agents = join(home, "Library/LaunchAgents");
   await mkdir(agents, { recursive: true });
-  const plist = join(agents, "io.github.kristofferr.carrier.debug-update.plist");
+  const plist = join(agents, "io.github.kristofferr.chatpane.debug-update.plist");
   await writeFile(
     plist,
     `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>Label</key><string>io.github.kristofferr.carrier.debug-update</string>
+<key>Label</key><string>io.github.kristofferr.chatpane.debug-update</string>
 <key>ProgramArguments</key><array><string>${xml(wrapper)}</string><string>--automatic</string></array>
 <key>StartInterval</key><integer>300</integer><key>RunAtLoad</key><true/>
 <key>StandardOutPath</key><string>${xml(join(root, "updater.log"))}</string>
@@ -111,7 +111,7 @@ if (mac) {
   );
   await run(["plutil", "-lint", plist]);
   await run(
-    ["launchctl", "bootout", `gui/${userInfo().uid}/io.github.kristofferr.carrier.debug-update`],
+    ["launchctl", "bootout", `gui/${userInfo().uid}/io.github.kristofferr.chatpane.debug-update`],
     [0, 3, 113],
   );
   await run(["launchctl", "bootstrap", `gui/${userInfo().uid}`, plist]);
@@ -148,15 +148,15 @@ if (mac) {
   const systemdQuote = (s: string) =>
     `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
   await writeFile(
-    join(units, "carrier-debug-update.service"),
-    `[Unit]\nDescription=Stage verified Carrier debug builds and install while quit\n[Service]\nType=oneshot\nExecStart=${systemdQuote(wrapper)} --automatic\nTimeoutStartSec=15min\n`,
+    join(units, "chatpane-debug-update.service"),
+    `[Unit]\nDescription=Stage verified Chatpane debug builds and install while quit\n[Service]\nType=oneshot\nExecStart=${systemdQuote(wrapper)} --automatic\nTimeoutStartSec=15min\n`,
   );
   await writeFile(
-    join(units, "carrier-debug-update.timer"),
-    "[Unit]\nDescription=Keep Carrier on debug builds from main\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\n[Install]\nWantedBy=timers.target\n",
+    join(units, "chatpane-debug-update.timer"),
+    "[Unit]\nDescription=Keep Chatpane on debug builds from main\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=5min\n[Install]\nWantedBy=timers.target\n",
   );
   await run(["systemctl", "--user", "daemon-reload"]);
-  await run(["systemctl", "--user", "enable", "--now", "carrier-debug-update.timer"]);
+  await run(["systemctl", "--user", "enable", "--now", "chatpane-debug-update.timer"]);
 }
 console.log(
   "Enrolled: hourly checks for debug drafts; install every five minutes while quit. No automatic restart.",

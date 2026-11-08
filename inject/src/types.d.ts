@@ -1,17 +1,17 @@
 /*
- * Ambient types for the injected environment: the Carrier settings snapshot
+ * Ambient types for the injected environment: the Chatpane settings snapshot
  * the Rust side pushes onto the page, the internal Tauri bridge, and the
- * `__carrier*` globals the injected scripts hang off `window` so the native
+ * `__chatpane*` globals the injected scripts hang off `window` so the native
  * menus / other injected scripts can reach them.
  */
 
 /**
  * Mirror of the Rust `Settings` struct (src-tauri/src/settings.rs), pushed to
- * the page as `window.__CARRIER_SETTINGS__` + a `carrier:settings` event. All
+ * the page as `window.__CHATPANE_SETTINGS__` + a `chatpane:settings` event. All
  * fields are optional because the page may run off a stale localStorage cache
  * (or none at all) before the first settings push lands.
  */
-interface CarrierSettings {
+interface ChatpaneSettings {
   hold_failures?: boolean;
   always_on_top?: boolean;
   show_tray?: boolean;
@@ -79,11 +79,11 @@ interface CarrierSettings {
   download_behavior?: "downloads" | "ask";
 }
 
-type CarrierToastAction =
+type ChatpaneToastAction =
   | { label: string; kind: "reveal-download"; url: string }
   | { label: string; kind: "open-download-privacy" };
 
-interface CarrierToastOptions {
+interface ChatpaneToastOptions {
   warning?: boolean;
 }
 
@@ -91,45 +91,48 @@ interface CarrierToastOptions {
  * Closure-scoped bridge supplied by the Rust initialization wrapper. It signs
  * the request without serializing its non-extractable native authorization.
  */
-declare const carrierRevealDownload: (url: string) => Promise<unknown> | undefined;
-/** Opens the OS settings pane that grants Carrier folder access (macOS). */
-declare const carrierOpenDownloadPrivacy: () => Promise<unknown> | undefined;
-declare const carrierWindowControl: (
+declare const chatpaneRevealDownload: (url: string) => Promise<unknown> | undefined;
+/** Opens the OS settings pane that grants Chatpane folder access (macOS). */
+declare const chatpaneOpenDownloadPrivacy: () => Promise<unknown> | undefined;
+declare const chatpaneWindowControl: (
   action: "minimize" | "toggle-maximize" | "close" | "drag",
 ) => Promise<unknown> | undefined;
-declare const carrierMediaViewer: (open: boolean) => Promise<unknown> | undefined;
-declare const carrierScheduledSend: (
+declare const chatpaneMediaViewer: (open: boolean) => Promise<unknown> | undefined;
+declare const chatpaneScheduledSend: (
   request: import("./messenger/lib/scheduled-send").ScheduleRequest,
 ) => Promise<import("./messenger/lib/scheduled-send").ScheduleResponse>;
 
-declare const carrierMediaPlatform: "macos" | "windows" | "linux";
-type CarrierMediaPermissionState =
+declare const chatpaneMediaPlatform: "macos" | "windows" | "linux";
+type ChatpaneMediaPermissionState =
   | "unknown"
   | "not-determined"
   | "restricted"
   | "denied"
   | "allowed";
-type CarrierMediaPermissionSnapshot = Record<"camera" | "microphone", CarrierMediaPermissionState>;
-declare const carrierMediaPermissionStatus: (
+type ChatpaneMediaPermissionSnapshot = Record<
+  "camera" | "microphone",
+  ChatpaneMediaPermissionState
+>;
+declare const chatpaneMediaPermissionStatus: (
   device?: "camera" | "microphone",
-) => Promise<CarrierMediaPermissionSnapshot>;
-declare const carrierOpenMediaPrivacy: (device: "camera" | "microphone") => Promise<void>;
+) => Promise<ChatpaneMediaPermissionSnapshot>;
+declare const chatpaneOpenMediaPrivacy: (device: "camera" | "microphone") => Promise<void>;
 
 /** Claim a selected native context action before starting its asynchronous work. */
-declare const carrierClaimContextAction: (action: string) => Promise<unknown>;
+declare const chatpaneClaimContextAction: (action: string) => Promise<unknown>;
 
 /** Reserve the exact blob URL produced by a claimed native share action. */
-declare const carrierPrepareDownload: (action: string, url: string) => Promise<unknown>;
+declare const chatpanePrepareDownload: (action: string, url: string) => Promise<unknown>;
 
 /** Ask the native shell to reserve a user-selected path for this download. */
-declare const carrierChooseDownload: (url: string, name: string) => Promise<unknown>;
+declare const chatpaneChooseDownload: (url: string, name: string) => Promise<unknown>;
 
 /**
  * Ask the native shell to render and save a conversation export where the user
  * chooses. Rejects with "export cancelled" when the save dialog is dismissed.
  * `reveal` is an opaque key the toast's reveal action can use afterwards.
  */
-declare const carrierExportConversation: (payload: {
+declare const chatpaneExportConversation: (payload: {
   format: "html" | "json";
   conversation: import("./messenger/lib/conversation-export").ConversationExport;
   reveal: string;
@@ -139,7 +142,7 @@ declare const carrierExportConversation: (payload: {
  * Same closure-scoped credential, second action: open the macOS share sheet
  * for a just-downloaded file, anchored at viewport fractions (0..1 top-left).
  */
-declare const carrierShareDownload: (
+declare const chatpaneShareDownload: (
   downloadId: string,
   x: number,
   y: number,
@@ -147,22 +150,22 @@ declare const carrierShareDownload: (
 ) => Promise<void>;
 
 /** Write an image through the native pasteboard after its menu row is selected. */
-declare const carrierCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;
+declare const chatpaneCopyImage: (dataUrl: string, action: string) => Promise<unknown> | undefined;
 
-/** Show Carrier's media and message actions in a native context menu. A
+/** Show Chatpane's media and message actions in a native context menu. A
  * keyboard-opened menu passes the viewport point to pop up at. */
-declare const carrierShowContextMenu: (
+declare const chatpaneShowContextMenu: (
   items: { label: string; action: string; value?: string; reaction?: true; checked?: true }[],
   position?: [x: number, y: number],
 ) => Promise<void>;
 
 /** Verify the native context-menu selection without exposing the window secret. */
-declare const carrierVerifyResult:
+declare const chatpaneVerifyResult:
   | ((event: string, value: unknown, signature: unknown) => Promise<boolean>)
   | undefined;
 
 /** Send a quick-reply result through the non-extractable per-window signer. */
-declare const carrierReplyResult: (id: number, attempt: number, ok: boolean) => Promise<unknown>;
+declare const chatpaneReplyResult: (id: number, attempt: number, ok: boolean) => Promise<unknown>;
 
 interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
@@ -170,8 +173,8 @@ interface Window {
     invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
     metadata?: { currentWindow?: { label?: string } };
   };
-  /** The title bar strip Carrier keeps (src-tauri/src/title_bar.rs). */
-  __CARRIER_TITLE_BAR__?: {
+  /** The title bar strip Chatpane keeps (src-tauri/src/title_bar.rs). */
+  __CHATPANE_TITLE_BAR__?: {
     inset: number;
     controls: "windows" | "linux" | null;
     minimize: boolean;
@@ -179,54 +182,54 @@ interface Window {
     maximized: boolean;
   };
   /** Called by the native side with the strip's current state. */
-  __carrierTitleBar?: (state: unknown) => void;
-  __CARRIER_SETTINGS__?: CarrierSettings;
+  __chatpaneTitleBar?: (state: unknown) => void;
+  __CHATPANE_SETTINGS__?: ChatpaneSettings;
   /** Scheduled delivery availability fixed when the native process starts. */
-  __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;
+  __CHATPANE_SCHEDULED_SEND_AVAILABLE__?: boolean;
   /** Conversation id a recycled window reopens; set only in rebuilt windows. */
-  __CARRIER_RESTORE_THREAD__?: string;
+  __CHATPANE_RESTORE_THREAD__?: string;
   /** macOS: built after a second window moved the session to Messenger's shared engine. */
-  __CARRIER_SHARED_ENGINE__?: boolean;
+  __CHATPANE_SHARED_ENGINE__?: boolean;
   /** Native watchdog generation baked into this Messenger window. */
-  __CARRIER_HEARTBEAT_ID__?: number;
+  __CHATPANE_HEARTBEAT_ID__?: number;
 
   // panel.js
-  __carrierToast?: (
+  __chatpaneToast?: (
     msg: string,
-    action?: CarrierToastAction,
-    options?: CarrierToastOptions,
+    action?: ChatpaneToastAction,
+    options?: ChatpaneToastOptions,
   ) => void;
-  __carrierCheckUpdates?: () => void;
-  __carrierToggleSettings?: () => void;
-  __carrierToggleShortcuts?: () => void;
+  __chatpaneCheckUpdates?: () => void;
+  __chatpaneToggleSettings?: () => void;
+  __chatpaneToggleShortcuts?: () => void;
 
   // messenger.js — driven by the native menus (View ▸ Zoom, File ▸ New
   // Conversation, Dock/tray thread menus) and the dev-only mcp-bridge.
-  __carrierZoomIn?: () => void;
-  __carrierZoomOut?: () => void;
-  __carrierZoomReset?: () => void;
-  __carrierShortcuts?: Record<string, () => unknown>;
-  __carrierToggleInfo?: () => boolean;
-  /** Native → page account requests; answered on `carrier:account-result`. */
-  __carrierAccount?: (request: string, action: string, value: unknown) => void;
+  __chatpaneZoomIn?: () => void;
+  __chatpaneZoomOut?: () => void;
+  __chatpaneZoomReset?: () => void;
+  __chatpaneShortcuts?: Record<string, () => unknown>;
+  __chatpaneToggleInfo?: () => boolean;
+  /** Native → page account requests; answered on `chatpane:account-result`. */
+  __chatpaneAccount?: (request: string, action: string, value: unknown) => void;
   /** File ▸ Export Conversation as HTML/JSON… */
-  __carrierExportConversation?: (format: unknown) => void;
-  __carrierOpenThread?: (href: string) => boolean;
+  __chatpaneExportConversation?: (format: unknown) => void;
+  __chatpaneOpenThread?: (href: string) => boolean;
   /** Temporarily resume encrypted-history indexing for conversation search. */
-  __carrierWakeSearchIndex?: () => void;
-  __CARRIER_WORKER_OPTIMIZATION__?: {
+  __chatpaneWakeSearchIndex?: () => void;
+  __CHATPANE_WORKER_OPTIMIZATION__?: {
     responsivenessWorkersStopped: number;
   };
-  __carrierNotifyClick?: (id: number) => boolean;
-  __carrierNotifyResult?: (id: number, delivery: string) => void;
+  __chatpaneNotifyClick?: (id: number) => boolean;
+  __chatpaneNotifyResult?: (id: number, delivery: string) => void;
   /** Share-extension payload delivery from the native intake (macOS). */
-  __carrierShareMedia?: (payload: unknown) => void;
-  /** Deliver a native notification reply without raising the Carrier window. */
-  __carrierQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
+  __chatpaneShareMedia?: (payload: unknown) => void;
+  /** Deliver a native notification reply without raising the Chatpane window. */
+  __chatpaneQuickReply?: (path: string, text: string, id: number, attempt: number) => void;
   /** Preserve a failed notification reply as an unsent composer draft. */
-  __carrierQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
+  __chatpaneQuickReplyDraft?: (path: string, text: string, id: number, attempt: number) => void;
   /** Mute a conversation from its notification without raising the window. */
-  __carrierQuickMute?: (
+  __chatpaneQuickMute?: (
     path: string,
     target: unknown,
     id: number,
@@ -234,7 +237,7 @@ interface Window {
     budgetMs: number,
   ) => void;
   /** React to the message a notification announced (`target`: native ActionTarget). */
-  __carrierQuickReact?: (
+  __chatpaneQuickReact?: (
     path: string,
     target: unknown,
     id: number,
@@ -242,7 +245,7 @@ interface Window {
     budgetMs: number,
   ) => void;
   /** Mark a notification's conversation read without opening it. */
-  __carrierMarkRead?: (
+  __chatpaneMarkRead?: (
     path: string,
     target: unknown,
     id: number,
@@ -250,28 +253,28 @@ interface Window {
     budgetMs: number,
   ) => void;
   /** Auto-refresh nudge, called by the Notification bridge. */
-  __carrierOnNotification?: () => void;
+  __chatpaneOnNotification?: () => void;
   /** Sender-avatar cache sizes, or one sender's verdict, for the MCP probe. */
-  __carrierSenderAvatarStats?: (
+  __chatpaneSenderAvatarStats?: (
     thread?: string,
     sender?: string,
   ) => { avatars: number; groups: number; retired: number } | { resolves: string };
   /** Set while a getUserMedia call is live so auto-refresh never reloads mid-call. */
-  __carrierInCall?: boolean;
+  __chatpaneInCall?: boolean;
   /** Respond to the native renderer watchdog without exposing page content. */
-  __carrierHeartbeat?: (expectedId: number) => void;
-  __carrierRateLimitRetry?: (expectedId: number, expires: number) => void;
-  __carrierCaptureRecovery?: () => Promise<void>;
+  __chatpaneHeartbeat?: (expectedId: number) => void;
+  __chatpaneRateLimitRetry?: (expectedId: number, expires: number) => void;
+  __chatpaneCaptureRecovery?: () => Promise<void>;
 }
 
 interface XMLHttpRequest {
   /** Set by the telemetry blocker in open(), consumed in send(). */
-  __carrierBlocked?: boolean;
+  __chatpaneBlocked?: boolean;
 }
 
 interface Element {
   /** System-emoji feature: the native-glyph <span> shadowing this sprite. */
-  __carrierSystemEmojiGlyph?: HTMLSpanElement;
+  __chatpaneSystemEmojiGlyph?: HTMLSpanElement;
   /** Fullscreen polyfill (only on WebViews without the real API). */
   webkitRequestFullscreen?: () => Promise<void>;
 }

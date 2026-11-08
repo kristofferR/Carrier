@@ -15,20 +15,20 @@ import { workerRecovery, workerReplacement } from "./worker-recovery";
 const SEARCH_INDEX_WAKE_MS = 5 * 60_000;
 
 /**
- * Intercept the few Facebook modules Carrier intentionally replaces before the
+ * Intercept the few Facebook modules Chatpane intentionally replaces before the
  * page's bootloader registers them. Failure is harmless: the original module
  * loader remains installed and messenger.css still hides Facebook's chrome.
  */
 export function initFacebookModuleInterception() {
   const page = window as unknown as Record<string, unknown>;
-  const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+  const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
   const wrappedDefines = new WeakSet<object>();
   const searchIndex = new FacebookFTSIdleCoordinator();
   const nicknamePreference = {
-    getSnapshot: () => nicknameMode(window.__CARRIER_SETTINGS__),
+    getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
     subscribe: (listener: () => void) => {
-      window.addEventListener("carrier:settings", listener);
-      return () => window.removeEventListener("carrier:settings", listener);
+      window.addEventListener("chatpane:settings", listener);
+      return () => window.removeEventListener("chatpane:settings", listener);
     },
   };
   let pauseTimer: number | undefined;
@@ -42,7 +42,7 @@ export function initFacebookModuleInterception() {
       searchIndex.pause();
     }, SEARCH_INDEX_WAKE_MS);
   };
-  window.__carrierWakeSearchIndex = wakeSearchIndex;
+  window.__chatpaneWakeSearchIndex = wakeSearchIndex;
 
   // Messenger focuses a real input when conversation search opens. Unlike its
   // translated button label, this control shape is locale-independent.
@@ -85,7 +85,7 @@ export function initFacebookModuleInterception() {
       },
       // macOS keeps Messenger's encrypted engine per window (#295), unless a
       // second window moved the session onto Facebook's shared engine.
-      /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
+      /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
       nicknamePreference,
     );
     wrappedDefines.add(wrapped);

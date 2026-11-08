@@ -1,7 +1,7 @@
 /* ------------------------ Message context menu ------------------------- */
 // Right-clicking a message offers Messenger's own message actions: quick
 // reactions, Reply, Forward, Pin, Unsend/Remove. Nothing is reimplemented:
-// Carrier reads what the message's hover toolbar offers and, when a row is
+// Chatpane reads what the message's hover toolbar offers and, when a row is
 // chosen, presses the same toolbar button or menu row. Messenger mounts the
 // toolbar only on hover, and its React and More menus are opened briefly while
 // hidden (see hidden-menu.ts) to learn which reactions and actions this

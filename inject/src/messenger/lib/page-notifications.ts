@@ -3,8 +3,8 @@
  *
  * Messenger only raises a Web Notification when it believes it runs as the
  * installed messenger.com app (`isMessengerPWA() && justknobx._("1465")`) and
- * the page is hidden. Neither holds in Carrier, so Messenger never notified and
- * every Carrier notification was reconstructed from the chat list. Rewriting
+ * the page is hidden. Neither holds in Chatpane, so Messenger never notified and
+ * every Chatpane notification was reconstructed from the chat list. Rewriting
  * exactly those two checks in `useMWLSChatPopperUpper` lets Messenger notify
  * whenever the window is hidden or unfocused, like the old desktop app.
  *
@@ -326,7 +326,7 @@ export function loadRewrittenScript(
   global: Record<string, unknown>,
   report: (outcome: "loaded" | "refused" | "invalid") => void,
 ): void {
-  const key = `__carrierRewritten${++rewriteSeq}`;
+  const key = `__chatpaneRewritten${++rewriteSeq}`;
   const url = URL.createObjectURL(
     new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" }),
   );

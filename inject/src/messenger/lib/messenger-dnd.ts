@@ -1,7 +1,7 @@
 /*
  * Messenger's own Do Not Disturb (Ref #353). Turning it on in Messenger or on
  * the phone syncs `notification_settings.globalMuteUntil` to the account:
- * seconds since 1970 when it ends, 0 when off, -1 until turned off. Carrier
+ * seconds since 1970 when it ends, 0 when off, -1 until turned off. Chatpane
  * keeps the latest value here and treats an active Do Not Disturb like Mute
  * Notifications. Idea from fMess (github.com/toanbku/fmess, MIT).
  */

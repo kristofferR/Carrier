@@ -8,7 +8,7 @@
     "macOS": {
       "entitlements": "entitlements.release.plist",
       "files": {
-        "PlugIns/Carrier Share.appex": "target/share-extension/Carrier Share.appex",
+        "PlugIns/Chatpane Share.appex": "target/share-extension/Chatpane Share.appex",
         "embedded.provisionprofile": "embedded.provisionprofile"
       }
     }

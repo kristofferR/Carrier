@@ -1,6 +1,6 @@
 import { DOWNLOAD_ACCESS_DENIED } from "./downloads";
 
-export const DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+export const DOWNLOAD_FINISHED_EVENT = "chatpane:download-finished";
 
 const NativePromise = Promise;
 const nativePromiseThen = Promise.prototype.then;
@@ -19,7 +19,7 @@ type DownloadFinishedDetail = {
   id: string;
   url: string;
   success: boolean;
-  /** The OS refused Carrier access to the destination folder. */
+  /** The OS refused Chatpane access to the destination folder. */
   denied: boolean;
   signature: string;
 };
@@ -108,7 +108,7 @@ export function waitForNativeDownload(
 
 /**
  * Call `onDenied` for every authenticated download the OS refused to save
- * because Carrier may not access the folder. This covers downloads nobody
+ * because Chatpane may not access the folder. This covers downloads nobody
  * awaits, such as attachment links the WebView turns into downloads itself.
  */
 export function watchDeniedDownloads(

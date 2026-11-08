@@ -1,7 +1,7 @@
 //! Durable record of the message each conversation last announced.
 //!
 //! The page decides when a conversation has news, but its memory dies with the
-//! document: Facebook's macOS client deletes Carrier's localStorage on every
+//! document: Facebook's macOS client deletes Chatpane's localStorage on every
 //! load, and a rebuilt window or a restart has no session storage either. A
 //! re-hydrated unread row would then notify again. Every banner passes through
 //! the native side, so this ledger is shared by all windows and survives
@@ -17,7 +17,7 @@ use tauri::Manager;
 
 const LEDGER_FILE: &str = "notification-ledger.json";
 const LEDGER_LIMIT: usize = 1000;
-/// A conversation read while Carrier was closed never reports that read, so
+/// A conversation read while Chatpane was closed never reports that read, so
 /// its entry expires instead of silencing an identical preview forever.
 const ENTRY_MAX_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 

@@ -1,5 +1,5 @@
 //! Log Out… (Ref #356). Runs Facebook's own logout in the Messenger page, so
-//! the session ends on Facebook's side too, then deletes everything Carrier
+//! the session ends on Facebook's side too, then deletes everything Chatpane
 //! keeps for the account and restarts; `settings.json` stays.
 
 use tauri::Manager;

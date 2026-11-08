@@ -1,7 +1,7 @@
 //! Pause notifications for a set time from the tray and Dock menus (Ref #348).
 //!
 //! A pause is an end time in settings, not a timer, so it survives restarts
-//! and a pause that ended while Carrier was closed is already over at launch.
+//! and a pause that ended while Chatpane was closed is already over at launch.
 //! "Until I turn them back on" is the existing `mute_notifications` setting.
 
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone};

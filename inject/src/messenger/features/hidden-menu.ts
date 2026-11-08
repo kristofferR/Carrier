@@ -1,5 +1,5 @@
 /* --------------------------- Hidden menus ------------------------------ */
-// Carrier's message and conversation menus learn what Messenger offers by
+// Chatpane's message and conversation menus learn what Messenger offers by
 // opening Messenger's own menu briefly while hidden
 // (data-carrier-message-menu-probe, see messenger.css), reading its rows,
 // and closing it again. Choosing a row later opens it hidden once more and

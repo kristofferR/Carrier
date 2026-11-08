@@ -185,7 +185,7 @@ describe("hasCandidateTextChild", () => {
   });
 
   test("keeps a sprite leaf a candidate, glyph span and all", () => {
-    // What System emoji renders: "Kim: " + sprite + Carrier's own glyph span.
+    // What System emoji renders: "Kim: " + sprite + Chatpane's own glyph span.
     const glyph = element("SPAN", { "data-carrier-system-emoji-glyph": "" }, [
       textNode("\u{1F622}"),
     ]);

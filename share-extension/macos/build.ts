@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 if (process.platform !== "darwin") {
-  console.log("Carrier Share: skipped on non-macOS target");
+  console.log("Chatpane Share: skipped on non-macOS target");
   process.exit(0);
 }
 
@@ -34,5 +34,5 @@ const result = Bun.spawnSync(
   { cwd: repoRoot, stdout: "inherit", stderr: "inherit" },
 );
 if (result.exitCode !== 0) {
-  throw new Error(`Carrier Share build failed with exit code ${result.exitCode ?? "unknown"}`);
+  throw new Error(`Chatpane Share build failed with exit code ${result.exitCode ?? "unknown"}`);
 }

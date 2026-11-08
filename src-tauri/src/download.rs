@@ -377,7 +377,7 @@ pub(crate) fn is_unsafe_download(name: &str) -> bool {
     )
 }
 
-/// True when the OS refuses to let Carrier save into `folder`: the macOS
+/// True when the OS refuses to let Chatpane save into `folder`: the macOS
 /// Downloads folder permission was denied, or the folder is read-only. Probes
 /// with a uniquely named empty file (`create_new` never touches an existing
 /// one) and removes it. Call it off the main thread: while macOS hasn't asked
@@ -397,7 +397,7 @@ pub(crate) fn is_folder_access_denied(folder: &Path) -> bool {
     }
 }
 
-/// Where the user can give Carrier folder access again.
+/// Where the user can give Chatpane folder access again.
 pub(crate) fn folder_privacy_url(platform: &str) -> Option<&'static str> {
     (platform == "macos").then_some(
         "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",

@@ -7,7 +7,7 @@ if (!executable || !files.length) throw new Error("Usage: manifest.ts executable
 const probe = Bun.spawnSync([executable, "--build-info"]);
 if (probe.exitCode !== 0) throw new Error("Build identity probe failed");
 const build = buildInfo(JSON.parse(probe.stdout.toString()));
-if (build.revision !== process.env.CARRIER_BUILD_REVISION)
+if (build.revision !== process.env.CHATPANE_BUILD_REVISION)
   throw new Error("Build commit differs from workflow commit");
 const hashes: Record<string, string> = {};
 for (const path of files) {

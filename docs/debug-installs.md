@@ -1,6 +1,6 @@
 # Personal debug installations
 
-Kris's MacBook and Omarchy run diagnostics builds of Carrier from `main`. They do
+Kris's MacBook and Omarchy run diagnostics builds of Chatpane from `main`. They do
 not use Homebrew, AUR, Snap, or the public-release updater. This policy follows
 commits, including new commits with the same app version; it never pins a version.
 Public releases and their package-manager distribution are unchanged.
@@ -34,18 +34,18 @@ and matching app/dSYM UUIDs. Missing, incomplete, failed, divergent, or downgrad
 builds leave the current installation in place. It never falls back to a release.
 
 Checks for new debug drafts run hourly. Every five minutes the scheduler tries to install a staged
-build if Carrier is **quit**, including its tray process. It never terminates,
-reloads, restarts, or focuses Carrier. Native shared/exclusive file locks protect
+build if Chatpane is **quit**, including its tray process. It never terminates,
+reloads, restarts, or focuses Chatpane. Native shared/exclusive file locks protect
 against launching during installation and concurrent updater runs. The next
-normal launch uses the new debug build. Because the updater never quits Carrier,
+normal launch uses the new debug build. Because the updater never quits Chatpane,
 a running diagnostics build checks every ten minutes for a staged build and posts
-one notification per staged build saying that quitting Carrier installs it.
+one notification per staged build saying that quitting Chatpane installs it.
 
-- macOS app: `/Applications/Carrier.app`
+- macOS app: `/Applications/Chatpane.app`
 - Linux app: `~/.local/bin/carrier` (both desktop and autostart entries use it)
 - Check now: `~/.local/bin/carrier-debug-update --check`
-- macOS scheduler: `io.github.kristofferr.carrier.debug-update` LaunchAgent
-- Linux scheduler: `carrier-debug-update.timer` user unit
+- macOS scheduler: `io.github.kristofferr.chatpane.debug-update` LaunchAgent
+- Linux scheduler: `chatpane-debug-update.timer` user unit
 
 Authenticated `gh`, Bun, and platform verification tools must remain available.
 The updater uses the existing GitHub login; it stores no tokens. Updates download
@@ -56,20 +56,20 @@ artifacts. Draft tags use `debug-v*`, so they cannot trigger the public `v*` flo
 
 1. Build/push the implementation, let its main CI succeed, then manually run `debug.yml` for that main commit.
    Future public releases trigger the debug draft automatically.
-2. Preserve existing app data and the current debug app. On Linux copy Carrier's
+2. Preserve existing app data and the current debug app. On Linux copy Chatpane's
    launcher icons to the user's icon directory before removing the AUR package.
-   Remove only the Carrier package/cask, never dependencies or app data. Do not
+   Remove only the Chatpane package/cask, never dependencies or app data. Do not
    run `brew uninstall --zap`.
-3. Quit Carrier when the live state no longer needs preservation. Run
+3. Quit Chatpane when the live state no longer needs preservation. Run
    `bun scripts/debug/update.ts --check` from the repo. It verifies and installs
    the latest eligible debug draft, keeping the previous application.
 4. Run `bun scripts/debug/enroll.ts --hold-failures`. Enrollment refuses an AUR/Homebrew-owned
-   Carrier install, verifies the installed debug identity, and installs the user
+   Chatpane install, verifies the installed debug identity, and installs the user
    scheduler and command. The helper advances with each verified app build.
 5. Launch normally. Enrollment enables **Settings → Advanced → Hold Failures
    for Investigation** with `--hold-failures`; the setting persists across builds.
 
-The `debug-only` marker in the management directory makes future Carrier builds
+The `debug-only` marker in the management directory makes future Chatpane builds
 without full diagnostics refuse to start on these machines. Debug builds reject
 public-release discovery and installation in the backend, including direct IPC.
 Removing package-manager ownership prevents routine package upgrades from
@@ -85,22 +85,22 @@ Normal Dock/menu/login launches enable native stdout/stderr capture, full Rust
 panic backtraces, MCP, DevTools, and existing webview instrumentation. No special
 launch command or environment is required. Native output rotates at 20 MiB with
 one previous file per session; the latest five completed sessions and all live sessions are retained.
-Carrier's existing bounded application log remains available in **Open Log
+Chatpane's existing bounded application log remains available in **Open Log
 Folder**. Native output may contain third-party diagnostics; keep it private.
 
 **Hold Failures** pauses native watchdog recovery, silent worker repair, and
 injected automatic reloads, while heartbeats and diagnostics continue. Manual reload and navigation
-remain available. Before automatic reload or window recreation (when enabled), Carrier records
+remain available. Before automatic reload or window recreation (when enabled), Chatpane records
 native watchdog state and requests a content-free page snapshot with DOM counts,
 visibility, document age, and transport health. Unresponsive renderers cannot
 supply a page snapshot; the native evidence is still recorded. No message text,
 contact names, draft contents, or raw DOM are captured by this snapshot.
 
-Management data lives under `~/Library/Application Support/CarrierDebug` on Mac
-and `~/.local/share/carrier-debug` on Linux:
+Management data lives under `~/Library/Application Support/ChatpaneDebug` on Mac
+and `~/.local/share/chatpane-debug` on Linux:
 
 - `installed.json`: active source commit and previous app path.
-- `pending.json`: a verified update waiting for Carrier to quit.
+- `pending.json`: a verified update waiting for Chatpane to quit.
 - `builds/`: latest three downloaded builds with manifests and symbols.
 - `backups/`: latest two replaced apps for manual rollback.
 - `symbols/`: macOS dSYM ZIP and manifest for every installed managed build.
@@ -109,5 +109,5 @@ and `~/.local/share/carrier-debug` on Linux:
 Linux retains symbols inside each stored executable. Copy an investigation's
 binary/logs out of the rolling cache when preserving evidence long term. macOS
 symbol archives are retained separately even after old app bundles are pruned.
-For rollback, stop the updater scheduler, quit Carrier, restore the desired
+For rollback, stop the updater scheduler, quit Chatpane, restore the desired
 backup, and retain its matching manifest/symbols. Automatic downgrade is rejected.

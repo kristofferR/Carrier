@@ -46,7 +46,7 @@ host. Replacing either image requires a new privacy inspection before upload.
    that source change immediately. Use this binary only for the capture; keep
    the MCP release-build prohibition intact and rebuild normally afterward.
 2. Launch it with fresh, empty `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, and
-   `XDG_CACHE_HOME` directories and a dedicated `CARRIER_MCP_SOCKET_PATH`. Never
+   `XDG_CACHE_HOME` directories and a dedicated `CHATPANE_MCP_SOCKET_PATH`. Never
    copy cookies, a browser profile, or user settings into this capture profile.
 3. Use an isolated Ubuntu GNOME session with Yaru (or Yaru-dark), the Ubuntu
    settings overrides, and `gsd-xsettings` running. A separate Xvfb display and

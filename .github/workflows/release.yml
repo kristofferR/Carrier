@@ -122,7 +122,7 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # Communication notifications (Ref #366) need Carrier's Developer ID
+      # Communication notifications (Ref #366) need Chatpane's Developer ID
       # provisioning profile in the bundle; tauri.conf.release.json embeds it.
       - name: Install the provisioning profile
         env:
@@ -130,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$APPLE_PROVISIONING_PROFILE" ]; then
-            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Carrier's Developer ID provisioning profile)."
+            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Chatpane's Developer ID provisioning profile)."
             exit 1
           fi
           printf '%s' "$APPLE_PROVISIONING_PROFILE" | /usr/bin/base64 -D > src-tauri/embedded.provisionprofile
@@ -176,7 +176,7 @@ jobs:
           build_args=()
           if [ "$DEBUG_BUILD" = "true" ]; then
             build_args+=(--debug --features diagnostics)
-            export CARRIER_BUILD_REVISION="$(git rev-parse HEAD)"
+            export CHATPANE_BUILD_REVISION="$(git rev-parse HEAD)"
           fi
           bun run tauri build --bundles app --ci "${build_args[@]}" \
             --config src-tauri/tauri.conf.release.json \
@@ -203,9 +203,9 @@ jobs:
             exit 1
           fi
           PLIST="$APP/Contents/Info.plist"
-          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
-          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
-            echo "The Carrier Share extension is missing from $APP." >&2
+          APPEX="$APP/Contents/PlugIns/Chatpane Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Chatpane Share" ]; then
+            echo "The Chatpane Share extension is missing from $APP." >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$APP"
@@ -213,7 +213,7 @@ jobs:
           sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
             | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
           if [ "$sandbox" != "true" ]; then
-            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            echo "The Chatpane Share extension is missing its sandbox entitlement." >&2
             exit 1
           fi
           app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
@@ -225,7 +225,7 @@ jobs:
           fi
           spctl --assess --type execute --verbose=2 "$APP"
           xcrun stapler validate "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" Carrier-notarized-smoke.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP" Chatpane-notarized-smoke.zip
           if [ "$DEBUG_BUILD" = "true" ]; then
             symbols=src-tauri/target/debug/carrier.dSYM
             app_uuid=$(xcrun dwarfdump --uuid "$APP/Contents/MacOS/carrier" | awk '{print $2}')
@@ -234,16 +234,16 @@ jobs:
               echo "Debug symbols do not match the signed app." >&2
               exit 1
             fi
-            ditto -c -k --sequesterRsrc --keepParent "$symbols" Carrier-debug-symbols.zip
+            ditto -c -k --sequesterRsrc --keepParent "$symbols" Chatpane-debug-symbols.zip
           fi
 
       - name: Upload notarized smoke app
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: Carrier-notarized-smoke
+          name: Chatpane-notarized-smoke
           path: |
-            Carrier-notarized-smoke.zip
-            Carrier-debug-symbols.zip
+            Chatpane-notarized-smoke.zip
+            Chatpane-debug-symbols.zip
           if-no-files-found: error
           retention-days: 1
 
@@ -320,7 +320,7 @@ jobs:
             echo "$delimiter"
           } >> "$GITHUB_OUTPUT"
           keep_draft=false
-          if grep -q '<!-- carrier:keep-draft -->' <<< "$body"; then
+          if grep -q '<!-- chatpane:keep-draft -->' <<< "$body"; then
             keep_draft=true
             echo "Release will remain a draft after all artifacts are built."
           fi
@@ -394,7 +394,7 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      # Communication notifications (Ref #366) need Carrier's Developer ID
+      # Communication notifications (Ref #366) need Chatpane's Developer ID
       # provisioning profile in the bundle; tauri.conf.release.json embeds it.
       - name: Install the provisioning profile
         if: startsWith(matrix.os, 'macos')
@@ -403,7 +403,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$APPLE_PROVISIONING_PROFILE" ]; then
-            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Carrier's Developer ID provisioning profile)."
+            echo "::error::Set the APPLE_PROVISIONING_PROFILE secret (base64 of Chatpane's Developer ID provisioning profile)."
             exit 1
           fi
           printf '%s' "$APPLE_PROVISIONING_PROFILE" | /usr/bin/base64 -D > src-tauri/embedded.provisionprofile
@@ -498,16 +498,16 @@ jobs:
             exit 1
           fi
           PLIST="$APP/Contents/Info.plist"
-          APPEX="$APP/Contents/PlugIns/Carrier Share.appex"
-          if [ ! -x "$APPEX/Contents/MacOS/Carrier Share" ]; then
-            echo "The Carrier Share extension is missing from $APP." >&2
+          APPEX="$APP/Contents/PlugIns/Chatpane Share.appex"
+          if [ ! -x "$APPEX/Contents/MacOS/Chatpane Share" ]; then
+            echo "The Chatpane Share extension is missing from $APP." >&2
             exit 1
           fi
           codesign --verify --strict --verbose=2 "$APPEX"
           sandbox=$(codesign -d --entitlements :- "$APPEX" 2>/dev/null \
             | plutil -extract 'com\.apple\.security\.app-sandbox' raw -)
           if [ "$sandbox" != "true" ]; then
-            echo "The Carrier Share extension is missing its sandbox entitlement." >&2
+            echo "The Chatpane Share extension is missing its sandbox entitlement." >&2
             exit 1
           fi
           app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
@@ -666,7 +666,7 @@ jobs:
   publish:
     needs: [build, prepare_release]
     # A curated draft can opt into a manual-test hold with the hidden
-    # `carrier:keep-draft` marker. All six signed bundles still build and upload,
+    # `chatpane:keep-draft` marker. All six signed bundles still build and upload,
     # but public links, the Homebrew tap, and the release itself stay untouched.
     if: needs.prepare_release.outputs.keep_draft != 'true'
     runs-on: ubuntu-latest

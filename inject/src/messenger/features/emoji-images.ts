@@ -108,7 +108,7 @@ export function initEmojiImageLoading() {
   document.addEventListener("scroll", scheduleScan, true);
   window.addEventListener("resize", scheduleScan);
 
-  // Intersection/loading primitives can retain observed images. Carrier uses
+  // Intersection/loading primitives can retain observed images. Chatpane uses
   // an explicit set instead and drops detached picker trees immediately.
   new MutationObserver((records) => {
     if (pending.size === 0) return;

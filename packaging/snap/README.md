@@ -77,7 +77,7 @@ registration confirms the name is free. Register and upload only after the
 Chatpane rename release ships, so the snap never shows the old in-app name.
 
 To use a different name, change `name`, the app key, `snap/gui/snap.<name>.desktop`,
-`desktop-file-ids`, and the notification D-Bus slot together. Carrier's Rust
+`desktop-file-ids`, and the notification D-Bus slot together. Chatpane's Rust
 code derives the portal bus name, object path, and launcher desktop ID
 (`<name>_<name>`) from `SNAP_NAME`, so the app key must equal the snap name.
 

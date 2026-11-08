@@ -1,5 +1,5 @@
 //! Snap blocks the freedesktop ActivationToken broadcast. Exported portal
-//! actions instead receive activation data in a call addressed only to Carrier.
+//! actions instead receive activation data in a call addressed only to Chatpane.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -167,7 +167,7 @@ pub(super) fn show(
     ]);
     // Version 1 rejects unknown keys rather than ignoring them.
     if portal.version >= 2 {
-        // The portal plays its default sound or none; Carrier plays any other.
+        // The portal plays its default sound or none; Chatpane plays any other.
         let silent = sound.hint == crate::sound::SoundHint::Silent;
         notification.insert("sound", if silent { "silent" } else { "default" }.into());
     }

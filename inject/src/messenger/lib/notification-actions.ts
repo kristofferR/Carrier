@@ -1,6 +1,6 @@
 /*
  * Notification quick actions through Messenger's own code (Ref #368). Neither
- * navigates nor needs the window, so both work while Carrier is hidden.
+ * navigates nor needs the window, so both work while Chatpane is hidden.
  *
  * - Mark as Read calls `MWLSMarkThreadAsRead`, the function behind the inbox's
  *   "Mark as read", which handles encrypted and regular chats alike.
@@ -40,7 +40,7 @@ interface Database {
   ): Promise<T>;
 }
 
-const TRACE = "CarrierNotificationActions";
+const TRACE = "ChatpaneNotificationActions";
 // How an action reached the conversation, for Messenger's attribution.
 const ENTRYPOINT = "notificationInThreadReply";
 

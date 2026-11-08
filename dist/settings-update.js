@@ -3,7 +3,7 @@
  * Source: inject/src/settings/update-consent.ts (bundled by inject/build.ts via `bun run build:inject`).
  */
 "use strict";
-var CarrierSettingsUpdate = (() => {
+var ChatpaneSettingsUpdate = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;

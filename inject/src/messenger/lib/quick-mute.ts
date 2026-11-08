@@ -16,7 +16,7 @@ export interface QuickMuteSnapshot {
   infoRequested: boolean;
   /** A mute dialog this flow opened, and whether the wanted duration is selected. */
   dialog: "none" | "unselected" | "ready";
-  /** After confirming: the duration dialog closed, or Carrier saw the thread muted. */
+  /** After confirming: the duration dialog closed, or Chatpane saw the thread muted. */
   confirmed: boolean;
 }
 

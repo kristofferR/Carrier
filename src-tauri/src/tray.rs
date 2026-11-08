@@ -464,7 +464,7 @@ pub(crate) fn toggle_main(app: &tauri::AppHandle) {
     toggle_main_with_token(app, None);
 }
 
-/// Toggle Carrier from an XDG portal activation. This must run on GTK's main
+/// Toggle Chatpane from an XDG portal activation. This must run on GTK's main
 /// thread; the portal worker dispatches it there before calling this function.
 #[cfg(target_os = "linux")]
 pub(crate) fn toggle_main_with_activation_token(app: &tauri::AppHandle, token: Option<&str>) {

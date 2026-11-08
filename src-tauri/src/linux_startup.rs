@@ -40,7 +40,7 @@ fn environment_defaults(
                     .any(|desktop| desktop.trim().eq_ignore_ascii_case("niri"))
             })
         });
-    let safe_mode = match env("CARRIER_LINUX_WEBKIT_SAFE_MODE").as_deref() {
+    let safe_mode = match env("CHATPANE_LINUX_WEBKIT_SAFE_MODE").as_deref() {
         Some(value) if value == "1" => true,
         Some(value) if value == "0" => false,
         _ => wayland && niri,
@@ -105,7 +105,7 @@ pub(crate) fn configure() {
     // Keep an opt-out for testing newer system libraries; see docs/sync-recovery.md.
     if should_default_to_http1(
         std::env::var_os("SOUP_FORCE_HTTP1"),
-        std::env::var_os("CARRIER_LINUX_HTTP2"),
+        std::env::var_os("CHATPANE_LINUX_HTTP2"),
     ) {
         unsafe { std::env::set_var("SOUP_FORCE_HTTP1", "1") };
     }
@@ -263,18 +263,18 @@ mod tests {
     #[test]
     fn safe_mode_can_be_forced_on_or_disabled_independently_of_backend_selection() {
         assert_eq!(
-            defaults(&[("DISPLAY", ":0"), ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1")]),
+            defaults(&[("DISPLAY", ":0"), ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1")]),
             [DMABUF, COMPOSITING]
         );
         assert_eq!(
             defaults(&[
                 WAYLAND,
                 ("XDG_CURRENT_DESKTOP", "niri"),
-                ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "0")
+                ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "0")
             ]),
             [("GDK_BACKEND", "wayland")]
         );
-        assert!(defaults(&[("CARRIER_LINUX_WEBKIT_SAFE_MODE", "0")]).is_empty());
+        assert!(defaults(&[("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "0")]).is_empty());
     }
 
     #[test]
@@ -285,11 +285,11 @@ mod tests {
                     WAYLAND,
                     ("DISPLAY", ":0"),
                     ("XDG_CURRENT_DESKTOP", "niri"),
-                    ("CARRIER_LINUX_WEBKIT_SAFE_MODE", value)
+                    ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", value)
                 ]),
                 [DMABUF, COMPOSITING]
             );
-            assert!(defaults(&[("CARRIER_LINUX_WEBKIT_SAFE_MODE", value)]).is_empty());
+            assert!(defaults(&[("CHATPANE_LINUX_WEBKIT_SAFE_MODE", value)]).is_empty());
         }
     }
 
@@ -298,7 +298,7 @@ mod tests {
         for value in ["0", "1", ""] {
             assert!(
                 defaults(&[
-                    ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1"),
+                    ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1"),
                     ("WEBKIT_DISABLE_DMABUF_RENDERER", value),
                     ("WEBKIT_DISABLE_COMPOSITING_MODE", value)
                 ])
@@ -307,14 +307,14 @@ mod tests {
         }
         assert_eq!(
             defaults(&[
-                ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1"),
+                ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1"),
                 ("WEBKIT_DISABLE_DMABUF_RENDERER", "0")
             ]),
             [COMPOSITING]
         );
         assert_eq!(
             defaults(&[
-                ("CARRIER_LINUX_WEBKIT_SAFE_MODE", "1"),
+                ("CHATPANE_LINUX_WEBKIT_SAFE_MODE", "1"),
                 ("WEBKIT_DISABLE_COMPOSITING_MODE", "0")
             ]),
             [DMABUF]

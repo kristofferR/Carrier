@@ -111,7 +111,7 @@ export function keyboardMenuPoint(
 
 /**
  * A message's text with Messenger's emoji images read back as their
- * characters. Carrier's own System emoji glyph spans are skipped, since the
+ * characters. Chatpane's own System emoji glyph spans are skipped, since the
  * image beside each one already contributes the character. Messenger renders
  * each line of a multi-line message as its own block.
  */

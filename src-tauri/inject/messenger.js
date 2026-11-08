@@ -144,7 +144,7 @@
 
   // inject/src/messenger/bridge.ts
   var invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args);
-  var toast = (msg, action2, options) => window.__carrierToast ? window.__carrierToast(msg, action2, options) : console.log("[carrier]", msg);
+  var toast = (msg, action2, options) => window.__chatpaneToast ? window.__chatpaneToast(msg, action2, options) : console.log("[chatpane]", msg);
   var diag = /* @__PURE__ */ (() => {
     const RATE_MS = 6e4;
     const lastSent = /* @__PURE__ */ new Map();
@@ -154,11 +154,11 @@
         if (now - (lastSent.get(key) || 0) < RATE_MS) return;
         lastSent.set(key, now);
         try {
-          if (localStorage.__carrier_debug === "1") console.warn(`[carrier] ${key}: ${msg}`);
+          if (localStorage.__chatpane_debug === "1") console.warn(`[chatpane] ${key}: ${msg}`);
         } catch (_) {
         }
         invoke("plugin:event|emit", {
-          event: "carrier:diag",
+          event: "chatpane:diag",
           payload: { key: String(key), msg: String(msg) }
         })?.catch?.(() => {
         });
@@ -166,12 +166,12 @@
       }
     };
   })();
-  var cleanSharedUrl = (url) => window.__CARRIER_SETTINGS__?.strip_link_tracking === false ? url : stripFacebookTracking(url, location.href);
+  var cleanSharedUrl = (url) => window.__CHATPANE_SETTINGS__?.strip_link_tracking === false ? url : stripFacebookTracking(url, location.href);
   var openUrl = (url) => invoke("plugin:opener|open_url", { url: cleanSharedUrl(url), with: null })?.catch?.(
     () => diag("ipc.open-url", "opener invoke failed")
   );
   var toastDownloadSaved = (url) => toast(
-    window.__CARRIER_SETTINGS__?.download_behavior === "ask" ? "Download saved" : "Saved to Downloads",
+    window.__CHATPANE_SETTINGS__?.download_behavior === "ask" ? "Download saved" : "Saved to Downloads",
     {
       label: downloadRevealLabel(navigator.userAgent),
       kind: "reveal-download",
@@ -183,7 +183,7 @@
     toast(message);
   };
   var toastDownloadAccessDenied = () => {
-    const { message, action: action2 } = downloadAccessDeniedToast(carrierMediaPlatform);
+    const { message, action: action2 } = downloadAccessDeniedToast(chatpaneMediaPlatform);
     toast(message, action2, { warning: true });
   };
 
@@ -514,10 +514,10 @@
       }
     };
     const reply = (request, payload) => invoke("plugin:event|emit", {
-      event: "carrier:account-result",
+      event: "chatpane:account-result",
       payload: { request, ...payload }
     });
-    window.__carrierAccount = (request, action2, value) => {
+    window.__chatpaneAccount = (request, action2, value) => {
       const run = actions[action2];
       (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request"))).then((state3) => reply(request, { ok: true, state: state3 })).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -914,13 +914,13 @@
     return null;
   }
   function searchInConversation() {
-    window.__carrierWakeSearchIndex?.();
+    window.__chatpaneWakeSearchIndex?.();
     const btn = searchInConvoButton();
     if (btn) {
       btn.click();
       return true;
     }
-    if (typeof window.__carrierToggleInfo !== "function" || !window.__carrierToggleInfo())
+    if (typeof window.__chatpaneToggleInfo !== "function" || !window.__chatpaneToggleInfo())
       return false;
     let tries = 0;
     const timer = setInterval(() => {
@@ -1073,7 +1073,7 @@ ${button.innerHTML}`)
   var isComposerDeliveryActive = () => composerBusy;
   var setComposerBusy = (busy2) => {
     composerBusy = busy2;
-    if (typeof window !== "undefined") window.dispatchEvent(new Event("carrier:protection-change"));
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("chatpane:protection-change"));
   };
   async function runComposerDelivery(run) {
     try {
@@ -1146,7 +1146,7 @@ ${button.innerHTML}`)
       __publicField(this, "pausedDedicatedSetup");
       __publicField(this, "currentPhase", "idle");
       __publicField(this, "lastPhase", "idle");
-      /** Carrier's own replayed setup, which can stay pending indefinitely. */
+      /** Chatpane's own replayed setup, which can stay pending indefinitely. */
       __publicField(this, "ownSetup");
     }
     get phase() {
@@ -1338,7 +1338,7 @@ ${button.innerHTML}`)
             Reflect.apply(lifecycle.callback, void 0, [
               "carrier-sync-recovery",
               id,
-              "carrier_recovery"
+              "chatpane_recovery"
             ]);
             return "started";
           }
@@ -1419,9 +1419,9 @@ ${button.innerHTML}`)
       }
     }
   };
-  var SILENT_RECOVERY_EVENT = "carrier:sync-recovery";
-  var SILENT_RECOVERY_RETRY_EVENT = "carrier:sync-recovery-retry";
-  var SILENT_RECOVERY_RELOAD_EVENT = "carrier:sync-recovery-reload";
+  var SILENT_RECOVERY_EVENT = "chatpane:sync-recovery";
+  var SILENT_RECOVERY_RETRY_EVENT = "chatpane:sync-recovery-retry";
+  var SILENT_RECOVERY_RELOAD_EVENT = "chatpane:sync-recovery-reload";
   var SILENT_RECOVERY_TIMEOUT_MS = 3e4;
   var RETRY_DELAYS_MS = [0, 15e3, 6e4];
   var HEALTHY_RESET_MS = 6e4;
@@ -1667,9 +1667,9 @@ ${button.innerHTML}`)
   };
 
   // inject/src/messenger/features/rate-limit.ts
-  var RATE_LIMIT_RETRY_STATE_EVENT = "carrier:rate-limit-retry-state";
-  var RATE_LIMIT_RETRY_EVENT = "carrier:rate-limit-retry";
-  var RATE_LIMIT_EVENT = "carrier:rate-limit-change";
+  var RATE_LIMIT_RETRY_STATE_EVENT = "chatpane:rate-limit-retry-state";
+  var RATE_LIMIT_RETRY_EVENT = "chatpane:rate-limit-retry";
+  var RATE_LIMIT_EVENT = "chatpane:rate-limit-change";
   var RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
   var state;
   var storageKey = null;
@@ -2249,12 +2249,12 @@ ${button.innerHTML}`)
     loadFacebookModule,
     () => accountScopedStorageKey("carrier-worker-recovery", document.cookie) ?? void 0,
     async () => {
-      if (window.__CARRIER_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
+      if (window.__CHATPANE_SETTINGS__?.multi_instance !== false || typeof window.BroadcastChannel !== "function") {
         return false;
       }
       try {
         const windows = await invoke("plugin:window|get_all_windows");
-        return window.__CARRIER_SETTINGS__?.multi_instance === false && typeof window.BroadcastChannel === "function" && hasSoleMessengerWindow(windows);
+        return window.__CHATPANE_SETTINGS__?.multi_instance === false && typeof window.BroadcastChannel === "function" && hasSoleMessengerWindow(windows);
       } catch (_) {
         return false;
       }
@@ -2650,14 +2650,14 @@ ${button.innerHTML}`)
       clearTimeout(timer);
       timer = void 0;
     };
-    const heartbeatId = window.__CARRIER_HEARTBEAT_ID__;
+    const heartbeatId = window.__CHATPANE_HEARTBEAT_ID__;
     try {
-      delete window.__CARRIER_HEARTBEAT_ID__;
+      delete window.__CHATPANE_HEARTBEAT_ID__;
     } catch (_) {
-      window.__CARRIER_HEARTBEAT_ID__ = void 0;
+      window.__CHATPANE_HEARTBEAT_ID__ = void 0;
     }
     let lastHeartbeatProtection;
-    const heartbeatProtection = () => isComposerDeliveryActive() || hasComposerDraft() || !!window.__carrierInCall;
+    const heartbeatProtection = () => isComposerDeliveryActive() || hasComposerDraft() || !!window.__chatpaneInCall;
     const realtimeRecovery = new RealtimeRecoveryTracker(Date.now());
     const onFacebookErrorPage = () => {
       try {
@@ -2720,7 +2720,7 @@ ${button.innerHTML}`)
       const visible = !document.hidden && !systemSleeping;
       lastHeartbeatProtection = protectedNow;
       invoke("plugin:event|emit", {
-        event: "carrier:webview-heartbeat",
+        event: "chatpane:webview-heartbeat",
         payload: {
           id: heartbeatId,
           protected: protectedNow,
@@ -2750,7 +2750,7 @@ ${button.innerHTML}`)
       if (heartbeatProtection() !== lastHeartbeatProtection) emitHeartbeat();
     };
     window.addEventListener("input", emitProtectionChange, true);
-    window.addEventListener("carrier:protection-change", emitProtectionChange);
+    window.addEventListener("chatpane:protection-change", emitProtectionChange);
     emitHeartbeat();
     const processingActive = () => !systemSleeping && !document.hidden && navigator.onLine && rateLimitRemainingMs() <= 0 && isMessengerContentPath(location.pathname);
     const captureRecovery = async () => {
@@ -2758,16 +2758,16 @@ ${button.innerHTML}`)
       const snapshot = `age=${Math.round(nativeNow2())} ready=${document.readyState} visible=${!document.hidden} focused=${document.hasFocus()} nodes=${document.getElementsByTagName("*").length} articles=${document.querySelectorAll('[role="article"]').length} protected=${heartbeatProtection()} realtime=${realtimeStatus()} processing=${JSON.stringify(processing)}`;
       await Promise.race([
         invoke("plugin:event|emit", {
-          event: "carrier:diag",
+          event: "chatpane:diag",
           payload: { key: "recovery.snapshot", msg: snapshot }
         })?.catch?.(() => {
         }),
         new Promise((resolve) => nativeSetTimeout5(resolve, 500))
       ]);
     };
-    window.__carrierCaptureRecovery = captureRecovery;
+    window.__chatpaneCaptureRecovery = captureRecovery;
     let capturingRecovery = false;
-    const recoveryHeld = () => window.__CARRIER_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" && pendingReason !== "manual";
+    const recoveryHeld = () => window.__CHATPANE_SETTINGS__?.hold_failures && pendingReason !== "rate-limit-manual" && pendingReason !== "manual";
     const cancelRecoveredStuckReload = () => {
       if (pendingReason === "worker-stuck" && realtimeStatus() === "ok" && recoveryHealthy()) {
         clearPending();
@@ -2832,12 +2832,12 @@ ${button.innerHTML}`)
       }
       location.reload();
     };
-    window.addEventListener("carrier:settings", () => {
+    window.addEventListener("chatpane:settings", () => {
       if (pending && timer === void 0 && !recoveryHeld()) {
         timer = setTimeout(maybeReload, 0);
       }
     });
-    window.__carrierRateLimitRetry = (expectedId, expires) => {
+    window.__chatpaneRateLimitRetry = (expectedId, expires) => {
       if (expectedId !== heartbeatId || !Number.isFinite(expires) || expires <= Date.now()) return;
       if (!pending || pendingReason !== "rate-limit") return;
       rateLimitRetryGrantUntil = expires;
@@ -2869,7 +2869,7 @@ ${button.innerHTML}`)
     });
     recoveryHealthy = realtime.isRecoveryHealthy;
     const silentRecovery = createSilentRecovery({
-      blocked: (manual) => !manual && !!window.__CARRIER_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
+      blocked: (manual) => !manual && !!window.__CHATPANE_SETTINGS__?.hold_failures || systemSleeping || !navigator.onLine || heartbeatProtection() || rateLimitRemainingMs() > 0 || !isMessengerContentPath(location.pathname) || onFacebookErrorPage(),
       needsRecovery: () => ["stale", "never"].includes(realtimeStatus()),
       isHealthy: () => realtimeStatus() === "ok" && realtime.isRecoveryHealthy(),
       check: () => realtime.check(),
@@ -2884,7 +2884,7 @@ ${button.innerHTML}`)
       sampleSyncProcessing(processingActive());
       if (!systemSleeping && navigator.onLine && rateLimitRemainingMs() <= 0) realtime.check();
     };
-    window.__carrierHeartbeat = (expectedId) => {
+    window.__chatpaneHeartbeat = (expectedId) => {
       if (expectedId !== heartbeatId) return;
       noteLifecycle();
       emitHeartbeat();
@@ -2895,7 +2895,7 @@ ${button.innerHTML}`)
     window.addEventListener("online", noteLifecycle);
     window.addEventListener("offline", noteLifecycle);
     const powerState = new PowerStateTracker(performance.timeOrigin);
-    window.addEventListener("carrier:power-state", (event) => {
+    window.addEventListener("chatpane:power-state", (event) => {
       const snapshot = event.detail;
       if (!snapshot || typeof snapshot.sleeping !== "boolean" || !Number.isSafeInteger(snapshot.resume_generation)) {
         return;
@@ -2911,7 +2911,7 @@ ${button.innerHTML}`)
         noteLifecycle();
       }
     });
-    window.__carrierOnNotification = noteLifecycle;
+    window.__chatpaneOnNotification = noteLifecycle;
     window.addEventListener(RATE_LIMIT_RETRY_EVENT, () => schedule(1e3, "rate-limit-manual"));
     window.addEventListener(SILENT_RECOVERY_RELOAD_EVENT, () => schedule(0, "manual"));
     window.addEventListener(SILENT_RECOVERY_EVENT, (event) => {
@@ -2947,7 +2947,7 @@ ${button.innerHTML}`)
         emitHeartbeat();
         return;
       }
-      if (waitingForRateLimit && !window.__CARRIER_SETTINGS__?.hold_failures) {
+      if (waitingForRateLimit && !window.__CHATPANE_SETTINGS__?.hold_failures) {
         waitingForRateLimit = false;
         window.dispatchEvent(new Event(RATE_LIMIT_EVENT));
         diag(
@@ -3060,7 +3060,7 @@ ${button.innerHTML}`)
   }
   function returnState() {
     return {
-      enabled: window.__CARRIER_SETTINGS__?.focus_composer_on_return !== false,
+      enabled: window.__CHATPANE_SETTINGS__?.focus_composer_on_return !== false,
       threadOpen: !!threadIdFromHref(location.pathname),
       dialogOpen: [...document.querySelectorAll('[role="dialog"]')].some(isShown),
       focus: currentFocus()
@@ -3448,7 +3448,7 @@ ${button.innerHTML}`)
           isComposing: event.isComposing,
           compositionActive,
           keyCode: event.keyCode,
-          requireAccelerator: window.__CARRIER_SETTINGS__?.send_with_accelerator === true,
+          requireAccelerator: window.__CHATPANE_SETTINGS__?.send_with_accelerator === true,
           acceleratorPressed: isMac ? event.metaKey : event.ctrlKey,
           shiftKey: event.shiftKey
         }))
@@ -3490,7 +3490,7 @@ ${button.innerHTML}`)
   ];
 
   // inject/src/messenger/lib/download-completion.ts
-  var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
+  var DOWNLOAD_FINISHED_EVENT = "chatpane:download-finished";
   var NativePromise = Promise;
   var nativePromiseThen = Promise.prototype.then;
   var nativeReflectApply = Reflect.apply;
@@ -4146,7 +4146,7 @@ ${button.innerHTML}`)
     }
     const reveal = `carrier-export:${randomHex()}`;
     try {
-      await carrierExportConversation({ format, conversation, reveal });
+      await chatpaneExportConversation({ format, conversation, reveal });
     } catch (error) {
       if (error instanceof Error && error.message === "export cancelled") {
         toast("Export cancelled");
@@ -4182,7 +4182,7 @@ ${button.innerHTML}`)
     });
   }
   function initConversationExport() {
-    window.__carrierExportConversation = (format) => {
+    window.__chatpaneExportConversation = (format) => {
       if (format === "html" || format === "json") startConversationExport(format);
     };
   }
@@ -4354,7 +4354,7 @@ ${button.innerHTML}`)
   )?.get;
   var NativeUint8Array = Uint8Array;
   var nativeGetRandomValues = crypto.getRandomValues.bind(crypto);
-  var nativeShowContextMenu = typeof carrierShowContextMenu === "function" ? carrierShowContextMenu : void 0;
+  var nativeShowContextMenu = typeof chatpaneShowContextMenu === "function" ? chatpaneShowContextMenu : void 0;
   var appendOwn = (items, item) => {
     nativeReflectApply3(nativeObjectDefineProperty, void 0, [
       items,
@@ -4405,8 +4405,8 @@ ${button.innerHTML}`)
     const detail = event.detail;
     if (!detail || typeof detail !== "object") return;
     const { action: action2, signature } = detail;
-    if (typeof action2 !== "string" || !carrierVerifyResult) return;
-    if (!await carrierVerifyResult("carrier:context-action", { action: action2 }, signature)) return;
+    if (typeof action2 !== "string" || !chatpaneVerifyResult) return;
+    if (!await chatpaneVerifyResult("chatpane:context-action", { action: action2 }, signature)) return;
     const handlers = nativeActionHandlers;
     for (let index = 0; index < handlers.length; index += 1) {
       const handler = handlers[index];
@@ -4441,9 +4441,9 @@ ${button.innerHTML}`)
     });
   }
   async function shareSrc(src, fallbackName, fx, fy, action2) {
-    await carrierClaimContextAction(action2);
+    await chatpaneClaimContextAction(action2);
     const { id } = await downloadSrc(src, fallbackName, action2);
-    await carrierShareDownload(id, fx, fy, action2);
+    await chatpaneShareDownload(id, fx, fy, action2);
   }
   var oversizeByHeader = (res) => Number(res.headers.get("content-length")) > MAX_BLOB;
   var copyAddress = (text) => navigator.clipboard?.writeText(cleanSharedUrl(text)).then(() => toast("Address copied")).catch(() => toast("Copy failed"));
@@ -4467,11 +4467,11 @@ ${button.innerHTML}`)
     a.style.display = "none";
     document.body.appendChild(a);
     try {
-      if (action2) await carrierPrepareDownload(action2, href);
-      if (window.__CARRIER_SETTINGS__?.download_behavior === "ask") {
-        await carrierChooseDownload(href, name);
+      if (action2) await chatpanePrepareDownload(action2, href);
+      if (window.__CHATPANE_SETTINGS__?.download_behavior === "ask") {
+        await chatpaneChooseDownload(href, name);
       }
-      const completion = waitForNativeDownload(window, href, carrierVerifyResult);
+      const completion = waitForNativeDownload(window, href, chatpaneVerifyResult);
       a.click();
       return await completion;
     } finally {
@@ -4480,7 +4480,7 @@ ${button.innerHTML}`)
     }
   }
   async function copyImageSrc(src, action2) {
-    if (action2) await carrierClaimContextAction(action2);
+    if (action2) await chatpaneClaimContextAction(action2);
     const res = await fetch(src);
     if (!res.ok) throw new Error(`fetch failed (${res.status})`);
     const maxSize = action2 ? MAX_CLIPBOARD_IMAGE : MAX_BLOB;
@@ -4515,7 +4515,7 @@ ${button.innerHTML}`)
       ]);
       nativeReflectApply3(nativeReadAsDataURL, reader, [blob]);
     });
-    await carrierCopyImage(dataUrl, action2);
+    await chatpaneCopyImage(dataUrl, action2);
   }
   var ctxMenu = null;
   var ctxMenuReturnFocus = null;
@@ -4538,7 +4538,7 @@ ${button.innerHTML}`)
     if (!nativeGetRectX || !nativeGetRectY || !nativeGetRectWidth || !nativeGetRectHeight || !nativeGetEventTarget || !nativeGetMouseClientX || !nativeGetMouseClientY || !nativeGetKeyboardKey || !nativeGetStyle || !nativeSetTextContent || !nativeSetTabIndex)
       return;
     nativeReflectApply3(nativeAddEventListener2, window, [
-      "carrier:context-action",
+      "chatpane:context-action",
       runNativeAction,
       true
     ]);
@@ -4687,7 +4687,7 @@ ${button.innerHTML}`)
       const nativeTakesKeyboard = !keyboard || !isLinux;
       if (nativeShowContextMenu && nativeItemsAreValid && nativeImageCopyIsSafe && nativeTakesKeyboard) {
         try {
-          const zoom = (Number(window.__CARRIER_SETTINGS__?.zoom) || 100) / 100;
+          const zoom = (Number(window.__CHATPANE_SETTINGS__?.zoom) || 100) / 100;
           const point = keyboardPoint ?? (isLinux ? [contextPoint.x, contextPoint.y] : null);
           await showNativeContextMenu(
             items,
@@ -5223,7 +5223,7 @@ ${button.innerHTML}`)
   }
   function initDownloadAnchors() {
     sweepDlAnchors(document.documentElement);
-    watchDeniedDownloads(window, carrierVerifyResult, toastDownloadAccessDenied);
+    watchDeniedDownloads(window, chatpaneVerifyResult, toastDownloadAccessDenied);
     if (!document.hidden) observeSweeps();
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
@@ -5439,7 +5439,7 @@ ${button.innerHTML}`)
       return;
     const { createElement, useSyncExternalStore, useContext } = runtime;
     const context2 = threadContext(react, runtime);
-    const provider = function CarrierNicknameProvider(props) {
+    const provider = function ChatpaneNicknameProvider(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const group = context2 && useContext ? useContext(context2) : void 0;
       const enabled = showNicknames(mode, group);
@@ -5854,7 +5854,7 @@ ${button.innerHTML}`)
       );
       return request;
     };
-    const hook = function useCarrierReplyAttribution(...args) {
+    const hook = function useChatpaneReplyAttribution(...args) {
       const text = Reflect.apply(original, this, args);
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
@@ -5950,7 +5950,7 @@ ${button.innerHTML}`)
     const { createElement, useSyncExternalStore, useState, useRef, useEffect, useLayoutEffect } = react;
     const { to_string: threadKey } = i64;
     const { maybeUnvault } = vault;
-    const component = function CarrierNicknameSnippet(props) {
+    const component = function ChatpaneNicknameSnippet(props) {
       const mode = useSyncExternalStore(preference.subscribe, preference.getSnapshot);
       const [names2, setNames] = useState(null);
       const owner = useRef({}).current;
@@ -6103,7 +6103,7 @@ ${button.innerHTML}`)
     return type === "search" || role === "searchbox" || type === "text" && role === null && hasAccessibleName;
   }
   var NULL_COMPONENT_MODULES = /* @__PURE__ */ new Set([
-    // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
+    // Chatpane's CSS already hides this entire Facebook-wide header tree. Removing
     // the React root prevents its search, notification, account, and portal work.
     "CometBaseAppNavigation.react",
     // Messenger's server-driven promotion banner is not part of messaging.
@@ -6112,7 +6112,7 @@ ${button.innerHTML}`)
     "MAWSecureThreadQuickPromotion.react",
     "MWThreadListQP.react",
     "MWMessageSearchEBRestoreUpsell.react",
-    // Carrier owns desktop notification delivery; Facebook's browser-push root
+    // Chatpane owns desktop notification delivery; Facebook's browser-push root
     // is redundant inside the native WebView.
     "CometBrowserPushRoot.react",
     // Casting is Facebook-wide video chrome, not Messenger media playback.
@@ -6134,7 +6134,7 @@ ${button.innerHTML}`)
     return null;
   }
   Object.defineProperty(nullComponent, "displayName", {
-    value: "CarrierNullFacebookComponent"
+    value: "ChatpaneNullFacebookComponent"
   });
   function replaceFunctionExport(value, replacement) {
     if (typeof value === "function") return replacement;
@@ -6722,7 +6722,7 @@ ${button.innerHTML}`)
         if (id) {
           mutedThreads.observe(id, nextMuted);
           window.dispatchEvent(
-            new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } })
+            new CustomEvent("chatpane:thread-mute", { detail: { id, muted: nextMuted } })
           );
         }
       },
@@ -6940,7 +6940,7 @@ ${button.innerHTML}`)
   }
   var rewriteSeq = 0;
   function loadRewrittenScript(source, ready2, doc, global, report) {
-    const key = `__carrierRewritten${++rewriteSeq}`;
+    const key = `__chatpaneRewritten${++rewriteSeq}`;
     const url = URL.createObjectURL(
       new Blob([`window[${JSON.stringify(key)}] = (${source});`], { type: "text/javascript" })
     );
@@ -7082,7 +7082,7 @@ ${button.innerHTML}`)
         return nativePlay.call(this);
       }
       quiet(this);
-      if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
+      if (notificationsGloballyMuted(window.__CHATPANE_SETTINGS__)) return Promise.resolve();
       if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
         const { thread: thread2, messageId } = pendingMessageSound;
         messageSound = { thread: thread2, messageId, at: Date.now() };
@@ -7151,7 +7151,7 @@ ${button.innerHTML}`)
     const playChatTabSound = exports.playChatTabSound;
     if (typeof playChatTabSound !== "function") return false;
     exports.playChatTabSound = function(...args) {
-      const settings = window.__CARRIER_SETTINGS__;
+      const settings = window.__CHATPANE_SETTINGS__;
       const load = pageLoad();
       const message = args[0];
       const plays = playsMessageSound({
@@ -7223,14 +7223,14 @@ ${button.innerHTML}`)
   var SEARCH_INDEX_WAKE_MS = 5 * 6e4;
   function initFacebookModuleInterception() {
     const page = window;
-    const shouldBlockTelemetry = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const shouldBlockTelemetry = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const wrappedDefines = /* @__PURE__ */ new WeakSet();
     const searchIndex = new FacebookFTSIdleCoordinator();
     const nicknamePreference = {
-      getSnapshot: () => nicknameMode(window.__CARRIER_SETTINGS__),
+      getSnapshot: () => nicknameMode(window.__CHATPANE_SETTINGS__),
       subscribe: (listener) => {
-        window.addEventListener("carrier:settings", listener);
-        return () => window.removeEventListener("carrier:settings", listener);
+        window.addEventListener("chatpane:settings", listener);
+        return () => window.removeEventListener("chatpane:settings", listener);
       }
     };
     let pauseTimer;
@@ -7243,7 +7243,7 @@ ${button.innerHTML}`)
         searchIndex.pause();
       }, SEARCH_INDEX_WAKE_MS);
     };
-    window.__carrierWakeSearchIndex = wakeSearchIndex;
+    window.__chatpaneWakeSearchIndex = wakeSearchIndex;
     document.addEventListener(
       "focusin",
       (event) => {
@@ -7279,7 +7279,7 @@ ${button.innerHTML}`)
         },
         // macOS keeps Messenger's encrypted engine per window (#295), unless a
         // second window moved the session onto Facebook's shared engine.
-        /mac/i.test(navigator.platform) && window.__CARRIER_SHARED_ENGINE__ !== true,
+        /mac/i.test(navigator.platform) && window.__CHATPANE_SHARED_ENGINE__ !== true,
         nicknamePreference
       );
       wrappedDefines.add(wrapped3);
@@ -7345,14 +7345,14 @@ ${button.innerHTML}`)
   function initFacebookWorkerOptimization() {
     if (typeof window.Worker !== "function" || typeof Proxy !== "function") return;
     const state3 = { responsivenessWorkersStopped: 0 };
-    window.__CARRIER_WORKER_OPTIMIZATION__ = state3;
+    window.__CHATPANE_WORKER_OPTIMIZATION__ = state3;
     const NativeWorker = window.Worker;
     window.Worker = new Proxy(NativeWorker, {
       construct(Target, args, NewTarget) {
         const worker = Reflect.construct(Target, args, NewTarget);
         return optimizeFacebookWorker(
           worker,
-          () => window.__CARRIER_SETTINGS__?.block_telemetry === true,
+          () => window.__CHATPANE_SETTINGS__?.block_telemetry === true,
           () => {
             state3.responsivenessWorkersStopped++;
           }
@@ -7366,7 +7366,7 @@ ${button.innerHTML}`)
     const html = document.documentElement;
     let forcedClass = null;
     const apply2 = () => {
-      const forced = window.__CARRIER_SETTINGS__?.theme;
+      const forced = window.__CHATPANE_SETTINGS__?.theme;
       if (forced !== "light" && forced !== "dark") {
         if (forcedClass) {
           html.classList.remove(forcedClass);
@@ -7383,7 +7383,7 @@ ${button.innerHTML}`)
       forcedClass = want;
     };
     apply2();
-    window.addEventListener("carrier:settings", apply2);
+    window.addEventListener("chatpane:settings", apply2);
     new MutationObserver(apply2).observe(html, { attributes: true, attributeFilter: ["class"] });
   }
   var DARK_MARKERS = ["data-carrier-dark", "data-fmess-dark"];
@@ -7509,8 +7509,8 @@ ${button.innerHTML}`)
     let observer = null;
     let pending = false;
     let suppressMutations = false;
-    const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
-    const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+    const namesHidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
+    const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
     const on2 = () => namesHidden() || avatarsHidden();
     function textValue(el) {
       return (el?.textContent || "").replace(/\s+/g, " ").trim();
@@ -7835,7 +7835,7 @@ ${button.innerHTML}`)
       }
     };
     apply2();
-    window.addEventListener("carrier:settings", apply2);
+    window.addEventListener("chatpane:settings", apply2);
   }
 
   // inject/src/messenger/lib/image-paste.ts
@@ -8008,7 +8008,7 @@ ${button.innerHTML}`)
   var GAP = 8;
   var inside = (rect, x, y) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   function initLinuxCallNotice() {
-    if (carrierMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
+    if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
     const host = document.createElement("div");
     host.id = "carrier-linux-call-notice";
     const root = host.attachShadow({ mode: "closed" });
@@ -8064,7 +8064,7 @@ ${button.innerHTML}`)
       const rect = button.getBoundingClientRect();
       const left = Math.max(GAP, Math.min(rect.right - WIDTH, innerWidth - WIDTH - GAP));
       host.style.cssText = `position: fixed; top: ${rect.bottom + GAP}px; left: ${left}px; z-index: 2147483646;`;
-      host.dataset.theme = window.__CARRIER_SETTINGS__?.theme ?? "system";
+      host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
       (document.body ?? document.documentElement).append(host);
       (document.head ?? document.documentElement).append(hideFacebookTooltips);
       document.addEventListener("pointermove", track, true);
@@ -8167,7 +8167,7 @@ ${button.innerHTML}`)
     let tidyObserver = null;
     const prefersDark = () => !!window.matchMedia?.("(prefers-color-scheme: dark)").matches;
     const wantDark = () => {
-      const t = window.__CARRIER_SETTINGS__?.theme;
+      const t = window.__CHATPANE_SETTINGS__?.theme;
       if (t === "dark") return true;
       if (t === "light") return false;
       return prefersDark();
@@ -8400,7 +8400,7 @@ ${button.innerHTML}`)
     schedule();
     tidyObserver = new MutationObserver(schedule);
     tidyObserver.observe(document.documentElement, { childList: true, subtree: true });
-    window.addEventListener("carrier:settings", schedule);
+    window.addEventListener("chatpane:settings", schedule);
     window.addEventListener("resize", schedule);
     window.addEventListener("load", schedule, { once: true });
     for (const delay of [300, 1200]) setTimeout(schedule, delay);
@@ -8422,7 +8422,7 @@ ${button.innerHTML}`)
   // inject/src/messenger/features/media-autoplay.ts
   var VIDEO_SELECTOR = "video";
   function initMediaAutoplay() {
-    const on2 = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
+    const on2 = () => window.__CHATPANE_SETTINGS__?.stop_media_autoplay === true;
     let lastActivationAt = Number.NEGATIVE_INFINITY;
     let observer = null;
     const noteActivation = (event) => {
@@ -8484,7 +8484,7 @@ ${button.innerHTML}`)
       }
     };
     apply2();
-    window.addEventListener("carrier:settings", apply2);
+    window.addEventListener("chatpane:settings", apply2);
   }
 
   // inject/src/messenger/lib/media-permissions.ts
@@ -8593,7 +8593,7 @@ ${button.innerHTML}`)
     for (const [device, reason] of failures2)
       failureGroups.set(reason, [...failureGroups.get(reason) ?? [], device]);
     const failureDescription = [...failureGroups].map(([reason, group]) => captureFailureMessage(reason, group)).join(" ");
-    const platform = carrierMediaPlatform;
+    const platform = chatpaneMediaPlatform;
     const host = document.createElement("div");
     host.id = "carrier-media-permission-banner";
     const root = host.attachShadow({ mode: "closed" });
@@ -8663,9 +8663,9 @@ ${button.innerHTML}`)
         render();
         try {
           if (state3 === "not-determined" && platform === "macos") {
-            accept(await carrierMediaPermissionStatus(device));
+            accept(await chatpaneMediaPermissionStatus(device));
           } else {
-            await carrierOpenMediaPrivacy(device);
+            await chatpaneOpenMediaPrivacy(device);
           }
         } catch {
           actionError = `The action could not finish. ${mediaPrivacyGuidance(platform)}`;
@@ -8729,7 +8729,7 @@ ${button.innerHTML}`)
       pending = true;
       render();
       try {
-        accept(await carrierMediaPermissionStatus());
+        accept(await chatpaneMediaPermissionStatus());
       } catch {
         accept({ camera: "unknown", microphone: "unknown" });
       } finally {
@@ -8738,7 +8738,7 @@ ${button.innerHTML}`)
       }
     };
     const theme = () => {
-      host.dataset.theme = window.__CARRIER_SETTINGS__?.theme ?? "system";
+      host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
     };
     const onFocus = () => {
       void refresh();
@@ -8746,7 +8746,7 @@ ${button.innerHTML}`)
     root.querySelector("footer button").addEventListener("click", dismiss);
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
-    window.addEventListener("carrier:settings", theme);
+    window.addEventListener("chatpane:settings", theme);
     theme();
     render();
     (document.body ?? document.documentElement).append(host);
@@ -8756,7 +8756,7 @@ ${button.innerHTML}`)
       clearTimeout(confirmation);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
-      window.removeEventListener("carrier:settings", theme);
+      window.removeEventListener("chatpane:settings", theme);
       host.remove();
     };
   }
@@ -8788,8 +8788,8 @@ ${button.innerHTML}`)
         removeCard = showMediaPermissionCard(new Map(failures2), dismissWarning, hide);
     };
     const liveTracks = new LiveMediaTrackCounter((inCall) => {
-      window.__carrierInCall = inCall;
-      window.dispatchEvent(new Event("carrier:protection-change"));
+      window.__chatpaneInCall = inCall;
+      window.dispatchEvent(new Event("chatpane:protection-change"));
     });
     md.getUserMedia = async (constraints) => {
       const serial = ++requestSerial;
@@ -8863,7 +8863,7 @@ ${button.innerHTML}`)
   }
 
   // inject/src/messenger/lib/notification-actions.ts
-  var TRACE = "CarrierNotificationActions";
+  var TRACE = "ChatpaneNotificationActions";
   var ENTRYPOINT = "notificationInThreadReply";
   function exported(load, name, member) {
     const mod = load(name);
@@ -9008,7 +9008,7 @@ ${button.innerHTML}`)
   var BUDGET_MS = 12e3;
   function pageAction(name, run) {
     return (path, target, id, attempt, budgetMs) => {
-      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+      const report = (ok) => chatpaneReplyResult(id, attempt, ok).catch(
         () => diag(`${name}.ack`, `${name} acknowledgement emit failed`)
       );
       const thread2 = threadPathId(path);
@@ -9038,11 +9038,11 @@ ${button.innerHTML}`)
     };
   }
   function initNotificationActions() {
-    window.__carrierMarkRead = pageAction(
+    window.__chatpaneMarkRead = pageAction(
       "mark-read",
       (load, thread2, _target, deadline) => markThreadRead(load, thread2, deadline)
     );
-    window.__carrierQuickReact = pageAction(
+    window.__chatpaneQuickReact = pageAction(
       "react",
       async (load, thread2, target, deadline) => target.message && target.reaction ? reactToMessage(load, {
         threadId: thread2,
@@ -10608,16 +10608,16 @@ ${button.innerHTML}`)
     );
     const pageNotificationReceipts = new PageNotificationReceiptStore(
       pageReceiptKey ? notificationStorage : null,
-      pageReceiptKey || "__carrier_page_notification_receipts_anonymous__"
+      pageReceiptKey || "__chatpane_page_notification_receipts_anonymous__"
     );
     const pendingPageNotifications = new PendingPageNotificationStore(
       pendingPageKey ? notificationStorage : null,
-      pendingPageKey || "__carrier_pending_page_notifications_anonymous__"
+      pendingPageKey || "__chatpane_pending_page_notifications_anonymous__"
     );
     let notifySeq = Date.now() * 1e3 + Math.floor(Math.random() * 1e3);
     const notifyHandlers = /* @__PURE__ */ new Map();
     const deliveryHandlers = /* @__PURE__ */ new Map();
-    window.__carrierNotifyClick = (id) => {
+    window.__chatpaneNotifyClick = (id) => {
       noteExplicitAction();
       const handler = notifyHandlers.get(id);
       notifyHandlers.delete(id);
@@ -10631,7 +10631,7 @@ ${button.innerHTML}`)
       }
       return handler !== void 0;
     };
-    window.__carrierNotifyResult = (id, delivery) => {
+    window.__chatpaneNotifyResult = (id, delivery) => {
       if (delivery !== "accepted" && delivery !== "duplicate" && delivery !== "suppressed") return;
       pageNotificationReceipts.recordDelivery(id, delivery);
       const handler = deliveryHandlers.get(id);
@@ -10648,7 +10648,7 @@ ${button.innerHTML}`)
         }
       }
       invoke("plugin:event|emit", {
-        event: "carrier:notify",
+        event: "chatpane:notify",
         payload: {
           id,
           title,
@@ -10669,20 +10669,20 @@ ${button.innerHTML}`)
         }
       })?.catch?.(() => {
         deliveryHandlers.delete(id);
-        diag("notify.emit", "carrier:notify emit failed");
+        diag("notify.emit", "chatpane:notify emit failed");
       });
     };
     const updateNotificationRoute = (id, threadPath) => {
       invoke("plugin:event|emit", {
-        event: "carrier:notify-route",
+        event: "chatpane:notify-route",
         payload: { id, thread_path: threadPath }
-      })?.catch?.(() => diag("notify.route", "carrier:notify-route emit failed"));
+      })?.catch?.(() => diag("notify.route", "chatpane:notify-route emit failed"));
     };
     const notifiedStore = new NotifiedSignatureStore(notificationStorage);
     const markNotified = (key, fingerprint, bodyHash) => {
       notifiedStore.markNotified(key, fingerprint, bodyHash);
       invoke("plugin:event|emit", {
-        event: "carrier:notify-handled",
+        event: "chatpane:notify-handled",
         payload: {
           account: accountId(document.cookie) || "",
           thread: key,
@@ -10696,8 +10696,8 @@ ${button.innerHTML}`)
     const threadKinds = new ThreadKindCache(
       (thread2) => readThreadIsGroup(thread2, window.require)
     );
-    const groupFiltering = () => window.__CARRIER_SETTINGS__?.notify_group_chats === false;
-    const groupSuppressed = (thread2) => !!thread2 && suppressGroupChat(window.__CARRIER_SETTINGS__, threadKinds.isGroup(thread2));
+    const groupFiltering = () => window.__CHATPANE_SETTINGS__?.notify_group_chats === false;
+    const groupSuppressed = (thread2) => !!thread2 && suppressGroupChat(window.__CHATPANE_SETTINGS__, threadKinds.isGroup(thread2));
     const learnThreadKind = (thread2) => groupFiltering() && thread2 ? threadKinds.ensure(thread2).then(() => {
     }) : Promise.resolve();
     const conversationNames = (threadId) => readConversationNotificationNames(
@@ -10712,7 +10712,7 @@ ${button.innerHTML}`)
       rowTitles.set(key, title);
       if (rowTitles.size > ROW_TITLE_LIMIT) rowTitles.delete(rowTitles.keys().next().value);
     };
-    window.__carrierSenderAvatarStats = (thread2, sender) => thread2 === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread2, sender || "") };
+    window.__chatpaneSenderAvatarStats = (thread2, sender) => thread2 === void 0 ? senderAvatars.stats : { resolves: senderAvatars.describe(thread2, sender || "") };
     const notificationCorrelations = new NotificationCorrelationQueue();
     const cancelFallbackForDraftReceipt = (threadId, body) => {
       if (!body) return;
@@ -10726,18 +10726,18 @@ ${button.innerHTML}`)
     const waitForPageMatchWhileFiltering = (signal) => {
       const cancel = new AbortController();
       const cancelWhenFilteringIsDisabled = () => {
-        if (!ignoresMutedConversations(window.__CARRIER_SETTINGS__) && !groupFiltering()) {
+        if (!ignoresMutedConversations(window.__CHATPANE_SETTINGS__) && !groupFiltering()) {
           cancel.abort();
         }
       };
-      window.addEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+      window.addEventListener("chatpane:settings", cancelWhenFilteringIsDisabled);
       cancelWhenFilteringIsDisabled();
       return waitForPageNotificationMatch(
         signal,
         PAGE_NOTIFICATION_RECOVERY_MS,
         cancel.signal
       ).finally(() => {
-        window.removeEventListener("carrier:settings", cancelWhenFilteringIsDisabled);
+        window.removeEventListener("chatpane:settings", cancelWhenFilteringIsDisabled);
       });
     };
     const markPageNotification = (title, body, thread2) => {
@@ -10783,9 +10783,9 @@ ${button.innerHTML}`)
         })
       };
     };
-    function CarrierNotification(title, options = {}) {
+    function ChatpaneNotification(title, options = {}) {
       const opts = options || {};
-      const s = window.__CARRIER_SETTINGS__ || {};
+      const s = window.__CHATPANE_SETTINGS__ || {};
       diag(
         "notify.fired",
         `page constructed a Notification (visibility: ${document.visibilityState})`
@@ -10832,13 +10832,13 @@ ${button.innerHTML}`)
         const matchWait = pageMatch.signal?.matchPromise && !taggedThread && (ignoresMutedConversations(s) || groupFiltering()) ? waitForPageMatchWhileFiltering(pageMatch.signal) : Promise.resolve();
         const identityMatchWait = pageMatch.signal && !taggedThread && !hidePreviewAtConstruction ? waitForPageNotificationMatch(pageMatch.signal, 1e3) : Promise.resolve();
         const names2 = Promise.all([matchWait, identityMatchWait]).then(
-          () => hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview ? null : conversationNames(
+          () => hidePreviewAtConstruction || window.__CHATPANE_SETTINGS__?.hide_notification_preview ? null : conversationNames(
             threadPathId(pageMatch.threadPath ?? pageMatch.signal?.threadPath ?? "") || ""
           )
         );
         const imageDeadline = Date.now() + 3500;
         const thumbnail = opts.image ? notificationThumbnail(hidePreviewAtConstruction ? "" : opts.image) : Promise.all([matchWait, identityMatchWait]).then(() => {
-          if (hidePreviewAtConstruction || window.__CARRIER_SETTINGS__?.hide_notification_preview) {
+          if (hidePreviewAtConstruction || window.__CHATPANE_SETTINGS__?.hide_notification_preview) {
             return "";
           }
           const route = pageMatch.threadPath ?? pageMatch.signal?.threadPath;
@@ -10862,7 +10862,7 @@ ${button.innerHTML}`)
         ]).then(([icon2, , image, group, picture]) => {
           const signal = pageMatch.signal;
           const unresolvedIdentity = signal !== void 0 && !signal.matched && !signal.threadPath;
-          const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+          const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
           if (notificationsGloballyMuted(deliverySettings)) {
             pendingPageNotifications.remove(id);
           }
@@ -10992,7 +10992,7 @@ ${button.innerHTML}`)
         if (pageMatch.signal) pageMatch.signal.suppressedBeforeMatch = true;
       }
       try {
-        window.__carrierOnNotification?.();
+        window.__chatpaneOnNotification?.();
       } catch (_) {
       }
       queueMicrotask(scanUnreadConversations);
@@ -11001,14 +11001,14 @@ ${button.innerHTML}`)
       this.close = () => {
       };
     }
-    CarrierNotification.permission = "granted";
-    CarrierNotification.requestPermission = (cb) => {
+    ChatpaneNotification.permission = "granted";
+    ChatpaneNotification.requestPermission = (cb) => {
       if (cb) cb("granted");
       return Promise.resolve("granted");
     };
     try {
       Object.defineProperty(window, "Notification", {
-        value: CarrierNotification,
+        value: ChatpaneNotification,
         writable: true,
         configurable: true
       });
@@ -11225,7 +11225,7 @@ ${button.innerHTML}`)
       if (pageSignal.emitted && pageSignal.nativeId !== void 0 && conversation.threadPath) {
         updateNotificationRoute(pageSignal.nativeId, conversation.threadPath);
       }
-      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CARRIER_SETTINGS__) || groupSuppressed(conversation.key)) {
+      if (suppressMutedDelivery(pageSignal.threadMuted, window.__CHATPANE_SETTINGS__) || groupSuppressed(conversation.key)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         pageSignal.pendingDelivery = void 0;
       } else if (pageSignal.emitted) {
@@ -11255,7 +11255,7 @@ ${button.innerHTML}`)
     const completeCapacityEviction = async (fallback) => {
       if (!fallback.deliverable) return;
       if (groupFiltering()) await learnThreadKind(fallback.key);
-      const settings = window.__CARRIER_SETTINGS__ || {};
+      const settings = window.__CHATPANE_SETTINGS__ || {};
       if (suppressNotificationDelivery(mutedThreads.isMuted(fallback.key), settings) || groupSuppressed(fallback.key)) {
         notifiedStore.markSuppressed(
           fallback.key,
@@ -11277,7 +11277,7 @@ ${button.innerHTML}`)
         hidePreview ? "New message" : fallback.displayBody,
         "",
         fallback.dedupeKey,
-        () => window.__carrierOpenThread?.(fallback.threadPath),
+        () => window.__chatpaneOpenThread?.(fallback.threadPath),
         fallback.threadPath,
         void 0,
         "",
@@ -11308,7 +11308,7 @@ ${button.innerHTML}`)
       if (previous) clearTimeout(previous.timer);
       if (pairPendingPageNotification(conversation, detectedAt, confirmedRepeat, routeCandidates))
         return;
-      if (suppressMutedDelivery(conversation.muted, window.__CARRIER_SETTINGS__) || groupSuppressed(conversation.key)) {
+      if (suppressMutedDelivery(conversation.muted, window.__CHATPANE_SETTINGS__) || groupSuppressed(conversation.key)) {
         notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
         const timer2 = setTimeout(() => {
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer2) {
@@ -11339,7 +11339,7 @@ ${button.innerHTML}`)
         { sender: "", thread: "" }
       );
       const senderIcon = conversation.isGroup ? senderAvatars.lookup(conversation.key, groupPreviewSender(conversation.body)) : "";
-      const hiddenAtConstruction = window.__CARRIER_SETTINGS__?.hide_notification_preview === true;
+      const hiddenAtConstruction = window.__CHATPANE_SETTINGS__?.hide_notification_preview === true;
       const names2 = hiddenAtConstruction ? Promise.resolve(null) : conversationNames(conversation.key);
       const senderAvatar = hiddenAtConstruction ? Promise.resolve("") : names2.then((group) => {
         const person = notificationSender(conversation.body, group);
@@ -11355,7 +11355,7 @@ ${button.innerHTML}`)
       const timer = setTimeout(async () => {
         await learnThreadKind(conversation.key);
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
-        const settings = window.__CARRIER_SETTINGS__ || {};
+        const settings = window.__CHATPANE_SETTINGS__ || {};
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), settings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
           if (notificationCorrelations.getRow(conversation.key)?.timer === timer) {
@@ -11380,7 +11380,7 @@ ${button.innerHTML}`)
           diag("notify.avatar", "group notification has no photo for its displayed identity");
         }
         if (notificationCorrelations.getRow(conversation.key)?.timer !== timer) return;
-        const deliverySettings = window.__CARRIER_SETTINGS__ || {};
+        const deliverySettings = window.__CHATPANE_SETTINGS__ || {};
         const hidePreview = deliverySettings.hide_notification_preview === true;
         if (suppressNotificationDelivery(mutedThreads.isMuted(conversation.key), deliverySettings) || groupSuppressed(conversation.key)) {
           notifiedStore.markSuppressed(conversation.key, fingerprint, bodyHash);
@@ -11428,7 +11428,7 @@ ${button.innerHTML}`)
           hidePreview ? "" : icon2,
           dedupeKey,
           () => {
-            window.__carrierOpenThread?.(conversation.threadPath);
+            window.__chatpaneOpenThread?.(conversation.threadPath);
           },
           conversation.threadPath,
           void 0,
@@ -11508,7 +11508,7 @@ ${button.innerHTML}`)
           (conversation) => conversation.unread && !isOwnMessagePreview(conversation.body) && !conversation.draft
         );
         for (const conversation of conversations) void learnThreadKind(conversation.key);
-        const ignoreMuted = ignoresMutedConversations(window.__CARRIER_SETTINGS__);
+        const ignoreMuted = ignoresMutedConversations(window.__CHATPANE_SETTINGS__);
         const silenced = (conversation) => ignoreMuted && conversation.muted || groupSuppressed(conversation.key);
         const notifyKeys = new Set(
           conversations.filter((conversation) => !silenced(conversation)).map(({ key }) => key)
@@ -11575,7 +11575,7 @@ ${button.innerHTML}`)
         }
         if (confirmedReads.length > 0) {
           invoke("plugin:event|emit", {
-            event: "carrier:notify-read",
+            event: "chatpane:notify-read",
             payload: { account: accountId(document.cookie) || "", reads: confirmedReads }
           })?.catch?.(() => {
           });
@@ -11797,7 +11797,7 @@ ${button.innerHTML}`)
         }
         if ([...changed].every((key) => stale.has(key) || unhydrated.has(key))) return;
         try {
-          window.__carrierOnNotification?.();
+          window.__chatpaneOnNotification?.();
         } catch (_) {
         }
         for (const conversation of conversations) {
@@ -11988,11 +11988,11 @@ ${button.innerHTML}`)
   html[${RESIZING_ATTR}], html[${RESIZING_ATTR}] * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
 `;
   function storedWidths() {
-    return sanitizePaneWidths(window.__CARRIER_SETTINGS__?.pane_widths);
+    return sanitizePaneWidths(window.__CHATPANE_SETTINGS__?.pane_widths);
   }
   function rememberLocally(widths) {
     try {
-      const settings = window.__CARRIER_SETTINGS__;
+      const settings = window.__CHATPANE_SETTINGS__;
       if (settings && typeof settings === "object") settings.pane_widths = { ...widths };
       const cached = JSON.parse(
         localStorage.getItem("__carrier_settings") || "null"
@@ -12039,7 +12039,7 @@ ${button.innerHTML}`)
       showWidths();
       rememberLocally(widths);
       invoke("plugin:event|emit", {
-        event: "carrier:pane-widths",
+        event: "chatpane:pane-widths",
         payload: { list: widths.list, details: widths.details }
       })?.catch?.(() => {
       });
@@ -12050,8 +12050,8 @@ ${button.innerHTML}`)
       widths = next;
       showWidths();
     };
-    window.addEventListener("carrier:settings", followSettings);
-    window.addEventListener("carrier:pane-widths", followSettings);
+    window.addEventListener("chatpane:settings", followSettings);
+    window.addEventListener("chatpane:pane-widths", followSettings);
     const chatRow = () => document.querySelector(`[${CHAT_ROW_ATTR}]`);
     const chatBox = () => chatRow()?.firstElementChild ?? document.querySelector('[role="main"]') ?? null;
     const startDrag = (event, edge) => {
@@ -12281,7 +12281,7 @@ ${button.innerHTML}`)
     const onRoute = () => threadIdFromHref(location.pathname) === wanted;
     if (onRoute()) return onRoute;
     const staleLog = log();
-    if (window.__carrierOpenThread?.(path) !== true) return null;
+    if (window.__chatpaneOpenThread?.(path) !== true) return null;
     return () => {
       const current = log();
       return onRoute() && current !== null && current !== staleLog;
@@ -12348,12 +12348,12 @@ ${button.innerHTML}`)
   }
   function initThreadNav() {
     setTimeout(() => {
-      const restoreId = window.__CARRIER_RESTORE_THREAD__;
+      const restoreId = window.__CHATPANE_RESTORE_THREAD__;
       if (typeof restoreId === "string" && /^\d{1,32}$/.test(restoreId)) {
         restoreRecycledThread(restoreId);
       }
     }, 0);
-    window.__carrierOpenThread = (href) => {
+    window.__chatpaneOpenThread = (href) => {
       noteExplicitAction();
       const id = threadPathId(href);
       if (!id) return false;
@@ -12380,7 +12380,7 @@ ${button.innerHTML}`)
       viewed = next.state;
       if (next.emit) {
         invoke("plugin:event|emit", {
-          event: "carrier:thread-viewed",
+          event: "chatpane:thread-viewed",
           payload: { thread_path: next.emit }
         })?.catch?.(() => diag("thread-viewed.emit", "thread view emit failed"));
       }
@@ -12390,7 +12390,7 @@ ${button.innerHTML}`)
     window.addEventListener("focus", reportViewedThread);
     window.addEventListener("blur", reportViewedThread);
     reportViewedThread();
-    window.__carrierToggleInfo = () => {
+    window.__chatpaneToggleInfo = () => {
       const btn = conversationInfoButton();
       if (btn) {
         btn.click();
@@ -12532,7 +12532,7 @@ ${button.innerHTML}`)
             const kept = confirmed ? void 0 : muteExpiries.get(wantedThread);
             if (kept !== void 0) muteExpiries.delete(wantedThread);
             window.dispatchEvent(
-              new CustomEvent("carrier:thread-mute", { detail: { id: wantedThread, muted: true } })
+              new CustomEvent("chatpane:thread-mute", { detail: { id: wantedThread, muted: true } })
             );
             if (kept !== void 0) muteExpiries.set(wantedThread, kept);
             if (confirmed)
@@ -12542,7 +12542,7 @@ ${button.innerHTML}`)
                   muteExpiries.delete(wantedThread);
                   mutedThreads.invalidateMute(wantedThread);
                   window.dispatchEvent(
-                    new CustomEvent("carrier:thread-mute", {
+                    new CustomEvent("chatpane:thread-mute", {
                       detail: { id: wantedThread, muted: false }
                     })
                   );
@@ -12570,15 +12570,15 @@ ${button.innerHTML}`)
     }
   }
   function initQuickMute() {
-    window.addEventListener("carrier:thread-mute", (event) => {
+    window.addEventListener("chatpane:thread-mute", (event) => {
       const id = event.detail?.id;
       if (typeof id !== "string") return;
       clearTimeout(muteExpiries.get(id));
       muteExpiries.delete(id);
     });
-    window.__carrierQuickMute = (path, target, id, attempt, budgetMs) => {
+    window.__chatpaneQuickMute = (path, target, id, attempt, budgetMs) => {
       noteExplicitAction();
-      const report = (ok) => carrierReplyResult(id, attempt, ok).catch(
+      const report = (ok) => chatpaneReplyResult(id, attempt, ok).catch(
         () => diag("quick-mute.ack", "mute acknowledgement emit failed")
       );
       if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !actionTargetFor(target, document.cookie)) {
@@ -12635,14 +12635,14 @@ ${button.innerHTML}`)
   var currentThreadId = () => threadIdFromHref(location.pathname);
   var composer = () => firstShown(COMPOSER_SELECTOR2);
   var emitReplyResult = (id, attempt, ok) => {
-    carrierReplyResult(id, attempt, ok).catch(
+    chatpaneReplyResult(id, attempt, ok).catch(
       () => diag("quick-reply.ack", "reply acknowledgement emit failed")
     );
   };
   var validRequest = (path, text, id, attempt) => threadPathId(path) !== null && text.trim().length > 0 && [...text].length <= MAX_REPLY_CHARS && Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(attempt) && attempt > 0;
   async function deliver(path, text, id, state3) {
     const wantedThread = threadPathId(path);
-    if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+    if (!wantedThread || currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true) {
       diag("quick-reply.open", "validated thread could not be opened");
       return false;
     }
@@ -12713,7 +12713,7 @@ ${button.innerHTML}`)
   }
   async function preserveDraft(path, text, id) {
     const wantedThread = threadPathId(path);
-    if (!wantedThread || currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true) {
+    if (!wantedThread || currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true) {
       return false;
     }
     const deadline = Date.now() + DELIVERY_BUDGET_MS;
@@ -12757,7 +12757,7 @@ ${text}`)) {
     return false;
   }
   function initQuickReply() {
-    window.__carrierQuickReply = (path, rawText, id, attempt) => {
+    window.__chatpaneQuickReply = (path, rawText, id, attempt) => {
       noteExplicitAction();
       const text = String(rawText);
       if (!validRequest(path, text, id, attempt)) {
@@ -12778,7 +12778,7 @@ ${text}`)) {
         emitReplyResult(id, attempt, false);
       });
     };
-    window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
+    window.__chatpaneQuickReplyDraft = (path, rawText, id, attempt) => {
       noteExplicitAction();
       const text = String(rawText);
       if (threadPathId(path) === null || !Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(attempt) || attempt <= 0) {
@@ -13102,7 +13102,7 @@ ${text}`)) {
       let names2;
       return readRecentThreads(window.require, {
         viewer,
-        mode: nicknameMode(window.__CARRIER_SETTINGS__),
+        mode: nicknameMode(window.__CHATPANE_SETTINGS__),
         limit: MAX_THREADS,
         fallbackName: (id) => (names2 ?? (names2 = rowNames())).get(id) ?? ""
       });
@@ -13127,7 +13127,7 @@ ${text}`)) {
     let emptySince = 0;
     let pushing = false;
     let pushAgain = false;
-    const hidden = () => hidesNames(window.__CARRIER_SETTINGS__);
+    const hidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
     const push = async () => {
       if (pushing) {
         pushAgain = true;
@@ -13159,7 +13159,7 @@ ${text}`)) {
       const key = JSON.stringify(threads);
       if (key === lastSent) return;
       lastSent = key;
-      invoke("plugin:event|emit", { event: "carrier:recent-threads", payload: threads })?.catch?.(
+      invoke("plugin:event|emit", { event: "chatpane:recent-threads", payload: threads })?.catch?.(
         () => {
         }
       );
@@ -13173,7 +13173,7 @@ ${text}`)) {
       startPoll();
       if (!document.hidden) push();
     });
-    window.addEventListener("carrier:settings", push);
+    window.addEventListener("chatpane:settings", push);
     startPoll();
     setTimeout(push, 1500);
     setTimeout(push, 4e3);
@@ -13203,7 +13203,7 @@ ${text}`)) {
     routeChanged = true;
   });
   var pause4 = () => new Promise((resolve) => setTimeout(resolve, 100));
-  var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__carrierInCall;
+  var ready = () => scheduledSendConnectionReady() && rateLimitRemainingMs() <= 0 && !window.__chatpaneInCall;
   var activeTextInput = () => document.hasFocus() && document.activeElement?.matches('input, textarea, [contenteditable="true"][role="textbox"]');
   var paneThread = () => {
     const pane = document.querySelector('[role="main"] [role="log"]');
@@ -13333,7 +13333,7 @@ ${text}`)) {
     const request = async (operation) => {
       const current = account();
       if (!current) throw new Error("Sign in to schedule a message.");
-      const response = await carrierScheduledSend({ ...operation, account: current });
+      const response = await chatpaneScheduledSend({ ...operation, account: current });
       if (account() !== current) throw new Error("The signed-in account changed.");
       if (response.error) throw new Error(response.error);
       owner = current;
@@ -13347,7 +13347,7 @@ ${text}`)) {
       diag("scheduled-send.action", "schedule operation failed");
     };
     const warning = async () => {
-      if (document.hidden || !window.__carrierToast) return;
+      if (document.hidden || !window.__chatpaneToast) return;
       const missed = rows.filter(
         (row) => (row.status === "missed" || row.status === "missed_draft" || row.status === "uncertain") && !row.toast_seen
       );
@@ -13626,7 +13626,7 @@ ${text}`)) {
         close(true);
         return;
       }
-      if (window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false) {
+      if (window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false) {
         toast("Scheduled sending is unavailable with multiple app instances enabled.");
         return;
       }
@@ -13706,7 +13706,7 @@ ${text}`)) {
       syncColors();
     }
     const poll = async () => {
-      if (polling || busy2 || !account() || window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ === false)
+      if (polling || busy2 || !account() || window.__CHATPANE_SCHEDULED_SEND_AVAILABLE__ === false)
         return;
       polling = true;
       try {
@@ -13795,7 +13795,7 @@ ${text}`)) {
       document.addEventListener("visibilitychange", () => {
         void poll();
       });
-      window.addEventListener("carrier:settings", scheduleMount);
+      window.addEventListener("chatpane:settings", scheduleMount);
       new MutationObserver(scheduleMount).observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["class", "style"]
@@ -13964,7 +13964,7 @@ ${text}`)) {
     // Mounted from a requestAnimationFrame callback, which a hidden webview
     // never runs — so a hidden window says nothing about whether the selector
     // still works, and checking one would report a break every interval for as
-    // long as Carrier sits in the background.
+    // long as Chatpane sits in the background.
     { key: "settings-button", sel: "[data-carrier-settings-button]", needsVisible: true }
   ];
   function initSelectorHealth() {
@@ -14069,7 +14069,7 @@ ${text}`)) {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      window.__carrierToggleSettings?.();
+      window.__chatpaneToggleSettings?.();
     });
     slot.appendChild(button);
     return slot;
@@ -14177,7 +14177,7 @@ ${text}`)) {
         pending.timer = window.setTimeout(poll, COMPOSER_POLL_MS);
       }
     };
-    Object.defineProperty(window, "__carrierShareMedia", {
+    Object.defineProperty(window, "__chatpaneShareMedia", {
       value: (payload) => {
         const entries = sanitizeSharedFiles(payload);
         const { files, failures: failures2 } = decodeSharedFiles(entries);
@@ -14228,7 +14228,7 @@ ${text}`)) {
     zoomLevel = clamped;
     try {
       localStorage.setItem(ZOOM_KEY, String(clamped));
-      const settings = window.__CARRIER_SETTINGS__ && typeof window.__CARRIER_SETTINGS__ === "object" && !Array.isArray(window.__CARRIER_SETTINGS__) ? window.__CARRIER_SETTINGS__ : null;
+      const settings = window.__CHATPANE_SETTINGS__ && typeof window.__CHATPANE_SETTINGS__ === "object" && !Array.isArray(window.__CHATPANE_SETTINGS__) ? window.__CHATPANE_SETTINGS__ : null;
       if (settings) settings.zoom = clamped;
       const cached = JSON.parse(
         localStorage.getItem("__carrier_settings") || "null"
@@ -14241,7 +14241,7 @@ ${text}`)) {
     } catch (_) {
     }
     if (changed && !fromSettings) {
-      invoke("plugin:event|emit", { event: "carrier:zoom", payload: clamped })?.catch?.(() => {
+      invoke("plugin:event|emit", { event: "chatpane:zoom", payload: clamped })?.catch?.(() => {
       });
     }
   }
@@ -14249,26 +14249,26 @@ ${text}`)) {
   var zoomOut = () => setZoomLevel(zoomLevel - 10);
   var zoomReset = () => setZoomLevel(100);
   function syncZoomFromSettings() {
-    const s = window.__CARRIER_SETTINGS__ || {};
+    const s = window.__CHATPANE_SETTINGS__ || {};
     const z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
     if (z !== zoomLevel) setZoomLevel(z, true);
   }
   function initZoomLevel() {
-    const s = window.__CARRIER_SETTINGS__ || {};
+    const s = window.__CHATPANE_SETTINGS__ || {};
     let z = typeof s.zoom === "number" && Number.isFinite(s.zoom) ? clampZoom(s.zoom) : 100;
     const stored = parseInt(localStorage.getItem(ZOOM_KEY) || "", 10);
     if (z === 100 && Number.isFinite(stored) && clampZoom(stored) !== 100) {
       z = clampZoom(stored);
-      invoke("plugin:event|emit", { event: "carrier:zoom", payload: z })?.catch?.(() => {
+      invoke("plugin:event|emit", { event: "chatpane:zoom", payload: z })?.catch?.(() => {
       });
     }
     if (z !== zoomLevel) setZoomLevel(z, true);
-    window.addEventListener("carrier:settings", syncZoomFromSettings);
+    window.addEventListener("chatpane:settings", syncZoomFromSettings);
   }
   function initZoom() {
-    window.__carrierZoomIn = zoomIn;
-    window.__carrierZoomOut = zoomOut;
-    window.__carrierZoomReset = zoomReset;
+    window.__chatpaneZoomIn = zoomIn;
+    window.__chatpaneZoomOut = zoomOut;
+    window.__chatpaneZoomReset = zoomReset;
     if (document.readyState === "loading")
       document.addEventListener("DOMContentLoaded", initZoomLevel, { once: true });
     else initZoomLevel();
@@ -14291,7 +14291,7 @@ ${text}`)) {
     e: () => openEmojiPicker(),
     g: () => openGifPicker(),
     t: () => attachFiles(),
-    "/": () => window.__carrierToggleShortcuts?.()
+    "/": () => window.__chatpaneToggleShortcuts?.()
   };
   function initShortcuts() {
     document.addEventListener(
@@ -14318,16 +14318,16 @@ ${text}`)) {
       (e) => {
         if (e.key === "F1") {
           e.preventDefault();
-          window.__carrierToggleShortcuts?.();
+          window.__chatpaneToggleShortcuts?.();
         } else if (e.key === "F5") {
           e.preventDefault();
           location.reload();
         } else if (e.key === "F3") {
           e.preventDefault();
-          window.__carrierToggleSettings?.();
+          window.__chatpaneToggleSettings?.();
         } else if (e.key === "F2") {
           e.preventDefault();
-          window.__carrierCheckUpdates?.();
+          window.__chatpaneCheckUpdates?.();
         } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
           const target = chatRows()[Number(e.key) - 1];
           if (target) {
@@ -14351,7 +14351,7 @@ ${text}`)) {
       attachFiles,
       newConversation
     };
-    window.__carrierShortcuts = Object.fromEntries(
+    window.__chatpaneShortcuts = Object.fromEntries(
       Object.entries(actions).map(([name, action2]) => [
         name,
         () => {
@@ -14366,7 +14366,7 @@ ${text}`)) {
   // inject/src/messenger/features/spellcheck.ts
   var SPELL_SEL = '[contenteditable="true"], textarea, input[type="text"], input[type="search"]';
   function applySpellcheckNow() {
-    const on2 = window.__CARRIER_SETTINGS__?.spellcheck === true;
+    const on2 = window.__CHATPANE_SETTINGS__?.spellcheck === true;
     document.querySelectorAll(SPELL_SEL).forEach((el) => {
       el.setAttribute?.("spellcheck", on2 ? "true" : "false");
     });
@@ -14374,7 +14374,7 @@ ${text}`)) {
   function applySpellcheck() {
     applySpellcheckNow();
     registerAddedNodeSweep((root) => {
-      const on2 = window.__CARRIER_SETTINGS__?.spellcheck === true;
+      const on2 = window.__CHATPANE_SETTINGS__?.spellcheck === true;
       const want = on2 ? "true" : "false";
       const set = (el) => {
         if (el.getAttribute?.("spellcheck") !== want) el.setAttribute?.("spellcheck", want);
@@ -14384,7 +14384,7 @@ ${text}`)) {
     });
   }
   function initSpellcheck() {
-    window.addEventListener("carrier:settings", applySpellcheckNow);
+    window.addEventListener("chatpane:settings", applySpellcheckNow);
     if (document.readyState === "loading")
       document.addEventListener("DOMContentLoaded", applySpellcheck);
     else applySpellcheck();
@@ -14395,7 +14395,7 @@ ${text}`)) {
   function initSyncHealth() {
     const tracker = new SyncHealthTracker();
     const serverDelays = new RetryAfterWindow();
-    const emitSyncAlert = (kind) => invoke("plugin:event|emit", { event: "carrier:sync-alert", payload: { kind } })?.catch?.(
+    const emitSyncAlert = (kind) => invoke("plugin:event|emit", { event: "chatpane:sync-alert", payload: { kind } })?.catch?.(
       () => {
       }
     );
@@ -14574,7 +14574,7 @@ ${text}`)) {
           });
           banner.appendChild(retry);
         }
-        const protectedNow = !!window.__carrierInCall || [...document.querySelectorAll('[contenteditable="true"]')].some(
+        const protectedNow = !!window.__chatpaneInCall || [...document.querySelectorAll('[contenteditable="true"]')].some(
           (element2) => !!element2.textContent?.trim()
         );
         if (retry) {
@@ -14705,7 +14705,7 @@ ${text}`)) {
     let observer = null;
     let pending = false;
     const queuedRoots = /* @__PURE__ */ new Set();
-    const on2 = () => window.__CARRIER_SETTINGS__?.system_emoji === true;
+    const on2 = () => window.__CHATPANE_SETTINGS__?.system_emoji === true;
     function sourceGlyph(el) {
       if (el?.nodeType !== 1 || el.hasAttribute(GLYPH_ATTR)) return "";
       if (el.matches?.("img[alt]")) {
@@ -14721,10 +14721,10 @@ ${text}`)) {
       return EMOJI_SOURCE_RE.test(bg) ? label2 : "";
     }
     function clearGlyph(el) {
-      el.__carrierSystemEmojiGlyph?.remove?.();
+      el.__chatpaneSystemEmojiGlyph?.remove?.();
       el.removeAttribute(SOURCE_ATTR);
       el.removeAttribute("data-carrier-emoji-glyph");
-      delete el.__carrierSystemEmojiGlyph;
+      delete el.__chatpaneSystemEmojiGlyph;
     }
     function ensureGlyph(el) {
       const glyph = sourceGlyph(el);
@@ -14734,12 +14734,12 @@ ${text}`)) {
       }
       el.setAttribute(SOURCE_ATTR, "");
       el.setAttribute("data-carrier-emoji-glyph", glyph);
-      let span = el.__carrierSystemEmojiGlyph;
+      let span = el.__chatpaneSystemEmojiGlyph;
       if (!span?.isConnected) {
         span = document.createElement("span");
         span.setAttribute(GLYPH_ATTR, "");
         span.setAttribute("role", "img");
-        el.__carrierSystemEmojiGlyph = span;
+        el.__chatpaneSystemEmojiGlyph = span;
         el.after(span);
       }
       if (span.previousSibling !== el) el.after(span);
@@ -14754,7 +14754,7 @@ ${text}`)) {
     function sweepOrphanGlyphs() {
       for (const glyph of document.querySelectorAll(`[${GLYPH_ATTR}]`)) {
         const source = glyph.previousElementSibling;
-        if (!source?.hasAttribute(SOURCE_ATTR) || source.__carrierSystemEmojiGlyph !== glyph || !source.isConnected) {
+        if (!source?.hasAttribute(SOURCE_ATTR) || source.__chatpaneSystemEmojiGlyph !== glyph || !source.isConnected) {
           glyph.remove();
         }
       }
@@ -14831,7 +14831,7 @@ ${text}`)) {
       }
     };
     apply2();
-    window.addEventListener("carrier:settings", apply2);
+    window.addEventListener("chatpane:settings", apply2);
     if (document.readyState === "loading")
       document.addEventListener("DOMContentLoaded", () => on2() && schedule(), { once: true });
   }
@@ -14871,7 +14871,7 @@ ${text}`)) {
 
   // inject/src/messenger/features/telemetry.ts
   function initTelemetryBlocking() {
-    const on2 = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+    const on2 = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
     const shouldBlock = (raw) => on2() && isBlockedTelemetryUrl(raw, location.href);
     try {
       const origFetch = window.fetch;
@@ -14892,14 +14892,14 @@ ${text}`)) {
       const origSend = proto.send;
       proto.open = function(...args) {
         try {
-          this.__carrierBlocked = shouldBlock(args[1]);
+          this.__chatpaneBlocked = shouldBlock(args[1]);
         } catch (_) {
-          this.__carrierBlocked = false;
+          this.__chatpaneBlocked = false;
         }
         return origOpen.apply(this, args);
       };
       proto.send = function(...args) {
-        if (this.__carrierBlocked && on2()) {
+        if (this.__chatpaneBlocked && on2()) {
           setTimeout(() => {
             try {
               for (const [k, v] of [
@@ -14944,8 +14944,8 @@ ${text}`)) {
   var CONTROLS_ID = "carrier-window-controls";
   var state2 = null;
   function control(action2) {
-    carrierWindowControl(action2)?.catch?.(
-      () => diag("title-bar.control", "carrier:window-control emit failed")
+    chatpaneWindowControl(action2)?.catch?.(
+      () => diag("title-bar.control", "chatpane:window-control emit failed")
     );
   }
   var ICONS = {
@@ -15048,9 +15048,9 @@ ${text}`)) {
     return state2?.controls && state2.inset > 0 ? state2.inset : 0;
   }
   function initTitleBar() {
-    const initial = window.__CARRIER_TITLE_BAR__;
+    const initial = window.__CHATPANE_TITLE_BAR__;
     if (!initial) return;
-    window.__carrierTitleBar = (next) => apply(next);
+    window.__chatpaneTitleBar = (next) => apply(next);
     const root = document.documentElement;
     if (root) {
       root.style.setProperty(INSET_VAR, `${initial.inset}px`);
@@ -15069,11 +15069,11 @@ ${text}`)) {
   }
   var viewerReported = null;
   function reportMediaViewer(open) {
-    if (!/Mac/.test(navigator.platform) || !window.__CARRIER_TITLE_BAR__) return;
+    if (!/Mac/.test(navigator.platform) || !window.__CHATPANE_TITLE_BAR__) return;
     if (open === viewerReported) return;
     viewerReported = open;
-    carrierMediaViewer(open)?.catch?.(
-      () => diag("title-bar.viewer", "carrier:media-viewer emit failed")
+    chatpaneMediaViewer(open)?.catch?.(
+      () => diag("title-bar.viewer", "chatpane:media-viewer emit failed")
     );
   }
 
@@ -15184,7 +15184,7 @@ ${text}`)) {
   }
 
   // inject/src/messenger/features/typing-block.ts
-  var on = () => window.__CARRIER_SETTINGS__?.block_typing_indicator === true;
+  var on = () => window.__CHATPANE_SETTINGS__?.block_typing_indicator === true;
   function bytesOf(data) {
     if (data instanceof ArrayBuffer) return new Uint8Array(data);
     if (ArrayBuffer.isView(data))
@@ -15309,7 +15309,7 @@ ${text}`)) {
       });
     };
     const unreadConversationState = () => {
-      const ignoreMuted = badgeIgnoresMutedConversations(window.__CARRIER_SETTINGS__);
+      const ignoreMuted = badgeIgnoresMutedConversations(window.__CHATPANE_SETTINGS__);
       const openId = threadIdFromHref(location.pathname);
       if (openId) {
         observeOpenThreadMute(openId, [
@@ -15389,7 +15389,7 @@ ${text}`)) {
     let filteredUnreadBaseline = null;
     const knownMutedUnreads = new MutedUnreadStore(
       accountStorageKey ? unreadStorage : null,
-      accountStorageKey || "__carrier_muted_unreads_anonymous__"
+      accountStorageKey || "__chatpane_muted_unreads_anonymous__"
     );
     let ignoreMutedPolicy = null;
     const setBadge = (n, force) => {
@@ -15397,16 +15397,16 @@ ${text}`)) {
       if (n === last && dockError === lastDockError && !force) return;
       last = n;
       lastDockError = dockError;
-      const dot = window.__CARRIER_SETTINGS__?.badge_mode === "dot";
+      const dot = window.__CHATPANE_SETTINGS__?.badge_mode === "dot";
       const command = isMac4 ? "plugin:window|set_badge_label" : "plugin:window|set_badge_count";
       const value = isMac4 ? dockError ? "ERR" : n > 0 ? dot ? "•" : String(n) : null : n > 0 && !dot ? n : null;
       invoke(command, { value })?.catch?.(() => diag("badge.set", "badge update failed"));
-      invoke("plugin:event|emit", { event: "carrier:unread", payload: n })?.catch?.(
-        () => diag("badge.emit", "carrier:unread emit failed")
+      invoke("plugin:event|emit", { event: "chatpane:unread", payload: n })?.catch?.(
+        () => diag("badge.emit", "chatpane:unread emit failed")
       );
     };
     const apply2 = (force) => {
-      const s = window.__CARRIER_SETTINGS__ || {};
+      const s = window.__CHATPANE_SETTINGS__ || {};
       const ignoreMuted = badgeIgnoresMutedConversations(s);
       if (didMutedFilterPolicyChange(ignoreMutedPolicy, ignoreMuted)) {
         filteredUnreadBaseline = null;
@@ -15442,7 +15442,7 @@ ${text}`)) {
       }
       setBadge(n, force);
     };
-    window.addEventListener("carrier:thread-mute", (event) => {
+    window.addEventListener("chatpane:thread-mute", (event) => {
       const detail = event.detail;
       if (typeof detail?.muted !== "boolean" || typeof detail.id !== "string") return;
       if (!detail.muted) knownMutedUnreads.invalidate(detail.id);
@@ -15478,7 +15478,7 @@ ${text}`)) {
       waitForHead.observe(document.documentElement, { childList: true, subtree: true });
     }
     window.addEventListener(RATE_LIMIT_EVENT, () => apply2(true));
-    window.addEventListener("carrier:settings", () => apply2(true));
+    window.addEventListener("chatpane:settings", () => apply2(true));
     let pollTimer;
     const startPoll = () => {
       clearInterval(pollTimer);
@@ -15576,7 +15576,7 @@ ${text}`)) {
   var ACTIONS_ATTR = "data-carrier-media-actions";
   var OFFSET = "--carrier-media-controls-offset";
   var visibleControls = (root) => [...root.querySelectorAll(CONTROL)].map((control2) => control2.getBoundingClientRect()).filter(
-    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && // Controls sit near the top; Carrier's strip (and the offset clearing
+    (rect) => rect.width >= 16 && rect.height >= 16 && rect.bottom > 0 && // Controls sit near the top; Chatpane's strip (and the offset clearing
     // it) can move them further down, so the band grows with it.
     rect.top < 96 + windowControlsInset() && rect.right > 0 && rect.left < window.innerWidth
   );

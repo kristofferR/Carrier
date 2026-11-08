@@ -7,7 +7,7 @@
     <script>
       // Before the first paint, so the tab bar doesn't move.
       if (/Mac/.test(navigator.platform || "")) document.documentElement.classList.add("mac-title-bar");
-      // Windows and Linux: Carrier's close button and drag strip. Settings
+      // Windows and Linux: Chatpane's close button and drag strip. Settings
       // can't be minimized or maximized, so close is the only control.
       (() => {
         const root = document.documentElement;
@@ -48,8 +48,8 @@
           if (document.body) attach();
           else document.addEventListener("DOMContentLoaded", attach, { once: true });
         };
-        window.__carrierTitleBar = apply;
-        apply(window.__CARRIER_TITLE_BAR__);
+        window.__chatpaneTitleBar = apply;
+        apply(window.__CHATPANE_TITLE_BAR__);
       })();
     </script>
     <style>
@@ -57,7 +57,7 @@
       /* macOS: the window buttons float over the tab bar (no separate title
          bar), so the bar keeps a 28pt strip free for them. */
       html.mac-title-bar .tabs { padding-top: 40px; }
-      /* Windows and Linux: Carrier draws the close button (src-tauri/src/title_bar.rs),
+      /* Windows and Linux: Chatpane draws the close button (src-tauri/src/title_bar.rs),
          over a strip at the top of the tab bar that drags the window. */
       html[data-controls] .tabs { padding-top: calc(12px + var(--inset)); }
       #title-strip { position: fixed; top: 0; left: 0; right: 0; height: var(--inset); z-index: 2; }
@@ -395,7 +395,7 @@
 
       let activeTab = "general";
       try {
-        const saved = localStorage.getItem("carrier:settingsTab");
+        const saved = localStorage.getItem("chatpane:settingsTab");
         if (saved && TABS.some((t) => t.id === saved)) activeTab = saved;
       } catch (_) {}
 
@@ -1101,7 +1101,7 @@
           if (!runtimeCapabilities) {
             hint = "Unavailable because Chatpane could not verify this runtime capability.";
           } else if (key === "automatic_update_checks" && runtimeCapabilities.debug) {
-            hint = "Debug drafts are managed by carrier-debug-update. Release updates are blocked.";
+            hint = "Debug drafts are managed by chatpane-debug-update. Release updates are blocked.";
           } else if (key === "multi_instance") {
             hint = "The Snap package supports one Chatpane process at a time.";
           } else if (runtimeCapabilities.snap) {
@@ -1124,7 +1124,7 @@
         if (id !== activeTab) {
           activeTab = id;
           try {
-            localStorage.setItem("carrier:settingsTab", id);
+            localStorage.setItem("chatpane:settingsTab", id);
           } catch (_) {}
           render();
         }
@@ -1217,7 +1217,7 @@
         return rows;
       }
 
-      // Carrier logs warnings and page-integration failures to a file; this
+      // Chatpane logs warnings and page-integration failures to a file; this
       // opens its folder so the log is easy to attach to a bug report.
       function openLogsRow() {
         return buttonRow(
@@ -1463,7 +1463,7 @@
         notesBox.querySelector(".update-notes-text").textContent = notes;
         notesBox.hidden = false;
       }
-      const updateController = new CarrierSettingsUpdate.UpdateConsentController(
+      const updateController = new ChatpaneSettingsUpdate.UpdateConsentController(
         (command) => invoke(command),
         (state) => {
           updateButton.textContent = state.buttonLabel;

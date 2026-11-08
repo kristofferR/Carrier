@@ -9,7 +9,7 @@ import { shouldSuppressMediaPlay } from "../lib/media-autoplay";
 const VIDEO_SELECTOR = "video";
 
 export function initMediaAutoplay() {
-  const on = () => window.__CARRIER_SETTINGS__?.stop_media_autoplay === true;
+  const on = () => window.__CHATPANE_SETTINGS__?.stop_media_autoplay === true;
   let lastActivationAt = Number.NEGATIVE_INFINITY;
   let observer: MutationObserver | null = null;
 
@@ -86,5 +86,5 @@ export function initMediaAutoplay() {
   };
 
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
 }

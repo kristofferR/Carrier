@@ -95,7 +95,7 @@ function searchInConvoButton(): HTMLElement | null {
 }
 
 export function searchInConversation(): boolean {
-  window.__carrierWakeSearchIndex?.();
+  window.__chatpaneWakeSearchIndex?.();
   const btn = searchInConvoButton();
   if (btn) {
     btn.click();
@@ -103,7 +103,7 @@ export function searchInConversation(): boolean {
   }
   // The control only exists inside the conversation-info sidebar: open that
   // first, then click Search once React has rendered the panel.
-  if (typeof window.__carrierToggleInfo !== "function" || !window.__carrierToggleInfo())
+  if (typeof window.__chatpaneToggleInfo !== "function" || !window.__chatpaneToggleInfo())
     return false;
   let tries = 0;
   const timer = setInterval(() => {

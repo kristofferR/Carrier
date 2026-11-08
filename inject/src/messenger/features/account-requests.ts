@@ -1,6 +1,6 @@
 /* ----------------------- Account requests ------------------------------ */
-// Native asks through `window.__carrierAccount(request, action, value)` and
-// reads the answer on `carrier:account-result`: Messenger's own account
+// Native asks through `window.__chatpaneAccount(request, action, value)` and
+// reads the answer on `chatpane:account-result`: Messenger's own account
 // settings for Settings → Account (Ref #358), and Log Out (Ref #356).
 import { diag, invoke } from "../bridge";
 import { pageRequire } from "../lib/facebook-loader";
@@ -49,11 +49,11 @@ export function initAccountRequests() {
   };
   const reply = (request: string, payload: object) =>
     invoke("plugin:event|emit", {
-      event: "carrier:account-result",
+      event: "chatpane:account-result",
       payload: { request, ...payload },
     });
 
-  window.__carrierAccount = (request, action, value) => {
+  window.__chatpaneAccount = (request, action, value) => {
     const run = actions[action];
     (run ? Promise.resolve().then(() => run(value)) : Promise.reject(new Error("Unknown request")))
       .then((state) => reply(request, { ok: true, state }))

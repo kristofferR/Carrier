@@ -166,8 +166,8 @@ describe("hand-maintained injected assets", () => {
 
     expect(release.build.beforeBundleCommand).toBe("bun run build:share-extension");
     expect(packageJson.scripts["build:share-extension"]).toBe("bun share-extension/macos/build.ts");
-    expect(release.bundle.macOS.files["PlugIns/Carrier Share.appex"]).toBe(
-      "target/share-extension/Carrier Share.appex",
+    expect(release.bundle.macOS.files["PlugIns/Chatpane Share.appex"]).toBe(
+      "target/share-extension/Chatpane Share.appex",
     );
     expect(release.bundle.createUpdaterArtifacts).toBe(true);
     expect(buildEntrypoint).toContain('if (process.platform !== "darwin")');

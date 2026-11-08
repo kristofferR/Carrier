@@ -39,7 +39,7 @@ export interface VoiceClipEscapeState {
   key: string;
   isComposing: boolean;
   defaultPrevented: boolean;
-  /** A dialog, a menu, or Carrier's zoom overlay is open and owns Escape. */
+  /** A dialog, a menu, or Chatpane's zoom overlay is open and owns Escape. */
   escapeOwnedElsewhere: boolean;
   /** The key went to the chat (or to nothing focused), not to another surface. */
   inChat: boolean;

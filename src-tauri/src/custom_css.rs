@@ -1,6 +1,6 @@
 //! Best-effort user stylesheet support.
 //!
-//! `custom.css` lives beside Carrier's settings file. It is read afresh after
+//! `custom.css` lives beside Chatpane's settings file. It is read afresh after
 //! each Messenger page load so editing it and pressing Reload is sufficient;
 //! missing, unreadable, non-UTF-8, or unreasonably large files are ignored.
 
@@ -14,10 +14,10 @@ use crate::url_rules::is_messenger_web_url;
 const CUSTOM_CSS_FILE: &str = "custom.css";
 const CUSTOM_CSS_MAX_BYTES: u64 = 512 * 1024;
 const CUSTOM_CSS_TEMPLATE: &str = r#"/*
- * Carrier custom CSS
+ * Chatpane custom CSS
  *
  * This advanced customization is best-effort: Facebook can change Messenger's
- * markup at any time. Save this file, then reload Carrier (Ctrl/Cmd+R).
+ * markup at any time. Save this file, then reload Chatpane (Ctrl/Cmd+R).
  */
 
 "#;

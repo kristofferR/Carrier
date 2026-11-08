@@ -1,5 +1,5 @@
 /*
- * Carrier — toast notifications and the bridge that opens the dedicated
+ * Chatpane — toast notifications and the bridge that opens the dedicated
  * settings window (F2/F3). The settings UI itself lives
  * in its own native window (dist/settings.html), not as an overlay.
  *
@@ -11,7 +11,7 @@ import { installToast } from "./toast";
 // Internal bridge directly (no global window.__TAURI__ exposed to the page).
 const invoke = (cmd: string, args?: Record<string, unknown>) =>
   window.__TAURI_INTERNALS__?.invoke(cmd, args);
-// Facebook is a remote origin and can't call Carrier's own commands, but it
+// Facebook is a remote origin and can't call Chatpane's own commands, but it
 // *can* emit events (core:event), which a Rust listener handles.
 const emit = (event: string) =>
   invoke("plugin:event|emit", { event, payload: null })?.catch?.(() => {});
@@ -23,15 +23,15 @@ function main() {
   /* --------------------------- Update check ----------------------------- */
   // Updates can replace and restart the app, so the remote Facebook origin
   // only opens trusted Settings, where the user explicitly confirms install.
-  window.__carrierCheckUpdates = () => {
-    window.__carrierToast?.("Opening Settings to check for updates…");
-    emit("carrier:open-settings");
+  window.__chatpaneCheckUpdates = () => {
+    window.__chatpaneToast?.("Opening Settings to check for updates…");
+    emit("chatpane:open-settings");
   };
 
   /* --------------------------- Settings window -------------------------- */
   // F3 / the menu opens the dedicated settings window (handled in Rust).
-  window.__carrierToggleSettings = () => {
-    emit("carrier:open-settings");
+  window.__chatpaneToggleSettings = () => {
+    emit("chatpane:open-settings");
   };
 
   /* ------------------------- Shortcut reference ------------------------- */
@@ -196,7 +196,7 @@ function main() {
     close.focus({ preventScroll: true });
   };
 
-  window.__carrierToggleShortcuts = () => {
+  window.__chatpaneToggleShortcuts = () => {
     if (shortcutOverlay) closeShortcuts();
     else openShortcuts();
   };

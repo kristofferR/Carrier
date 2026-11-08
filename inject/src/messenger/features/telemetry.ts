@@ -9,7 +9,7 @@
 import { isBlockedTelemetryUrl } from "../lib/telemetry";
 
 export function initTelemetryBlocking() {
-  const on = () => window.__CARRIER_SETTINGS__?.block_telemetry === true;
+  const on = () => window.__CHATPANE_SETTINGS__?.block_telemetry === true;
   const shouldBlock = (raw: string | URL) => on() && isBlockedTelemetryUrl(raw, location.href);
 
   try {
@@ -36,16 +36,16 @@ export function initTelemetryBlocking() {
       ...args: [method: string, url: string | URL, ...rest: unknown[]]
     ) {
       try {
-        this.__carrierBlocked = shouldBlock(args[1]);
+        this.__chatpaneBlocked = shouldBlock(args[1]);
       } catch (_) {
-        this.__carrierBlocked = false;
+        this.__chatpaneBlocked = false;
       }
       // Always run the native open, even when blocking: a skipped open leaves
       // the XHR UNSENT and Facebook's setRequestHeader() calls would throw.
       return origOpen.apply(this, args as Parameters<XMLHttpRequest["open"]>);
     };
     proto.send = function (this: XMLHttpRequest, ...args: Parameters<XMLHttpRequest["send"]>) {
-      if (this.__carrierBlocked && on()) {
+      if (this.__chatpaneBlocked && on()) {
         // Skip the network and synthesize a clean empty 200 — Banzai persists
         // unsent batches and retries, so a silently-dropped request would
         // just make it queue and re-send. Own data properties shadow the

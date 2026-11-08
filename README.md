@@ -78,7 +78,7 @@ global shortcuts, and cryptographically verified updates.
 ## Why Chatpane?
 
 - **Only Messenger**: Facebook's Feed, Reels, Marketplace and other pages are hidden.
-- **Reply from notifications**: reply, react, mark as read or mute without opening Carrier.
+- **Reply from notifications**: reply, react, mark as read or mute without opening Chatpane.
 - **Right-click menus**: react to, reply to, forward or pin a message; mute,
   archive or mark a conversation as read.
 - **Hide that you're typing**: the people you chat with don't see "typing…".
@@ -279,7 +279,7 @@ Niri is detected through `NIRI_SOCKET` or a `niri` desktop identifier in
 If the window is blank or rendering is unstable, try launching with:
 
 ```bash
-CARRIER_LINUX_WEBKIT_SAFE_MODE=1 carrier
+CHATPANE_LINUX_WEBKIT_SAFE_MODE=1 carrier
 ```
 
 `1` requests both rendering fallbacks on any Linux desktop. `0` disables the
@@ -317,7 +317,7 @@ Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and the
 
 ```bash
 git clone https://github.com/kristofferR/Carrier.git
-cd Carrier
+cd Chatpane
 bun install
 bun run dev
 bun run build

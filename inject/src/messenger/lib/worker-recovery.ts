@@ -83,7 +83,7 @@ export class FacebookWorkerRecovery {
     | undefined;
   private currentPhase: RecoveryPhase = "idle";
   private lastPhase: RecoveryPhase = "idle";
-  /** Carrier's own replayed setup, which can stay pending indefinitely. */
+  /** Chatpane's own replayed setup, which can stay pending indefinitely. */
   private ownSetup: object | undefined;
 
   get phase(): RecoveryPhase {
@@ -166,7 +166,7 @@ export class FacebookWorkerRecovery {
         owner.scope = undefined;
         owner.setupStartedAt = undefined;
         owner.pausedDedicatedSetup = undefined;
-        // Messenger's own newer setup supersedes any replay Carrier started.
+        // Messenger's own newer setup supersedes any replay Chatpane started.
         owner.ownSetup = undefined;
         // Current MAWSetupWorker ABI: vault, bridge, two lifecycle callbacks,
         // reason, error callback, optional EB state. Unknown shapes fail open.
@@ -273,7 +273,7 @@ export class FacebookWorkerRecovery {
         nativeNow() - this.setupStartedAt >= REALTIME_NEVER_CONNECTED_MS &&
         stillPendingAndDisconnected();
       if (pendingSetup && !resumingDedicated && !stalledSetup) return "busy";
-      // Only a guarded restart may act while Carrier's own setup is pending.
+      // Only a guarded restart may act while Chatpane's own setup is pending.
       if (this.ownSetup && !stalledSetup) return "busy";
       const initialId = currentId.call(state);
       if (stalledSetup && (typeof initialId !== "string" || initialId.length === 0)) {
@@ -311,7 +311,7 @@ export class FacebookWorkerRecovery {
       }
       if (resumingDedicated && paused) {
         if (status.tag !== "dedicated_not_exists" || !canResumeDedicated()) return "busy";
-        // Carrier already stopped this exact dedicated worker, but a protection
+        // Chatpane already stopped this exact dedicated worker, but a protection
         // gate deferred setup. Resume only after a fresh no-worker inspection.
         this.pausedDedicatedSetup = undefined;
         return this.startSetup(paused.replay, (error) => reject.call(state, error));
@@ -375,7 +375,7 @@ export class FacebookWorkerRecovery {
           Reflect.apply(lifecycle.callback, undefined, [
             "carrier-sync-recovery",
             id,
-            "carrier_recovery",
+            "chatpane_recovery",
           ]);
           return "started";
         }
@@ -512,9 +512,9 @@ export class FacebookWorkerRecovery {
   }
 }
 
-export const SILENT_RECOVERY_EVENT = "carrier:sync-recovery";
-export const SILENT_RECOVERY_RETRY_EVENT = "carrier:sync-recovery-retry";
-export const SILENT_RECOVERY_RELOAD_EVENT = "carrier:sync-recovery-reload";
+export const SILENT_RECOVERY_EVENT = "chatpane:sync-recovery";
+export const SILENT_RECOVERY_RETRY_EVENT = "chatpane:sync-recovery-retry";
+export const SILENT_RECOVERY_RELOAD_EVENT = "chatpane:sync-recovery-reload";
 export const SILENT_RECOVERY_TIMEOUT_MS = 30_000;
 const RETRY_DELAYS_MS = [0, 15_000, 60_000] as const;
 const HEALTHY_RESET_MS = 60_000;

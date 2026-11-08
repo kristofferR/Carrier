@@ -1,5 +1,5 @@
 /*
- * Carrier — noise-stripping stylesheet for facebook.com/messages
+ * Chatpane — noise-stripping stylesheet for facebook.com/messages
  *
  * Clean-room implementation. These selectors target Facebook's *public* DOM
  * (ARIA roles / labels) to hide the surrounding Facebook chrome so the window
@@ -27,7 +27,7 @@ html:has(body [role="navigation"] [role="grid"]) {
   --header-height: 0px !important;
 }
 
-/* Carrier's title bar strip (--carrier-title-bar-inset, set by Carrier; see
+/* Chatpane's title bar strip (--carrier-title-bar-inset, set by Chatpane; see
    src-tauri/src/title_bar.rs and features/title-bar.ts).
    macOS: the window buttons float over the top of the chat list, so the list
    keeps the strip free under them. The padding goes on the element that paints
@@ -42,7 +42,7 @@ html[data-carrier-title-bar="macos"]
   box-sizing: border-box !important;
 }
 
-/* Windows and Linux: Carrier draws minimize, maximize and close at the top
+/* Windows and Linux: Chatpane draws minimize, maximize and close at the top
    right, over a strip above the chat; the chat list starts at the top. */
 html:is([data-carrier-title-bar="windows"], [data-carrier-title-bar="linux"]) [role="main"] {
   margin-top: var(--carrier-title-bar-inset, 0px) !important;
@@ -91,7 +91,7 @@ html[data-carrier-title-bar="windows"] #carrier-title-strip {
 #carrier-window-controls button[hidden] {
   display: none;
 }
-/* Sized from the strip (32px at 100% zoom), which Carrier scales against the
+/* Sized from the strip (32px at 100% zoom), which Chatpane scales against the
    page zoom, so the buttons keep their size at any zoom. */
 #carrier-window-controls svg {
   width: calc(var(--carrier-title-bar-inset, 0px) * 10 / 32);
@@ -167,7 +167,7 @@ div[role="banner"] div[role="navigation"] {
   display: none !important;
 }
 
-/* Carrier Settings beside Messenger's chat-list overflow control. The slot is
+/* Chatpane Settings beside Messenger's chat-list overflow control. The slot is
    inserted by messenger.js; Facebook's own theme variables keep it native in
    both light and dark mode. */
 [data-carrier-settings-slot] {
@@ -463,7 +463,7 @@ html[data-carrier-login][data-carrier-login-logo] [data-carrier-login-col]::befo
   background: var(--carrier-login-logo) center / contain no-repeat;
 }
 
-/* Carrier's loader while a fresh login page has no text yet: WebKitGTK can
+/* Chatpane's loader while a fresh login page has no text yet: WebKitGTK can
    hold Facebook's page for about 20 s before its text paints. messenger.js
    removes it once the form's text has rendered, or after 15 s. ::before is the
    backdrop with the mark and label, ::after a small bar gliding under them.
@@ -545,7 +545,7 @@ html[data-carrier-login-loading="done"]::after {
 /* Facebook's newer login layout defines its own light palette inside the
    page. Set the semantic tokens at every scope so fields, labels, links and
    icons share a dark palette without recolouring individual text nodes.
-   JS follows Carrier's forced theme or the system, independently of FB's root
+   JS follows Chatpane's forced theme or the system, independently of FB's root
    theme class. Removing the marker restores Facebook's original palette. */
 html[data-carrier-login-dark],
 html[data-carrier-login-dark] body,
@@ -864,7 +864,7 @@ html[data-carrier-system-emoji] [data-carrier-reaction-emoji] {
 .carrier-schedule-warning { color: var(--warning, #e09a32); }
 
 /* Message and chat-list context menus: Messenger's own menus open hidden while
-   Carrier reads which actions a message or conversation offers, or presses one. */
+   Chatpane reads which actions a message or conversation offers, or presses one. */
 html[data-carrier-message-menu-probe] [role="menu"] {
   opacity: 0 !important;
   pointer-events: none !important;

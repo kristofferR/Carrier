@@ -1,4 +1,4 @@
-/** Only a browser-generated activation of Carrier's own button may reveal. */
+/** Only a browser-generated activation of Chatpane's own button may reveal. */
 export const canActivateToastAction = (eventIsTrusted: boolean, userActivationIsActive: boolean) =>
   eventIsTrusted && userActivationIsActive;
 
@@ -42,7 +42,7 @@ export function installToast() {
   });
 
   let mounted = false;
-  let action: CarrierToastAction | undefined;
+  let action: ChatpaneToastAction | undefined;
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
   let toastRemoveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -57,15 +57,15 @@ export function installToast() {
     ) {
       return;
     }
-    if (action.kind === "reveal-download") carrierRevealDownload(action.url)?.catch?.(() => {});
+    if (action.kind === "reveal-download") chatpaneRevealDownload(action.url)?.catch?.(() => {});
     else if (action.kind === "open-download-privacy")
-      carrierOpenDownloadPrivacy()?.catch?.(() => {});
+      chatpaneOpenDownloadPrivacy()?.catch?.(() => {});
   });
 
   const showToast = (
     msg: string,
-    nextAction?: CarrierToastAction,
-    options?: CarrierToastOptions,
+    nextAction?: ChatpaneToastAction,
+    options?: ChatpaneToastOptions,
   ) => {
     if (!mounted) {
       document.body.appendChild(toastEl);
@@ -104,7 +104,7 @@ export function installToast() {
     );
   };
 
-  Object.defineProperty(window, "__carrierToast", {
+  Object.defineProperty(window, "__chatpaneToast", {
     value: showToast,
     writable: false,
     configurable: false,

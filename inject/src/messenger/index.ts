@@ -1,5 +1,5 @@
 /*
- * Carrier — in-page enhancements for the Messenger web app.
+ * Chatpane — in-page enhancements for the Messenger web app.
  * Clean-room implementation (keyboard shortcuts, page zoom, an image/video
  * zoom + pan viewer, and a fullscreen polyfill for the WebView).
  *

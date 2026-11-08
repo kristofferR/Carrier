@@ -45,7 +45,7 @@ observer callback; the open message log contained 14 articles. This supports
 treating a brief visual reappearance as insufficient evidence of recovery, while
 still leaving the underlying cause unproven.
 
-## What Carrier records
+## What Chatpane records
 
 - Heartbeats sample one animation frame at most every heartbeat. There is no
   continuous animation loop. A 15-second wait across successive visible samples

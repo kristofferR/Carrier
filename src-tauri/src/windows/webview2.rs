@@ -1,6 +1,6 @@
 //! A missing Microsoft Edge WebView2 runtime (Ref #365). The installer
 //! bootstraps it, but the portable `.zip` cannot, and some LTSC, Server and
-//! stripped images ship without it; Carrier then failed to start with no
+//! stripped images ship without it; Chatpane then failed to start with no
 //! useful message. Detection follows Microsoft's documented registry check.
 
 /// The runtime's EdgeUpdate client key, relative to `SOFTWARE`.
@@ -108,7 +108,7 @@ pub(crate) fn explain_missing_runtime() {
 /// Let the page mark regions that drag the window, like a title bar
 /// (`app-region: drag`): WebView2 then handles them natively, with snapping,
 /// double-click to maximize and the system menu. It applies from the next
-/// navigation, and every Messenger window starts on Carrier's local page.
+/// navigation, and every Messenger window starts on Chatpane's local page.
 pub(crate) fn enable_app_region(window: &tauri::WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings9;
     use windows::core::Interface;

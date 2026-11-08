@@ -14,16 +14,23 @@
   the PR description, never in commit authorship or co-author trailers.
 
 **Naming:** the app is **Chatpane** ("Chatpane for Messenger" in stores), renamed
-from Carrier. Everything users see says Chatpane: the product name, window and
-notification text, packages (Homebrew cask, AUR, Snap, deb/rpm), release assets
-and the `chatpane://` scheme. Internal names deliberately keep `carrier`: the
-bundle identifier `io.github.kristofferr.carrier` (it locates app data, logins
-and OS permissions), the crate and binary `carrier`, `carrier:*` events and
-`__carrier*` globals, and the personal debug tooling (`carrier-debug-update`,
-debug builds installed as `Carrier.app`). The rest of this guide still says
-Carrier in places; read it as Chatpane.
+from Carrier. New names, code and docs say Chatpane. A few things keep `carrier`
+on purpose, for compatibility; don't rename them:
+- the bundle identifier `io.github.kristofferr.carrier` and names derived from
+  it: it locates app data, logins, OS permissions and the Windows toast identity
+- the crate and binary `carrier` (deb/rpm `/usr/bin/carrier`, `carrier.exe`,
+  the Linux window class)
+- persisted page storage keys (`__carrier_settings`, the `__carrier_*__`
+  notification memory, `carrier-rate-limit`, `carrier-worker-connected`, the
+  legacy `carrier:zoom`) and the `--carrier-*` / `.carrier-*` / `data-carrier-*`
+  CSS names that themes and custom CSS target
+- OS-registered IDs: macOS notification categories `carrier.message.*`, the
+  tray IDs, conversation-export format and reveal-link names
+- code that migrates installs from the old name (autostart entries, the NSIS
+  hook, `Carrier.app` → `Chatpane.app`, cask and AUR renames)
+- the repo `kristofferR/Carrier` and its site URL, until they move
 
-Carrier is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
+Chatpane is a tiny **Tauri v2** desktop client for **Facebook Messenger** (wraps
 `facebook.com/messages` in a chrome-stripped native window). Repo:
 **`kristofferR/Carrier`** (use the **kristofferR** GitHub account). **v1.0.0 is
 released.** **Cross-platform: macOS, Windows, and Linux** (CI builds all six
@@ -40,9 +47,9 @@ Cargo feature (`--debug --features diagnostics`). This is a permanent build poli
 not a version pin. Never install public release artifacts, Homebrew casks, or AUR
 packages on these machines. Public packaging remains for other users.
 
-Use the managed `carrier-debug-update` path in [docs/debug-installs.md](docs/debug-installs.md).
+Use the managed `chatpane-debug-update` path in [docs/debug-installs.md](docs/debug-installs.md).
 It follows CI-built debug drafts made before public builds (or manually from main),
-stages updates while Carrier runs, and installs
+stages updates while Chatpane runs, and installs
 only while quit. Preserve a live failure until Kris authorizes restarting it.
 Do not overwrite the app manually or drop matching symbols. MCP/DevTools, native
 logging, backtraces, and instrumentation must be enabled for every personal build.
@@ -59,7 +66,7 @@ bun run tauri build --debug --features diagnostics --bundles app   # fast debug 
 export APPLE_SIGNING_IDENTITY="Developer ID Application: Kristoffer Risanger (S5Q742QZEL)"
 bun run tauri build               # uses src-tauri/tauri.conf.release.json via the CI flow
 
-# Release signing locally: the release config embeds Carrier's Developer ID provisioning
+# Release signing locally: the release config embeds Chatpane's Developer ID provisioning
 # profile and signs with entitlements.release.plist (communication notifications, #366).
 # Put the profile at src-tauri/embedded.provisionprofile first (gitignored; Kris's Mac
 # keeps it in ~/.config/carrier-signing/, CI writes it from the APPLE_PROVISIONING_PROFILE
@@ -71,8 +78,8 @@ bun run tauri build --config src-tauri/tauri.conf.release.json \
 # when that certificate is replaced.
 
 # install without a Gatekeeper prompt (rm -rf on /Applications is blocked by the safety net):
-ditto "<path>/Carrier.app" "/Applications/Carrier.app"
-xattr -dr com.apple.quarantine "/Applications/Carrier.app"
+ditto "<path>/Chatpane.app" "/Applications/Chatpane.app"
+xattr -dr com.apple.quarantine "/Applications/Chatpane.app"
 ```
 
 **Gate before every commit** (CI mirrors this):
@@ -122,24 +129,24 @@ On `main` (committed `d8a25a6`).
 
 - Gated behind the Cargo **`mcp` feature** → **release builds never compile it**.
 - Build with it: `bun run tauri build --debug --features diagnostics --bundles app`. Debug
-  builds are marked — the window title reads **"Carrier (debug)"**.
+  builds are marked — the window title reads **"Chatpane (debug)"**.
 - `.mcp.json` registers the `tauri-mcp` server — **approve the project MCP server
   when a new session prompts for it.**
-- **A "Carrier (debug)" build must be RUNNING** for the tools to connect — build it
+- **A "Chatpane (debug)" build must be RUNNING** for the tools to connect — build it
   with the command above, then `ditto` it into `/Applications`.
 - For Hide Names & Avatars selector work, first run the dev-only sanitized probe
-  through MCP `execute_js` with code `__carrier_mcp_privacy_probe__`. It reports
+  through MCP `execute_js` with code `__chatpane_mcp_privacy_probe__`. It reports
   live Messenger selector hits, rectangles, computed `filter`, and sanitized
   ancestor/attribute shapes; it must not expose message text, raw numeric IDs,
   image URLs, or `alt` / `aria-label` contents. Prefer extending this probe over
   guessing selectors or dumping raw DOM when debugging privacy blur coverage.
-- Notification work has the same treatment: `__carrier_mcp_notification_row_probe__`
+- Notification work has the same treatment: `__chatpane_mcp_notification_row_probe__`
   (conversation-row and message-row shape — where emoji sprites sit, which
-  images a row carries) and `__carrier_mcp_sender_avatar_probe__` (what the
+  images a row carries) and `__chatpane_mcp_sender_avatar_probe__` (what the
   sender-avatar harvest would take, what it cached, and whether each visible
   group preview's sender resolves to a face). Both report classifications and
   counts only.
-- The message context menu has `__carrier_mcp_message_probe__:<n>:<step>`: the
+- The message context menu has `__chatpane_mcp_message_probe__:<n>:<step>`: the
   nth-newest message's shape, hover-toolbar labels, and open menu rows, where
   `<step>` is `shape`, `hover`, `more`, `react` or `escape`. Message text and
   names are reduced to lengths.
@@ -150,7 +157,7 @@ On `main` (committed `d8a25a6`).
 
 - **`src-tauri/src/lib.rs`** — the Rust shell: window/tray/menu/settings/theme,
   `on_navigation` (off-site → default browser), `on_new_window` (Messenger's
-  call windows open as `popup-*` windows sharing the session; Carrier's
+  call windows open as `popup-*` windows sharing the session; Chatpane's
   injected features skip them), `on_download` (media and file attachments,
   blocks executables), updater.
 - **`src-tauri/inject/`** — injected at document-start: `messenger.css` (hides FB
@@ -165,23 +172,23 @@ On `main` (committed `d8a25a6`).
   section order — capture-phase listeners on the same event fire in
   registration order, so keep it.
 - **`dist/settings.html`** — the standalone Settings window.
-- **IPC model (important):** the FB page is a **remote origin**. Carrier grants
+- **IPC model (important):** the FB page is a **remote origin**. Chatpane grants
   it only plugin permissions (`src-tauri/capabilities/default.json`, limited to
   facebook.com and messenger.com; never the user-content hosts fbcdn.net and
   fbsbx.com, which denies top-level pages there; on Linux, Wry's postMessage
   fallback attributes subframe IPC to the top-level page, so this is not
-  subframe isolation), so it **cannot call Carrier's own commands**. Tauri could expose
+  subframe isolation), so it **cannot call Chatpane's own commands**. Tauri could expose
   an app command to a remote origin if it were declared in
-  `tauri_build::AppManifest::commands` and granted per origin; Carrier does not.
+  `tauri_build::AppManifest::commands` and granted per origin; Chatpane does not.
   Any script on a granted origin can emit any `carrier:*` event, so treat event
   payloads as untrusted. Page→backend goes through Tauri **plugins**
   (`plugin:opener|open_url`, `plugin:window|set_badge_count`,
   `plugin:event|emit`) and **core events** the Rust side handles via
-  `app.listen_any` (`carrier:open-settings`, which also serves update checks,
-  `carrier:unread`, and `carrier:notify` — the
+  `app.listen_any` (`chatpane:open-settings`, which also serves update checks,
+  `chatpane:unread`, and `chatpane:notify` — the
   new-message notification bridge, emitted via `plugin:event|emit` and rendered
-  natively). Settings are pushed to the page as `window.__CARRIER_SETTINGS__` +
-  a `carrier:settings` event.
+  natively). Settings are pushed to the page as `window.__CHATPANE_SETTINGS__` +
+  a `chatpane:settings` event.
 
 ---
 

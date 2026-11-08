@@ -184,7 +184,7 @@ async function runFixtures(
     assert("inspection timeout permits another attempt", calls === 5);
 
     const restartFlags: boolean[] = [];
-    window.__CARRIER_SETTINGS__ = { multi_instance: false };
+    window.__CHATPANE_SETTINGS__ = { multi_instance: false };
     adapter.recover = async (_allowed, restartShared) => {
       restartFlags.push(restartShared === true);
       return "started";

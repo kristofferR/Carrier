@@ -187,9 +187,9 @@
   };
 
   // inject/src/messenger/features/web-audio-idle.ts
-  var CALL_STATE_MESSAGE = "carrier:web-audio-call-state:v1";
-  var CALL_STATE_REQUEST = "carrier:web-audio-call-state-request:v1";
-  var CALL_STATE_RELEASE = "carrier:web-audio-call-state-release:v1";
+  var CALL_STATE_MESSAGE = "chatpane:web-audio-call-state:v1";
+  var CALL_STATE_REQUEST = "chatpane:web-audio-call-state-request:v1";
+  var CALL_STATE_RELEASE = "chatpane:web-audio-call-state-release:v1";
   function initWebAudioIdle(report) {
     const NativeAudioContext = window.AudioContext;
     if (typeof NativeAudioContext !== "function") return;
@@ -248,7 +248,7 @@
       entries.set(ctx, { gate: new WebAudioIdleGate(now()), timer: void 0 });
       live.add(ctx);
       ctx.addEventListener("statechange", () => sync(ctx));
-      entries.get(ctx)?.gate.setInCall(window.__carrierInCall === true);
+      entries.get(ctx)?.gate.setInCall(window.__chatpaneInCall === true);
       sync(ctx);
     };
     const gateOf = (ctx) => entries.get(ctx)?.gate;
@@ -437,8 +437,8 @@
         else childOrigins.delete(child);
       }
     };
-    window.addEventListener("carrier:protection-change", () => {
-      const inCall = window.__carrierInCall === true;
+    window.addEventListener("chatpane:protection-change", () => {
+      const inCall = window.__chatpaneInCall === true;
       applyCallState(inCall);
       postCallStateToChildren(inCall);
     });
@@ -451,13 +451,13 @@
       if (data?.type === CALL_STATE_REQUEST && isDirectChild(event.source) && isTrustedWebAudioFrameOrigin(event.origin)) {
         const child = event.source;
         childOrigins.set(child, event.origin);
-        postCallState(child, event.origin, window.__carrierInCall === true);
+        postCallState(child, event.origin, window.__chatpaneInCall === true);
         return;
       }
       if (window.parent === window || event.source !== window.parent || !isTrustedWebAudioFrameOrigin(event.origin) || data?.type !== CALL_STATE_MESSAGE || typeof data.inCall !== "boolean") {
         return;
       }
-      window.__carrierInCall = data.inCall;
+      window.__chatpaneInCall = data.inCall;
       applyCallState(data.inCall);
       postCallStateToChildren(data.inCall);
     });
@@ -479,10 +479,10 @@
   var normalizeHost = (host) => host.toLowerCase().replace(/^www\./, "");
   var isMessengerHost = (host) => host === "facebook.com" || host.endsWith(".facebook.com") || host === "messenger.com" || host.endsWith(".messenger.com");
   var isFbsbxHost = (host) => host === "fbsbx.com" || host.endsWith(".fbsbx.com");
-  var carrierHost = normalizeHost(location.hostname);
-  var carrierAncestorHost = window.parent === window ? "" : normalizeHost(firstAccessibleAncestorHost(window.parent));
-  var isMessengerFrame = isMessengerHost(carrierHost) || !carrierHost && isMessengerHost(carrierAncestorHost);
-  var isAudioOnlyFrame = isFbsbxHost(carrierHost) || !carrierHost && isFbsbxHost(carrierAncestorHost);
+  var chatpaneHost = normalizeHost(location.hostname);
+  var chatpaneAncestorHost = window.parent === window ? "" : normalizeHost(firstAccessibleAncestorHost(window.parent));
+  var isMessengerFrame = isMessengerHost(chatpaneHost) || !chatpaneHost && isMessengerHost(chatpaneAncestorHost);
+  var isAudioOnlyFrame = isFbsbxHost(chatpaneHost) || !chatpaneHost && isFbsbxHost(chatpaneAncestorHost);
   if (isMessengerFrame || isAudioOnlyFrame) {
     const report = (() => {
       if (window.top !== window.self) return (_diagnostic) => {
@@ -495,7 +495,7 @@
           if (now - (lastSent.get(key) ?? 0) < 3e4) return;
           lastSent.set(key, now);
           window.__TAURI_INTERNALS__?.invoke("plugin:event|emit", {
-            event: "carrier:diag",
+            event: "chatpane:diag",
             payload: { key, msg: message }
           })?.catch?.(() => {
           });

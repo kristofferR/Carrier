@@ -1,5 +1,5 @@
 /**
- * Pure logic for share-into-Carrier delivery (Ref #214): validating the
+ * Pure logic for share-into-Chatpane delivery (Ref #214): validating the
  * native payload and deciding when a parked share is still deliverable.
  */
 

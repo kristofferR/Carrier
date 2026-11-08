@@ -2,7 +2,7 @@
 // Messenger creates an AudioContext at page load and leaves it running for the
 // life of the page. A running context keeps a real-time CoreAudio output
 // client rendering silence and, on macOS, holds a Bluetooth audio session:
-// while Carrier is the foreground audio owner that idle session competes with
+// while Chatpane is the foreground audio owner that idle session competes with
 // other apps for the route (hijacking playback) and can trip a HAL overload
 // that stalls the shared output device, silencing Bluetooth headphones (#232 —
 // the foreground failure, separate from the hidden-window suspend/resume flip
@@ -26,9 +26,9 @@ interface Entry {
 
 type AudioContextCtor = typeof AudioContext;
 type Reporter = (diagnostic: WebAudioDiagnostic) => void;
-const CALL_STATE_MESSAGE = "carrier:web-audio-call-state:v1";
-const CALL_STATE_REQUEST = "carrier:web-audio-call-state-request:v1";
-const CALL_STATE_RELEASE = "carrier:web-audio-call-state-release:v1";
+const CALL_STATE_MESSAGE = "chatpane:web-audio-call-state:v1";
+const CALL_STATE_REQUEST = "chatpane:web-audio-call-state-request:v1";
+const CALL_STATE_RELEASE = "chatpane:web-audio-call-state-release:v1";
 
 export function initWebAudioIdle(report: Reporter) {
   const NativeAudioContext = window.AudioContext;
@@ -102,7 +102,7 @@ export function initWebAudioIdle(report: Reporter) {
     // the gate would never re-evaluate and the context would stay running.
     ctx.addEventListener("statechange", () => sync(ctx));
     // A context created mid-call must not be gated until the call ends.
-    entries.get(ctx)?.gate.setInCall(window.__carrierInCall === true);
+    entries.get(ctx)?.gate.setInCall(window.__chatpaneInCall === true);
     sync(ctx);
   };
 
@@ -327,8 +327,8 @@ export function initWebAudioIdle(report: Reporter) {
     }
   };
 
-  window.addEventListener("carrier:protection-change", () => {
-    const inCall = window.__carrierInCall === true;
+  window.addEventListener("chatpane:protection-change", () => {
+    const inCall = window.__chatpaneInCall === true;
     applyCallState(inCall);
     postCallStateToChildren(inCall);
   });
@@ -349,7 +349,7 @@ export function initWebAudioIdle(report: Reporter) {
     ) {
       const child = event.source as Window;
       childOrigins.set(child, event.origin);
-      postCallState(child, event.origin, window.__carrierInCall === true);
+      postCallState(child, event.origin, window.__chatpaneInCall === true);
       return;
     }
     if (
@@ -361,7 +361,7 @@ export function initWebAudioIdle(report: Reporter) {
     ) {
       return;
     }
-    window.__carrierInCall = data.inCall;
+    window.__chatpaneInCall = data.inCall;
     applyCallState(data.inCall);
     postCallStateToChildren(data.inCall);
   });

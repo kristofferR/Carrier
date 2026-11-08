@@ -1,6 +1,6 @@
 //! Dragged widths of the chat list and details panes (resizable panes, see
 //! `inject/src/messenger/features/pane-resize.ts`). After a drag the page
-//! reports both widths with `carrier:pane-widths`; they are kept in settings,
+//! reports both widths with `chatpane:pane-widths`; they are kept in settings,
 //! because Facebook clears unknown localStorage keys on Mac page loads, and
 //! pushed back to every Messenger page when it loads.
 
@@ -11,7 +11,7 @@ use tauri::{Listener, Manager};
 
 use crate::settings::{AppState, SaveOutcome, save_settings};
 
-const EVENT: &str = "carrier:pane-widths";
+const EVENT: &str = "chatpane:pane-widths";
 
 /// Sanity bounds in CSS pixels. Mirrors `PANE_WIDTH_MIN/MAX` in
 /// `inject/src/messenger/lib/pane-resize.ts`.
@@ -57,18 +57,18 @@ impl<'de> Deserialize<'de> for PaneWidths {
 }
 
 /// Hand `widths` to a Messenger page: its settings snapshot, the snapshot's
-/// reload cache, and a `carrier:pane-widths` event for the feature.
+/// reload cache, and a `chatpane:pane-widths` event for the feature.
 pub(crate) fn push(window: &tauri::WebviewWindow, widths: PaneWidths) {
     let Ok(json) = serde_json::to_string(&widths) else {
         return;
     };
     let _ = window.eval(format!(
-        "(function () {{ var w = {json}; var s = window.__CARRIER_SETTINGS__; \
+        "(function () {{ var w = {json}; var s = window.__CHATPANE_SETTINGS__; \
          if (s && typeof s === 'object') s.pane_widths = w; \
          try {{ var c = JSON.parse(localStorage.getItem('__carrier_settings') || 'null'); \
          if (c && typeof c === 'object' && !Array.isArray(c)) {{ c.pane_widths = w; \
          localStorage.setItem('__carrier_settings', JSON.stringify(c)); }} }} catch (e) {{}} \
-         window.dispatchEvent(new Event('carrier:pane-widths')); }})();"
+         window.dispatchEvent(new Event('chatpane:pane-widths')); }})();"
     ));
 }
 
@@ -98,7 +98,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         let h = handle.clone();
         // Listeners run on the UI thread; waiting there on the settings worker
         // can deadlock with a save that applies native window changes (as for
-        // carrier:zoom).
+        // chatpane:zoom).
         tauri::async_runtime::spawn(async move {
             let worker_h = h.clone();
             let state = h.state::<AppState>();

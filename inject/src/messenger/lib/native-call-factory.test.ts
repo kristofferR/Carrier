@@ -46,8 +46,8 @@ const nativeCallFactory = async () => {
   const source = await Bun.file(
     new URL("../../../../src-tauri/src/window.rs", import.meta.url),
   ).text();
-  const start = source.indexOf("  var carrierNativeCall = function");
-  const end = source.indexOf("\n\n  var carrierRevealDownload", start);
+  const start = source.indexOf("  var chatpaneNativeCall = function");
+  const end = source.indexOf("\n\n  var chatpaneRevealDownload", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   const exactFactory = source.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
@@ -61,8 +61,8 @@ const nativeCallFactory = async () => {
     clearTimeout(timeout);
   };
   const buildFactory = new Function(
-    "carrierAuthorizedEmit",
-    "carrierVerifyResult",
+    "chatpaneAuthorizedEmit",
+    "chatpaneVerifyResult",
     "NativePromise",
     "nativeSetTimeout",
     "nativeClearTimeout",
@@ -70,8 +70,8 @@ const nativeCallFactory = async () => {
     "nativeWindowAddEventListener",
     "nativeWindowRemoveEventListener",
     "window",
-    "carrierNativeRequest",
-    `${exactFactory}\nreturn carrierNativeCall;`,
+    "chatpaneNativeRequest",
+    `${exactFactory}\nreturn chatpaneNativeCall;`,
   ) as (
     emit: (event: string, payload: Record<string, unknown> & { request?: string }) => Promise<void>,
     verify: (event: string, result: VerifiedResult) => Promise<boolean>,
@@ -111,7 +111,7 @@ const nativeCallFactory = async () => {
     dispatch(shown: boolean, phase: ResultDetail["phase"]) {
       const request = emittedPayload?.request;
       expect(request).toBeString();
-      window.dispatch("carrier:context-menu-result", {
+      window.dispatch("chatpane:context-menu-result", {
         request: request ?? "",
         shown,
         phase,
@@ -130,7 +130,7 @@ test("native context calls wait for the result after their presentation acknowle
   const success = await nativeCallFactory();
   let successState = "pending";
   const successCall = success
-    .call("carrier:context-menu", "shown", "failed", "timed out", { items: [] }, true)
+    .call("chatpane:context-menu", "shown", "failed", "timed out", { items: [] }, true)
     .then(
       () => {
         successState = "resolved";
@@ -155,7 +155,7 @@ test("native context calls wait for the result after their presentation acknowle
 
   const failure = await nativeCallFactory();
   const failureCall = failure.call(
-    "carrier:context-menu",
+    "chatpane:context-menu",
     "shown",
     "failed",
     "timed out",
@@ -177,15 +177,15 @@ const replyResultFactory = async (
   const source = await Bun.file(
     new URL("../../../../src-tauri/src/window.rs", import.meta.url),
   ).text();
-  const start = source.indexOf("  var carrierReplyResult = function");
+  const start = source.indexOf("  var chatpaneReplyResult = function");
   const end = source.indexOf("\n\n", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   const exact = source.slice(start, end).replaceAll("{{", "{").replaceAll("}}", "}");
   return new Function(
-    "carrierAuthorizedEmit",
+    "chatpaneAuthorizedEmit",
     "NativePromise",
-    `${exact}\nreturn carrierReplyResult;`,
+    `${exact}\nreturn chatpaneReplyResult;`,
   )(authorizedEmit, Promise) as ReplyResult;
 };
 
@@ -198,7 +198,7 @@ test("quick-reply results carry the id, attempt and outcome over the authenticat
 
   await expect(replyResult(7, 2, false)).resolves.toBe("sent");
   expect(emitted).toEqual([
-    { event: "carrier:reply-result", payload: { id: 7, attempt: 2, ok: false } },
+    { event: "chatpane:reply-result", payload: { id: 7, attempt: 2, ok: false } },
   ]);
 });
 

@@ -25,7 +25,7 @@ type Run = (
 function pageAction(name: string, run: Run) {
   return (path: string, target: unknown, id: number, attempt: number, budgetMs: number) => {
     const report = (ok: boolean) =>
-      carrierReplyResult(id, attempt, ok).catch(() =>
+      chatpaneReplyResult(id, attempt, ok).catch(() =>
         diag(`${name}.ack`, `${name} acknowledgement emit failed`),
       );
     const thread = threadPathId(path);
@@ -67,10 +67,10 @@ function pageAction(name: string, run: Run) {
 }
 
 export function initNotificationActions() {
-  window.__carrierMarkRead = pageAction("mark-read", (load, thread, _target, deadline) =>
+  window.__chatpaneMarkRead = pageAction("mark-read", (load, thread, _target, deadline) =>
     markThreadRead(load, thread, deadline),
   );
-  window.__carrierQuickReact = pageAction("react", async (load, thread, target, deadline) =>
+  window.__chatpaneQuickReact = pageAction("react", async (load, thread, target, deadline) =>
     target.message && target.reaction
       ? reactToMessage(load, {
           threadId: thread,

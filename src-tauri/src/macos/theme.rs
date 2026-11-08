@@ -103,10 +103,10 @@ struct ThemeObserverIvars {
 //
 // macOS only surfaces a *system* light/dark switch through tao's
 // `WindowEvent::ThemeChanged`, which rides a coalesced distributed notification a
-// background app doesn't receive in time — so Carrier, sitting in the background
+// background app doesn't receive in time — so Chatpane, sitting in the background
 // while you flip the OS theme in System Settings, never noticed. KVO on
 // `effectiveAppearance` fires reliably and on the main thread the instant AppKit
-// updates the appearance, background or not. Carrier's windows have no title bar
+// updates the appearance, background or not. Chatpane's windows have no title bar
 // of their own to re-theme (the window buttons float over the page, see
 // title_bar.rs), and the pages re-theme themselves through prefers-color-scheme,
 // so on each change, while following the system theme, only the window

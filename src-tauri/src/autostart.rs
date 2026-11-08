@@ -32,7 +32,7 @@ pub(crate) enum Status {
 
 /// The stored setting after reading the OS: the OS wins, and an unreadable
 /// state keeps what was stored. Waiting for approval counts as off: macOS
-/// won't open Carrier at login until the user allows it, and switching it off
+/// won't open Chatpane at login until the user allows it, and switching it off
 /// in Login Items reports the same state. Settings shows the way to approve.
 fn reconciled(stored: bool, observed: Option<Status>) -> bool {
     observed.map_or(stored, |status| status == Status::On)
@@ -146,7 +146,7 @@ fn same_program(a: &std::path::Path, b: &std::path::Path) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LegacyAgent {
     Missing,
-    /// It starts Carrier at login.
+    /// It starts Chatpane at login.
     Enabled,
     /// macOS 13+: the user switched it off under "Allow in the Background";
     /// the plist stays but doesn't run.
@@ -158,11 +158,11 @@ enum LegacyAgent {
 #[derive(Debug, PartialEq, Eq)]
 enum LegacyAgentPlan {
     Nothing,
-    /// The login item already starts Carrier, or the user switched the agent
+    /// The login item already starts Chatpane, or the user switched the agent
     /// off and removing it keeps it off.
     Remove,
     /// Register the login item, and remove the agent once the login item is
-    /// enabled. Until then the agent keeps starting Carrier.
+    /// enabled. Until then the agent keeps starting Chatpane.
     Register,
 }
 
@@ -178,7 +178,7 @@ fn legacy_agent_plan(agent: LegacyAgent, service: Status) -> LegacyAgentPlan {
 }
 
 /// macOS 13+: an agent kept while the login item can't run still starts
-/// Carrier.
+/// Chatpane.
 #[cfg(any(test, target_os = "macos"))]
 fn macos_status(service: Status, agent: LegacyAgent) -> Status {
     if agent == LegacyAgent::Enabled {

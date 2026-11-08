@@ -30,8 +30,8 @@ export function initMediaPermissionWarning() {
       removeCard = showMediaPermissionCard(new Map(failures), dismissWarning, hide);
   };
   const liveTracks = new LiveMediaTrackCounter<MediaStreamTrack>((inCall) => {
-    window.__carrierInCall = inCall;
-    window.dispatchEvent(new Event("carrier:protection-change"));
+    window.__chatpaneInCall = inCall;
+    window.dispatchEvent(new Event("chatpane:protection-change"));
   });
   md.getUserMedia = async (constraints?: MediaStreamConstraints) => {
     const serial = ++requestSerial;

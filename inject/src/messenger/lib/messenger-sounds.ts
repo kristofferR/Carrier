@@ -5,18 +5,18 @@
  * focused, when the account's chat sounds are on).
  *
  * Messenger plays it whatever Do Not Disturb says, and while the window is
- * unfocused it plays it next to the notification it raises, which Carrier
+ * unfocused it plays it next to the notification it raises, which Chatpane
  * delivers natively with the system's sound: one message rang twice.
  */
 
 export interface MessageSoundState {
-  /** Carrier's Mute or Pause, or Messenger's Do Not Disturb. */
+  /** Chatpane's Mute or Pause, or Messenger's Do Not Disturb. */
   globallyMuted: boolean;
   /** The message is old news (see isOldNews): it raises no notification either. */
   oldNews: boolean;
   /** The Messenger window has the focus. */
   focused: boolean;
-  /** Carrier's notifications play a sound: `notification_sound`, off only when the chosen sound is Off. */
+  /** Chatpane's notifications play a sound: `notification_sound`, off only when the chosen sound is Off. */
   nativeSoundOn: boolean;
 }
 

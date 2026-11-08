@@ -1,6 +1,6 @@
 import { type NicknameMode, type NicknamePreference, showNicknames } from "./nicknames";
 
-/** Keep notification matching independent of Carrier's displayed thread title. */
+/** Keep notification matching independent of Chatpane's displayed thread title. */
 export class NativeThreadTitles {
   private readonly titles = new Map<string, { original: string; displayed: string }>();
 

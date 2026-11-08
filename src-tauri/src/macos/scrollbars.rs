@@ -3,8 +3,8 @@
 //! WebKit draws overlay scroll bars (thin, shown only while scrolling, moved
 //! on its scrolling thread) only when AppKit prefers them, which follows
 //! System Settings and whether a mouse is connected. Otherwise it draws classic
-//! always-on tracks that take room from the panes. A value in Carrier's own
-//! defaults domain outranks the system-wide one, for Carrier only. WebKit asks
+//! always-on tracks that take room from the panes. A value in Chatpane's own
+//! defaults domain outranks the system-wide one, for Chatpane only. WebKit asks
 //! once, when it starts, so this runs before any webview exists. Idea from
 //! fMess (github.com/toanbku/fmess, MIT).
 

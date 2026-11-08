@@ -67,11 +67,11 @@ const code = `(() => {
   win.querySelectorAll('.msg.out').forEach(bubble => {
     bubble.style.backgroundPosition = '0 ' + (-Math.round(bubble.getBoundingClientRect().top - bodyTop)) + 'px';
   });
-  window.__carrierHeartbeat = id => window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
-    event:'carrier:webview-heartbeat', payload:{id, protected:false, content_present:true}
+  window.__chatpaneHeartbeat = id => window.__TAURI_INTERNALS__.invoke('plugin:event|emit', {
+    event:'chatpane:webview-heartbeat', payload:{id, protected:false, content_present:true}
   });
-  window.__carrierStoreDemo = { language:'en', theme:${JSON.stringify(theme)}, source:'docs/index.html', fictional:true };
-  return { ...window.__carrierStoreDemo, width:innerWidth, height:innerHeight, images:document.images.length, externalResources:document.querySelectorAll('script, iframe, link, img[src^="http"]').length };
+  window.__chatpaneStoreDemo = { language:'en', theme:${JSON.stringify(theme)}, source:'docs/index.html', fictional:true };
+  return { ...window.__chatpaneStoreDemo, width:innerWidth, height:innerHeight, images:document.images.length, externalResources:document.querySelectorAll('script, iframe, link, img[src^="http"]').length };
 })()`;
 const authToken = (await readFile(`${socketPath}.token`, "utf8")).trim();
 const result = await new Promise<unknown>((resolveResult, reject) => {

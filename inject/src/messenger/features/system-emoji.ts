@@ -22,7 +22,7 @@ export function initSystemEmoji() {
   let pending = false;
   const queuedRoots = new Set<Element>();
 
-  const on = () => window.__CARRIER_SETTINGS__?.system_emoji === true;
+  const on = () => window.__CHATPANE_SETTINGS__?.system_emoji === true;
 
   function sourceGlyph(el: Element) {
     if (el?.nodeType !== 1 || el.hasAttribute(GLYPH_ATTR)) return "";
@@ -40,10 +40,10 @@ export function initSystemEmoji() {
   }
 
   function clearGlyph(el: Element) {
-    el.__carrierSystemEmojiGlyph?.remove?.();
+    el.__chatpaneSystemEmojiGlyph?.remove?.();
     el.removeAttribute(SOURCE_ATTR);
     el.removeAttribute("data-carrier-emoji-glyph");
-    delete el.__carrierSystemEmojiGlyph;
+    delete el.__chatpaneSystemEmojiGlyph;
   }
 
   function ensureGlyph(el: Element) {
@@ -54,12 +54,12 @@ export function initSystemEmoji() {
     }
     el.setAttribute(SOURCE_ATTR, "");
     el.setAttribute("data-carrier-emoji-glyph", glyph);
-    let span = el.__carrierSystemEmojiGlyph;
+    let span = el.__chatpaneSystemEmojiGlyph;
     if (!span?.isConnected) {
       span = document.createElement("span");
       span.setAttribute(GLYPH_ATTR, "");
       span.setAttribute("role", "img");
-      el.__carrierSystemEmojiGlyph = span;
+      el.__chatpaneSystemEmojiGlyph = span;
       el.after(span);
     }
     if (span.previousSibling !== el) el.after(span);
@@ -78,7 +78,7 @@ export function initSystemEmoji() {
       const source = glyph.previousElementSibling;
       if (
         !source?.hasAttribute(SOURCE_ATTR) ||
-        source.__carrierSystemEmojiGlyph !== glyph ||
+        source.__chatpaneSystemEmojiGlyph !== glyph ||
         !source.isConnected
       ) {
         glyph.remove();
@@ -167,7 +167,7 @@ export function initSystemEmoji() {
   };
 
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
   if (document.readyState === "loading")
     document.addEventListener("DOMContentLoaded", () => on() && schedule(), { once: true });
 }

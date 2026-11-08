@@ -47,11 +47,11 @@ export const DOWNLOAD_ACCESS_DENIED = "download folder access denied";
 export const isDownloadAccessDenied = (error: unknown): boolean =>
   error instanceof Error && error.message === DOWNLOAD_ACCESS_DENIED;
 
-/** What the page says when the OS blocked Carrier from the download folder.
+/** What the page says when the OS blocked Chatpane from the download folder.
  *  Only macOS has a settings pane that grants the access back. */
 export const downloadAccessDeniedToast = (
   platform: "macos" | "windows" | "linux",
-): { message: string; action?: CarrierToastAction } =>
+): { message: string; action?: ChatpaneToastAction } =>
   platform === "macos"
     ? {
         message: "Chatpane isn't allowed to save to your Downloads folder",

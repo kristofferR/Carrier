@@ -7,7 +7,7 @@
   <key>CFBundleDisplayName</key>
   <string>Chatpane</string>
   <key>CFBundleExecutable</key>
-  <string>Carrier Share</string>
+  <string>Chatpane Share</string>
   <key>CFBundleIdentifier</key>
   <string>io.github.kristofferr.carrier.share</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -29,7 +29,7 @@
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.share-services</string>
     <key>NSExtensionPrincipalClass</key>
-    <string>CarrierShareViewController</string>
+    <string>ChatpaneShareViewController</string>
     <key>NSExtensionAttributes</key>
     <dict>
       <key>NSExtensionActivationRule</key>

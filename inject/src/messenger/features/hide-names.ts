@@ -34,8 +34,8 @@ export function initHideNames() {
   let pending = false;
   let suppressMutations = false;
 
-  const namesHidden = () => hidesNames(window.__CARRIER_SETTINGS__);
-  const avatarsHidden = () => hidesAvatars(window.__CARRIER_SETTINGS__);
+  const namesHidden = () => hidesNames(window.__CHATPANE_SETTINGS__);
+  const avatarsHidden = () => hidesAvatars(window.__CHATPANE_SETTINGS__);
   const on = () => namesHidden() || avatarsHidden();
 
   function textValue(el: Element | null | undefined) {
@@ -475,5 +475,5 @@ export function initHideNames() {
     }
   };
   apply();
-  window.addEventListener("carrier:settings", apply);
+  window.addEventListener("chatpane:settings", apply);
 }

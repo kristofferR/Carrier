@@ -1,6 +1,6 @@
 /* Per-conversation mute: whether Messenger has silenced a thread.
  *
- * Facebook's title "(N)" and bold chat rows still count muted chats. Carrier
+ * Facebook's title "(N)" and bold chat rows still count muted chats. Chatpane
  * reads mute from accessible names on the row (and the open-thread Mute /
  * Unmute control), then remembers the thread id while its row is virtualized.
  */
@@ -75,7 +75,7 @@ export function suppressMutedDelivery(
   return muted && ignoresMutedConversations(settings);
 }
 
-/** Every notification is silenced: Carrier's Mute Notifications or Messenger's Do Not Disturb. */
+/** Every notification is silenced: Chatpane's Mute Notifications or Messenger's Do Not Disturb. */
 export function notificationsGloballyMuted(
   settings:
     | { mute_notifications?: boolean; notifications_paused_until?: number | null }
@@ -445,7 +445,7 @@ export function initMuteActionTracking(): void {
       if (id) {
         mutedThreads.observe(id, nextMuted);
         window.dispatchEvent(
-          new CustomEvent("carrier:thread-mute", { detail: { id, muted: nextMuted } }),
+          new CustomEvent("chatpane:thread-mute", { detail: { id, muted: nextMuted } }),
         );
       }
     },

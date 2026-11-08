@@ -19,7 +19,7 @@ test.skipIf(!chromium)(
           import { findOptionalCookieDeclineButton } from "../features/cookie-consent";
           import { initForceTheme } from "../features/force-theme";
           import { initLoginTidy } from "../features/login-tidy";
-          const testLocation = globalThis.__carrierTestLocation = {
+          const testLocation = globalThis.__chatpaneTestLocation = {
             hostname: "www.facebook.com", pathname: "/login.php",
             href: "https://www.facebook.com/login.php", replace() {}
           };
@@ -30,7 +30,7 @@ test.skipIf(!chromium)(
       bundle: true,
       write: false,
       define: {
-        location: "globalThis.__carrierTestLocation",
+        location: "globalThis.__chatpaneTestLocation",
       },
     });
     const css = await readFile(
@@ -136,7 +136,7 @@ async function runFixture(
         super.disconnect();
       }
     };
-    window.__CARRIER_SETTINGS__ = { theme: "dark" };
+    window.__CHATPANE_SETTINGS__ = { theme: "dark" };
     initTheme(); // Production order: the forced root class already exists.
     initTidy();
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -210,8 +210,8 @@ async function runFixture(
     checkLanguageSpacing(); // A short form must not push languages to the window bottom.
     content.style.minHeight = "120vh";
     const theme = async (value: "light" | "dark" | "system") => {
-      window.__CARRIER_SETTINGS__ = { theme: value };
-      window.dispatchEvent(new Event("carrier:settings"));
+      window.__CHATPANE_SETTINGS__ = { theme: value };
+      window.dispatchEvent(new Event("chatpane:settings"));
       await new Promise((resolve) => setTimeout(resolve, 40));
     };
     await theme("light");
@@ -251,7 +251,7 @@ async function runFixture(
     testLocation.replace = (url) => redirects.push(String(url));
     const checkNavigation = async (path: string, expected: number) => {
       testLocation.pathname = path;
-      window.dispatchEvent(new Event("carrier:settings"));
+      window.dispatchEvent(new Event("chatpane:settings"));
       await new Promise((resolve) => setTimeout(resolve, 40));
       if (redirects.length !== expected)
         throw new Error(`Unexpected redirect count on ${path}: ${redirects.length}`);

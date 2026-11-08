@@ -76,7 +76,7 @@ describe("installToast", () => {
   test("renders an inert action description, then clears it for a plain toast", () => {
     cleanup = installToast();
 
-    window.__carrierToast?.("Saved to Downloads", {
+    window.__chatpaneToast?.("Saved to Downloads", {
       label: "Show in folder",
       kind: "reveal-download",
       url: "blob:test-download",
@@ -89,7 +89,7 @@ describe("installToast", () => {
     expect(toast?.children[1]?.type).toBe("button");
     toast?.children[1]?.dispatchEvent(new Event("click"));
 
-    window.__carrierToast?.("Download failed");
+    window.__chatpaneToast?.("Download failed");
     expect(toast?.style.pointerEvents).toBe("none");
     expect(toast?.children).toHaveLength(1);
     expect(toast?.children[0]?.textContent).toBe("Download failed");
@@ -97,7 +97,7 @@ describe("installToast", () => {
 
   test("installs an immutable page hook", () => {
     cleanup = installToast();
-    const descriptor = Object.getOwnPropertyDescriptor(window, "__carrierToast");
+    const descriptor = Object.getOwnPropertyDescriptor(window, "__chatpaneToast");
 
     expect(descriptor?.writable).toBe(false);
     expect(descriptor?.configurable).toBe(false);
@@ -105,12 +105,12 @@ describe("installToast", () => {
 
   test("announces missed-send warnings as alerts and resets for ordinary toasts", () => {
     cleanup = installToast();
-    window.__carrierToast?.("Scheduled message not sent", undefined, { warning: true });
+    window.__chatpaneToast?.("Scheduled message not sent", undefined, { warning: true });
     const toast = body.children[0];
     expect(toast?.attributes.get("role")).toBe("alert");
     expect(toast?.attributes.get("aria-live")).toBe("assertive");
     expect(toast?.style.border).toContain("solid");
-    window.__carrierToast?.("Message copied");
+    window.__chatpaneToast?.("Message copied");
     expect(toast?.attributes.get("role")).toBe("status");
     expect(toast?.style.border).toBe("none");
   });

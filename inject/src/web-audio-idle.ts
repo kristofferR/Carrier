@@ -1,7 +1,7 @@
 /*
  * Runs before Messenger's document exists, in every frame that can own its
  * audio. Keeping this entry independent from messenger.js lets the Rust host
- * include it in fbsbx.com frames without exposing Carrier's privileged bridge.
+ * include it in fbsbx.com frames without exposing Chatpane's privileged bridge.
  */
 import { initWebAudioIdle } from "./messenger/features/web-audio-idle";
 import {
@@ -18,14 +18,14 @@ const isMessengerHost = (host: string) =>
   host.endsWith(".messenger.com");
 const isFbsbxHost = (host: string) => host === "fbsbx.com" || host.endsWith(".fbsbx.com");
 
-const carrierHost = normalizeHost(location.hostname);
-const carrierAncestorHost =
+const chatpaneHost = normalizeHost(location.hostname);
+const chatpaneAncestorHost =
   window.parent === window ? "" : normalizeHost(firstAccessibleAncestorHost(window.parent));
 
 const isMessengerFrame =
-  isMessengerHost(carrierHost) || (!carrierHost && isMessengerHost(carrierAncestorHost));
+  isMessengerHost(chatpaneHost) || (!chatpaneHost && isMessengerHost(chatpaneAncestorHost));
 const isAudioOnlyFrame =
-  isFbsbxHost(carrierHost) || (!carrierHost && isFbsbxHost(carrierAncestorHost));
+  isFbsbxHost(chatpaneHost) || (!chatpaneHost && isFbsbxHost(chatpaneAncestorHost));
 
 if (isMessengerFrame || isAudioOnlyFrame) {
   const report = (() => {
@@ -40,7 +40,7 @@ if (isMessengerFrame || isAudioOnlyFrame) {
         lastSent.set(key, now);
         window.__TAURI_INTERNALS__
           ?.invoke("plugin:event|emit", {
-            event: "carrier:diag",
+            event: "chatpane:diag",
             payload: { key, msg: message },
           })
           ?.catch?.(() => {});

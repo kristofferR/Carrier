@@ -1,13 +1,13 @@
-//! Carrier's own title bar: Messenger windows have no separate one, like the
+//! Chatpane's own title bar: Messenger windows have no separate one, like the
 //! old Messenger app. The page keeps a strip of [`INSET`] CSS pixels free for
 //! the window controls (messenger.css, inject/src/messenger/features/title-bar.ts):
 //!
 //! - macOS: the native window buttons float over the top of the chat list
 //!   (macos::title_bar draws nothing but moves the window).
-//! - Windows, and Linux windows the compositor doesn't tile: Carrier draws
+//! - Windows, and Linux windows the compositor doesn't tile: Chatpane draws
 //!   minimize, maximize and close at the top right, over a strip above the
 //!   chat; the chat list starts at the top. The page asks for window actions
-//!   through the `carrier:window-control` event. A window the compositor tiles
+//!   through the `chatpane:window-control` event. A window the compositor tiles
 //!   or gives a title bar of its own has neither (crate::linux_tiling).
 //!
 //! The strip goes in full screen and, on macOS, while the photo viewer has a
@@ -23,20 +23,20 @@ use tauri::{Manager, WebviewWindow};
 use crate::settings::Settings;
 use crate::window::is_messenger_window_label;
 
-/// The windows Carrier keeps its title bar in: Messenger's and Settings.
+/// The windows Chatpane keeps its title bar in: Messenger's and Settings.
 pub(crate) fn has_title_bar(label: &str) -> bool {
     is_messenger_window_label(label) || label == "settings"
 }
 
 /// Height of the strip, in CSS pixels at 100% zoom: macOS's title bar, or the
-/// caption buttons Carrier draws.
+/// caption buttons Chatpane draws.
 pub(crate) const INSET: f64 = if cfg!(target_os = "macos") {
     28.0
 } else {
     32.0
 };
 
-/// Which window controls Carrier draws in the page.
+/// Which window controls Chatpane draws in the page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Controls {
@@ -46,7 +46,7 @@ pub(crate) enum Controls {
     Linux,
 }
 
-/// Carrier draws the window controls itself: always on Windows, and on Linux
+/// Chatpane draws the window controls itself: always on Windows, and on Linux
 /// when the title bar is Automatic (Show keeps the GTK header bar), except
 /// in windows the compositor handles (see [`window_controls`]).
 pub(crate) fn controls(settings: &Settings) -> Option<Controls> {
@@ -153,7 +153,7 @@ pub(crate) fn initial_script(settings: &Settings, zoomed: bool) -> String {
         maximized: false,
     };
     format!(
-        "\n  window.__CARRIER_TITLE_BAR__ = {};",
+        "\n  window.__CHATPANE_TITLE_BAR__ = {};",
         serde_json::to_string(&state).expect("title bar state serialises")
     )
 }
@@ -203,7 +203,7 @@ pub(crate) fn sync(window: &WebviewWindow) {
     }
     let _ = window.eval(format!(
         "document.documentElement && document.documentElement.style.setProperty(\
-         '--carrier-title-bar-inset', '{inset}px'); window.__carrierTitleBar?.({json});",
+         '--carrier-title-bar-inset', '{inset}px'); window.__chatpaneTitleBar?.({json});",
         inset = state.inset
     ));
     #[cfg(target_os = "macos")]
@@ -245,7 +245,7 @@ pub(crate) fn zoom_changed(window: &WebviewWindow, percent: i32) {
 }
 
 /// Called with every settings change (and at startup): the title bar setting
-/// can switch Carrier's controls on or off.
+/// can switch Chatpane's controls on or off.
 pub(crate) fn settings_changed(app: &tauri::AppHandle, settings: &Settings) {
     *current_controls().lock().unwrap() = controls(settings);
     sync_all(app);
@@ -260,8 +260,8 @@ pub(crate) fn sync_all(app: &tauri::AppHandle) {
 }
 
 /// A window action: from Messenger's page through the signed
-/// `carrier:window-control` event (lib.rs), which names the sender's window,
-/// or from Carrier's own pages through [`window_control`]. The worst a page
+/// `chatpane:window-control` event (lib.rs), which names the sender's window,
+/// or from Chatpane's own pages through [`window_control`]. The worst a page
 /// can do is minimize, maximize, move or close (to the tray) its own window.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -272,7 +272,7 @@ pub(crate) enum Action {
     Drag,
 }
 
-/// The same for Carrier's own local pages (the connection check, Settings),
+/// The same for Chatpane's own local pages (the connection check, Settings),
 /// which call it as a command.
 #[tauri::command]
 pub(crate) fn window_control(window: WebviewWindow, action: Action) {

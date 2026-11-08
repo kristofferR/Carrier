@@ -41,7 +41,7 @@ export function isConversationSearchInput({
 }
 
 const NULL_COMPONENT_MODULES = new Set([
-  // Carrier's CSS already hides this entire Facebook-wide header tree. Removing
+  // Chatpane's CSS already hides this entire Facebook-wide header tree. Removing
   // the React root prevents its search, notification, account, and portal work.
   "CometBaseAppNavigation.react",
   // Messenger's server-driven promotion banner is not part of messaging.
@@ -50,7 +50,7 @@ const NULL_COMPONENT_MODULES = new Set([
   "MAWSecureThreadQuickPromotion.react",
   "MWThreadListQP.react",
   "MWMessageSearchEBRestoreUpsell.react",
-  // Carrier owns desktop notification delivery; Facebook's browser-push root
+  // Chatpane owns desktop notification delivery; Facebook's browser-push root
   // is redundant inside the native WebView.
   "CometBrowserPushRoot.react",
   // Casting is Facebook-wide video chrome, not Messenger media playback.
@@ -75,7 +75,7 @@ function nullComponent() {
 }
 
 Object.defineProperty(nullComponent, "displayName", {
-  value: "CarrierNullFacebookComponent",
+  value: "ChatpaneNullFacebookComponent",
 });
 
 type ComponentReplacement = typeof nullComponent;

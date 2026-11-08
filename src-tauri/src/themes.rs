@@ -21,7 +21,7 @@
 //!
 //! A theme is CSS and nothing more: at most 2 MB, no `@import`, and no URL
 //! other than `data:`, so it can't load or send anything. Themes can set
-//! Carrier's `--carrier-*` palette tokens, which Carrier maps onto Messenger's
+//! Chatpane's `--carrier-*` palette tokens, which Chatpane maps onto Messenger's
 //! own CSS variables, and key dark colors on `html[data-carrier-dark]`.
 //!
 //! The page gets three `<style>` elements, created once in this order so later
@@ -54,7 +54,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("slate", include_str!("../themes/slate.css")),
 ];
 
-/// Carrier's palette tokens and the Messenger variables each one sets.
+/// Chatpane's palette tokens and the Messenger variables each one sets.
 const PALETTE: &[(&str, &[&str])] = &[
     ("wash", &["--web-wash"]),
     // Behind the messages; set by its own rule (see `palette_mapping`).
@@ -423,7 +423,7 @@ fn palette_mapping(tokens: &[&str], chat_background: bool) -> String {
     css
 }
 
-/// A theme's CSS as the page gets it: the file, Carrier's mapping for the
+/// A theme's CSS as the page gets it: the file, Chatpane's mapping for the
 /// tokens it sets, and a light- or dark-only wrapper when its header asks.
 fn page_theme_css(css: &str) -> String {
     let mode = parse_header(css).ok().and_then(|header| header.mode);

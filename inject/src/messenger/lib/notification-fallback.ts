@@ -736,7 +736,7 @@ interface PendingPageNotificationReceipt {
 
 /**
  * Content-opaque page signals that have not reached native delivery yet. They
- * survive Carrier's stale-view reload so the hydrated row can recover the
+ * survive Chatpane's stale-view reload so the hydrated row can recover the
  * arrival, route it, and still apply its live mute state.
  */
 export class PendingPageNotificationStore {

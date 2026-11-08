@@ -17,11 +17,11 @@ import { buildInfo } from "./policy";
 
 // Uses a real compiled diagnostics binary, isolated HOME, and fake GitHub/process
 // discovery. Exercises the real archives, hashes, native locks, and file swaps.
-const executable = process.env.CARRIER_TEST_BINARY;
+const executable = process.env.CHATPANE_TEST_BINARY;
 test.skipIf(!executable || process.platform !== "linux")(
   "debug installer rejects launch collisions, stages while running, rolls back failures, and rejects tampering",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "carrier-debug-install-test-"));
+    const directory = await mkdtemp(join(tmpdir(), "chatpane-debug-install-test-"));
     try {
       const home = join(directory, "home");
       const commands = join(directory, "commands");
@@ -35,7 +35,7 @@ test.skipIf(!executable || process.platform !== "linux")(
       const tar = Bun.spawnSync([
         "tar",
         "-czf",
-        join(artifacts, "Carrier-debug-linux.tar.gz"),
+        join(artifacts, "Chatpane-debug-linux.tar.gz"),
         "-C",
         join(executable!, ".."),
         "carrier",
@@ -60,8 +60,8 @@ if (a[0] === "api") {
   const path = a[1];
   let response;
   if (path.includes("releases?")) response = await Bun.file(${JSON.stringify(withdrawn)}).exists() ? [] : [
-      {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${olderRevision}"},
-      {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Carrier debug ready\\nCommit: ${info.revision}"},
+      {draft:true,tag_name:"debug-v${info.version}-${olderRevision.slice(0, 12)}",body:"Chatpane debug ready\\nCommit: ${olderRevision}"},
+      {draft:true,tag_name:"debug-v${info.version}-${info.revision.slice(0, 12)}",body:"Chatpane debug ready\\nCommit: ${info.revision}"},
     ];
   else if (path.endsWith("compare/${olderRevision}...main")) response = {status:"ahead",ahead_by:2};
   else if (path.endsWith("compare/${info.revision}...main")) response = {status:"ahead",ahead_by:1};
@@ -89,7 +89,7 @@ if (a[0] === "api") {
         await writeFile(join(commands, "pgrep"), `#!/bin/sh\n${result}\n`);
         await chmod(join(commands, "pgrep"), 0o755);
       };
-      const root = join(home, ".local/share/carrier-debug");
+      const root = join(home, ".local/share/chatpane-debug");
       const target = join(home, ".local/bin/carrier");
       const env = { ...process.env, HOME: home, PATH: `${commands}:${process.env.PATH}` };
       const lockReady = join(directory, "install-lock-ready");
@@ -113,7 +113,7 @@ if (a[0] === "api") {
         timeout: 1000,
       });
       expect(collided.exitCode).toBe(1);
-      expect(collided.stderr.toString()).toContain("Carrier debug install lock");
+      expect(collided.stderr.toString()).toContain("Chatpane debug install lock");
       expect(await lockHolder.exited).toBe(0);
       const run = async () => {
         const p = Bun.spawn([process.execPath, join(import.meta.dir, "update.ts"), "--check"], {
@@ -134,7 +134,7 @@ if (a[0] === "api") {
       expect(await Bun.file(join(root, "pending.json")).exists()).toBe(true);
       expect(await Bun.file(target).exists()).toBe(false);
       const attestations = await readFile(attestationLog, "utf8");
-      expect(attestations).toContain("Carrier-debug-linux.tar.gz");
+      expect(attestations).toContain("Chatpane-debug-linux.tar.gz");
       expect(attestations).toContain("build.json");
       expect(attestations).toContain(`--source-digest\t${info.revision}`);
       expect(attestations).toContain(
@@ -229,7 +229,7 @@ if (a[0] === "api") {
       );
       const recovered = await run();
       expect(recovered.code, recovered.output).toBe(0);
-      expect(recovered.output).toContain("Recovered the previous Carrier installation");
+      expect(recovered.output).toContain("Recovered the previous Chatpane installation");
       expect(await Bun.file(join(root, "swap.json")).exists()).toBe(false);
       expect(await Bun.file(join(root, "backups", interruptedBackup)).exists()).toBe(false);
       const repeated = await run();

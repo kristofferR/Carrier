@@ -9,7 +9,7 @@
 //    in a rolling window;
 //  - symptom-level: a loading spinner stuck visible far past any normal load.
 // Degraded state shows a persistent in-window banner and raises a native
-// notification (via carrier:sync-alert); both clear on recovery.
+// notification (via chatpane:sync-alert); both clear on recovery.
 
 import { diag, invoke } from "../bridge";
 import { RetryAfterWindow } from "../lib/rate-limit";
@@ -39,7 +39,7 @@ import { syncProcessingStalled } from "./sync-processing";
 
 // Hidden/minimized webviews throttle or suspend page timers on every
 // platform, so this interval alone would lag in the background. The native
-// watchdog already evals `window.__carrierHeartbeat?.()` into the page every
+// watchdog already evals `window.__chatpaneHeartbeat?.()` into the page every
 // 5s (webview_watchdog.rs), which wakes a suspended renderer and lets pending
 // timers fire — that keeps this check ticking well enough while hidden. The
 // spinner detector additionally requires a visible document by design.
@@ -49,7 +49,7 @@ export function initSyncHealth() {
   const tracker = new SyncHealthTracker();
   const serverDelays = new RetryAfterWindow();
   const emitSyncAlert = (kind: "degraded" | "recovered" | "rate-limited") =>
-    invoke("plugin:event|emit", { event: "carrier:sync-alert", payload: { kind } })?.catch?.(
+    invoke("plugin:event|emit", { event: "chatpane:sync-alert", payload: { kind } })?.catch?.(
       () => {},
     );
   let sawRateLimit = false;
@@ -298,7 +298,7 @@ export function initSyncHealth() {
         banner.appendChild(retry);
       }
       const protectedNow =
-        !!window.__carrierInCall ||
+        !!window.__chatpaneInCall ||
         [...document.querySelectorAll('[contenteditable="true"]')].some(
           (element) => !!element.textContent?.trim(),
         );

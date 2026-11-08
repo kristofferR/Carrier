@@ -19,7 +19,7 @@ use crate::download::{
 use crate::settings::AppState;
 use crate::{NativeResultPhase, SignedAction, result_signature, signed_action_window};
 
-pub(crate) const EVENT: &str = "carrier:export-conversation";
+pub(crate) const EVENT: &str = "chatpane:export-conversation";
 /// The request carries the whole conversation model. The page refuses models
 /// over 32 MiB before JSON-escaping them into the signed message.
 pub(crate) const MESSAGE_MAX: usize = 64 * 1024 * 1024;
@@ -101,7 +101,7 @@ impl Format {
     /// The page call the native menu item makes.
     pub(crate) fn page_script(self) -> String {
         format!(
-            "window.__carrierExportConversation && window.__carrierExportConversation('{}')",
+            "window.__chatpaneExportConversation && window.__chatpaneExportConversation('{}')",
             self.extension()
         )
     }
@@ -786,7 +786,7 @@ fn send_result(
     outcome: Outcome,
     phase: NativeResultPhase,
 ) {
-    // Field order must match the result object carrierNativeCall verifies.
+    // Field order must match the result object chatpaneNativeCall verifies.
     #[derive(Serialize)]
     struct ExportResult<'a> {
         request: &'a str,
@@ -906,7 +906,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             .hides_names();
 
         let dialog = window.dialog().file();
-        // macOS shows a parented dialog as a sheet, and Carrier destroys
+        // macOS shows a parented dialog as a sheet, and Chatpane destroys
         // Messenger windows on a theme change; AppKit can drop a sheet with
         // its window without calling back, which would hold the export
         // permit until restart. A free-standing panel always calls back.

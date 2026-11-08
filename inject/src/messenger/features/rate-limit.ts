@@ -2,9 +2,9 @@ import { diag } from "../bridge";
 import { nextRateLimit, type RateLimitState, readRateLimitState } from "../lib/rate-limit";
 import { accountScopedStorageKey } from "../lib/threads";
 
-export const RATE_LIMIT_RETRY_STATE_EVENT = "carrier:rate-limit-retry-state";
-export const RATE_LIMIT_RETRY_EVENT = "carrier:rate-limit-retry";
-export const RATE_LIMIT_EVENT = "carrier:rate-limit-change";
+export const RATE_LIMIT_RETRY_STATE_EVENT = "chatpane:rate-limit-retry-state";
+export const RATE_LIMIT_RETRY_EVENT = "chatpane:rate-limit-retry";
+export const RATE_LIMIT_EVENT = "chatpane:rate-limit-change";
 export const RATE_LIMIT_STORAGE_KEY = "carrier-rate-limit";
 let state: RateLimitState | undefined;
 let storageKey: string | null = null;

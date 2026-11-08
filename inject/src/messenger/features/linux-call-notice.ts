@@ -22,7 +22,7 @@ const inside = (rect: DOMRect, x: number, y: number) =>
   x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 
 export function initLinuxCallNotice() {
-  if (carrierMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
+  if (chatpaneMediaPlatform !== "linux" || engineSupportsCalls(window)) return;
 
   const host = document.createElement("div");
   host.id = "carrier-linux-call-notice";
@@ -84,7 +84,7 @@ export function initLinuxCallNotice() {
     const rect = button.getBoundingClientRect();
     const left = Math.max(GAP, Math.min(rect.right - WIDTH, innerWidth - WIDTH - GAP));
     host.style.cssText = `position: fixed; top: ${rect.bottom + GAP}px; left: ${left}px; z-index: 2147483646;`;
-    host.dataset.theme = window.__CARRIER_SETTINGS__?.theme ?? "system";
+    host.dataset.theme = window.__CHATPANE_SETTINGS__?.theme ?? "system";
     (document.body ?? document.documentElement).append(host);
     (document.head ?? document.documentElement).append(hideFacebookTooltips);
     document.addEventListener("pointermove", track, true);

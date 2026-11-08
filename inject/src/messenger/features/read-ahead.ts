@@ -1,12 +1,12 @@
 /* ------------------- Read ahead in encrypted chats -------------------- */
 // Opening an encrypted chat is instant only when Messenger's worker has
 // already loaded its newest messages into the page. Messenger does that for
-// the chat row under the pointer (useMWPreloadThread); Carrier makes the same
+// the chat row under the pointer (useMWPreloadThread); Chatpane makes the same
 // local call for the encrypted chats at the top of the list, so they open at
 // once too. Idea and approach from fMess (github.com/toanbku/fmess, MIT).
 //
 // Plain chats are deliberately left out: reading ahead in them asks
-// Facebook's servers for message pages, and Carrier has hit their rate limits.
+// Facebook's servers for message pages, and Chatpane has hit their rate limits.
 //
 // Preloading opens no chat, so nothing is marked as seen, and the older
 // messages it loads raise no notification: Messenger notifies only for

@@ -118,7 +118,7 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
-    /// Linux: window title bar visibility — "auto" (Carrier's own controls,
+    /// Linux: window title bar visibility — "auto" (Chatpane's own controls,
     /// left out of windows a tiling window manager tiles, where the compositor
     /// moves/closes them), "show" (the GTK header bar), or "hide".
     pub(crate) title_bar: String,
@@ -133,10 +133,10 @@ pub(crate) struct Settings {
     pub(crate) mute_notifications: bool,
     /// Notifications are paused until this time (milliseconds since 1970),
     /// set from the tray or Dock menu. An end time rather than a timer, so a
-    /// pause survives restarts and one that ended while Carrier was closed is
+    /// pause survives restarts and one that ended while Chatpane was closed is
     /// already over.
     pub(crate) notifications_paused_until: Option<i64>,
-    /// Discover signed Carrier updates on startup and then every
+    /// Discover signed Chatpane updates on startup and then every
     /// `update_check_hours`. This never downloads or installs without explicit
     /// confirmation in Settings.
     pub(crate) automatic_update_checks: bool,
@@ -195,7 +195,7 @@ pub(crate) struct Settings {
     pub(crate) zoom: i32,
     /// Dragged chat list and details pane widths, reported by the page.
     pub(crate) pane_widths: crate::pane_widths::PaneWidths,
-    /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Carrier from
+    /// Global summon hotkey (Cmd/Ctrl+Shift+M): show or hide Chatpane from
     /// anywhere. Off by default so it can't clash with other apps' shortcuts.
     pub(crate) global_hotkey: bool,
     /// Block Facebook's analytics/logging requests (banzai, quick metrics,
@@ -444,10 +444,10 @@ pub(crate) struct AppState {
     /// window count hits zero.
     pub(crate) recreating: AtomicBool,
     /// The page-scraped recent-conversations list backing the Dock/tray menus.
-    /// In memory only — never persisted (see `carrier:recent-threads`).
+    /// In memory only — never persisted (see `chatpane:recent-threads`).
     pub(crate) recent_threads: Mutex<Vec<RecentThread>>,
     /// Per-window secrets that authenticate reveal-download requests from
-    /// Carrier's injected click handler. They are imported as non-extractable
+    /// Chatpane's injected click handler. They are imported as non-extractable
     /// HMAC keys in the page and are never included in an IPC payload.
     pub(crate) download_reveal_tokens: Mutex<HashMap<String, String>>,
     /// User-selected save paths awaiting the matching WebView download. The
@@ -694,7 +694,7 @@ pub(crate) fn schedule_webview_data_clear(app: &tauri::AppHandle) -> Result<(), 
 }
 
 /// Log Out… (Ref #356): the webview data plus everything
-/// else Carrier keeps for the account. `settings.json` stays.
+/// else Chatpane keeps for the account. `settings.json` stays.
 pub(crate) fn schedule_account_reset(app: &tauri::AppHandle) -> Result<(), String> {
     schedule_clear(app, ACCOUNT_RESET)
 }
@@ -781,7 +781,7 @@ fn webview_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     paths
 }
 
-/// What Carrier itself derives from the signed-in account, beyond the webview.
+/// What Chatpane itself derives from the signed-in account, beyond the webview.
 fn account_data_paths(app: &tauri::AppHandle) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(data) = app.path().app_data_dir() {
@@ -847,7 +847,7 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
 /// dispatching portal work off-main.
 pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     crate::menu::sync_setting_checks(app, s);
-    // The title bar setting can switch Carrier's window controls on or off.
+    // The title bar setting can switch Chatpane's window controls on or off.
     crate::title_bar::settings_changed(app, s);
     // Action titles are fixed per macOS category registration.
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
@@ -887,7 +887,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         let _ = window.set_background_color(Some(splash_background(s)));
         // Title-bar visibility follows the setting live, on every window —
         // the Settings dialog carries the same redundant header bar on
-        // tiling WMs. Messenger windows and Settings draw Carrier's own controls
+        // tiling WMs. Messenger windows and Settings draw Chatpane's own controls
         // instead, in windows the compositor doesn't tile (crate::title_bar).
         #[cfg(target_os = "linux")]
         let _ = window.set_decorations(
@@ -910,9 +910,9 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
             // (spell-check) refresh without a reload.
             if let Some(ref json) = settings_json {
                 let _ = window.eval(format!(
-                    "window.__CARRIER_SETTINGS__ = {json}; \
-                     try {{ localStorage.setItem('__carrier_settings', JSON.stringify(window.__CARRIER_SETTINGS__)); }} catch (e) {{}} \
-                     window.dispatchEvent(new Event('carrier:settings'));"
+                    "window.__CHATPANE_SETTINGS__ = {json}; \
+                     try {{ localStorage.setItem('__carrier_settings', JSON.stringify(window.__CHATPANE_SETTINGS__)); }} catch (e) {{}} \
+                     window.dispatchEvent(new Event('chatpane:settings'));"
                 ));
             }
         }
@@ -1016,7 +1016,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
     // Only remove the main window from the Windows taskbar after the tray has
     // actually been created. If AppIndicator/tray creation fails for any
     // reason, restore the taskbar entry and surface the window instead of
-    // leaving Carrier with no reliable way back.
+    // leaving Chatpane with no reliable way back.
     #[cfg(target_os = "windows")]
     {
         let hide_from_taskbar = s.hide_taskbar_icon && tray_available;

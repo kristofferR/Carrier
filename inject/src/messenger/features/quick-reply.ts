@@ -38,7 +38,7 @@ const currentThreadId = () => threadIdFromHref(location.pathname);
 const composer = () => firstShown<HTMLElement>(COMPOSER_SELECTOR);
 
 const emitReplyResult = (id: number, attempt: number, ok: boolean) => {
-  carrierReplyResult(id, attempt, ok).catch(() =>
+  chatpaneReplyResult(id, attempt, ok).catch(() =>
     diag("quick-reply.ack", "reply acknowledgement emit failed"),
   );
 };
@@ -61,7 +61,7 @@ async function deliver(
   const wantedThread = threadPathId(path);
   if (
     !wantedThread ||
-    (currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true)
+    (currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true)
   ) {
     diag("quick-reply.open", "validated thread could not be opened");
     return false;
@@ -151,7 +151,7 @@ async function preserveDraft(path: string, text: string, id: number): Promise<bo
   const wantedThread = threadPathId(path);
   if (
     !wantedThread ||
-    (currentThreadId() !== wantedThread && window.__carrierOpenThread?.(path) !== true)
+    (currentThreadId() !== wantedThread && window.__chatpaneOpenThread?.(path) !== true)
   ) {
     return false;
   }
@@ -201,7 +201,7 @@ async function preserveDraft(path: string, text: string, id: number): Promise<bo
 }
 
 export function initQuickReply() {
-  window.__carrierQuickReply = (path, rawText, id, attempt) => {
+  window.__chatpaneQuickReply = (path, rawText, id, attempt) => {
     noteExplicitAction();
     const text = String(rawText);
     if (!validRequest(path, text, id, attempt)) {
@@ -225,7 +225,7 @@ export function initQuickReply() {
       });
   };
 
-  window.__carrierQuickReplyDraft = (path, rawText, id, attempt) => {
+  window.__chatpaneQuickReplyDraft = (path, rawText, id, attempt) => {
     noteExplicitAction();
     const text = String(rawText);
     if (
