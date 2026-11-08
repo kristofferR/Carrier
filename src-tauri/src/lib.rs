@@ -21,6 +21,7 @@ use tauri_plugin_opener::OpenerExt;
 mod account;
 mod actions;
 mod app_icon;
+mod autostart;
 mod cli;
 mod commands;
 mod custom_css;
@@ -1088,10 +1089,6 @@ pub fn run() {
     }
 
     builder
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
-        ))
         // The summon shortcut itself is (un)registered in `apply_settings`,
         // following the Global Hotkey setting.
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -1186,6 +1183,8 @@ pub fn run() {
             title_bar::window_control,
             commands::get_settings,
             commands::runtime_capabilities,
+            commands::autostart_status,
+            commands::open_login_items,
             commands::set_settings,
             commands::reset_settings,
             commands::check_for_updates,
@@ -1258,8 +1257,6 @@ pub fn run() {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             observe_system_theme_changes(app.handle());
 
-            // Don't sync autostart at startup; the OS registration already
-            // reflects the user's last explicit choice.
             #[cfg(target_os = "linux")]
             reconcile_startup_global_hotkey(app.handle(), &settings);
             #[cfg(target_os = "linux")]
@@ -1274,6 +1271,9 @@ pub fn run() {
                 *app.state::<AppState>().settings.lock().unwrap() = settings.clone();
             }
             apply_settings(app.handle(), &settings);
+            // Show whether Carrier will really start at login: the user can
+            // switch it off in the OS (Ref #443).
+            tauri::async_runtime::spawn(autostart::reconcile(app.handle().clone()));
 
             // Start hidden only when a tray was actually created to reopen from.
             let has_tray = app.state::<AppState>().tray.lock().unwrap().is_some();

@@ -12,7 +12,6 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use tauri_plugin_autostart::ManagerExt;
 
 use crate::actions::AppAction;
 use crate::hotkey::apply_global_hotkey;
@@ -835,9 +834,8 @@ pub(crate) fn sync_autostart(app: &tauri::AppHandle, want: bool) -> Result<(), S
             "Start on System Startup is unavailable in this sandboxed installation.".into(),
         );
     }
-    let mgr = app.autolaunch();
-    let res = if want { mgr.enable() } else { mgr.disable() };
-    res.map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
+    crate::autostart::set(app, want)
+        .map_err(|e| format!("Couldn't update Start on System Startup: {e}"))
 }
 
 /// Apply the settings that have an immediate runtime effect (window topmost

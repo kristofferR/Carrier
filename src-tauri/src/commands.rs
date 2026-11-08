@@ -342,6 +342,19 @@ pub(crate) fn runtime_capabilities() -> RuntimeCapabilities {
     }
 }
 
+/// Whether Carrier will start at login, read from the OS. Also corrects the
+/// stored setting, which the user may have overridden in the OS.
+#[tauri::command]
+pub(crate) async fn autostart_status(app: tauri::AppHandle) -> Option<crate::autostart::Status> {
+    crate::autostart::reconcile(app).await
+}
+
+/// macOS 13+: System Settings → General → Login Items, to approve Carrier.
+#[tauri::command]
+pub(crate) fn open_login_items() {
+    crate::autostart::open_login_items();
+}
+
 /// Persist `new`, syncing OS-backed preferences first so a failed sync doesn't
 /// commit a preference the OS rejected. Other preferences are always saved;
 /// sync failures are returned (after saving the rest) so the UI can surface them.
