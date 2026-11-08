@@ -290,7 +290,7 @@ mod platform {
     /// if Start on System Startup was on.
     pub(super) fn repoint_after_bundle_rename(app: &tauri::AppHandle) {
         use tauri::Manager;
-        if !crate::bundle_rename::launched_after_rename()
+        if !crate::bundle_rename::take_launched_after_rename()
             || !app
                 .state::<crate::settings::AppState>()
                 .settings

@@ -52,7 +52,9 @@ pub(crate) fn rename_and_relaunch() -> bool {
         return false;
     }
     // The new instance must start after this one exits, or the single-instance
-    // check would hand it back to this process.
+    // check would hand it back to this process. Its own process group keeps a
+    // LaunchAgent launch from taking the helper down with this process.
+    use std::os::unix::process::CommandExt;
     let reopened = std::process::Command::new("/bin/sh")
         .arg("-c")
         .arg("while kill -0 \"$1\" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open -n \"$2\" --args \"$3\"")
@@ -63,6 +65,7 @@ pub(crate) fn rename_and_relaunch() -> bool {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .process_group(0)
         .spawn();
     if let Err(error) = reopened {
         eprintln!("couldn't reopen Chatpane.app: {error}");
@@ -73,10 +76,13 @@ pub(crate) fn rename_and_relaunch() -> bool {
     true
 }
 
-/// Whether this launch is the reopen after the rename.
+/// Whether this launch is the reopen after the rename. True only for the first
+/// caller, so the follow-up work runs once.
 #[cfg(target_os = "macos")]
-pub(crate) fn launched_after_rename() -> bool {
-    std::env::args().any(|arg| arg == RENAMED_ARG)
+pub(crate) fn take_launched_after_rename() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static TAKEN: AtomicBool = AtomicBool::new(false);
+    std::env::args().any(|arg| arg == RENAMED_ARG) && !TAKEN.swap(true, Ordering::Relaxed)
 }
 
 #[cfg(test)]
