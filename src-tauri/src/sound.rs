@@ -327,9 +327,26 @@ fn import_sound(
         };
         match find_sound(&searched, extensions, &candidate) {
             None => {
-                std::fs::write(dir.join(format!("{candidate}.{extension}")), &bytes)
-                    .map_err(|error| fail(error.to_string()))?;
-                return Ok(candidate);
+                // Create the file exclusively: on a case-insensitive disk a
+                // differently cased sound can hold the name, and a dangling
+                // link there must not redirect the write.
+                let path = dir.join(format!("{candidate}.{extension}"));
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                {
+                    Ok(mut file) => {
+                        return std::io::Write::write_all(&mut file, &bytes)
+                            .map(|()| candidate)
+                            .map_err(|error| {
+                                let _ = std::fs::remove_file(&path);
+                                fail(error.to_string())
+                            });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(fail(error.to_string())),
+                }
             }
             // Adding the same sound again picks the copy already there.
             Some(existing) if std::fs::read(&existing).is_ok_and(|other| other == bytes) => {
@@ -717,6 +734,16 @@ fn plain_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
 }
 
+/// A theme's sound folder: relative, and never climbing out of the theme.
+#[cfg(any(target_os = "linux", test))]
+fn theme_subdir(directory: &str) -> bool {
+    use std::path::Component;
+    !directory.is_empty()
+        && Path::new(directory)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
+}
+
 /// Find a sound in a theme, the themes it inherits, and finally the
 /// `freedesktop` fallback theme (the freedesktop sound theme spec).
 #[cfg(any(target_os = "linux", test))]
@@ -746,7 +773,10 @@ fn find_in_theme(
         let root = base.join("sounds").join(theme);
         let index = std::fs::read_to_string(root.join("index.theme")).unwrap_or_default();
         let (directories, inherits) = parse_theme_index(&index);
-        for directory in directories.iter().filter(|directory| plain_name(directory)) {
+        for directory in directories
+            .iter()
+            .filter(|directory| theme_subdir(directory))
+        {
             for extension in ["oga", "ogg", "wav"] {
                 let file = root.join(directory).join(format!("{name}.{extension}"));
                 if file.is_file() {
@@ -930,6 +960,19 @@ mod tests {
         );
         assert!(import_sound(&dir, &listed, &outside.join("song.mp3"), &["wav"]).is_err());
         assert_eq!(sounds_in(&listed, &["wav"]).len(), 2);
+        // A dangling link holding the name is skipped, not written through.
+        #[cfg(unix)]
+        {
+            let target = outside.join("target.wav");
+            std::os::unix::fs::symlink(&target, dir.join("Chime.wav")).unwrap();
+            let chime = outside.join("Chime.wav");
+            touch(&chime, b"three");
+            assert_eq!(
+                import_sound(&dir, &listed, &chime, &["wav"]).unwrap(),
+                "Chime 2"
+            );
+            assert!(!target.exists());
+        }
         std::fs::remove_dir_all(dir).unwrap();
         std::fs::remove_dir_all(outside).unwrap();
     }
@@ -978,6 +1021,8 @@ mod tests {
         assert_eq!(find("window-attention"), None);
         assert_eq!(find("../ocean/5.1/bell"), None);
         assert_eq!(theme_sound_in(&dirs, "../sounds", "bell"), None);
+        assert!(theme_subdir(".") && theme_subdir("stereo/alerts"));
+        assert!(!theme_subdir("../base") && !theme_subdir("/usr") && !theme_subdir(""));
         let listed: Vec<String> = linux_system_sounds(|name| find(name).is_some())
             .into_iter()
             .map(|option| option.label)
