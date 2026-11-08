@@ -6998,6 +6998,15 @@ ${button.innerHTML}`)
   var sources = /* @__PURE__ */ new WeakMap();
   var pauses = /* @__PURE__ */ new WeakMap();
   var pausesOf = (element2) => pauses.get(element2) ?? 0;
+  var quieted = /* @__PURE__ */ new WeakSet();
+  var quiet = (element2) => {
+    if (element2.muted) return;
+    element2.muted = true;
+    quieted.add(element2);
+  };
+  var unquiet = (element2) => {
+    if (quieted.delete(element2)) element2.muted = false;
+  };
   function decoded(audio, src) {
     let buffer = buffers.get(src);
     if (!buffer) {
@@ -7029,7 +7038,7 @@ ${button.innerHTML}`)
     const source = audio.createBufferSource();
     const gain = audio.createGain();
     source.buffer = data;
-    gain.gain.value = element2.muted ? 0 : element2.volume;
+    gain.gain.value = element2.muted && !quieted.has(element2) ? 0 : element2.volume;
     source.connect(gain).connect(audio.destination);
     let playing = sources.get(element2);
     if (!playing) sources.set(element2, playing = /* @__PURE__ */ new Set());
@@ -7052,7 +7061,11 @@ ${button.innerHTML}`)
     const nativePause = proto.pause;
     proto.play = function() {
       const isSound = soundPlayerCalls > 0 && this instanceof HTMLAudioElement && Boolean(this.src) && !this.loop && !this.srcObject;
-      if (!isSound) return nativePlay.call(this);
+      if (!isSound) {
+        unquiet(this);
+        return nativePlay.call(this);
+      }
+      quiet(this);
       if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
       if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
         const { thread: thread2, messageId } = pendingMessageSound;
@@ -7062,7 +7075,9 @@ ${button.innerHTML}`)
       const pausesAtStart = pausesOf(this);
       return playThroughWebAudio(this).catch(() => {
         diag("sound.web-audio", "Web Audio could not play a Messenger sound; using the element");
-        return pausesOf(this) === pausesAtStart ? nativePlay.call(this) : void 0;
+        if (pausesOf(this) !== pausesAtStart) return void 0;
+        unquiet(this);
+        return nativePlay.call(this);
       });
     };
     proto.pause = function() {
@@ -7078,9 +7093,32 @@ ${button.innerHTML}`)
       return nativePause.call(this);
     };
   }
+  function quietPreloaded(urls) {
+    const paths = /* @__PURE__ */ new Set();
+    for (const url of Array.isArray(urls) ? urls : [urls]) {
+      try {
+        paths.add(new URL(String(url), location.href).pathname);
+      } catch (_) {
+      }
+    }
+    for (const element2 of document.querySelectorAll("audio")) {
+      try {
+        if (!element2.loop && paths.has(new URL(element2.src).pathname)) quiet(element2);
+      } catch (_) {
+      }
+    }
+  }
   function patchSoundPlayer(exports) {
     const play = exports.play;
     if (typeof play !== "function") return false;
+    const preload = exports.preload;
+    if (typeof preload === "function") {
+      exports.preload = function(...args) {
+        const result = Reflect.apply(preload, this, args);
+        quietPreloaded(args[0]);
+        return result;
+      };
+    }
     exports.play = function(...args) {
       const loop = args[1]?.loop === true;
       if (loop) return Reflect.apply(play, this, args);

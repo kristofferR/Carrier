@@ -3351,8 +3351,11 @@
                   return url && audio.src && audio.src.indexOf(String(url).split("?")[0].split("/").pop()) !== -1;
                 });
               });
+              var player = window.require("SoundPlayer");
               resolve({
                 played: true,
+                patched: String(player && player.play).indexOf("soundPlayerCalls") !== -1,
+                contexts: typeof AudioContext,
                 elements: elements.length,
                 elementPlayed: elements.some(function (audio) {
                   return audio.played && audio.played.length > 0;

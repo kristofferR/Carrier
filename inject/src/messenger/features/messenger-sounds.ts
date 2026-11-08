@@ -6,6 +6,10 @@
 // every message sound. Those one-shot sounds play through Web Audio instead,
 // which is not offered; when that fails the element plays as before. Looping
 // sounds (a call's ringtone) and every other media element are left alone.
+// Once the page has had a user gesture, WebKit also offers a loaded, unmuted
+// <audio> that never played, as soon as anything else starts playback (tested
+// on macOS 27), so SoundPlayer's elements stay muted while Web Audio plays
+// their sound, and are unmuted whenever they play themselves.
 //
 // The new-message sound itself (`MWLSChatPopperCommon.playChatTabSound`)
 // follows Do Not Disturb, Pause and Mute, and rings once per message (see
@@ -93,6 +97,16 @@ const sources = new WeakMap<HTMLMediaElement, Set<AudioBufferSourceNode>>();
 // Pauses per element, so a pause stops a sound that is still loading.
 const pauses = new WeakMap<HTMLMediaElement, number>();
 const pausesOf = (element: HTMLMediaElement) => pauses.get(element) ?? 0;
+// SoundPlayer elements Carrier muted (see the header).
+const quieted = new WeakSet<HTMLMediaElement>();
+const quiet = (element: HTMLMediaElement) => {
+  if (element.muted) return;
+  element.muted = true;
+  quieted.add(element);
+};
+const unquiet = (element: HTMLMediaElement) => {
+  if (quieted.delete(element)) element.muted = false;
+};
 
 function decoded(audio: AudioContext, src: string): Promise<AudioBuffer> {
   let buffer = buffers.get(src);
@@ -134,7 +148,7 @@ async function playThroughWebAudio(element: HTMLMediaElement): Promise<void> {
   const source = audio.createBufferSource();
   const gain = audio.createGain();
   source.buffer = data;
-  gain.gain.value = element.muted ? 0 : element.volume;
+  gain.gain.value = element.muted && !quieted.has(element) ? 0 : element.volume;
   source.connect(gain).connect(audio.destination);
   let playing = sources.get(element);
   if (!playing) sources.set(element, (playing = new Set()));
@@ -164,7 +178,11 @@ export function installMessengerSoundPlayback() {
       Boolean(this.src) &&
       !this.loop &&
       !this.srcObject;
-    if (!isSound) return nativePlay.call(this);
+    if (!isSound) {
+      unquiet(this);
+      return nativePlay.call(this);
+    }
+    quiet(this);
     // Do Not Disturb, Pause and Mute silence all of Messenger's sounds.
     if (notificationsGloballyMuted(window.__CARRIER_SETTINGS__)) return Promise.resolve();
     if (pendingMessageSound && Date.now() < pendingMessageSound.until) {
@@ -175,7 +193,9 @@ export function installMessengerSoundPlayback() {
     const pausesAtStart = pausesOf(this);
     return playThroughWebAudio(this).catch(() => {
       diag("sound.web-audio", "Web Audio could not play a Messenger sound; using the element");
-      return pausesOf(this) === pausesAtStart ? nativePlay.call(this) : undefined;
+      if (pausesOf(this) !== pausesAtStart) return undefined;
+      unquiet(this);
+      return nativePlay.call(this);
     });
   };
   proto.pause = function (this: HTMLMediaElement) {
@@ -193,9 +213,32 @@ export function installMessengerSoundPlayback() {
 
 /* ---- Facebook modules ---- */
 
+/** Mute the <audio> elements SoundPlayer keeps for these URLs (see the header). */
+function quietPreloaded(urls: unknown) {
+  const paths = new Set<string>();
+  for (const url of Array.isArray(urls) ? urls : [urls]) {
+    try {
+      paths.add(new URL(String(url), location.href).pathname);
+    } catch (_) {}
+  }
+  for (const element of document.querySelectorAll("audio")) {
+    try {
+      if (!element.loop && paths.has(new URL(element.src).pathname)) quiet(element);
+    } catch (_) {}
+  }
+}
+
 function patchSoundPlayer(exports: Record<string, unknown>): boolean {
   const play = exports.play;
   if (typeof play !== "function") return false;
+  const preload = exports.preload;
+  if (typeof preload === "function") {
+    exports.preload = function (this: unknown, ...args: unknown[]) {
+      const result = Reflect.apply(preload, this, args);
+      quietPreloaded(args[0]);
+      return result;
+    };
+  }
   exports.play = function (this: unknown, ...args: unknown[]) {
     // A looping sound is a ringtone: a media element, as Messenger plays it.
     const loop = (args[1] as { loop?: unknown } | null | undefined)?.loop === true;
