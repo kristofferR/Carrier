@@ -4,10 +4,11 @@
 //!
 //! - macOS: the native window buttons float over the top of the chat list
 //!   (macos::title_bar draws nothing but moves the window).
-//! - Windows, and Linux on floating desktops: Carrier draws minimize, maximize
-//!   and close at the top right, over a strip above the chat; the chat list
-//!   starts at the top. The page asks for window actions through the
-//!   `carrier:window-control` event.
+//! - Windows, and Linux windows the compositor doesn't tile: Carrier draws
+//!   minimize, maximize and close at the top right, over a strip above the
+//!   chat; the chat list starts at the top. The page asks for window actions
+//!   through the `carrier:window-control` event. A window the compositor tiles
+//!   or gives a title bar of its own has neither (crate::linux_tiling).
 //!
 //! The strip goes in full screen and, on macOS, while the photo viewer has a
 //! title bar of its own.
@@ -23,7 +24,7 @@ use crate::settings::Settings;
 use crate::window::is_messenger_window_label;
 
 /// The windows Carrier keeps its title bar in: Messenger's and Settings.
-fn has_title_bar(label: &str) -> bool {
+pub(crate) fn has_title_bar(label: &str) -> bool {
     is_messenger_window_label(label) || label == "settings"
 }
 
@@ -46,8 +47,8 @@ pub(crate) enum Controls {
 }
 
 /// Carrier draws the window controls itself: always on Windows, and on Linux
-/// when the title bar is Automatic on a floating desktop (tiling window
-/// managers manage the window, and Show keeps the GTK header bar).
+/// when the title bar is Automatic (Show keeps the GTK header bar), except
+/// in windows the compositor handles (see [`window_controls`]).
 pub(crate) fn controls(settings: &Settings) -> Option<Controls> {
     #[cfg(target_os = "windows")]
     {
@@ -56,13 +57,23 @@ pub(crate) fn controls(settings: &Settings) -> Option<Controls> {
     }
     #[cfg(target_os = "linux")]
     {
-        (settings.title_bar == "auto" && !crate::linux::is_tiling_wm()).then_some(Controls::Linux)
+        (settings.title_bar == "auto").then_some(Controls::Linux)
     }
     #[cfg(target_os = "macos")]
     {
         let _ = settings;
         None
     }
+}
+
+/// The controls one window draws: none where the compositor handles them.
+fn window_controls(label: &str) -> Option<Controls> {
+    let controls = *current_controls().lock().unwrap();
+    #[cfg(target_os = "linux")]
+    let controls = controls.filter(|_| !crate::linux_tiling::compositor_handles(label));
+    #[cfg(not(target_os = "linux"))]
+    let _ = label;
+    controls
 }
 
 /// Whether a Messenger window keeps the strip at all.
@@ -89,13 +100,33 @@ pub(crate) fn css_inset(zoom_percent: i32) -> f64 {
     INSET * 100.0 / f64::from(zoom_percent.max(1))
 }
 
-/// What the page needs: the strip's height, the controls to draw, and whether
+/// What the page needs: the strip's height, the controls to draw, which of
+/// minimize and maximize they include (close is always there), and whether
 /// the window is maximized (the maximize button turns into restore).
 #[derive(Serialize, PartialEq)]
 struct PageState {
     inset: f64,
     controls: Option<Controls>,
+    minimize: bool,
+    maximize: bool,
     maximized: bool,
+}
+
+/// Which of minimize and maximize the controls offer.
+fn buttons() -> (bool, bool) {
+    #[cfg(target_os = "linux")]
+    if crate::linux::is_tiling_wm() {
+        return crate::linux_tiling::buttons();
+    }
+    (true, true)
+}
+
+fn is_maximized(window: &WebviewWindow) -> bool {
+    #[cfg(target_os = "linux")]
+    if let Some(maximized) = crate::linux_tiling::hyprland_maximized(window.label()) {
+        return maximized;
+    }
+    window.is_maximized().unwrap_or(false)
 }
 
 /// Set before the page's features run (window::init_script), so Messenger's
@@ -104,8 +135,12 @@ struct PageState {
 pub(crate) fn initial_script(settings: &Settings, zoomed: bool) -> String {
     let controls = controls(settings);
     *current_controls().lock().unwrap() = controls;
+    // A new window counts as tiled until the compositor says otherwise.
+    #[cfg(target_os = "linux")]
+    let controls = controls.filter(|_| !crate::linux::is_tiling_wm());
     // Even without a strip: the page then follows a later change of the title
     // bar setting (Linux "show" to "auto").
+    let (minimize, maximize) = buttons();
     let state = PageState {
         inset: if has_strip(controls) {
             css_inset(if zoomed { settings.zoom } else { 100 })
@@ -113,6 +148,8 @@ pub(crate) fn initial_script(settings: &Settings, zoomed: bool) -> String {
             0.0
         },
         controls,
+        minimize,
+        maximize,
         maximized: false,
     };
     format!(
@@ -122,7 +159,7 @@ pub(crate) fn initial_script(settings: &Settings, zoomed: bool) -> String {
 }
 
 fn page_state(window: &WebviewWindow) -> PageState {
-    let controls = *current_controls().lock().unwrap();
+    let controls = window_controls(window.label());
     let fullscreen = window.is_fullscreen().unwrap_or(false);
     #[cfg(target_os = "macos")]
     let viewer = crate::macos::title_bar::viewer_open(window.label());
@@ -138,10 +175,13 @@ fn page_state(window: &WebviewWindow) -> PageState {
     } else {
         0.0
     };
+    let (minimize, maximize) = buttons();
     PageState {
         inset,
         controls,
-        maximized: window.is_maximized().unwrap_or(false),
+        minimize,
+        maximize,
+        maximized: is_maximized(window),
     }
 }
 
@@ -173,6 +213,8 @@ pub(crate) fn sync(window: &WebviewWindow) {
 /// Keep a Messenger window's page in step with full screen and maximizing,
 /// which both resize the window.
 pub(crate) fn watch(window: &WebviewWindow) {
+    #[cfg(target_os = "linux")]
+    crate::linux_tiling::watch(window);
     let watched = window.clone();
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Resized(_)) {
@@ -190,6 +232,8 @@ pub(crate) fn page_loaded(window: &WebviewWindow) {
 /// Forget a closed window's state.
 pub(crate) fn forget(label: &str) {
     told().lock().unwrap().remove(label);
+    #[cfg(target_os = "linux")]
+    crate::linux_tiling::forget(label);
     #[cfg(target_os = "macos")]
     crate::macos::title_bar::forget(label);
 }
@@ -204,6 +248,10 @@ pub(crate) fn zoom_changed(window: &WebviewWindow, percent: i32) {
 /// can switch Carrier's controls on or off.
 pub(crate) fn settings_changed(app: &tauri::AppHandle, settings: &Settings) {
     *current_controls().lock().unwrap() = controls(settings);
+    sync_all(app);
+}
+
+pub(crate) fn sync_all(app: &tauri::AppHandle) {
     for (label, window) in app.webview_windows() {
         if has_title_bar(&label) {
             sync(&window);
@@ -239,6 +287,8 @@ pub(crate) fn perform(window: &WebviewWindow, action: Action) {
     }
     let result = match action {
         Action::Minimize => window.minimize(),
+        #[cfg(target_os = "linux")]
+        Action::ToggleMaximize if crate::linux_tiling::toggle_maximized(window.label()) => Ok(()),
         Action::ToggleMaximize => {
             if window.is_maximized().unwrap_or(false) {
                 window.unmaximize()

@@ -7,8 +7,8 @@
 // - macOS: the native window buttons float over the top of the chat list,
 //   which keeps the strip free under them (messenger.css). The photo viewer is
 //   reported, as it gets a title bar of its own while it's open.
-// - Windows, and Linux on floating desktops: Carrier draws minimize, maximize
-//   and close at the top right, over a strip above the chat that drags the
+// - Windows, and Linux windows the compositor doesn't tile: Carrier draws
+//   minimize, maximize and close at the top right, over a strip above the chat that drags the
 //   window: natively on Windows (WebView2 app-region), through the native side
 //   on Linux. The chat list starts at the top.
 import { diag } from "../bridge";
@@ -18,6 +18,9 @@ type Controls = "windows" | "linux";
 interface TitleBarState {
   inset: number;
   controls: Controls | null;
+  /** Tiling window managers can't minimize, and most can't maximize. */
+  minimize: boolean;
+  maximize: boolean;
   maximized: boolean;
 }
 
@@ -78,7 +81,7 @@ function buildStrip(): HTMLElement {
   strip.addEventListener("mousedown", (event) => {
     if (event.button !== 0 || !state?.controls) return;
     event.preventDefault();
-    control(event.detail === 2 ? "toggle-maximize" : "drag");
+    control(event.detail === 2 && state.maximize ? "toggle-maximize" : "drag");
   });
   return strip;
 }
@@ -127,6 +130,8 @@ function apply(next: TitleBarState) {
   const close = controls.querySelector<HTMLButtonElement>('[data-control="close"]');
   if (minimize && !minimize.innerHTML) minimize.innerHTML = icon("minimize");
   if (close && !close.innerHTML) close.innerHTML = icon("close");
+  if (minimize) minimize.hidden = !next.minimize;
+  if (maximize) maximize.hidden = !next.maximize;
   if (maximize) {
     const name = next.maximized ? "restore" : "maximize";
     if (maximize.dataset.icon !== name) {

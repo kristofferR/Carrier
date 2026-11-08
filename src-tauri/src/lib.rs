@@ -36,6 +36,8 @@ mod install_environment;
 mod linux;
 #[cfg(any(target_os = "linux", test))]
 mod linux_startup;
+#[cfg(target_os = "linux")]
+mod linux_tiling;
 mod log_out;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -1256,6 +1258,8 @@ pub fn run() {
             // reflects the user's last explicit choice.
             #[cfg(target_os = "linux")]
             reconcile_startup_global_hotkey(app.handle(), &settings);
+            #[cfg(target_os = "linux")]
+            linux_tiling::start(app.handle());
             #[cfg(not(target_os = "linux"))]
             reconcile_startup_global_hotkey(app.handle(), &mut settings);
             // Non-Linux reconciliation mutates the local snapshot

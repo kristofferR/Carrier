@@ -119,10 +119,9 @@ pub(crate) struct Settings {
     pub(crate) menu_bar_only: bool,
     /// Windows/Linux: hide the native application menu from Messenger windows.
     pub(crate) hide_menu_bar: bool,
-    /// Linux: window title bar visibility — "auto" (hidden on tiling window
-    /// managers, where the compositor moves/closes windows and the GTK header
-    /// bar is dead weight; shown on floating desktops, where it is also how
-    /// you drag and close the window), "show", or "hide".
+    /// Linux: window title bar visibility — "auto" (Carrier's own controls,
+    /// left out of windows a tiling window manager tiles, where the compositor
+    /// moves/closes them), "show" (the GTK header bar), or "hide".
     pub(crate) title_bar: String,
     /// Windows: hide the main window into the tray when it is minimized.
     pub(crate) hide_on_minimize: bool,
@@ -885,7 +884,7 @@ pub(crate) fn apply_settings(app: &tauri::AppHandle, s: &Settings) {
         // Title-bar visibility follows the setting live, on every window —
         // the Settings dialog carries the same redundant header bar on
         // tiling WMs. Messenger windows and Settings draw Carrier's own controls
-        // instead on floating desktops (crate::title_bar).
+        // instead, in windows the compositor doesn't tile (crate::title_bar).
         #[cfg(target_os = "linux")]
         let _ = window.set_decorations(
             if crate::window::is_messenger_window_label(&label) || label == "settings" {
