@@ -119,8 +119,8 @@ global shortcuts, and cryptographically verified updates.
 
 ### Appearance
 
-- Themes: Default, OLED Black, Graphite, Warm, Pink, Lavender, Sage and Slate,
-  or import your own
+- Themes: Default, OLED Black, Graphite, Warm, Pink, Lavender, Sage, Slate and
+  Terminal, or import your own
 - Accent color and message font
 - Four app icons (Color, Color dark, Mono and Mono dark), with an optional
   different icon in dark mode

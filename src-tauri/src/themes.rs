@@ -51,6 +51,7 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("lavender", include_str!("../themes/lavender.css")),
     ("sage", include_str!("../themes/sage.css")),
     ("slate", include_str!("../themes/slate.css")),
+    ("terminal", include_str!("../themes/terminal.css")),
 ];
 
 /// Carrier's palette tokens and the Messenger variables each one sets.

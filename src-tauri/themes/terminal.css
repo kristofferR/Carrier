@@ -1,0 +1,34 @@
+/* Carrier theme
+   name: Terminal
+   author: Carrier
+   mode: dark
+   preview: #000000 #050805 #050805 #3dff6e #0c1a0e
+*/
+
+/* Black with phosphor green, and messages in a monospace font. */
+:root {
+  --carrier-wash: #000000;
+  --carrier-page: #050805;
+  --carrier-chat: #050805;
+  --carrier-field: #0c140c;
+  --carrier-hover: rgba(80, 255, 120, 0.06);
+  --carrier-line: rgba(80, 255, 120, 0.16);
+  --carrier-text: #b6f5c0;
+  --carrier-text-2: #4f9a5c;
+  --carrier-icon: #b6f5c0;
+  --carrier-brand: #3dff6e;
+  --carrier-brand-soft: #0f2a14;
+  --carrier-brand-soft-text: #5cff7a;
+  --carrier-out: #3dff6e;
+  --carrier-out-text: #001a06;
+  --carrier-in: #0c1a0e;
+  --carrier-in-text: #b6f5c0;
+  --carrier-selection: rgba(61, 255, 110, 0.25);
+}
+
+/* The same text the message font setting styles, so a chosen font still wins. */
+[role="main"] :is([role="log"], [contenteditable="true"][role="textbox"]) :is(div, span, a, p, li),
+[role="main"] [contenteditable="true"][role="textbox"] {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas,
+    "DejaVu Sans Mono", monospace !important;
+}
