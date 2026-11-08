@@ -107,6 +107,10 @@ pub(crate) struct NotifyMsg {
     /// Messenger's UI language is English. Older page bundles omit it.
     #[serde(default)]
     english_ui: bool,
+    /// Messenger's own sound already rang for this message, so the
+    /// notification stays silent. It can only take the sound away.
+    #[serde(default)]
+    silent: bool,
     /// Messenger's id for the announced message, when the page knows it
     /// exactly: what React reacts to.
     #[serde(default)]
@@ -292,9 +296,14 @@ fn quick_actions_supported() -> bool {
 }
 
 impl NotifyMsg {
-    fn visible_images(&self, hide_preview: bool) -> (&str, &str) {
+    /// The avatar and the shared-media preview a notification may show. Hide
+    /// Preview drops both; Hide Avatars drops the avatar (a person's or a
+    /// group's face) but keeps a photo from the message.
+    fn visible_images(&self, hide_preview: bool, hide_avatars: bool) -> (&str, &str) {
         if hide_preview {
             ("", "")
+        } else if hide_avatars {
+            ("", &self.image)
         } else {
             (&self.icon, &self.image)
         }
@@ -2441,14 +2450,15 @@ pub(crate) fn show_message_notification(
     // checks in messenger.js run in the remote facebook.com origin, so a page
     // bug (or a hostile script emitting carrier:notify directly) must not be
     // able to bypass mute or leak sender/message content past hide-preview.
-    let (sound, muted, hide_preview, group_by_conversation, attention_on_message) = {
+    let (sound, muted, hide_preview, hide_avatars, group_by_conversation, attention_on_message) = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         (
-            s.notification_sound,
+            s.notification_sound && !msg.silent,
             crate::pause::pause_state(&s, crate::pause::now_ms())
                 != crate::pause::PauseState::Active,
             s.hide_notification_preview,
+            s.hides_avatars(),
             s.group_notifications_by_conversation,
             s.attention_on_message,
         )
@@ -2595,7 +2605,7 @@ pub(crate) fn show_message_notification(
             .unwrap()
             .register(page_id, native_id, Instant::now());
     }
-    let (icon, preview) = msg.visible_images(hide_preview);
+    let (icon, preview) = msg.visible_images(hide_preview, hide_avatars);
     let preview = avatar_to_temp_png(preview);
     #[cfg(target_os = "linux")]
     let image = preview.or_else(|| avatar_to_temp_png(icon));
@@ -2626,7 +2636,9 @@ pub(crate) fn show_message_notification(
         let group_picture = msg
             .sender
             .as_ref()
-            .filter(|sender| sender_identifier.is_some() && !sender.group.trim().is_empty())
+            .filter(|sender| {
+                !hide_avatars && sender_identifier.is_some() && !sender.group.trim().is_empty()
+            })
             .and_then(|sender| avatar_to_temp_png(&sender.group_picture));
         let sender =
             msg.sender
@@ -3390,8 +3402,10 @@ mod tests {
             msg.content(true),
             ("Messenger".into(), String::new(), "New message".into())
         );
-        assert_eq!(msg.visible_images(false), ("avatar", "shared image"));
-        assert_eq!(msg.visible_images(true), ("", ""));
+        assert_eq!(msg.visible_images(false, false), ("avatar", "shared image"));
+        assert_eq!(msg.visible_images(true, false), ("", ""));
+        assert_eq!(msg.visible_images(false, true), ("", "shared image"));
+        assert_eq!(msg.visible_images(true, true), ("", ""));
     }
 
     fn notify_msg(id: u64, title: &str, body: &str, dedupe_key: &str) -> NotifyMsg {
@@ -3406,6 +3420,7 @@ mod tests {
             thread_path: String::new(),
             sender: None,
             english_ui: false,
+            silent: false,
             message_id: String::new(),
             account: String::new(),
             row: None,

@@ -43,6 +43,7 @@ mod media_permissions;
 mod menu;
 mod notification_ledger;
 mod notifications;
+mod pane_widths;
 mod pause;
 mod preflight;
 mod render_recovery;
@@ -1025,6 +1026,9 @@ pub fn run() {
     }
     #[cfg(target_os = "linux")]
     linux_startup::configure();
+    // Before any webview exists: WebKit reads the scroll bar style once.
+    #[cfg(target_os = "macos")]
+    macos::scrollbars::prefer_overlay_scrollbars();
 
     let initial = load_settings_early();
     let cold_cli_action = cli::parse_launch_action(std::env::args_os());
@@ -1207,6 +1211,7 @@ pub fn run() {
 
             clear_pending_webview_data(app.handle());
             account::install(app.handle());
+            pane_widths::install(app.handle());
 
             // Portable zips have no installer to register the scheme, and a moved
             // portable folder must re-point the handler at the new exe. Writing

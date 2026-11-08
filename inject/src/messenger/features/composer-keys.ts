@@ -2,7 +2,12 @@
 // Carrier runs at document start, before Messenger registers its handlers.
 // Stopping propagation here keeps a composing Enter from reaching Messenger's
 // send handler while preserving the browser default that commits the IME text.
-import { shouldKeepEnterInComposer } from "../lib/composer-keys";
+import {
+  isVoiceClipCancelIcon,
+  shouldEscapeCancelVoiceClip,
+  shouldKeepEnterInComposer,
+} from "../lib/composer-keys";
+import { isMediaZoomActive } from "./media-viewer";
 
 const isMac = /mac/i.test(navigator.platform) || /mac/i.test(navigator.userAgent);
 const composerSelector =
@@ -12,6 +17,49 @@ export function isComposerTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   const editor = target.closest(composerSelector);
   return !!editor?.closest('[role="main"]');
+}
+
+const isShown = (element: Element) => {
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+};
+
+/** The visible X of a voice clip being recorded or replayed, if any. */
+function voiceClipCancelButton(): HTMLElement | undefined {
+  return [...document.querySelectorAll<HTMLElement>('[role="main"] [role="button"]')].find(
+    (button) =>
+      isVoiceClipCancelIcon(button.querySelector("svg path")?.getAttribute("d")) && isShown(button),
+  );
+}
+
+// Escape discards a voice clip being recorded or replayed, like its X button.
+// Dialogs, menus, Carrier's zoom overlay and fullscreen media keep Escape.
+function onVoiceClipEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  const target = event.target;
+  const inChat =
+    target === document.body ||
+    target === document.documentElement ||
+    (target instanceof Element && !!target.closest('[role="main"]'));
+  const escapeOwnedElsewhere =
+    isMediaZoomActive() ||
+    !!document.fullscreenElement ||
+    [...document.querySelectorAll('[role="dialog"], [role="menu"]')].some(isShown);
+  if (
+    !shouldEscapeCancelVoiceClip({
+      key: event.key,
+      isComposing: event.isComposing,
+      defaultPrevented: event.defaultPrevented,
+      escapeOwnedElsewhere,
+      inChat,
+    })
+  )
+    return;
+  const cancel = voiceClipCancelButton();
+  if (!cancel) return;
+  event.preventDefault();
+  event.stopPropagation();
+  cancel.click();
 }
 
 export function initComposerKeys() {
@@ -54,4 +102,5 @@ export function initComposerKeys() {
     },
     true,
   );
+  document.addEventListener("keydown", onVoiceClipEscape, true);
 }

@@ -6,6 +6,7 @@ import {
 } from "../lib/facebook-modules";
 import { nicknameMode } from "../lib/nicknames";
 import { isFacebookRateLimitError } from "../lib/rate-limit";
+import { installMessengerSoundPlayback, interceptSoundModules } from "./messenger-sounds";
 import { interceptNotificationModules } from "./page-notifications";
 import { reportRateLimit } from "./rate-limit";
 import { syncProcessing } from "./sync-processing";
@@ -31,6 +32,7 @@ export function initFacebookModuleInterception() {
     },
   };
   let pauseTimer: number | undefined;
+  installMessengerSoundPlayback();
 
   const wakeSearchIndex = () => {
     searchIndex.wake();
@@ -67,7 +69,9 @@ export function initFacebookModuleInterception() {
   const wrap = (value: unknown): unknown => {
     if (typeof value !== "function" || wrappedDefines.has(value)) return value;
     const wrapped = createFacebookModuleDefineInterceptor(
-      interceptNotificationModules(value as FacebookModuleDefine) as FacebookModuleDefine,
+      interceptNotificationModules(
+        interceptSoundModules(value as FacebookModuleDefine),
+      ) as FacebookModuleDefine,
       shouldBlockTelemetry,
       (restore) => searchIndex.register(restore),
       (error) => {

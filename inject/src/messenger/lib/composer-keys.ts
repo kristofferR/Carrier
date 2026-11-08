@@ -24,3 +24,34 @@ export function shouldKeepEnterInComposer(state: ComposerEnterState): boolean {
   // Shift+Enter remains Messenger's normal explicit line-break shortcut.
   return state.requireAccelerator && !state.acceleratorPressed && !state.shiftKey;
 }
+
+/**
+ * Messenger's X that discards a voice clip being recorded or replayed, by the
+ * start of its icon's path rather than its translated label. From fMess
+ * (github.com/toanbku/fmess, MIT).
+ */
+const VOICE_CLIP_CANCEL_ICON = "M8 .5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z";
+
+export const isVoiceClipCancelIcon = (path: string | null | undefined) =>
+  !!path?.startsWith(VOICE_CLIP_CANCEL_ICON);
+
+export interface VoiceClipEscapeState {
+  key: string;
+  isComposing: boolean;
+  defaultPrevented: boolean;
+  /** A dialog, a menu, or Carrier's zoom overlay is open and owns Escape. */
+  escapeOwnedElsewhere: boolean;
+  /** The key went to the chat (or to nothing focused), not to another surface. */
+  inChat: boolean;
+}
+
+/** Whether Escape should discard a voice clip, when one is being recorded or replayed. */
+export function shouldEscapeCancelVoiceClip(state: VoiceClipEscapeState): boolean {
+  return (
+    state.key === "Escape" &&
+    !state.isComposing &&
+    !state.defaultPrevented &&
+    !state.escapeOwnedElsewhere &&
+    state.inChat
+  );
+}

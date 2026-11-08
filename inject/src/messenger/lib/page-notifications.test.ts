@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isOldNews,
+  LATE_NOTIFICATION_MS,
   loadRewrittenScript,
   messengerId,
   PageMessageIndex,
   pageMessages,
+  readOldNews,
   rewriteChatPopperSource,
   wrapChatPopperFactory,
   wrapDesktopNotificationsFactory,
@@ -52,8 +55,56 @@ describe("PageMessageIndex", () => {
   });
 });
 
+describe("isOldNews", () => {
+  const sent = 1_000_000;
+  test("a late catch-up or a message already read elsewhere is old news", () => {
+    expect(isOldNews(sent, sent + LATE_NOTIFICATION_MS + 1, null)).toBe(true);
+    expect(isOldNews(sent, sent + 5_000, sent)).toBe(true);
+    expect(isOldNews(sent, sent + 5_000, sent - 1)).toBe(false);
+  });
+
+  test("unknown times never suppress", () => {
+    expect(isOldNews(null, sent * 2, sent * 2)).toBe(false);
+    expect(isOldNews(sent, null, null)).toBe(false);
+  });
+});
+
+describe("readOldNews", () => {
+  const load = (now: number) => (name: string) =>
+    name === "ServerTime"
+      ? { getMillis: () => now }
+      : name === "I64"
+        ? { to_string: (value: unknown) => String(value) }
+        : undefined;
+  const db = (watermark: unknown) => ({
+    tables: {
+      threads: {
+        get: async (key: unknown) =>
+          key === 9 ? { lastReadWatermarkTimestampMs: watermark } : null,
+      },
+    },
+  });
+
+  test("reads the conversation's read watermark", async () => {
+    const message = { timestampMs: 5_000, threadKey: 9 };
+    expect(await readOldNews(db(5_000), message, load(6_000))).toBe(true);
+    expect(await readOldNews(db(4_000), message, load(6_000))).toBe(false);
+    expect(await readOldNews(db(0), message, load(5_000 + LATE_NOTIFICATION_MS + 1))).toBe(true);
+  });
+
+  test("notifies when the check can't run", async () => {
+    const message = { timestampMs: 5_000, threadKey: 9 };
+    expect(await readOldNews(null, message, load(6_000))).toBe(false);
+    expect(await readOldNews(db(5_000), { threadKey: 9 }, load(6_000))).toBe(false);
+    const failing = { tables: { threads: { get: async () => Promise.reject(new Error("x")) } } };
+    expect(await readOldNews(failing, message, load(6_000))).toBe(false);
+    const hanging = { tables: { threads: { get: () => new Promise(() => {}) } } };
+    expect(await readOldNews(hanging, message, load(6_000), 10)).toBe(false);
+  });
+});
+
 describe("wrapDesktopNotificationsFactory", () => {
-  test("records each notified message before Messenger notifies, keeping the factory's arity", () => {
+  test("records each notified message before Messenger notifies, keeping the factory's arity", async () => {
     const calls: unknown[] = [];
     function factory(
       _a: unknown,
@@ -77,9 +128,34 @@ describe("wrapDesktopNotificationsFactory", () => {
     const exports: Record<string, unknown> = {};
     wrapped(null, null, null, null, {}, exports);
     const trigger = exports.triggerLocalNotification as (db: unknown, message: unknown) => unknown;
-    expect(trigger({}, { messageId: "mid.tagged", threadKey: 555 })).toBe("shown");
+    expect(await trigger({}, { messageId: "mid.tagged", threadKey: 555 })).toBe("shown");
     expect(calls).toHaveLength(1);
     expect(pageMessages.threadFor("mid.tagged")).toBe("555");
+    expect(pageMessages.isStale("mid.tagged")).toBe(false);
+  });
+
+  test("still lets Messenger notify about old news, marked stale for the bridge", async () => {
+    let notified = 0;
+    function factory(_module: unknown, exports: Record<string, unknown>) {
+      exports.triggerLocalNotification = () => {
+        notified += 1;
+      };
+    }
+    const wrapped = wrapDesktopNotificationsFactory(
+      factory as never,
+      () => (name: string) =>
+        name === "ServerTime"
+          ? { getMillis: () => 10_000_000 }
+          : name === "I64"
+            ? { to_string: (value: unknown) => String(value) }
+            : undefined,
+    );
+    const exports: Record<string, unknown> = {};
+    wrapped({}, exports);
+    const trigger = exports.triggerLocalNotification as (db: unknown, message: unknown) => unknown;
+    await trigger({}, { messageId: "mid.old", threadKey: 1, timestampMs: 1_000 });
+    expect(notified).toBe(1);
+    expect(pageMessages.isStale("mid.old")).toBe(true);
   });
 });
 

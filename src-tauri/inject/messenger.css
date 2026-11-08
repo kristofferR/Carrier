@@ -124,6 +124,71 @@ div[role="banner"] div[role="navigation"] {
   box-shadow: 0 1px 0 var(--mwp-message-row-background);
 }
 
+/* WebKit takes about 4 s per layout for a 100%-high image inside an
+   aspect-ratio flex box (photos in shared-post previews), which froze whole
+   chats. Auto height looks the same there and lays out in milliseconds.
+   Measured by fMess (github.com/toanbku/fmess). */
+[role="main"] img[height="100%"][width="100%"] {
+  height: auto !important;
+}
+
+/* ------------------- Text selection like a native app ------------------- */
+/* selection.ts marks <html> with data-carrier-chats on the chats. There, only
+   text worth copying is selectable: messages, the pinned message and the
+   details in the conversation pane, dialogs, and fields. The chat list and
+   the rest of the chrome are not. The `none` rule carries no specificity, so
+   narrower opt-ins (Hide Names' preview highlight) still win. */
+:where(html[data-carrier-chats]:not([data-carrier-login])) body,
+:where(html[data-carrier-chats]:not([data-carrier-login])) body * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+:where(html[data-carrier-chats]:not([data-carrier-login]))
+  :is([role="main"], [role="dialog"])
+  :is([dir="auto"], [dir="auto"] *),
+:where(html[data-carrier-chats]:not([data-carrier-login]))
+  :is(input, textarea, [contenteditable="true"], [contenteditable="true"] *) {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* ----------------------------- Scroll bars ------------------------------ */
+/* scrollbars.ts measures which scroll bars the engine draws. Overlay ones
+   (macOS, GTK overlay scrolling) are only made thin. Classic always-on tracks
+   (Windows) are hidden in the chats, where a thin indicator floats over the
+   pane while it scrolls; login and checkpoint pages keep theirs. */
+html[data-carrier-scrollbars="overlay"],
+html[data-carrier-scrollbars="overlay"] * {
+  scrollbar-width: thin !important;
+}
+
+html[data-carrier-chats][data-carrier-scrollbars="classic"],
+html[data-carrier-chats][data-carrier-scrollbars="classic"] * {
+  scrollbar-width: none !important;
+}
+
+html[data-carrier-chats][data-carrier-scrollbars="classic"]::-webkit-scrollbar,
+html[data-carrier-chats][data-carrier-scrollbars="classic"] ::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+#carrier-scroll-indicator {
+  position: fixed;
+  z-index: 2147483646;
+  top: 0;
+  left: 0;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--chat-scrollbar-thumb-color, rgba(128, 128, 128, 0.55));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s;
+  /* A layer of its own: moving it neither lays out nor repaints the page. */
+  will-change: transform, opacity;
+}
+
 /* --- Login page: hide the marketing collage, show just the login box --- */
 /* (`data-carrier-*` attributes are set by the login tidy-up in messenger.js.) */
 [data-carrier-hide] {
