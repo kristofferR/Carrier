@@ -69,67 +69,99 @@ Feed, Reels, Marketplace, global search, and other surrounding chrome.
 
 Carrier uses the operating system's WebView through
 [Tauri](https://tauri.app), rather than shipping another copy of Chromium. The
-macOS and Windows installers are roughly **2–3.5 MB**, while still providing
-native notifications, unread badges, tray integration, global shortcuts, and
-cryptographically verified updates.
+macOS and Windows installers are about **3–4.5 MB**, while still providing
+native notifications you can reply from, unread badges, tray integration,
+global shortcuts, and cryptographically verified updates.
 
 ## Why Carrier?
 
-- **Just your conversations** — no Feed, Reels, Marketplace, or browser tabs.
-- **[Schedule messages](docs/scheduled-sending.md)** — send texts at a chosen date
-  and time. Carrier must be running and connected.
-- **Small by design** — one system WebView instead of a bundled browser engine.
-- **Real desktop notifications** — including background delivery, notification
-  sound controls, muted notifications, and hidden previews.
-- **At home on your desktop** — unread badges, tray or menu-bar operation,
-  start-on-login, a global show/hide hotkey, and remembered window placement.
-- **Made for focus and screen sharing** — force light or dark mode, adjust page
-  zoom, use system emoji, or temporarily hide names and avatars.
-- **Useful Messenger extras** — fast conversation navigation, better media
-  viewing, richer context menus, and external links that bypass Facebook's
-  tracking redirect.
+- **Only Messenger**: Facebook's Feed, Reels, Marketplace and other pages are hidden.
+- **Reply from notifications**: reply, react, mark as read or mute without opening Carrier.
+- **Right-click menus**: react to, reply to, forward or pin a message; mute,
+  archive or mark a conversation as read.
+- **Hide that you're typing**: the people you chat with don't see "typing…".
+- **Themes and app icons**: four themes, an accent color, a message font and
+  four app icons.
+- **Export conversations**: save a conversation as an HTML or JSON file.
+- **[Schedule messages](docs/scheduled-sending.md)**: send texts at a chosen
+  date and time. Carrier must be running and connected.
+- **Small**: one system WebView instead of a bundled browser engine.
 
 ## Features
 
+### Notifications
+
+- Native notifications with the sender's photo, and the group's picture for group chats
+- Reply, react, mark as read or mute from the notification
+- On macOS, message notifications show the sender's face, like Messages
+- Pause notifications for an hour, until tomorrow morning, or until you turn
+  them back on, from the tray or Dock menu; they also wait while a call window is open
+- Messenger's own Do Not Disturb is honored, including when you turn it on from your phone
+- Group-chat messages can count on the unread badge without notifying
+- Muted conversations can be left out, shown on the badge only, or counted like any other chat
+- No notifications for messages that are old or already read on another device, for example after sleep
+- One sound per message: Messenger's in-page sounds don't double up with Carrier's,
+  and stay silent during Do Not Disturb, Pause and Mute (calls still ring)
+- Hidden message previews, notification sound controls, and a test notification
+  in Settings that explains when the system is blocking banners
+
 ### Desktop integration
 
-- Native notifications with sender avatars and optional hidden previews
-- Notification sound and mute controls, and Messenger's own Do Not Disturb is honored
-- Optionally leave group-chat messages to the unread badge instead of notifying
-- Unread count on the Dock or taskbar icon, or just a dot for privacy
+- Unread count on the Dock or taskbar icon, or just a dot
+- Recent conversations in the Dock, tray and jump-list menus
 - Tray support, start to tray, start on login, and hide on close
-- Pause notifications for an hour or until morning from the tray or Dock menu; they also wait while a call window is open
 - Optional system-wide <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> hotkey
 - Menu-bar-only mode on macOS
+- On macOS the window buttons sit over the chat list; on Windows and floating
+  Linux desktops Carrier draws its own window buttons instead of a title bar
 - Always on top and experimental multi-window support
-- Window size and position restored between launches
+- Window size, position and pane widths restored between launches
 
-### Appearance and focus
+### Appearance
 
-- Forced light or dark theme, or follow the operating system
+- Themes: Default, OLED Black, Graphite and Warm, or import your own
+- Accent color and message font
+- Four app icons (Color, Color dark, Mono and Mono dark), with an optional
+  different icon in dark mode
+- Light, dark, or follow the operating system
 - Adjustable and persistent page zoom
 - Optional system emoji instead of Facebook's emoji sprites
-- Hide names, avatars or both for screen sharing or working in public
 - Optional top application menu on Windows and Linux
+
+### Privacy
+
+- Hide that you're typing, in regular and encrypted chats
+- Hide names, avatars or both, for screen sharing or working in public; hidden
+  avatars stay out of notifications too
+- Block Facebook's analytics and logging requests (on by default)
 
 ### Messenger tools
 
+- Right-click a message to react, reply, copy text, edit, forward, pin or unsend
+- Right-click a conversation for its own menu: mark as read or unread, mute,
+  view profile, archive, delete, block, report or leave a group
+- Export a conversation to HTML or JSON from the File menu; nothing is uploaded
 - [Schedule text messages](docs/scheduled-sending.md) with quick delays or a 24-hour date/time picker
+- Drag the edge of the chat list or details pane to resize it; double-click to reset
+- Recent encrypted chats open faster: their newest messages are preloaded on this computer
 - Jump directly to conversations and cycle through them from the keyboard
-- Toggle the conversation information sidebar
-- Return to the message box automatically when you switch back to Carrier
+- Return to the message box automatically when you switch back to Carrier or open a conversation
 - Search conversations or the active thread without reaching for the mouse
-- Double-click photos and videos for zooming and panning
-- Copy, download, and open message media from richer right-click menus
-- Copy images that Messenger exposes only as in-page blobs
-- Optionally hide that you are typing, in regular and encrypted chats
-- Voice and video call permissions
-- Spell-check controls
+- Double-click photos and videos to zoom and pan, or pinch on macOS
+- Copy, download, and open message media from the right-click menu
+- Drop files on the window to send them, and paste copied images as images
+- Voice and video calls, and spell-check controls
+
+### Account
+
+- Messenger's Active Status, message sounds and Do Not Disturb in **Settings → Account**
+- **Log Out…** in the app and tray menus logs out of Facebook and deletes what
+  Carrier stored for the account on this computer; your settings are kept
 
 ### Maintenance
 
-- Automatic signed-update discovery at startup and every four hours (optional),
-  with consent-based installs from Settings or <kbd>F2</kbd>
+- Signed-update checks every hour, every 4 hours or once a day (optional),
+  with the release notes shown before you choose to install
 - A diagnostics log for Messenger markup changes and integration failures
 - A dedicated Settings window, available with <kbd>F3</kbd>
 - Optional, best-effort `custom.css` styling from **Settings → Advanced**
@@ -171,6 +203,8 @@ GitHub Releases.
 - Known Facebook analytics and logging requests can be blocked without blocking
   messaging (**Settings → Privacy → Block Facebook telemetry**, enabled by
   default).
+- **Settings → Privacy** can also hide that you're typing, and hide names and
+  avatars.
 - Off-site links open in your normal browser; Facebook tracking redirects are
   removed first.
 - Updates are cryptographically verified before installation.
@@ -195,8 +229,8 @@ also includes:
 | Windows | x64, ARM64 | Installer and portable `.zip` |
 | Linux | x64, ARM64 | `.deb`, `.rpm`, and AppImage |
 
-The macOS and Windows installers are about 2–3.5 MB. Linux `.deb` and `.rpm`
-packages are about 4 MB; the self-contained AppImage is around 90 MB because it
+The macOS and Windows installers are about 3–4.5 MB. Linux `.deb` and `.rpm`
+packages are about 5 MB; the self-contained AppImage is around 90 MB because it
 bundles WebKitGTK instead of using the system package.
 
 Carrier loads `facebook.com/messages`, so you need an account that Meta permits
