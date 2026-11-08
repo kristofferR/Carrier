@@ -3134,6 +3134,31 @@ ${button.innerHTML}`)
     );
   }
 
+  // inject/src/messenger/lib/chat-row-menu.ts
+  var CHAT_ROW_CONTEXT_MENU_LABELS = [
+    "Mark as read",
+    "Mark as unread",
+    "Mute notifications",
+    "Unmute notifications",
+    "View profile",
+    "Start end-to-end encrypted chat",
+    "Block",
+    "Unblock",
+    "Archive chat",
+    "Unarchive chat",
+    "Delete chat",
+    "Report",
+    "Leave group"
+  ];
+  function chatRowAction(text) {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    return CHAT_ROW_CONTEXT_MENU_LABELS.find((action2) => action2 === normalized) ?? null;
+  }
+  function chatRowActions(texts) {
+    const offered = new Set(texts.map(chatRowAction));
+    return CHAT_ROW_CONTEXT_MENU_LABELS.filter((action2) => offered.has(action2));
+  }
+
   // inject/src/messenger/lib/download-completion.ts
   var DOWNLOAD_FINISHED_EVENT = "carrier:download-finished";
   var NativePromise = Promise;
@@ -3320,15 +3345,10 @@ ${button.innerHTML}`)
     return text;
   }
 
-  // inject/src/messenger/features/message-menu.ts
-  var MESSAGE = '[aria-roledescription="message"]';
+  // inject/src/messenger/features/hidden-menu.ts
   var PROBE_ATTRIBUTE = "data-carrier-message-menu-probe";
   var POLL_MS = 16;
-  var TOOLBAR_WAIT_MS = 600;
   var MENU_WAIT_MS = 800;
-  var MAX_REACTIONS = 12;
-  var messageFor = (target) => target.closest(MESSAGE);
-  var toolbarButton = (message, label2) => message.querySelector(`[role="toolbar"] [role="button"][aria-label^="${label2}"]`);
   async function waitFor(read, ms) {
     const deadline = Date.now() + ms;
     while (true) {
@@ -3337,15 +3357,6 @@ ${button.innerHTML}`)
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
     }
-  }
-  async function ensureToolbar(message) {
-    const mounted = () => message.querySelector('[role="toolbar"] [role="button"][aria-label]');
-    if (mounted()) return true;
-    const rect = message.getBoundingClientRect();
-    const point = { bubbles: true, clientX: rect.x + rect.width / 2, clientY: rect.y + 4 };
-    message.dispatchEvent(new MouseEvent("mouseover", point));
-    message.dispatchEvent(new MouseEvent("mousemove", point));
-    return await waitFor(mounted, TOOLBAR_WAIT_MS) !== null;
   }
   var expanded = (button) => button.getAttribute("aria-expanded") === "true";
   function openMenu() {
@@ -3376,6 +3387,62 @@ ${button.innerHTML}`)
       if (!picks && focused instanceof HTMLElement && focused.isConnected)
         focused.focus({ preventScroll: true });
     }
+  }
+
+  // inject/src/messenger/features/chat-row-menu.ts
+  var ROW_MENU_BUTTON = '[aria-haspopup="menu"][aria-label^="More options for "]';
+  var rowMenuButton = (link) => link.closest('[role="row"]')?.querySelector(ROW_MENU_BUTTON) ?? null;
+  function chatRowFor(anchor) {
+    return anchor.getAttribute("href")?.includes("/t/") && rowMenuButton(anchor) ? anchor : null;
+  }
+  var menuRows = (menu) => [...menu.querySelectorAll('[role="menuitem"]')];
+  async function readChatRowActions(link) {
+    const button = rowMenuButton(link);
+    if (!button) return [];
+    return await withHiddenMenu(
+      button,
+      (menu) => chatRowActions(menuRows(menu).map((row) => row.textContent ?? ""))
+    ) ?? [];
+  }
+  function currentMenuButton(href) {
+    for (const link of document.querySelectorAll('[role="row"] a[href]'))
+      if (link.getAttribute("href") === href) return rowMenuButton(link);
+    return null;
+  }
+  async function runChatRowAction(href, action2) {
+    const button = currentMenuButton(href);
+    if (!button) {
+      toast("That conversation is no longer in the list");
+      return;
+    }
+    const picked = await withHiddenMenu(
+      button,
+      (menu) => {
+        const row = menuRows(menu).find((item) => chatRowAction(item.textContent ?? "") === action2);
+        row?.click();
+        return row !== void 0;
+      },
+      true
+    );
+    if (picked) return;
+    diag("chat-row-menu.action", `${action2} was not offered when chosen`);
+    toast("Messenger no longer offers that action");
+  }
+
+  // inject/src/messenger/features/message-menu.ts
+  var MESSAGE = '[aria-roledescription="message"]';
+  var TOOLBAR_WAIT_MS = 600;
+  var MAX_REACTIONS = 12;
+  var messageFor = (target) => target.closest(MESSAGE);
+  var toolbarButton = (message, label2) => message.querySelector(`[role="toolbar"] [role="button"][aria-label^="${label2}"]`);
+  async function ensureToolbar(message) {
+    const mounted = () => message.querySelector('[role="toolbar"] [role="button"][aria-label]');
+    if (mounted()) return true;
+    const rect = message.getBoundingClientRect();
+    const point = { bubbles: true, clientX: rect.x + rect.width / 2, clientY: rect.y + 4 };
+    message.dispatchEvent(new MouseEvent("mouseover", point));
+    message.dispatchEvent(new MouseEvent("mousemove", point));
+    return await waitFor(mounted, TOOLBAR_WAIT_MS) !== null;
   }
   var reactionRows = (menu) => menu.querySelectorAll('[role="menuitemradio"]');
   var reactionEmoji = (row) => (row.querySelector("img[alt]")?.getAttribute("alt") || row.textContent || "").trim();
@@ -3733,9 +3800,10 @@ ${button.innerHTML}`)
       const imgSrc = img && (img.currentSrc || img.src);
       const vidSrc = video && (video.currentSrc || video.src);
       const linkHref = anchor?.href;
+      let chatRow = null;
       const fx = contextPoint.x / Math.max(1, innerWidth);
       const fy = contextPoint.y / Math.max(1, innerHeight);
-      const items = [];
+      let items = [];
       const addItem = (item) => {
         appendOwn(items, item);
       };
@@ -3773,6 +3841,7 @@ ${button.innerHTML}`)
         }
         addItem([VIDEO_CONTEXT_MENU_LABELS[2], () => copyAddress(vidSrc), cleanSharedUrl(vidSrc)]);
       } else if (linkHref && !linkHref.startsWith("javascript:")) {
+        chatRow = anchor && chatRowFor(anchor);
         addItem([LINK_CONTEXT_MENU_LABELS[0], () => copyAddress(linkHref), cleanSharedUrl(linkHref)]);
         addItem([LINK_CONTEXT_MENU_LABELS[1], () => openUrl(linkHref)]);
       }
@@ -3789,16 +3858,34 @@ ${button.innerHTML}`)
       ) : null;
       menuRequest += 1;
       const request = menuRequest;
-      if (message) {
+      const readAbandonably = async (read) => {
         nativeReflectApply3(nativeAddEventListener2, document, ["pointerdown", abandonMenu, true]);
         nativeReflectApply3(nativeAddEventListener2, document, ["keydown", abandonMenu, true]);
-        let offer;
         try {
-          offer = await readMessageOffer(message);
+          return await read();
         } finally {
           nativeReflectApply3(nativeRemoveEventListener2, document, ["pointerdown", abandonMenu, true]);
           nativeReflectApply3(nativeRemoveEventListener2, document, ["keydown", abandonMenu, true]);
         }
+      };
+      if (chatRow) {
+        const href = chatRow.getAttribute("href") ?? "";
+        const row = chatRow;
+        const actions = await readAbandonably(() => readChatRowActions(row));
+        if (request !== menuRequest) return;
+        const linkItems = items;
+        items = [];
+        for (let index = 0; index < actions.length; index += 1) {
+          const action2 = actions[index];
+          if (action2) addItem([action2, () => runChatRowAction(href, action2)]);
+        }
+        for (let index = 0; index < linkItems.length; index += 1) {
+          const item = linkItems[index];
+          if (item) addItem(item);
+        }
+      }
+      if (message) {
+        const offer = await readAbandonably(() => readMessageOffer(message));
         if (request !== menuRequest) return;
         for (let index = 0; index < offer.reactions.length; index += 1) {
           const reaction = offer.reactions[index];
@@ -3864,7 +3951,7 @@ ${button.innerHTML}`)
       nativeReflectApply3(nativeSetAttribute, menu, ["role", "menu"]);
       nativeReflectApply3(nativeSetAttribute, menu, [
         "aria-label",
-        message ? "Message actions" : "Media actions"
+        message ? "Message actions" : chatRow ? "Conversation actions" : "Media actions"
       ]);
       const menuStyle = nativeReflectApply3(nativeGetStyle, menu, []);
       applyStyles(menuStyle, {
@@ -3896,7 +3983,7 @@ ${button.innerHTML}`)
         const fn = item[1];
         const rowIndex = menuItems.length;
         const reaction = item[3];
-        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : 0;
+        const group = reaction ? 1 : MESSAGE_CONTEXT_MENU_LABELS.includes(label2) ? 2 : chatRow && CHAT_ROW_CONTEXT_MENU_LABELS.includes(label2) ? 3 : 0;
         if (previousGroup !== null && previousGroup !== group) {
           const divider = nativeReflectApply3(nativeCreateElement, document, [
             "div"

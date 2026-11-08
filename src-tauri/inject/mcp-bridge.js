@@ -853,6 +853,12 @@
           reply(messageBubbleProbe(Number(messageProbe[1]), messageProbe[2]));
           return;
         }
+        var chatRowProbe =
+          /^__carrier_mcp_chat_row_probe__:(\d{1,2}|t\d{5,20}):(shape|open|close)$/.exec(code);
+        if (chatRowProbe) {
+          reply(chatRowMenuProbe(chatRowProbe[1], chatRowProbe[2]));
+          return;
+        }
         var mediaAction = /^__carrier_mcp_media_action__:(scroll-first|click-first|close)$/.exec(code);
         if (mediaAction) {
           if (mediaAction[1] === "close") {
@@ -3649,6 +3655,77 @@
             };
           },
         ),
+      };
+    }
+
+    // A chat-list row's "More options" menu: the row's shape, the menu
+    // button, and (for `open`) the rows the menu offers. Rows are picked by
+    // list index or by thread id ("t<digits>"); names are never reported.
+    function chatRowMenuProbe(selector, step) {
+      var links = Array.prototype.filter.call(
+        document.querySelectorAll('[role="grid"] a[href*="/t/"], [role="navigation"] a[href*="/t/"]'),
+        function (a) {
+          var r = a.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        },
+      );
+      var link =
+        selector[0] === "t"
+          ? links.find(function (a) {
+              return (a.getAttribute("href") || "").indexOf("/" + selector.slice(1)) !== -1;
+            })
+          : links[Number(selector)];
+      if (!link) return { found: false, rows: links.length };
+      var row = link.closest('[role="row"]');
+      var button = row && row.querySelector('[aria-haspopup="menu"][aria-label^="More options for "]');
+      var weights = Array.prototype.map.call(link.querySelectorAll("span"), function (span) {
+        return Number(getComputedStyle(span).fontWeight) || 0;
+      });
+      var clicked = false;
+      if (button && (step === "open" ? button.getAttribute("aria-expanded") !== "true" : step === "close" && button.getAttribute("aria-expanded") === "true")) {
+        button.click();
+        clicked = true;
+      }
+      var menuId = button && button.getAttribute("aria-controls");
+      var r = row ? row.getBoundingClientRect() : link.getBoundingClientRect();
+      return {
+        found: true,
+        index: links.indexOf(link),
+        e2ee: /\/e2ee\/t\//.test(link.getAttribute("href") || ""),
+        maxFontWeight: Math.max.apply(null, weights.concat([0])),
+        hasRow: !!row,
+        rowRect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        cells: row ? row.querySelectorAll('[role="gridcell"]').length : 0,
+        button: button
+          ? {
+              tag: button.tagName.toLowerCase(),
+              role: button.getAttribute("role"),
+              controls: menuId,
+              expanded: button.getAttribute("aria-expanded"),
+              sameCellAsLink: button.closest('[role="gridcell"]') === link.closest('[role="gridcell"]'),
+            }
+          : null,
+        clicked: clicked,
+        controlled: menuId ? !!document.getElementById(menuId) : null,
+        menus: Array.prototype.map.call(document.querySelectorAll('[role="menu"]'), function (menu) {
+          return {
+            id: menu.id || null,
+            label: (menu.getAttribute("aria-label") || "").slice(0, 40),
+            items: Array.prototype.map.call(
+              menu.querySelectorAll('[role^="menuitem"], [role="separator"]'),
+              function (node) {
+                return {
+                  role: node.getAttribute("role"),
+                  text: (node.textContent || "").trim().replace(/\d/g, "#").slice(0, 40),
+                  label: (node.getAttribute("aria-label") || "").replace(/\d/g, "#").slice(0, 40),
+                  disabled: node.getAttribute("aria-disabled"),
+                  checked: node.getAttribute("aria-checked"),
+                  haspopup: node.getAttribute("aria-haspopup"),
+                };
+              },
+            ),
+          };
+        }),
       };
     }
 
