@@ -110,7 +110,7 @@ fn forget_account_in_memory(app: &tauri::AppHandle) {
 }
 
 /// Remove the account's notifications from the system's notification list,
-/// and this run's avatar files (earlier runs' are swept at startup).
+/// and the cached sender avatars.
 fn forget_delivered_notifications(app: &tauri::AppHandle) {
     crate::notifications::remove_avatar_cache();
     #[cfg(target_os = "macos")]

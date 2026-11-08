@@ -1095,13 +1095,23 @@ pub(crate) fn clear_avatar_cache() {
     }
 }
 
-/// Delete this run's avatar directory (Log Out and Reset; Ref #356).
+/// Delete every avatar directory, this run's and earlier runs' (Log Out and
+/// Reset; Ref #356). Like the startup sweep, never follows a symlink.
 pub(crate) fn remove_avatar_cache() {
-    if let Some(Some(dir)) = AVATAR_CACHE_DIR.get()
-        && let Err(error) = std::fs::remove_dir_all(dir)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        log::warn!("failed to remove the avatar cache: {error}");
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if is_dir
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("carrier-avatars-")
+            && let Err(error) = std::fs::remove_dir_all(entry.path())
+        {
+            log::warn!("failed to remove an avatar cache: {error}");
+        }
     }
 }
 
