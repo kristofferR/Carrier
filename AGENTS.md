@@ -89,6 +89,14 @@ git tag v1.4.0 <release-commit>
 git push origin v1.4.0
 ```
 
+Before tagging, check the landing page (`docs/index.html`, served on GitHub
+Pages) against the draft's **What's New** items. Every user-facing feature or
+visible change it should show or mention must be on the page: English inline,
+every other language in `docs/i18n/*.json`, and screenshots in
+`docs/screenshots/` when the UI changed. Site changes go straight to `main`.
+Skip this step only when nothing in What's New belongs on the page, and say so
+when you hand off the release.
+
 `.github/workflows/release.yml` requires a non-empty curated draft, builds 6
 targets, signs + notarizes macOS, attaches artifacts without rewriting the title
 or body, and publishes it. Apple/Tauri secrets are set in the repo.
