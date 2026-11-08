@@ -171,7 +171,11 @@
     transition: transform .2s ease, box-shadow .2s ease;
   }
   .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 26px -10px rgba(0,106,255,.55); }
-  @media (max-width: 560px) { .nav-features, .site-nav a[href="#faq"] { display: none; } }
+  /* Phones: the footer keeps the GitHub link and the hero's download button
+     sits right below, so the header drops them to fit the language menu. */
+  @media (max-width: 560px) { .nav-features, .site-nav a[href="#faq"], .site-nav a[href*="github.com"] { display: none; } }
+  @media (max-width: 440px) { .nav-cta { display: none; } }
+  @media (max-width: 360px) { .lang-sel { max-width: 9rem; } }
 
   .lang-sel {
     border: 1.5px solid #d6e2f2; border-radius: 999px;
