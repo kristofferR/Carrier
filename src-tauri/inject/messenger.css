@@ -20,11 +20,13 @@ html:has(body [role="navigation"] [role="grid"]) {
   overflow: hidden !important;
 }
 
-/* Default state (no media viewer open): collapse the header and hide the banner. */
+/* Default state (no media viewer open): collapse the header and hide the banner.
+   On macOS the window buttons float over the page, which keeps the strip
+   under them free (--carrier-title-bar-inset, set by Carrier; 0 elsewhere). */
 :root,
 .__fb-light-mode,
 .__fb-dark-mode {
-  --header-height: 0px !important;
+  --header-height: var(--carrier-title-bar-inset, 0px) !important;
 }
 
 body:not(:has([data-carrier-media-viewer])) div[role="banner"] {

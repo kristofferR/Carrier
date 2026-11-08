@@ -164,7 +164,10 @@ interface Window {
   /** Tauri's always-present internal IPC bridge (no `withGlobalTauri`). */
   __TAURI_INTERNALS__?: {
     invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown>;
+    metadata?: { currentWindow?: { label?: string } };
   };
+  /** macOS: height of the strip under the window buttons, in CSS pixels at 100%. */
+  __CARRIER_TITLE_BAR_INSET__?: number;
   __CARRIER_SETTINGS__?: CarrierSettings;
   /** Scheduled delivery availability fixed when the native process starts. */
   __CARRIER_SCHEDULED_SEND_AVAILABLE__?: boolean;

@@ -12,4 +12,5 @@ pub(crate) mod scrollbars;
 pub(crate) mod share;
 pub(crate) mod share_intake;
 pub(crate) mod theme;
+pub(crate) mod title_bar;
 pub(crate) mod zoom;

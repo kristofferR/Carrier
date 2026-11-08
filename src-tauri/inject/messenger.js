@@ -14921,6 +14921,38 @@ ${text}`)) {
     }
   }
 
+  // inject/src/messenger/features/title-bar.ts
+  var INSET_VAR = "--carrier-title-bar-inset";
+  var hasTitleBarStrip = () => typeof window.__CARRIER_TITLE_BAR_INSET__ === "number";
+  function initTitleBar() {
+    const inset = window.__CARRIER_TITLE_BAR_INSET__;
+    if (typeof inset !== "number") return;
+    const apply = (root) => {
+      if (!root.style.getPropertyValue(INSET_VAR)) root.style.setProperty(INSET_VAR, `${inset}px`);
+    };
+    if (document.documentElement) {
+      apply(document.documentElement);
+      return;
+    }
+    const wait = new MutationObserver(() => {
+      if (!document.documentElement) return;
+      wait.disconnect();
+      apply(document.documentElement);
+    });
+    wait.observe(document, { childList: true });
+  }
+  var viewerReported = null;
+  function reportMediaViewer(open) {
+    if (!hasTitleBarStrip() || open === viewerReported) return;
+    const label2 = window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label;
+    if (!label2) return;
+    viewerReported = open;
+    invoke("plugin:event|emit", {
+      event: "carrier:media-viewer",
+      payload: { window: label2, open }
+    })?.catch?.(() => diag("title-bar.viewer", "carrier:media-viewer emit failed"));
+  }
+
   // inject/src/messenger/lib/typing-block.ts
   /*! Includes code adapted from fMess (https://github.com/toanbku/fmess).
    *
@@ -15463,6 +15495,7 @@ ${text}`)) {
         if (!dialog.hasAttribute(MEDIA_VIEWER_ATTR)) dialog.setAttribute(MEDIA_VIEWER_ATTR, "");
       }
       viewers = nextViewers;
+      reportMediaViewer(viewers.size > 0);
       const previouslyMarked = markedControls;
       markedControls = /* @__PURE__ */ new Set();
       if (viewers.size) {
@@ -15547,6 +15580,7 @@ ${text}`)) {
   }
   function main() {
     initFeature("rate-limit", initRateLimit);
+    initFeature("title-bar", initTitleBar);
     initFeature("facebook-workers", initFacebookWorkerOptimization);
     initFeature("facebook-modules", initFacebookModuleInterception);
     initFeature("typing-block", initTypingBlock);

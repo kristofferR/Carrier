@@ -525,6 +525,9 @@ fn build_app_window_with_render_budget(
                     crate::pane_widths::push(&window, settings.pane_widths);
                 }
                 apply_custom_css(&window, payload.url());
+                // A reload starts from the initial inset; restate the current one.
+                #[cfg(target_os = "macos")]
+                crate::macos::title_bar::page_loaded(&window);
             }
         })
         .on_navigation(allow_navigation)
@@ -684,6 +687,12 @@ fn build_app_window_with_render_budget(
             }
             _ => true,
         });
+    // macOS: no separate title bar, like the old Messenger app; the window
+    // buttons float over the page (see macos::title_bar).
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     // Linux: drop the GTK header bar on tiling WMs (or by explicit setting).
     #[cfg(target_os = "linux")]
     let builder = builder
@@ -724,7 +733,10 @@ fn build_app_window_with_render_budget(
         }
         // macOS: let the themed window background show through the title bar.
         #[cfg(target_os = "macos")]
-        make_webview_transparent(window);
+        {
+            make_webview_transparent(window);
+            crate::macos::title_bar::install(window);
+        }
     })?;
     let token_cleanup_value = download_reveal_token.clone();
     {
@@ -740,6 +752,8 @@ fn build_app_window_with_render_budget(
     let token_cleanup_label = label.to_string();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {
+            #[cfg(target_os = "macos")]
+            crate::macos::title_bar::forget(&token_cleanup_label);
             let state = token_cleanup_handle.state::<AppState>();
             let mut tokens = state.download_reveal_tokens.lock().unwrap();
             if tokens.get(&token_cleanup_label) == Some(&token_cleanup_value) {
@@ -1342,6 +1356,14 @@ fn init_script(
     let settings_literal = serde_json::to_string(settings).expect("settings serialise");
     let reveal_token_literal =
         serde_json::to_string(download_reveal_token).expect("reveal token serialises");
+    // macOS: the strip under the window buttons, set before the features run.
+    #[cfg(target_os = "macos")]
+    let title_bar_inset = format!(
+        "\n  window.__CARRIER_TITLE_BAR_INSET__ = {};",
+        crate::macos::title_bar::css_inset(settings.zoom)
+    );
+    #[cfg(not(target_os = "macos"))]
+    let title_bar_inset = "";
     format!(
         r#"(function () {{
   var carrierHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
@@ -1367,7 +1389,7 @@ fn init_script(
   }}
 
   window.__CARRIER_HEARTBEAT_ID__ = {watchdog_id};
-  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};
+  window.__CARRIER_SCHEDULED_SEND_AVAILABLE__ = {scheduled_send_available};{title_bar_inset}
 
   // Import the per-window secret as a non-extractable key. Only signed request
   // data crosses Tauri's page-visible serializer, so a hostile inherited

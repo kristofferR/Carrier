@@ -228,6 +228,8 @@ pub(crate) fn apply_page_zoom(window: &tauri::WebviewWindow, zoom: i32) {
     let factor = f64::from(clamp_zoom(zoom)) / 100.0;
     #[cfg(target_os = "macos")]
     let result = crate::macos::zoom::set_page_zoom(window, factor);
+    #[cfg(target_os = "macos")]
+    crate::macos::title_bar::zoom_changed(window, clamp_zoom(zoom));
     #[cfg(not(target_os = "macos"))]
     let result = window.set_zoom(factor);
     if let Err(e) = result {
