@@ -114,6 +114,16 @@ div[role="banner"] div[role="navigation"] {
   --hosted-view-selected-state: #3a3a3a !important;
 }
 
+/* Messenger paints a chat's theme gradient behind the message list and covers
+   it with opaque rows, leaving your bubbles as holes. A conversation rendered
+   while the window was hidden can come back with a device-pixel gap between
+   rows (WebKitGTK's DMA-BUF renderer; macOS too), so the gradient
+   shows as thin lines until the rows re-render. Extend each row 1px in its own
+   color: the next row paints over it, except in such a gap. */
+[role="main"] [role="log"] [role="article"] {
+  box-shadow: 0 1px 0 var(--mwp-message-row-background);
+}
+
 /* --- Login page: hide the marketing collage, show just the login box --- */
 /* (`data-carrier-*` attributes are set by the login tidy-up in messenger.js.) */
 [data-carrier-hide] {
