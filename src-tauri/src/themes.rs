@@ -24,9 +24,9 @@
 //! Carrier's `--carrier-*` palette tokens, which Carrier maps onto Messenger's
 //! own CSS variables, and key dark colors on `html[data-carrier-dark]`.
 //!
-//! The page gets four `<style>` elements, created once in this order so later
-//! ones win: the theme, High Contrast (whenever the system asks for more
-//! contrast), the accent color, and the font. `custom.css` still comes last.
+//! The page gets three `<style>` elements, created once in this order so later
+//! ones win: the theme, the accent color, and the font. `custom.css` still
+//! comes last.
 
 use std::path::{Path, PathBuf};
 
@@ -38,7 +38,6 @@ use crate::settings::{AppState, Settings};
 use crate::url_rules::is_messenger_web_url;
 
 pub(crate) const DEFAULT_THEME: &str = "default";
-pub(crate) const HIGH_CONTRAST_THEME: &str = "high-contrast";
 const THEMES_DIR: &str = "themes";
 const THEME_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -48,10 +47,6 @@ const BUILT_IN: &[(&str, &str)] = &[
     ("oled-black", include_str!("../themes/oled-black.css")),
     ("graphite", include_str!("../themes/graphite.css")),
     ("warm", include_str!("../themes/warm.css")),
-    (
-        HIGH_CONTRAST_THEME,
-        include_str!("../themes/high-contrast.css"),
-    ),
 ];
 
 /// Carrier's palette tokens and the Messenger variables each one sets.
@@ -486,40 +481,13 @@ fn font_css(font: &str) -> String {
 #[serde(rename_all = "camelCase")]
 struct AppearancePayload {
     theme: String,
-    theme_media: &'static str,
-    contrast: String,
-    contrast_media: &'static str,
     accent: String,
     font: String,
 }
 
-const WHEN_NOT_CONTRAST: &str = "not all and (prefers-contrast: more)";
-const WHEN_CONTRAST: &str = "(prefers-contrast: more)";
-
-fn appearance_payload(
-    theme: Option<&str>,
-    high_contrast: Option<&str>,
-    s: &Settings,
-    system_high_contrast: bool,
-) -> AppearancePayload {
-    let chosen_contrast = s.color_theme == HIGH_CONTRAST_THEME;
-    // The chosen theme and the accent give way to High Contrast while the
-    // system asks for more contrast. Linux reports that through the settings
-    // portal; the other webviews report it to the page as prefers-contrast.
-    let (theme_media, contrast_media) = match (chosen_contrast, system_high_contrast) {
-        (true, _) => ("all", "not all"),
-        (false, true) => ("not all", "all"),
-        (false, false) => (WHEN_NOT_CONTRAST, WHEN_CONTRAST),
-    };
+fn appearance_payload(theme: Option<&str>, s: &Settings) -> AppearancePayload {
     AppearancePayload {
         theme: theme.map(page_theme_css).unwrap_or_default(),
-        theme_media,
-        contrast: if chosen_contrast {
-            String::new()
-        } else {
-            high_contrast.map(page_theme_css).unwrap_or_default()
-        },
-        contrast_media,
         accent: accent_css(&s.accent_color),
         font: font_css(&s.message_font),
     }
@@ -536,8 +504,8 @@ fn appearance_script(payload: &AppearancePayload) -> String {
   var p = {literal};
   var parent = document.head || document.documentElement;
   // Create each element once and only update it afterwards, so the order
-  // (theme, contrast, accent, font, then custom.css) never changes.
-  function put(attribute, css, media) {{
+  // (theme, accent, font, then custom.css) never changes.
+  function put(attribute, css) {{
     var style = document.querySelector('style[' + attribute + ']');
     if (!style) {{
       style = document.createElement('style');
@@ -546,29 +514,13 @@ fn appearance_script(payload: &AppearancePayload) -> String {
       if (custom && custom.parentNode) custom.parentNode.insertBefore(style, custom);
       else parent.appendChild(style);
     }}
-    style.media = media;
     if (style.textContent !== css) style.textContent = css;
   }}
-  put('data-carrier-theme', p.theme, p.themeMedia);
-  put('data-carrier-high-contrast', p.contrast, p.contrastMedia);
-  put('data-carrier-accent', p.accent, p.themeMedia);
-  put('data-carrier-font', p.font, 'all');
+  put('data-carrier-theme', p.theme);
+  put('data-carrier-accent', p.accent);
+  put('data-carrier-font', p.font);
 }})();"#
     )
-}
-
-fn system_high_contrast(app: &tauri::AppHandle) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        app.state::<AppState>()
-            .linux_high_contrast
-            .load(std::sync::atomic::Ordering::Acquire)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = app;
-        false
-    }
 }
 
 /// Put the chosen theme, accent and font into one Messenger window. Fails
@@ -582,20 +534,14 @@ pub(crate) fn apply_appearance(window: &WebviewWindow, s: &Settings) {
     }
     let app = window.app_handle();
     let theme = theme_css(app, &s.color_theme);
-    let high_contrast = theme_css(app, HIGH_CONTRAST_THEME);
-    let payload = appearance_payload(
-        theme.as_deref(),
-        high_contrast.as_deref(),
-        s,
-        system_high_contrast(app),
-    );
+    let payload = appearance_payload(theme.as_deref(), s);
     if let Err(error) = window.eval(appearance_script(&payload)) {
         log::warn!("could not apply the theme: {error}");
     }
 }
 
-/// Re-apply the appearance to every Messenger window (after a system contrast
-/// change, or when a theme file changes).
+/// Re-apply the appearance to every Messenger window (when a theme file
+/// changes).
 pub(crate) fn apply_appearance_everywhere(app: &tauri::AppHandle) {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     for (_, window) in app.webview_windows() {
@@ -911,29 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn high_contrast_takes_over_while_the_system_asks_for_it() {
-        let mut s = Settings {
-            color_theme: "warm".into(),
-            ..Settings::default()
-        };
-        let page = appearance_payload(Some("w"), Some("hc"), &s, false);
-        assert_eq!(page.theme_media, WHEN_NOT_CONTRAST);
-        assert_eq!(page.contrast_media, WHEN_CONTRAST);
-        assert!(!page.contrast.is_empty());
-
-        let portal = appearance_payload(Some("w"), Some("hc"), &s, true);
-        assert_eq!(
-            (portal.theme_media, portal.contrast_media),
-            ("not all", "all")
-        );
-
-        s.color_theme = HIGH_CONTRAST_THEME.into();
-        let chosen = appearance_payload(Some("hc"), Some("hc"), &s, false);
-        assert_eq!(chosen.theme_media, "all");
-        assert!(chosen.contrast.is_empty());
-    }
-
-    #[test]
     fn accent_and_font_are_validated_before_reaching_the_page() {
         assert!(accent_css("").is_empty());
         assert!(accent_css("red; } body { x").is_empty());
@@ -966,9 +889,6 @@ mod tests {
     fn the_script_keeps_style_order_stable_and_escapes_css() {
         let payload = AppearancePayload {
             theme: "a::after { content: \"</style>\u{2028}\" }".into(),
-            theme_media: "all",
-            contrast: String::new(),
-            contrast_media: "not all",
             accent: String::new(),
             font: String::new(),
         };

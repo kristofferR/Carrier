@@ -1,6 +1,6 @@
 //! Linux desktop integration.
 
-use ashpd::desktop::settings::{ColorScheme, Contrast, Settings as PortalSettings};
+use ashpd::desktop::settings::{ColorScheme, Settings as PortalSettings};
 use futures_util::StreamExt;
 use gtk::prelude::{GtkSettingsExt, GtkWindowExt, WidgetExt};
 use tauri::Manager;
@@ -269,44 +269,6 @@ fn apply_portal_color_scheme(app: &tauri::AppHandle, scheme: ColorScheme) {
     crate::app_icon::apply_app_icon_from_state(app);
 }
 
-fn apply_portal_contrast(app: &tauri::AppHandle, contrast: Contrast) {
-    let high = matches!(contrast, Contrast::High);
-    let state = app.state::<AppState>();
-    if state
-        .linux_high_contrast
-        .swap(high, std::sync::atomic::Ordering::AcqRel)
-        != high
-    {
-        crate::themes::apply_appearance_everywhere(app);
-    }
-}
-
-/// Follow `org.freedesktop.appearance contrast`, so High Contrast turns on
-/// with the desktop's own setting (GNOME's High Contrast, for one).
-async fn watch_portal_contrast(app: tauri::AppHandle) {
-    let mut last_error = None;
-    loop {
-        let result = async {
-            let portal = PortalSettings::new().await?;
-            apply_portal_contrast(&app, portal.contrast().await?);
-            let mut changes = portal.receive_contrast_changed().await?;
-            while let Some(contrast) = changes.next().await {
-                apply_portal_contrast(&app, contrast);
-            }
-            Ok::<(), ashpd::Error>(())
-        }
-        .await;
-        if let Err(error) = result {
-            let message = error.to_string();
-            if should_log_portal_error(last_error.as_deref(), &message) {
-                log::info!("desktop contrast portal unavailable: {message}");
-                last_error = Some(message);
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-    }
-}
-
 async fn watch_portal_color_scheme(app: tauri::AppHandle) {
     let mut last_error = None;
     loop {
@@ -348,7 +310,6 @@ async fn watch_portal_color_scheme(app: tauri::AppHandle) {
 /// Follow `org.freedesktop.appearance color-scheme` while Theme = System.
 pub(crate) fn observe_system_theme_changes(app: &tauri::AppHandle) {
     tauri::async_runtime::spawn(watch_portal_color_scheme(app.clone()));
-    tauri::async_runtime::spawn(watch_portal_contrast(app.clone()));
 }
 
 /// Point-in-time read of `org.freedesktop.appearance color-scheme`, used by

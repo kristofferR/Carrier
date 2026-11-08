@@ -1143,8 +1143,6 @@ pub fn run() {
             unread_count: AtomicI64::new(0),
             #[cfg(target_os = "linux")]
             linux_panel_dark: std::sync::atomic::AtomicBool::new(false),
-            #[cfg(target_os = "linux")]
-            linux_high_contrast: std::sync::atomic::AtomicBool::new(false),
             revealing_main: AtomicUsize::new(0),
             next_reveal_generation: AtomicUsize::new(0),
             zoom_generation: AtomicUsize::new(0),
