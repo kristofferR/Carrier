@@ -1812,6 +1812,31 @@ pub fn run() {
                 refresh_unread_indicators(&h, &settings, n);
             });
 
+            // macOS: the photo viewer gets a title bar of its own while it's open
+            // (see macos::title_bar). The page names its own window; the
+            // payload is untrusted, so only a Messenger window's title bar can
+            // be switched, and only between its two styles.
+            #[cfg(target_os = "macos")]
+            {
+                let h = app.handle().clone();
+                app.listen_any("carrier:media-viewer", move |event| {
+                    #[derive(serde::Deserialize)]
+                    struct ViewerMsg {
+                        window: String,
+                        open: bool,
+                    }
+                    let Ok(msg) = serde_json::from_str::<ViewerMsg>(event.payload()) else {
+                        return;
+                    };
+                    if !is_messenger_window_label(&msg.window) {
+                        return;
+                    }
+                    if let Some(window) = h.get_webview_window(&msg.window) {
+                        crate::macos::title_bar::set_viewer_open(&window, msg.open);
+                    }
+                });
+            }
+
             // Keyboard/menu zoom from the page → persist it in settings so the
             // Settings window, other Messenger windows, and the next launch pick
             // it up. The payload comes from the remote-origin page, so treat it

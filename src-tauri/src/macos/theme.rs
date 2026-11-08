@@ -7,7 +7,6 @@ use objc2::runtime::NSObjectProtocol;
 use tauri::{Manager, WebviewWindow};
 
 use crate::settings::AppState;
-use crate::window::recreate_themed_windows;
 
 /// Disable the WKWebView's opaque white background so the window background —
 /// which we keep in step with the theme — shows through the title bar and
@@ -95,7 +94,7 @@ fn nsapp_effective_is_dark() -> bool {
     }
 }
 
-/// The data the appearance observer needs: the handle it rebuilds windows through.
+/// The data the appearance observer needs: the handle it reaches the windows through.
 struct ThemeObserverIvars {
     app: tauri::AppHandle,
 }
@@ -105,12 +104,13 @@ struct ThemeObserverIvars {
 // macOS only surfaces a *system* light/dark switch through tao's
 // `WindowEvent::ThemeChanged`, which rides a coalesced distributed notification a
 // background app doesn't receive in time — so Carrier, sitting in the background
-// while you flip the OS theme in System Settings, never noticed, and its title bar
-// (themed once, at window creation) stayed on the old colour. KVO on
+// while you flip the OS theme in System Settings, never noticed. KVO on
 // `effectiveAppearance` fires reliably and on the main thread the instant AppKit
-// updates the appearance, background or not. On each change, while following the
-// system theme, rebuild the windows — the same refresh a manual theme change does
-// (`recreate_themed_windows`). The webview's own CSS re-themes by itself.
+// updates the appearance, background or not. Carrier's windows have no title bar
+// of their own to re-theme (the window buttons float over the page, see
+// title_bar.rs), and the pages re-theme themselves through prefers-color-scheme,
+// so on each change, while following the system theme, only the window
+// backgrounds and the app icon need repainting.
 objc2::define_class!(
     #[unsafe(super(objc2::runtime::NSObject))]
     #[ivars = ThemeObserverIvars]
@@ -138,12 +138,14 @@ objc2::define_class!(
             let was_dark = LAST_EFFECTIVE_DARK.swap(now_dark, Ordering::SeqCst);
             // Only while following the system theme. An explicit light/dark choice
             // also moves NSApp's appearance (we set it ourselves on a manual
-            // switch), but is rebuilt by recreate_on_theme_change, not from here;
-            // and overlapping rebuilds are dropped by the `recreating` flag, so a
-            // burst of changes is safe.
+            // switch), and apply_settings has already repainted for it.
             let is_system = app.state::<AppState>().settings.lock().unwrap().theme == "system";
             if is_system && now_dark != was_dark {
-                recreate_themed_windows(app);
+                for (_, window) in tauri::Manager::webview_windows(app) {
+                    if let Ok(ns_window) = window.ns_window() {
+                        set_macos_window_bg(ns_window, now_dark);
+                    }
+                }
                 crate::app_icon::apply_app_icon_from_state(app);
             }
         }
@@ -153,9 +155,9 @@ objc2::define_class!(
 );
 
 /// Register a [`ThemeObserver`] on the shared application so live OS light/dark
-/// switches refresh the native window chrome while Theme = System. Called once at
+/// switches repaint the window backgrounds while Theme = System. Called once at
 /// startup; the observer is leaked (it lives for the whole process) so KVO never
-/// messages a freed object, and it keeps working across the rebuilds it triggers.
+/// messages a freed object.
 pub(crate) fn observe_system_theme_changes(app: &tauri::AppHandle) {
     use objc2::{AllocAnyThread, class, msg_send, rc::Retained, runtime::AnyObject};
     use objc2_foundation::ns_string;

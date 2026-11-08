@@ -54,6 +54,7 @@ import { initSyncHealth } from "./features/sync-health";
 import { initSystemEmoji } from "./features/system-emoji";
 import { initTelemetryBlocking } from "./features/telemetry";
 import { initThreadNav } from "./features/thread-nav";
+import { initTitleBar } from "./features/title-bar";
 import { initTypingBlock } from "./features/typing-block";
 import { initUnreadBadge } from "./features/unread-badge";
 import { initViewerControls } from "./features/viewer-controls";
@@ -71,6 +72,8 @@ function initFeature(name: string, init: () => void) {
 
 function main() {
   initFeature("rate-limit", initRateLimit);
+  // Before Facebook's first paint, so its layout starts below the window buttons.
+  initFeature("title-bar", initTitleBar);
   // Must wrap Worker before Facebook starts its background profiler.
   initFeature("facebook-workers", initFacebookWorkerOptimization);
   // Must run before any Facebook module definitions execute.

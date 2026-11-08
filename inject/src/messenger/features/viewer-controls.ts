@@ -1,5 +1,6 @@
 import { isMediaViewerDialog, MEDIA_VIEWER_ATTR } from "../lib/media-viewer";
 import { viewerControlOffset } from "../lib/viewer-controls";
+import { reportMediaViewer } from "./title-bar";
 
 const DIALOG = '[role="dialog"]';
 const BANNER = 'div[role="banner"]';
@@ -72,6 +73,7 @@ export function initViewerControls() {
       if (!dialog.hasAttribute(MEDIA_VIEWER_ATTR)) dialog.setAttribute(MEDIA_VIEWER_ATTR, "");
     }
     viewers = nextViewers;
+    reportMediaViewer(viewers.size > 0);
     const previouslyMarked = markedControls;
     markedControls = new Set();
 

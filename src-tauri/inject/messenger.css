@@ -27,6 +27,19 @@ html:has(body [role="navigation"] [role="grid"]) {
   --header-height: 0px !important;
 }
 
+/* macOS: the window buttons float over the top of the chat list, so the list
+   keeps a strip free under them (--carrier-title-bar-inset, set by Carrier; 0
+   elsewhere). The padding goes on the element that paints the list, so the
+   list's own colour fills the strip, and the chat beside it keeps even gaps
+   above and below. The skeleton Messenger shows while loading has the same
+   structure, so nothing moves once it has loaded. */
+:is([role="main"] ~ [role="navigation"], [role="navigation"]:has(~ [role="main"]))
+  > div:first-child
+  > div:first-child {
+  padding-top: var(--carrier-title-bar-inset, 0px) !important;
+  box-sizing: border-box !important;
+}
+
 body:not(:has([data-carrier-media-viewer])) div[role="banner"] {
   display: none !important;
 }

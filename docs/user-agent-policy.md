@@ -138,7 +138,7 @@ engine/runtime version and package format, then check:
    microphone/camera permissions and record unsupported engine features separately.
 5. Download an image and an attachment through Carrier's existing download flow.
 6. Log out and confirm the login form is usable again.
-7. Repeat in an extra window and after a theme-triggered window recreation.
+7. Repeat in an extra window and after a watchdog window recreation.
 
 A credentialed test session, macOS/Windows hosts, and older OS/package environments
 were not available in this task. Complete these rows before claiming #258's full
