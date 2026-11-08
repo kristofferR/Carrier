@@ -1,6 +1,6 @@
 //! Messenger windows without a separate title bar, like the old Messenger
-//! app: the window buttons float over the page, which keeps a strip of
-//! [`INSET`] points free at the top. A transparent native view over that strip
+//! app: the window buttons float over the top of the chat list, which keeps a
+//! strip of [`INSET`] points free under them (messenger.css). A transparent native view over that strip
 //! drags the window and answers a double-click as the system's title bar does,
 //! so the page needs no window permissions. While Messenger's photo viewer is
 //! open the window gets a title bar of its own, as the viewer puts its buttons

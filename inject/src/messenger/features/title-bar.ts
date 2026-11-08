@@ -1,7 +1,7 @@
 /* ------------------------- macOS title bar strip ----------------------- */
 // On macOS Messenger windows have no separate title bar: the window buttons
-// float over the page, which keeps a strip free at the top through Facebook's
-// own --header-height (messenger.css). The native side owns the strip's size
+// float over the top of the chat list, which keeps a strip free under them
+// (messenger.css). The native side owns the strip's size
 // (src-tauri/src/macos/title_bar.rs) and restates it as the window enters or
 // leaves full screen; this sets it before the page first paints, and reports
 // the photo viewer, which gets a title bar of its own while it's open.
