@@ -35,3 +35,10 @@ export function chatRowActions(texts: string[]): ChatRowAction[] {
   const offered = new Set(texts.map(chatRowAction));
   return CHAT_ROW_CONTEXT_MENU_LABELS.filter((action) => offered.has(action));
 }
+
+// Carrier's own rows, after Messenger's: export that conversation (Ref #371).
+// Keep in sync with CHAT_EXPORT_CONTEXT_MENU_LABELS in src-tauri/src/menu.rs.
+export const CHAT_EXPORT_CONTEXT_MENU_LABELS = [
+  "Export chat as HTML…",
+  "Export chat as JSON…",
+] as const;
