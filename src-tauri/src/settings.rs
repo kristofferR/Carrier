@@ -406,10 +406,6 @@ pub(crate) struct AppState {
     /// Portal-derived panel tint heuristic for the opt-in Linux symbolic icon.
     #[cfg(target_os = "linux")]
     pub(crate) linux_panel_dark: AtomicBool,
-    /// The desktop asks for more contrast (settings portal). Other platforms'
-    /// webviews report this to the page as `prefers-contrast: more` instead.
-    #[cfg(target_os = "linux")]
-    pub(crate) linux_high_contrast: AtomicBool,
     /// Non-zero generation token while the main window is deliberately being
     /// restored. A token (rather than a bool) lets overlapping reveals renew
     /// the guard without an older reset timer clearing the newer reveal.
