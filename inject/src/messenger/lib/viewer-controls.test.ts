@@ -18,6 +18,10 @@ describe("viewerControlOffset", () => {
     expect(viewerControlOffset([8, 14], 0, 32)).toBe(32);
   });
 
+  test("keeps clear of a strip taller than the usual cap (low page zoom)", () => {
+    expect(viewerControlOffset([8], 0, 107)).toBe(107);
+  });
+
   test("caps pathological layout offsets and ignores invalid measurements", () => {
     expect(viewerControlOffset([Number.NaN, -500])).toBe(64);
     expect(viewerControlOffset([Number.NaN])).toBe(0);

@@ -15545,7 +15545,7 @@ ${text}`)) {
     const naturalTops = controlTops.filter(Number.isFinite).map((top) => top - (Number.isFinite(appliedOffset) ? appliedOffset : 0));
     if (!naturalTops.length) return 0;
     return Math.min(
-      MAX_OFFSET,
+      MAX_OFFSET + Math.max(0, reserved),
       Math.max(0, Math.ceil(SAFE_TOP + reserved - Math.min(...naturalTops)))
     );
   }

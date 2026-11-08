@@ -16,8 +16,9 @@ export function viewerControlOffset(
     .filter(Number.isFinite)
     .map((top) => top - (Number.isFinite(appliedOffset) ? appliedOffset : 0));
   if (!naturalTops.length) return 0;
+  // The cap guards against pathological layouts, on top of what is reserved.
   return Math.min(
-    MAX_OFFSET,
+    MAX_OFFSET + Math.max(0, reserved),
     Math.max(0, Math.ceil(SAFE_TOP + reserved - Math.min(...naturalTops))),
   );
 }
