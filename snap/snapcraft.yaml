@@ -1,8 +1,8 @@
 name: carrier
-title: Carrier
+title: Carrier for Messenger
 base: core24
 adopt-info: carrier
-summary: A focused desktop client for Facebook Messenger
+summary: Unofficial desktop app for Facebook Messenger
 description: |
   Carrier puts Messenger in a focused desktop window, with native notifications,
   unread badges, keyboard shortcuts, privacy controls, and a system tray.
@@ -52,10 +52,6 @@ apps:
 plugs:
   desktop:
     desktop-file-ids: [snap.carrier]
-  browser-support:
-    interface: browser-support
-    # Preserve WebKit's process sandbox inside strict Snap confinement.
-    allow-sandbox: true
 
 slots:
   notification-actions:
